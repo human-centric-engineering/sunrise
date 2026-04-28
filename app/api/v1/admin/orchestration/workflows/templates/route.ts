@@ -12,9 +12,14 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import type { Prisma } from '@prisma/client';
 
 export const GET = withAdminAuth(async (request) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
   const url = new URL(request.url);
   const category = url.searchParams.get('category');
   const source = url.searchParams.get('source');

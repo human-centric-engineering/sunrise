@@ -13,26 +13,30 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { prisma } from '@/lib/db/client';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
-import { validateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
-import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
-import { cuidSchema } from '@/lib/validations/common';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 import { z } from 'zod';
 
-const inputDataSchema = z.record(z.string(), z.unknown());
+const MAX_INPUT_SIZE = 256 * 1024; // 256 KB
+
+const inputDataSchema = z
+  .record(z.string(), z.unknown())
+  .refine((val) => JSON.stringify(val).length <= MAX_INPUT_SIZE, {
+    message: `inputData must be under ${MAX_INPUT_SIZE / 1024} KB`,
+  });
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
 
   const url = new URL(request.url);
   const inputDataRaw = url.searchParams.get('inputData');
@@ -51,40 +55,34 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     inputData = result.data;
   }
 
-  const budgetLimitUsd = url.searchParams.get('budgetLimitUsd');
-
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
-
-  if (!workflow.isActive) {
-    throw new ValidationError(`Workflow ${id} is not active`, {
-      isActive: ['Workflow must be active before it can be executed'],
-    });
+  const budgetLimitRaw = url.searchParams.get('budgetLimitUsd');
+  let budgetLimitUsd: number | undefined;
+  if (budgetLimitRaw !== null) {
+    const parsed = z.coerce
+      .number()
+      .positive()
+      .max(1000, 'Budget limit must be at most $1,000')
+      .safeParse(budgetLimitRaw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid budgetLimitUsd', {
+        budgetLimitUsd: ['Must be a positive number'],
+      });
+    }
+    budgetLimitUsd = parsed.data;
   }
 
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
-  if (!defParsed.success) {
-    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
-      workflowDefinition: defParsed.error.issues.map((i) => i.message),
-    });
-  }
-  const definition = defParsed.data;
-  const dag = validateWorkflow(definition);
-  if (!dag.ok) {
-    throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {
-      workflowDefinition: dag.errors,
-    });
-  }
+  // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
+  const { workflow, definition } = await prepareWorkflowExecution(rawId);
 
   log.info('workflow execute-stream started', {
-    workflowId: id,
+    workflowId: workflow.id,
     userId: session.user.id,
   });
 
   const engine = new OrchestrationEngine();
-  const events = engine.executeWithSubscriber({ id: workflow.id, definition }, inputData, {
+  const events = engine.execute({ id: workflow.id, definition }, inputData, {
     userId: session.user.id,
-    budgetLimitUsd: budgetLimitUsd ? Number(budgetLimitUsd) : undefined,
+    budgetLimitUsd,
     signal: request.signal,
   });
 

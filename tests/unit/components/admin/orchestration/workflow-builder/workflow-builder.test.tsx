@@ -762,6 +762,10 @@ describe('WorkflowBuilder', () => {
     it('calls apiClient.post for save-as-template and shows "Template saved"', async () => {
       // Arrange: edit mode with a real workflow
       const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
       vi.mocked(apiClient.post).mockResolvedValue({});
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-tpl-1' })} />);
 
@@ -780,6 +784,10 @@ describe('WorkflowBuilder', () => {
     it('shows a save error when save-as-template API call rejects', async () => {
       // Arrange
       const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Server error'));
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-tpl-err' })} />);
 

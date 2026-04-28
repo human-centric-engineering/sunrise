@@ -271,6 +271,16 @@ export interface StepResult {
    * after this step. Used by the final step of a chain to signal completion.
    */
   terminal?: boolean;
+  /**
+   * If true, the step was skipped due to the `skip` error strategy.
+   * The engine records a `'skipped'` trace entry instead of `'completed'`.
+   */
+  skipped?: boolean;
+  /**
+   * When `skipped` is true, carries the sanitised error message so the
+   * parallel batch handler can emit a `step_failed` SSE event.
+   */
+  skipError?: string;
 }
 
 /** Minimal summary of a workflow execution row, for list views. */

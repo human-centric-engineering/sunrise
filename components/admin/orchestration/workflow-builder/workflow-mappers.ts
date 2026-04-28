@@ -12,6 +12,7 @@
 
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 
+import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
 import type {
   ConditionalEdge,
   WorkflowDefinition,
@@ -158,12 +159,24 @@ export function workflowDefinitionToFlow(definition: WorkflowDefinition): {
 
   const edges: Edge[] = [];
   for (const step of definition.steps) {
+    const { outputLabels } = getStepOutputs(step.type, step.config);
     step.nextSteps.forEach((edge, i) => {
+      let sourceHandle: string | undefined;
+      if (edge.condition && outputLabels) {
+        const handleIndex = outputLabels.findIndex(
+          (label) => label.toLowerCase() === edge.condition!.toLowerCase()
+        );
+        if (handleIndex >= 0) {
+          sourceHandle = `out-${handleIndex}`;
+        }
+      }
       edges.push({
         id: `${step.id}-${edge.targetStepId}-${i}`,
         source: step.id,
         target: edge.targetStepId,
         label: edge.condition ?? undefined,
+        sourceHandle,
+        targetHandle: 'in-0',
         type: 'default',
       });
     });
@@ -197,7 +210,14 @@ export function flowToWorkflowDefinition(
     const outgoing: ConditionalEdge[] = edges
       .filter((e) => e.source === node.id && nodeIds.has(e.target))
       .map((e) => {
-        const condition = typeof e.label === 'string' && e.label.length > 0 ? e.label : undefined;
+        let condition = typeof e.label === 'string' && e.label.length > 0 ? e.label : undefined;
+        if (!condition && e.sourceHandle) {
+          const { outputLabels } = getStepOutputs(node.data.type, node.data.config);
+          const idx = parseInt(e.sourceHandle.replace('out-', ''), 10);
+          if (outputLabels && !isNaN(idx) && idx < outputLabels.length) {
+            condition = outputLabels[idx].toLowerCase();
+          }
+        }
         return { targetStepId: e.target, ...(condition ? { condition } : {}) };
       });
 

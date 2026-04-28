@@ -18,6 +18,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { modelRegistry } from '@/lib/orchestration/llm';
+import { logger } from '@/lib/logging';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -42,7 +43,15 @@ export interface SemanticValidationResult {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 /** Step types that accept an optional `modelOverride` in their config. */
-const LLM_STEP_TYPES = new Set(['llm_call', 'route', 'reflect', 'guard', 'evaluate']);
+const LLM_STEP_TYPES = new Set([
+  'llm_call',
+  'route',
+  'reflect',
+  'guard',
+  'evaluate',
+  'plan',
+  'orchestrator',
+]);
 
 // ── Validator ──────────────────────────────────────────────────────────────
 
@@ -101,33 +110,44 @@ export async function semanticValidateWorkflow(
   }
 
   // ── Batch DB queries ───────────────────────────────────────────────────
+  // Wrapped in try-catch so a temporary DB outage degrades gracefully
+  // (skips semantic checks) instead of crashing the entire validation.
 
-  const [activeProviders, activeCapabilities, activeAgents] = await Promise.all([
-    modelSteps.size > 0
-      ? prisma.aiProviderConfig.findMany({
-          where: { isActive: true },
-          select: { slug: true },
-        })
-      : Promise.resolve([]),
-    capabilitySteps.size > 0
-      ? prisma.aiCapability.findMany({
-          where: {
-            slug: { in: [...capabilitySteps.keys()] },
-            isActive: true,
-          },
-          select: { slug: true },
-        })
-      : Promise.resolve([]),
-    agentSteps.size > 0
-      ? prisma.aiAgent.findMany({
-          where: {
-            slug: { in: [...agentSteps.keys()] },
-            isActive: true,
-          },
-          select: { slug: true },
-        })
-      : Promise.resolve([]),
-  ]);
+  let activeProviders: Array<{ slug: string }> = [];
+  let activeCapabilities: Array<{ slug: string }> = [];
+  let activeAgents: Array<{ slug: string }> = [];
+
+  try {
+    [activeProviders, activeCapabilities, activeAgents] = await Promise.all([
+      modelSteps.size > 0
+        ? prisma.aiProviderConfig.findMany({
+            where: { isActive: true },
+            select: { slug: true },
+          })
+        : Promise.resolve([]),
+      capabilitySteps.size > 0
+        ? prisma.aiCapability.findMany({
+            where: {
+              slug: { in: [...capabilitySteps.keys()] },
+              isActive: true,
+            },
+            select: { slug: true },
+          })
+        : Promise.resolve([]),
+      agentSteps.size > 0
+        ? prisma.aiAgent.findMany({
+            where: {
+              slug: { in: [...agentSteps.keys()] },
+              isActive: true,
+            },
+            select: { slug: true },
+          })
+        : Promise.resolve([]),
+    ]);
+  } catch (err) {
+    logger.error('Semantic validator: DB query failed, skipping semantic checks', { error: err });
+    return { ok: true, errors: [] };
+  }
 
   // ── Check model overrides ──────────────────────────────────────────────
 

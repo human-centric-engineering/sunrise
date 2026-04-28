@@ -10,6 +10,13 @@ import { Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 
@@ -25,6 +32,10 @@ export interface ExternalCallConfig extends Record<string, unknown> {
   authSecret?: string;
   authQueryParam?: string;
   maxResponseBytes?: number;
+  responseTransform?: {
+    type: 'jmespath' | 'template';
+    expression: string;
+  };
 }
 
 export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCallConfig>) {
@@ -39,7 +50,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
   };
 
   const addHeader = (): void => {
-    onChange({ headers: { ...headers, '': '' } });
+    onChange({ headers: { ...headers, [`header-${headerEntries.length + 1}`]: '' } });
   };
 
   const removeHeader = (key: string): void => {
@@ -68,29 +79,40 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="ext-method" className="text-xs">
-            Method
+          <Label htmlFor="ext-method" className="flex items-center text-xs">
+            Method{' '}
+            <FieldHelp title="HTTP method">
+              POST, PUT, and PATCH include the body template. GET and DELETE do not send a request
+              body.
+            </FieldHelp>
           </Label>
-          <select
-            id="ext-method"
+          <Select
             value={config.method ?? 'POST'}
-            onChange={(e) =>
+            onValueChange={(value) =>
               onChange({
-                method: e.target.value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+                method: value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
               })
             }
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="PATCH">PATCH</option>
-            <option value="DELETE">DELETE</option>
-          </select>
+            <SelectTrigger id="ext-method">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="GET">GET</SelectItem>
+              <SelectItem value="POST">POST</SelectItem>
+              <SelectItem value="PUT">PUT</SelectItem>
+              <SelectItem value="PATCH">PATCH</SelectItem>
+              <SelectItem value="DELETE">DELETE</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="ext-timeout" className="text-xs">
-            Timeout (ms)
+          <Label htmlFor="ext-timeout" className="flex items-center text-xs">
+            Timeout (ms){' '}
+            <FieldHelp title="Request timeout">
+              Maximum time to wait for a response. The request is cancelled and the step fails if
+              exceeded. Default: 30,000 ms (30 seconds).
+            </FieldHelp>
           </Label>
           <Input
             id="ext-timeout"
@@ -127,7 +149,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
         </Label>
         <div className="space-y-2">
           {headerEntries.map(([key, value], index) => (
-            <div key={index} className="flex items-center gap-2">
+            <div key={`header-${key}`} className="flex items-center gap-2">
               <Input
                 aria-label={`Header ${index + 1} name`}
                 value={key}
@@ -180,26 +202,86 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
         </div>
       )}
 
+      <div className="space-y-1.5">
+        <Label htmlFor="ext-transform-type" className="flex items-center text-xs">
+          Response transform{' '}
+          <FieldHelp title="Response transform">
+            Optional. Transform the raw response before passing it as step output.{' '}
+            <strong>JMESPath</strong> extracts fields from JSON responses (e.g.{' '}
+            <code>data.results[0].text</code>). <strong>Template</strong> wraps the response in a
+            string template using <code>{'{{body}}'}</code> as a placeholder.
+          </FieldHelp>
+        </Label>
+        <Select
+          value={config.responseTransform?.type ?? 'none'}
+          onValueChange={(value) => {
+            if (value === 'none') {
+              onChange({ responseTransform: undefined });
+            } else {
+              onChange({
+                responseTransform: {
+                  type: value as 'jmespath' | 'template',
+                  expression: config.responseTransform?.expression ?? '',
+                },
+              });
+            }
+          }}
+        >
+          <SelectTrigger id="ext-transform-type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None (pass raw response)</SelectItem>
+            <SelectItem value="jmespath">JMESPath</SelectItem>
+            <SelectItem value="template">Template</SelectItem>
+          </SelectContent>
+        </Select>
+        {config.responseTransform && (
+          <Textarea
+            id="ext-transform-expr"
+            value={config.responseTransform.expression ?? ''}
+            onChange={(e) =>
+              onChange({
+                responseTransform: {
+                  ...config.responseTransform!,
+                  expression: e.target.value,
+                },
+              })
+            }
+            placeholder={
+              config.responseTransform.type === 'jmespath'
+                ? 'data.results[*].text'
+                : 'Extracted: {{body}}'
+            }
+            rows={3}
+            className="font-mono text-xs"
+          />
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label htmlFor="ext-auth-type" className="text-xs">
             Auth type
           </Label>
-          <select
-            id="ext-auth-type"
+          <Select
             value={config.authType ?? 'none'}
-            onChange={(e) =>
+            onValueChange={(value) =>
               onChange({
-                authType: e.target.value as 'none' | 'bearer' | 'api-key' | 'query-param',
+                authType: value as 'none' | 'bearer' | 'api-key' | 'query-param',
               })
             }
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="none">None</option>
-            <option value="bearer">Bearer token</option>
-            <option value="api-key">API key (header)</option>
-            <option value="query-param">API key (query param)</option>
-          </select>
+            <SelectTrigger id="ext-auth-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="bearer">Bearer token</SelectItem>
+              <SelectItem value="api-key">API key (header)</SelectItem>
+              <SelectItem value="query-param">API key (query param)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {config.authType && config.authType !== 'none' && (
           <div className="space-y-1.5">

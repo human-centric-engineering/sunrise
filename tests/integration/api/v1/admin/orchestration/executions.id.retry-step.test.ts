@@ -31,6 +31,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -127,7 +128,9 @@ function makeRequest(body: Record<string, unknown>) {
 describe('POST /api/v1/admin/orchestration/executions/:id/retry-step', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (prisma.aiWorkflowExecution.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({
+      count: 1,
+    });
   });
 
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -242,7 +245,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/retry-step', () => {
     });
 
     // Verify the DB update call
-    const updateCall = (prisma.aiWorkflowExecution.update as ReturnType<typeof vi.fn>).mock
+    const updateCall = (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mock
       .calls[0];
     const updateData = updateCall[0].data;
 
@@ -290,7 +293,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/retry-step', () => {
     });
     expect(res.status).toBe(200);
 
-    const updateData = (prisma.aiWorkflowExecution.update as ReturnType<typeof vi.fn>).mock
+    const updateData = (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mock
       .calls[0][0].data;
     expect(updateData.executionTrace).toHaveLength(0);
     expect(updateData.currentStep).toBeNull();

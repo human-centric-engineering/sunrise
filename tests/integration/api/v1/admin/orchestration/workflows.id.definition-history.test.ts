@@ -69,11 +69,29 @@ const USER_ID = 'cmjbv4i3x00003wsloputgwul';
 const INVALID_ID = 'not-a-cuid';
 const BASE_URL = `http://localhost:3000/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/definition-history`;
 
+/** A valid workflow definition that passes workflowDefinitionSchema */
+function makeValidDefinition(overrides: Record<string, unknown> = {}) {
+  return {
+    steps: [
+      {
+        id: 'step-1',
+        name: 'First Step',
+        type: 'llm_call',
+        config: { prompt: 'Hello' },
+        nextSteps: [],
+      },
+    ],
+    entryStepId: 'step-1',
+    errorStrategy: 'fail',
+    ...overrides,
+  };
+}
+
 function makeHistoryEntry(
   overrides: { definition?: Record<string, unknown>; changedAt?: string; changedBy?: string } = {}
 ) {
   return {
-    definition: { steps: [], name: 'Old version' },
+    definition: makeValidDefinition(),
     changedAt: '2024-01-01T00:00:00.000Z',
     changedBy: USER_ID,
     ...overrides,
@@ -89,7 +107,7 @@ function makeWorkflowRow(
   return {
     id: WORKFLOW_ID,
     slug: 'test-workflow',
-    workflowDefinition: { steps: [], name: 'Current version' },
+    workflowDefinition: makeValidDefinition(),
     workflowDefinitionHistory: [makeHistoryEntry()],
     ...overrides,
   };
@@ -194,15 +212,12 @@ describe('GET /api/v1/admin/orchestration/workflows/:id/definition-history', () 
       const historyEntries = [
         makeHistoryEntry({
           changedAt: '2024-01-01T00:00:00.000Z',
-          definition: { steps: [], name: 'v0' },
         }),
         makeHistoryEntry({
           changedAt: '2024-06-01T00:00:00.000Z',
-          definition: { steps: [], name: 'v1' },
         }),
         makeHistoryEntry({
           changedAt: '2024-12-01T00:00:00.000Z',
-          definition: { steps: [], name: 'v2' },
         }),
       ];
 

@@ -137,5 +137,12 @@ export function sseResponse<T extends { type: string }>(
 
 function formatFrame<T extends { type: string }>(event: T): string {
   const safeType = /^[a-z0-9_]+$/i.test(event.type) ? event.type : 'unknown';
-  return `event: ${safeType}\ndata: ${JSON.stringify(event)}\n\n`;
+  const json = JSON.stringify(event);
+  // SSE spec requires each line of a multi-line data field to start with "data:".
+  // JSON.stringify can produce strings containing literal \n inside string values.
+  const dataLines = json
+    .split('\n')
+    .map((line) => `data: ${line}`)
+    .join('\n');
+  return `event: ${safeType}\n${dataLines}\n\n`;
 }

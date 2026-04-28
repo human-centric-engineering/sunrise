@@ -22,7 +22,12 @@ import type { PatternNode } from '@/components/admin/orchestration/workflow-buil
  * row regardless of which validator flagged it.
  */
 export interface ExtraCheckError {
-  code: 'DISCONNECTED_NODE' | 'PARALLEL_WITHOUT_MERGE' | 'MISSING_REQUIRED_CONFIG';
+  code:
+    | 'DISCONNECTED_NODE'
+    | 'PARALLEL_WITHOUT_MERGE'
+    | 'MISSING_REQUIRED_CONFIG'
+    | 'CYCLE_DETECTED'
+    | 'DANGLING_EDGE';
   message: string;
   stepId?: string;
 }
@@ -41,6 +46,8 @@ export function runExtraChecks(
   errors.push(...checkDisconnected(nodes, edges));
   errors.push(...checkParallelMerges(nodes, edges));
   errors.push(...checkRequiredConfig(nodes));
+  errors.push(...checkCycles(nodes, edges));
+  errors.push(...checkDanglingEdges(nodes, edges));
   return errors;
 }
 
@@ -246,6 +253,28 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         }
         break;
       }
+      case 'agent_call': {
+        if (!isNonEmptyString(config.agentSlug)) {
+          emit(`Agent Call "${label}" needs a selected agent`);
+        }
+        if (!isNonEmptyString(config.message)) {
+          emit(`Agent Call "${label}" needs a message template`);
+        }
+        break;
+      }
+      case 'send_notification': {
+        const channel = config.channel as string | undefined;
+        if (!isNonEmptyString(config.bodyTemplate)) {
+          emit(`Notification "${label}" needs a body template`);
+        }
+        if (channel === 'email' && !isNonEmptyString(config.to)) {
+          emit(`Notification "${label}" (email) needs recipients`);
+        }
+        if (channel === 'webhook' && !isNonEmptyString(config.webhookUrl)) {
+          emit(`Notification "${label}" (webhook) needs a URL`);
+        }
+        break;
+      }
       default:
         // chain / parallel have no required config.
         break;
@@ -256,4 +285,83 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// CYCLE_DETECTED
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight DFS cycle detection on the React Flow graph so users get
+ * instant feedback instead of waiting for the backend validator on save.
+ */
+function checkCycles(nodes: readonly PatternNode[], edges: readonly Edge[]): ExtraCheckError[] {
+  const adj = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = adj.get(edge.source) ?? [];
+    list.push(edge.target);
+    adj.set(edge.source, list);
+  }
+
+  const WHITE = 0;
+  const GRAY = 1;
+  const BLACK = 2;
+  const colour = new Map<string, number>();
+  for (const node of nodes) colour.set(node.id, WHITE);
+
+  const errors: ExtraCheckError[] = [];
+  const reported = new Set<string>();
+
+  const visit = (id: string, stack: string[]): void => {
+    colour.set(id, GRAY);
+    stack.push(id);
+    for (const next of adj.get(id) ?? []) {
+      const c = colour.get(next) ?? WHITE;
+      if (c === GRAY && !reported.has(next)) {
+        reported.add(next);
+        const cycleStart = stack.indexOf(next);
+        const cyclePath = cycleStart >= 0 ? stack.slice(cycleStart) : [next];
+        errors.push({
+          code: 'CYCLE_DETECTED',
+          message: `Cycle detected: ${cyclePath.join(' → ')} → ${next}`,
+          stepId: next,
+        });
+      } else if (c === WHITE) {
+        visit(next, stack);
+      }
+    }
+    stack.pop();
+    colour.set(id, BLACK);
+  };
+
+  for (const node of nodes) {
+    if ((colour.get(node.id) ?? WHITE) === WHITE) {
+      visit(node.id, []);
+    }
+  }
+
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
+// DANGLING_EDGE
+// ---------------------------------------------------------------------------
+
+/**
+ * Edges whose target no longer exists in the node set. React Flow can
+ * leave these behind after node deletion. `flowToWorkflowDefinition`
+ * silently filters them, but the user should know.
+ */
+function checkDanglingEdges(
+  nodes: readonly PatternNode[],
+  edges: readonly Edge[]
+): ExtraCheckError[] {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  return edges
+    .filter((e) => !nodeIds.has(e.target) || !nodeIds.has(e.source))
+    .map((e) => ({
+      code: 'DANGLING_EDGE' as const,
+      message: `An edge references a step that no longer exists`,
+      stepId: nodeIds.has(e.source) ? e.source : e.target,
+    }));
 }

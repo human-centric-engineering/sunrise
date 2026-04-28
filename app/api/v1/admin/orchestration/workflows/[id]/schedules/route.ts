@@ -13,6 +13,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { createScheduleSchema } from '@/lib/validations/orchestration';
 import { isValidCron, getNextRunAt } from '@/lib/orchestration/scheduling';
@@ -52,6 +53,18 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const workflow = await prisma.aiWorkflow.findUnique({ where: { id: parsed.data } });
   if (!workflow) throw new NotFoundError(`Workflow ${parsed.data} not found`);
+  if (!workflow.isActive) {
+    throw new ValidationError('Cannot create schedule on an inactive workflow', {
+      workflowId: ['Workflow must be active to add schedules'],
+    });
+  }
+
+  const existingCount = await prisma.aiWorkflowSchedule.count({
+    where: { workflowId: parsed.data },
+  });
+  if (existingCount >= 10) {
+    throw new ValidationError('Maximum of 10 schedules per workflow');
+  }
 
   const body = await validateRequestBody(request, createScheduleSchema);
 
@@ -73,6 +86,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       nextRunAt,
       createdBy: session.user.id,
     },
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow_schedule.create',
+    entityType: 'workflow_schedule',
+    entityId: schedule.id,
+    entityName: schedule.name,
+    metadata: { workflowId: parsed.data, cronExpression: body.cronExpression },
+    clientIp: clientIP,
   });
 
   return successResponse({ schedule }, undefined, { status: 201 });

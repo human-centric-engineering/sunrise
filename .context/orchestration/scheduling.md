@@ -73,6 +73,8 @@ Called automatically by the unified maintenance tick.
 | `PATCH`  | `/api/v1/admin/orchestration/workflows/:id/schedules/:scheduleId` | Update schedule             |
 | `DELETE` | `/api/v1/admin/orchestration/workflows/:id/schedules/:scheduleId` | Delete schedule             |
 
+**Constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`.
+
 ### Scheduler Tick (admin-auth required)
 
 `POST /api/v1/admin/orchestration/schedules/tick` — calls `processDueSchedules()`. Legacy single-purpose endpoint.
@@ -128,6 +130,8 @@ Examples:
 - `0 0 1 * *` — first of each month at midnight
 
 Parsed by `cron-parser` v5 (`CronExpressionParser`).
+
+**Timezone:** All cron expressions are evaluated in the server's system timezone (typically UTC in production). There is no per-schedule timezone override. If the server timezone changes (e.g., during a migration), existing schedules will shift accordingly. Plan cron expressions in UTC to avoid ambiguity.
 
 ## Webhook SSRF Protection
 

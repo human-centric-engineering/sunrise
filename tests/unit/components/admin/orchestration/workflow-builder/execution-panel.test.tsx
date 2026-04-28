@@ -294,11 +294,11 @@ describe('ExecutionPanel', () => {
   // ─── budget_warning frame ─────────────────────────────────────────────────
 
   it('renders an amber budget warning alert when a budget_warning frame arrives', async () => {
-    // Arrange: stream with a budget_warning frame before workflow completes
+    // Arrange: stream with a budget_warning frame (no workflow_completed — source
+    // clears budgetWarning on completion, so we stop after the warning to assert it)
     const stream = makeSseStream([
       frame('workflow_started', { executionId: 'exec-bw', workflowId: WORKFLOW_ID }),
       frame('budget_warning', { usedUsd: 0.025, limitUsd: 0.05 }),
-      frame('workflow_completed', { output: null, totalTokensUsed: 0, totalCostUsd: 0 }),
     ]);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
 

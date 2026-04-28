@@ -48,7 +48,8 @@ export interface WorkflowValidationError {
     | 'MISSING_GUARD_RULES'
     | 'MISSING_EVALUATE_RUBRIC'
     | 'MISSING_EXTERNAL_URL'
-    | 'MISSING_AGENT_SLUG';
+    | 'MISSING_AGENT_SLUG'
+    | 'INSUFFICIENT_ROUTE_BRANCHES';
   message: string;
   stepId?: string;
   path?: string[];
@@ -167,6 +168,16 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidationRes
         errors.push({
           code: 'MISSING_AGENT_SLUG',
           message: `agent_call step "${step.id}" is missing a non-empty config.agentSlug`,
+          stepId: step.id,
+        });
+      }
+    }
+    if (step.type === 'route') {
+      const routes = step.config?.routes;
+      if (!Array.isArray(routes) || routes.length < 2) {
+        errors.push({
+          code: 'INSUFFICIENT_ROUTE_BRANCHES',
+          message: `route step "${step.id}" needs at least two branches`,
           stepId: step.id,
         });
       }

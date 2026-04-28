@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { API } from '@/lib/api/endpoints';
@@ -118,7 +119,13 @@ export function ExecutionInputDialog({
 
         <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="execution-input-data">Input data (JSON object)</Label>
+            <Label htmlFor="execution-input-data" className="flex items-center">
+              Input data (JSON object){' '}
+              <FieldHelp title="Input data">
+                A JSON object that becomes the <code>{'{{input}}'}</code> variable in prompt
+                templates. Access nested keys with <code>{'{{input.key}}'}</code>. Max 256 KB.
+              </FieldHelp>
+            </Label>
             <Textarea
               id="execution-input-data"
               value={raw}
@@ -130,7 +137,13 @@ export function ExecutionInputDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="execution-budget">Budget cap (USD, optional)</Label>
+            <Label htmlFor="execution-budget" className="flex items-center">
+              Budget cap (USD, optional){' '}
+              <FieldHelp title="Budget cap">
+                The workflow halts when cumulative LLM cost exceeds this amount. A warning fires at
+                80% usage. Leave empty for no limit (max $1,000).
+              </FieldHelp>
+            </Label>
             <Input
               id="execution-budget"
               type="number"

@@ -333,6 +333,7 @@ model AiWorkflow {
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
+  @@index([slug, isActive]) // Webhook trigger lookups: findFirst({ slug, isActive: true })
   @@map("ai_workflow")
 }
 
@@ -387,6 +388,10 @@ model AiWorkflowExecution {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+  @@index([status, startedAt])   // Zombie reaper: RUNNING rows past threshold
+  @@index([status, createdAt])   // Stale-pending reaper + execution list filters
+  @@index([status, updatedAt])   // Abandoned-approval reaper
+  @@index([userId, status, createdAt]) // Execution list with user + status + sort
   @@map("ai_workflow_execution")
 }
 

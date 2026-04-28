@@ -25,6 +25,8 @@ return sseResponse(events, { signal: request.signal });
 
 `execute()` returns `AsyncIterable<ExecutionEvent>`. Consumers iterate with `for await`; the SSE route hands the iterable straight to `sseResponse` which frames each event as `event: <type>\ndata: <json>\n\n`.
 
+A second entry point, `executeWithSubscriber()`, wraps the same generator but calls a subscriber callback on each event before yielding. The `GET /workflows/:id/execute-stream` SSE route uses this variant to persist execution trace entries as events arrive.
+
 ## Module layout
 
 ```
@@ -33,7 +35,9 @@ lib/orchestration/engine/
 ├── executor-registry.ts       # BE-only registry (no UI deps)
 ├── context.ts                 # ExecutionContext + createContext + mergeStepResult
 ├── events.ts                  # ExecutionEvent factory helpers
-├── errors.ts                  # ExecutorError (+ retriable flag), PausedForApproval, BudgetExceeded
+├── errors.ts                  # ExecutorError (+ retriable flag + partial cost), PausedForApproval, BudgetExceeded
+├── execution-reaper.ts        # zombie reaper — marks stale RUNNING/PENDING/PAUSED rows as FAILED
+├── step-registry.ts           # FE palette metadata: labels, colours, handle counts, defaultConfig
 ├── outbound-rate-limiter.ts   # per-host sliding-window rate limiter for external calls
 ├── llm-runner.ts              # shared LLM invocation + template interpolation
 └── executors/
@@ -71,6 +75,8 @@ Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `pri
 
 If the process dies mid-run, the row reflects the **last completed checkpoint**. Mid-run resume of LLM failures is not yet implemented — the one resume path that is implemented is `human_approval`, handled by the approve route at `app/api/v1/admin/orchestration/executions/[id]/approve/route.ts`.
 
+**Resume rehydration.** When resuming, `initRun()` rebuilds `ctx.stepOutputs` from the persisted trace. Both `completed` and `skipped` entries are rehydrated — skipped steps contribute `null` to `stepOutputs` so downstream template interpolation finds `null` (not `undefined`) for skipped predecessors.
+
 ## Parallel Execution
 
 When a `parallel` node completes, its `nextSteps` targets are all pushed to the ready queue. The engine detects multiple ready steps (those whose predecessors have all been visited) and runs them concurrently:
@@ -83,6 +89,8 @@ When a `parallel` node completes, its `nextSteps` targets are all pushed to the 
 6. **Convergence** — a join step (with in-degree > 1) stays in the `pending` set until all its predecessors complete, then becomes ready on the next iteration.
 
 The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
+
+**Parallel skip events.** When a parallel branch fails and the step's error strategy is `skip`, the engine emits a `step_failed` SSE event (with `willRetry: false`) so SSE clients learn about the failure immediately — without this, the client wouldn't see the failure until trace reconciliation. The `skipError` field on `StepResult` carries the sanitised error message for the event payload.
 
 ## `ExecutionEvent` (SSE payloads)
 
@@ -119,9 +127,11 @@ interface ExecutionContext {
 }
 ```
 
-Executors receive a **frozen snapshot** (via `snapshotContext()`) so they cannot silently mutate totals or sibling outputs. They return a `StepResult { output, tokensUsed, costUsd, nextStepIds? }`; the engine merges that back into the live context via `mergeStepResult()` and checkpoints.
+Executors receive a **frozen snapshot** (via `snapshotContext()`) so they cannot silently mutate totals or sibling outputs. They return a `StepResult { output, tokensUsed, costUsd, nextStepIds?, skipped?, skipError? }`; the engine merges that back into the live context via `mergeStepResult()` and checkpoints. When `skipped` is true (set by the `skip` error strategy), the engine records a `'skipped'` trace entry and `skipError` carries the sanitised error message for SSE event emission.
 
 Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id.
+
+**Template limitations:** Interpolation supports one level of property access (`{{input.key}}`) but not deeper paths (`{{input.key.nested}}`). For nested data, flatten in an intermediate step or use an LLM step to extract the needed value. Interpolated values have no per-value size limit — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts. The workflow execution body is capped at 256 KB for `inputData` to prevent oversized payloads.
 
 ## Executor registry
 
@@ -178,14 +188,25 @@ Each step carries `errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail'` in its
 
 `ExecutorError` carries a `retriable` flag (defaults to `true`). When `strategy === 'retry'` and the error has `retriable: false`, the engine skips retry attempts and fails immediately. This prevents pointless retries on HTTP 404, missing credentials, or host-not-allowed errors.
 
-Notable non-retriable error codes from the `external_call` executor:
+Notable non-retriable error codes by executor:
 
-| Code                    | Meaning                                                         |
-| ----------------------- | --------------------------------------------------------------- |
-| `request_aborted`       | Execution's `AbortSignal` was already triggered before the call |
-| `outbound_rate_limited` | Per-host outbound rate limit exceeded for the target            |
+| Executor        | Code                            | Meaning                                                         |
+| --------------- | ------------------------------- | --------------------------------------------------------------- |
+| `external_call` | `host_not_allowed`              | URL hostname not in `ORCHESTRATION_ALLOWED_HOSTS`               |
+| `external_call` | `missing_auth_secret`           | Auth env var not set                                            |
+| `external_call` | `http_error`                    | Non-retriable HTTP status (4xx except 429)                      |
+| `external_call` | `response_too_large`            | Response body exceeds `maxResponseBytes`                        |
+| `external_call` | `request_aborted`               | Execution's `AbortSignal` was already triggered before the call |
+| `tool_call`     | `missing_capability_slug`       | Step config has no `capabilitySlug`                             |
+| `tool_call`     | `unknown_capability`            | Capability slug not registered                                  |
+| `tool_call`     | `capability_inactive`           | Capability exists but is not active                             |
+| `tool_call`     | `capability_disabled_for_agent` | Capability disabled for the calling agent/workflow              |
+| `tool_call`     | `invalid_args`                  | Arguments failed Zod validation                                 |
+| `tool_call`     | `requires_approval`             | Capability requires admin approval                              |
 
-See [`external-calls.md`](./external-calls.md) for the full error code table.
+Retriable codes: `rate_limited`, `execution_error` (tool_call), `http_error_retriable` (429/502/503/504), `outbound_rate_limited` (external_call).
+
+See [`external-calls.md`](./external-calls.md) for the full external_call error code table.
 
 ### Per-step timeout
 
@@ -200,7 +221,7 @@ The engine is exposed over HTTP via two routes with the same event payloads but 
 | `/api/v1/admin/orchestration/workflows/:id/execute`        | `POST` | JSON body (`inputData`, `budgetLimitUsd`)           | Yes — `?resumeFromExecutionId=` query param routes through `human_approval` approve flow | `fetch()` + manual SSE parser (default admin UI)                                                      |
 | `/api/v1/admin/orchestration/workflows/:id/execute-stream` | `GET`  | `?inputData=<json>&budgetLimitUsd=<n>` query params | No                                                                                       | Native [`EventSource`](https://developer.mozilla.org/docs/Web/API/EventSource) (query-only transport) |
 
-Both rate-limit via `adminLimiter` on POST only — the GET variant is intended for trusted same-origin usage by EventSource where headers cannot be set. They share DAG validation, the `workflowDefinitionSchema.safeParse` pre-flight, and the `isActive` gate. Disconnect semantics are also the same: client aborts cancel the stream, but the engine's `status` poll keeps the DB row honest (see [Cancellation](#cancellation) below).
+Both rate-limit via `adminLimiter` (POST and GET). The GET variant is intended for same-origin usage by EventSource where headers cannot be set. They share DAG validation, the `workflowDefinitionSchema.safeParse` pre-flight, and the `isActive` gate. Disconnect semantics are also the same: client aborts cancel the stream, but the engine's `status` poll keeps the DB row honest (see [Cancellation](#cancellation) below).
 
 ## Cancellation
 
@@ -209,7 +230,7 @@ The engine supports two cancellation paths:
 1. **Client-side abort** — the caller passes `signal: AbortSignal` in options. At the top of each DAG-walk iteration the engine checks `signal?.aborted` and yields `workflow_failed('Execution aborted by client')` if true.
 2. **DB-side cancel** — `POST /executions/:id/cancel` sets `status: 'cancelled'` and `completedAt` in the database. The engine performs a lightweight `SELECT status` between steps and yields `workflow_failed('Execution cancelled by user')` when the status is `'cancelled'`. This covers the case where the SSE stream is lost but the execution row should still be terminated.
 
-Both paths are checked before each step, not mid-step — a long-running LLM call will complete before the cancellation is observed.
+Both paths are checked before each step, not mid-step — a long-running LLM call will complete (and incur cost) before the cancellation is observed. Per-step `timeoutMs` is the recommended mitigation for expensive steps that might run longer than expected. The `AbortSignal` is not propagated into individual executor functions — only the engine's DAG-walk loop checks it. Future work may thread the signal into executors for mid-step cancellation of LLM calls.
 
 ## Budget enforcement
 
@@ -219,6 +240,8 @@ After every step the engine checks `ctx.totalCostUsd > budgetLimitUsd` and emits
 - `workflow_failed { error: 'Budget exceeded' }` if the limit is overrun; the generator then returns.
 
 If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
+
+**Parallel batch note:** budget is checked after the entire parallel batch completes, not between branches. All branches run to completion (or failure) before the budget guard fires. Use per-step `timeoutMs` to bound individual branch cost.
 
 ## Execution statuses
 
@@ -237,8 +260,8 @@ The `pending` → `running` transition happens inside `initRun()` when the engin
 
 The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
 
-- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect).
-- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry).
+- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect). Uses `updatedAt` so that resumed executions (which preserve the original `startedAt`) aren't prematurely reaped — the resume path refreshes `updatedAt` when it flips status back to `running`.
+- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry). Uses `createdAt` (not `updatedAt`) so incidental DB writes don't reset the reap timer.
 - **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
 
 Called by the unified maintenance tick endpoint.

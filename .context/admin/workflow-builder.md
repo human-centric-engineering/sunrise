@@ -50,7 +50,7 @@ When nothing is selected the right column collapses. In **create** mode the Exec
 
 ## Step registry
 
-`lib/orchestration/engine/step-registry.ts` is the data-driven source of truth for pattern step types. The palette iterates over `STEP_REGISTRY` and renders one draggable block per entry; the `PatternNode` custom node looks entries up by `type` for its icon, colour, and handle counts.
+`lib/orchestration/engine/step-registry.ts` is the data-driven source of truth for pattern step types. The palette iterates over `STEP_REGISTRY` and renders one draggable block per entry; the `PatternNode` custom node looks entries up by `type` for its icon and colour, and calls `getStepOutputs(type, config)` for dynamic output handle counts and labels.
 
 **Entry shape:**
 
@@ -78,7 +78,7 @@ Each entry carries an `estimatedDuration` hint displayed in the palette below th
 | `llm_call`          | LLM Call          | agent         | 1       | 1       |
 | `chain`             | Chain Step        | agent         | 1       | 1       |
 | `route`             | Route             | decision      | 2       | 2       |
-| `parallel`          | Parallel          | output        | 3       | 3       |
+| `parallel`          | Parallel          | decision      | 3       | 3       |
 | `reflect`           | Reflect           | agent         | 1       | 4       |
 | `tool_call`         | Tool Call         | input         | 1       | 5       |
 | `plan`              | Plan              | agent         | 1       | 6       |
@@ -109,26 +109,25 @@ All five categories have a matching entry in `STEP_CATEGORY_COLOURS` driving the
 
 ## Custom node type
 
-`components/admin/orchestration/workflow-builder/node-types/pattern-node.tsx` is **one** React Flow custom node used for every pattern step. It reads `data.type` and looks up the registry entry for its visual treatment — icon, category colour, and handle count.
+`components/admin/orchestration/workflow-builder/node-types/pattern-node.tsx` is **one** React Flow custom node used for every pattern step. It reads `data.type` and calls `getStepOutputs(data.type, data.config)` for dynamic output handle count and labels — icon and category colour come from the registry entry.
 
 - `inputs === 1`: one target handle stacked at the vertical midpoint.
-- `outputs === 2` (`route`): two source handles at 33% and 67% vertical.
-- `outputs === 3` (`parallel`): three source handles at 25% / 50% / 75%.
+- Output handles are computed dynamically: `guard` always shows 2 (Pass/Fail), `route` shows one per `config.routes` entry, `parallel` shows one per `config.branches` entry. Handles are stacked vertically with labels rendered beside each handle.
 - `selected === true`: node root gets `ring-2 ring-primary shadow-md`.
 
 `nodeTypes` is exported as a frozen module-scope object from `node-types/index.ts` — this is the React Flow recommended pattern and prevents unnecessary re-renders of custom node components.
 
 ## Canvas interactions
 
-| Action                     | Effect                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| Drag palette block         | HTML5 DnD — `dataTransfer.setData('application/reactflow', type)`             |
-| Drop on canvas             | `onDrop` reads the type, **validates** against the registry, then `addNode()` |
-| Drag from output handle    | React Flow `onConnect` → `addEdge({ ...connection, type: 'default' }, edges)` |
-| Click a node               | `setSelectedNodeId(id)` → right panel opens                                   |
-| Click the pane             | `setSelectedNodeId(null)` → right panel closes                                |
-| Delete button (right pane) | Removes the node and every edge that references it                            |
-| Scroll / pinch / pan       | Native React Flow (Controls + MiniMap included)                               |
+| Action                     | Effect                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drag palette block         | HTML5 DnD — `dataTransfer.setData('application/reactflow', type)`                                                                                                     |
+| Drop on canvas             | `onDrop` reads the type, **validates** against the registry, then `addNode()`                                                                                         |
+| Drag from output handle    | React Flow `onConnect` → auto-labels the edge from the output handle's label (via `getStepOutputs`), then `addEdge({ ...connection, type: 'default', label }, edges)` |
+| Click a node               | `setSelectedNodeId(id)` → right panel opens                                                                                                                           |
+| Click the pane             | `setSelectedNodeId(null)` → right panel closes                                                                                                                        |
+| Delete button (right pane) | Removes the node and every edge that references it                                                                                                                    |
+| Scroll / pinch / pan       | Native React Flow (Controls + MiniMap included)                                                                                                                       |
 
 **Snap to grid:** `snapToGrid` is on with `snapGrid={[16, 16]}`. Keeps casually-placed nodes visually aligned.
 
@@ -155,25 +154,29 @@ Structure (top to bottom):
 
 All editors live under `components/admin/orchestration/workflow-builder/block-editors/`. Every non-trivial field carries a `<FieldHelp title="…">` ⓘ popover; copy voice mirrors `agent-form.tsx`.
 
-| Type             | Editor                      | Fields (default)                                                                                                                                                                                                                                                                                                                            |
-| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `llm_call`       | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                                                                                                                                                                                                                         |
-| `chain`          | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                                                                                                                                                                                                                               |
-| `route`          | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                                                                                                                                                                                                                                     |
-| `parallel`       | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` only; `first-success` reserved for future use)                                                                                                                                                                                                                         |
-| `reflect`        | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3)                                                                                                                                                                                                                                                                                    |
-| `tool_call`      | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                                                                                                                                                                                                                             |
-| `plan`           | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5)                                                                                                                                                                                                                                                                                           |
-| `human_approval` | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)                                                                                                                                                                                                          |
-| `rag_retrieve`   | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7)                                                                                                                                                                                                                                                      |
-| `guard`          | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                                                                                                                                                                                                                               |
-| `evaluate`       | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 0), `scaleMax` (number, 10), `threshold` (number, 7)                                                                                                                                                                                                                                               |
-| `external_call`  | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input)                                                                                                                                                                                                        |
-| `orchestrator`   | `orchestrator-editor.tsx`   | `plannerPrompt` (Textarea), `availableAgentSlugs` (multi-checkbox from agents list), `selectionMode` (Select: auto/all), `maxRounds` (number, 3), `maxDelegationsPerRound` (number, 5), `timeoutMs` (number displayed as seconds, 120), `budgetLimitUsd` (number, optional), `modelOverride` (Input, optional), `temperature` (number, 0.3) |
+| Type                | Editor                      | Fields (default)                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `llm_call`          | `llm-call-editor.tsx`       | `prompt` (Textarea), `modelOverride` (Input, optional), `temperature` (number, 0.7), `maxTokens` (number, optional), `responseFormat` (Select: text/json, default text)                                                                                                                                                                     |
+| `chain`             | `chain-editor.tsx`          | Placeholder card — sub-step tree editor lands in Session 5.1c                                                                                                                                                                                                                                                                               |
+| `route`             | `route-editor.tsx`          | `classificationPrompt` (Textarea), dynamic `routes: { label }[]` list with add / remove                                                                                                                                                                                                                                                     |
+| `parallel`          | `parallel-editor.tsx`       | `timeoutMs` (number, 60000), `stragglerStrategy` (Select: `wait-all` only; `first-success` reserved for future use)                                                                                                                                                                                                                         |
+| `reflect`           | `reflect-editor.tsx`        | `critiquePrompt` (Textarea), `maxIterations` (number, 3), `modelOverride` (Input, optional), `temperature` (number, 0.3)                                                                                                                                                                                                                    |
+| `tool_call`         | `tool-call-editor.tsx`      | `capabilitySlug` (Select populated from pre-fetched capabilities list; shows description for current selection)                                                                                                                                                                                                                             |
+| `plan`              | `plan-editor.tsx`           | `objective` (Textarea), `maxSubSteps` (number, 5), `modelOverride` (Input, optional), `temperature` (number, 0.3)                                                                                                                                                                                                                           |
+| `human_approval`    | `human-approval-editor.tsx` | `prompt` (Textarea), `timeoutMinutes` (number, 60), `notificationChannel` (Select: `in-app` / `email` / `slack`; last two stubbed)                                                                                                                                                                                                          |
+| `rag_retrieve`      | `rag-retrieve-editor.tsx`   | `query` (Textarea), `topK` (number, 5), `similarityThreshold` (number, step 0.05, 0.7), `filters` (Textarea, JSON metadata filters, optional)                                                                                                                                                                                               |
+| `guard`             | `guard-editor.tsx`          | `rules` (Textarea), `mode` (Select: `llm` / `regex`), `failAction` (Select: `block` / `flag`)                                                                                                                                                                                                                                               |
+| `evaluate`          | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 1), `scaleMax` (number, 5), `threshold` (number, 3), `modelOverride` (Input, optional), `temperature` (number, 0.7)                                                                                                                                                                                |
+| `external_call`     | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `responseTransform` (Select: none/jmespath/template + expression Textarea), `authType` (Select), `authSecret` (Input)                                                                                                                            |
+| `orchestrator`      | `orchestrator-editor.tsx`   | `plannerPrompt` (Textarea), `availableAgentSlugs` (multi-checkbox from agents list), `selectionMode` (Select: auto/all), `maxRounds` (number, 3), `maxDelegationsPerRound` (number, 5), `timeoutMs` (number displayed as seconds, 120), `budgetLimitUsd` (number, optional), `modelOverride` (Input, optional), `temperature` (number, 0.3) |
+| `agent_call`        | `agent-call-editor.tsx`     | `agentSlug` (Select populated from pre-fetched agents list), `message` (Textarea), `mode` (single-turn / multi-turn Select), `maxToolIterations` (number Input), `maxTurns` (number Input, shown in multi-turn mode)                                                                                                                        |
+| `send_notification` | `notification-editor.tsx`   | `channel` (Select: email/webhook), `bodyTemplate` (Textarea); conditional: `to` (Input, email channel), `subject` (Input, email), `webhookUrl` (Input, webhook channel)                                                                                                                                                                     |
 
 **Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
 
-**Route branch labels.** `route-editor.tsx` writes to `config.routes = [{ label }]`. The 5.1b mapper does **not** sync these labels to outgoing edge labels — inline edge-condition editing is a Session 5.1c concern.
+**Route branch labels.** `route-editor.tsx` writes to `config.routes = [{ label }]`. Each label maps to an output handle on the node. When a user draws an edge from a specific output handle, `onConnect` auto-labels the edge with the corresponding output label (lowercased). `flowToWorkflowDefinition` also derives the `condition` from `sourceHandle` when no explicit label is set, ensuring edges reconnect to the correct handles on reload.
+
+**Dynamic handle counts.** `getStepOutputs(type, config)` in `step-registry.ts` computes the output count and labels dynamically from step config: `guard` always returns 2 (Pass/Fail), `route` derives from `config.routes` length, `parallel` derives from `config.branches` length. `PatternNode` calls this function to render the correct number of source handles. Adding or removing branches in the editor immediately updates the node's handle count on the canvas.
 
 ### Default configuration
 
@@ -192,11 +195,13 @@ nodes/edges change ─┐
                                                 └─► setNodes(prev => mark data.hasError)
 ```
 
-- **`validateWorkflow(def).errors`** — from `lib/orchestration/workflows/validator.ts`. Covers `MISSING_ENTRY`, `UNKNOWN_TARGET`, `UNREACHABLE_STEP`, `CYCLE_DETECTED`, `DUPLICATE_STEP_ID`, `MISSING_APPROVAL_PROMPT`, `MISSING_CAPABILITY_SLUG`. This is the authoritative validator — the backend runs the same code on POST / PATCH.
-- **`runExtraChecks(nodes, edges)`** — `components/admin/orchestration/workflow-builder/extra-checks.ts`. Pure TS. Three FE-only checks that the backend validator does not yet cover:
+- **`validateWorkflow(def).errors`** — from `lib/orchestration/workflows/validator.ts`. Covers `MISSING_ENTRY`, `UNKNOWN_TARGET`, `UNREACHABLE_STEP`, `CYCLE_DETECTED`, `DUPLICATE_STEP_ID`, `MISSING_APPROVAL_PROMPT`, `MISSING_CAPABILITY_SLUG`, `MISSING_GUARD_RULES`, `MISSING_EVALUATE_RUBRIC`, `MISSING_EXTERNAL_URL`, `MISSING_AGENT_SLUG`, `INSUFFICIENT_ROUTE_BRANCHES` (12 codes total). This is the authoritative validator — the backend runs the same code on POST / PATCH.
+- **`runExtraChecks(nodes, edges)`** — `components/admin/orchestration/workflow-builder/extra-checks.ts`. Pure TS. Five FE-only checks that run alongside the backend validator for instant canvas feedback:
   - `DISCONNECTED_NODE` — a non-entry node with zero incoming **and** zero outgoing edges.
   - `PARALLEL_WITHOUT_MERGE` — a `parallel` step whose branches never reconverge at a single downstream node.
-  - `MISSING_REQUIRED_CONFIG` — type-specific emptiness: `llm_call.prompt`, `tool_call.capabilitySlug`, `human_approval.prompt`, `route.classificationPrompt`, `route.routes.length ≥ 2`, `rag_retrieve.query`, `plan.objective`, `reflect.critiquePrompt`. Some of these duplicate backend checks so the red ring appears instantly on the canvas without waiting for a save round-trip.
+  - `MISSING_REQUIRED_CONFIG` — type-specific emptiness: `llm_call.prompt`, `tool_call.capabilitySlug`, `human_approval.prompt`, `route.classificationPrompt`, `route.routes.length ≥ 2`, `rag_retrieve.query`, `plan.objective`, `reflect.critiquePrompt`, `guard.rules`, `evaluate.rubric`, `external_call.url`, `orchestrator.plannerPrompt`, `orchestrator.availableAgentSlugs`, `agent_call.agentSlug`, `agent_call.message`, `send_notification.bodyTemplate` (plus channel-specific checks). Some of these duplicate backend checks so the red ring appears instantly on the canvas without waiting for a save round-trip.
+  - `CYCLE_DETECTED` — lightweight DFS cycle detection on the React Flow graph. Distinct from the backend's structural cycle check — the FE version runs on every debounced change for instant feedback.
+  - `DANGLING_EDGE` — edges whose source or target node no longer exists. React Flow can leave these behind after node deletion; `flowToWorkflowDefinition` silently filters them, but the user should know.
 
 `ExtraCheckError` has the same `{ code, message, stepId? }` shape as the core validator's `WorkflowValidationError`, so the summary panel merges both lists without any type gymnastics.
 

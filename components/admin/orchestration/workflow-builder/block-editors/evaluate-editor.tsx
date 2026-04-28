@@ -42,8 +42,12 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="evaluate-scale-min" className="text-xs">
-            Scale min
+          <Label htmlFor="evaluate-scale-min" className="flex items-center text-xs">
+            Scale min{' '}
+            <FieldHelp title="Scale minimum">
+              The lowest score the model can assign. Works with Scale max and Threshold to define
+              the evaluation range.
+            </FieldHelp>
           </Label>
           <Input
             id="evaluate-scale-min"
@@ -53,8 +57,11 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="evaluate-scale-max" className="text-xs">
-            Scale max
+          <Label htmlFor="evaluate-scale-max" className="flex items-center text-xs">
+            Scale max{' '}
+            <FieldHelp title="Scale maximum">
+              The highest score the model can assign. Must be greater than Scale min.
+            </FieldHelp>
           </Label>
           <Input
             id="evaluate-scale-max"
@@ -64,6 +71,12 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
           />
         </div>
       </div>
+
+      {(config.scaleMin ?? 1) >= (config.scaleMax ?? 5) && (
+        <p className="text-xs text-red-600 dark:text-red-400">
+          Scale min must be less than scale max.
+        </p>
+      )}
 
       <div className="space-y-1.5">
         <Label htmlFor="evaluate-threshold" className="flex items-center text-xs">
@@ -83,6 +96,44 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
           }}
           placeholder="e.g. 3"
         />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="evaluate-model-override" className="flex items-center text-xs">
+            Model override{' '}
+            <FieldHelp title="Model override">
+              Optional. Overrides the workflow&rsquo;s default model for just this evaluate step —
+              useful for using a cheaper model for simple rubric checks.
+            </FieldHelp>
+          </Label>
+          <Input
+            id="evaluate-model-override"
+            value={config.modelOverride ?? ''}
+            onChange={(e) => onChange({ modelOverride: e.target.value })}
+            placeholder="claude-haiku-4-5"
+            className="font-mono text-xs"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="evaluate-temperature" className="flex items-center text-xs">
+            Temperature{' '}
+            <FieldHelp title="Temperature">
+              Controls randomness. <code>0</code> is deterministic (recommended for consistent
+              scoring), <code>1</code> is creative. Default: <code>0.7</code>.
+            </FieldHelp>
+          </Label>
+          <Input
+            id="evaluate-temperature"
+            type="number"
+            step="0.05"
+            min={0}
+            max={2}
+            value={config.temperature ?? 0.7}
+            onChange={(e) => onChange({ temperature: Number(e.target.value) })}
+          />
+        </div>
       </div>
     </div>
   );

@@ -46,7 +46,7 @@ describe('reapZombieExecutions', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           status: 'running',
-          startedAt: expect.objectContaining({ lt: expect.any(Date) }),
+          updatedAt: expect.objectContaining({ lt: expect.any(Date) }),
         }),
         data: expect.objectContaining({
           status: 'failed',
@@ -69,7 +69,7 @@ describe('reapZombieExecutions', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           status: 'pending',
-          updatedAt: expect.objectContaining({ lt: expect.any(Date) }),
+          createdAt: expect.objectContaining({ lt: expect.any(Date) }),
         }),
         data: expect.objectContaining({
           status: 'failed',
@@ -122,12 +122,12 @@ describe('reapZombieExecutions', () => {
     await reapZombieExecutions(fiveMinutes, thirtyMinutes, oneDay);
 
     const runningCall = mockUpdateMany.mock.calls[0][0];
-    const runningCutoff = runningCall.where.startedAt.lt as Date;
+    const runningCutoff = runningCall.where.updatedAt.lt as Date;
     expect(Date.now() - runningCutoff.getTime()).toBeGreaterThan(fiveMinutes - 2000);
     expect(Date.now() - runningCutoff.getTime()).toBeLessThan(fiveMinutes + 2000);
 
     const pendingCall = mockUpdateMany.mock.calls[1][0];
-    const pendingCutoff = pendingCall.where.updatedAt.lt as Date;
+    const pendingCutoff = pendingCall.where.createdAt.lt as Date;
     expect(Date.now() - pendingCutoff.getTime()).toBeGreaterThan(thirtyMinutes - 2000);
     expect(Date.now() - pendingCutoff.getTime()).toBeLessThan(thirtyMinutes + 2000);
 

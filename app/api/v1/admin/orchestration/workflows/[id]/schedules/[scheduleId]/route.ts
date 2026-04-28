@@ -14,6 +14,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateScheduleSchema } from '@/lib/validations/orchestration';
 import { isValidCron, getNextRunAt } from '@/lib/orchestration/scheduling';
@@ -49,7 +50,7 @@ export const GET = withAdminAuth<Params>(async (request, _session, { params }) =
   return successResponse({ schedule });
 });
 
-export const PATCH = withAdminAuth<Params>(async (request, _session, { params }) => {
+export const PATCH = withAdminAuth<Params>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -83,10 +84,20 @@ export const PATCH = withAdminAuth<Params>(async (request, _session, { params })
     },
   });
 
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow_schedule.update',
+    entityType: 'workflow_schedule',
+    entityId: existing.id,
+    entityName: updated.name,
+    metadata: { workflowId: id },
+    clientIp: clientIP,
+  });
+
   return successResponse({ schedule: updated });
 });
 
-export const DELETE = withAdminAuth<Params>(async (request, _session, { params }) => {
+export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
@@ -95,6 +106,16 @@ export const DELETE = withAdminAuth<Params>(async (request, _session, { params }
   const existing = await resolveSchedule(id, scheduleId);
 
   await prisma.aiWorkflowSchedule.delete({ where: { id: existing.id } });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow_schedule.delete',
+    entityType: 'workflow_schedule',
+    entityId: existing.id,
+    entityName: existing.name,
+    metadata: { workflowId: id },
+    clientIp: clientIP,
+  });
 
   return successResponse({ deleted: true });
 });

@@ -54,7 +54,7 @@ Pure function. Returns `{ ok: boolean, errors: WorkflowValidationError[] }`. Nev
 1. **Duplicate ids** — scan `steps`, flag any repeated `id` (first pass, before anything else, so later passes can safely assume ids are unique).
 2. **Missing entry** — check `entryStepId` resolves to a real step. If it doesn't, reachability and cycle checks are **skipped** (they'd cascade into meaningless errors).
 3. **Unknown targets** — every `nextSteps.targetStepId` on every step must resolve.
-4. **Per-type config** — `human_approval` steps require `config.prompt`; `tool_call` steps require `config.capabilitySlug`. Other types have no extra requirements.
+4. **Per-type config** — `human_approval` requires `config.prompt`, `tool_call` requires `config.capabilitySlug`, `guard` requires `config.rules`, `evaluate` requires `config.rubric`, `external_call` requires `config.url`, `agent_call` requires `config.agentSlug`, `route` requires at least 2 entries in `config.routes`.
 5. **Reachability** — BFS from `entryStepId`; any step not visited is an orphan.
 6. **Cycle detection** — DFS with gray/black colouring. When a back-edge into a gray node is found, the current DFS stack is sliced to produce the cycle `path`.
 
@@ -62,19 +62,20 @@ Pure function. Returns `{ ok: boolean, errors: WorkflowValidationError[] }`. Nev
 
 All errors are typed — the `code` field is the contract, **never** assert on `message` (tests depend on this). UI should render by code.
 
-| `code`                    | `stepId?` | `path?` | Meaning                                                                                                   |
-| ------------------------- | --------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| `MISSING_ENTRY`           | —         | —       | `entryStepId` does not resolve to any step. Cycle & reachability checks are skipped when this fires.      |
-| `DUPLICATE_STEP_ID`       | ✓         | —       | Two or more steps share the same `id`.                                                                    |
-| `UNKNOWN_TARGET`          | ✓         | —       | A step's `nextSteps[].targetStepId` doesn't match any step in the workflow.                               |
-| `UNREACHABLE_STEP`        | ✓         | —       | Step is not reachable from `entryStepId` via BFS — i.e. an orphan.                                        |
-| `CYCLE_DETECTED`          | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.              |
-| `MISSING_APPROVAL_PROMPT` | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.   |
-| `MISSING_CAPABILITY_SLUG` | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler. |
-| `MISSING_GUARD_RULES`     | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                |
-| `MISSING_EVALUATE_RUBRIC` | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.               |
-| `MISSING_EXTERNAL_URL`    | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.          |
-| `MISSING_AGENT_SLUG`      | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                 |
+| `code`                        | `stepId?` | `path?` | Meaning                                                                                                      |
+| ----------------------------- | --------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `MISSING_ENTRY`               | —         | —       | `entryStepId` does not resolve to any step. Cycle & reachability checks are skipped when this fires.         |
+| `DUPLICATE_STEP_ID`           | ✓         | —       | Two or more steps share the same `id`.                                                                       |
+| `UNKNOWN_TARGET`              | ✓         | —       | A step's `nextSteps[].targetStepId` doesn't match any step in the workflow.                                  |
+| `UNREACHABLE_STEP`            | ✓         | —       | Step is not reachable from `entryStepId` via BFS — i.e. an orphan.                                           |
+| `CYCLE_DETECTED`              | —         | ✓       | Workflows must be DAGs. `path` contains the cycle (first → ... → first) for error rendering.                 |
+| `MISSING_APPROVAL_PROMPT`     | ✓         | —       | A `human_approval` step is missing `config.prompt`, which the approval UI needs to render the decision.      |
+| `MISSING_CAPABILITY_SLUG`     | ✓         | —       | A `tool_call` step is missing `config.capabilitySlug`, which the dispatcher needs to resolve the handler.    |
+| `MISSING_GUARD_RULES`         | ✓         | —       | A `guard` step is missing `config.rules`, which defines the safety rules to check against.                   |
+| `MISSING_EVALUATE_RUBRIC`     | ✓         | —       | An `evaluate` step is missing `config.rubric`, which the scorer needs to assess the output.                  |
+| `MISSING_EXTERNAL_URL`        | ✓         | —       | An `external_call` step is missing `config.url`, which is the target endpoint for the HTTP call.             |
+| `MISSING_AGENT_SLUG`          | ✓         | —       | An `agent_call` step is missing `config.agentSlug`, which identifies the agent to invoke.                    |
+| `INSUFFICIENT_ROUTE_BRANCHES` | ✓         | —       | A `route` step has fewer than two branches in `config.routes`. Routes need at least two options to classify. |
 
 ### Example error payload
 
@@ -113,7 +114,7 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 
 ### Algorithm
 
-1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate` steps) and capability slugs (from `tool_call` steps).
+1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate`, `plan`, `orchestrator` steps) and capability slugs (from `tool_call` steps).
 2. **Batch DB queries** — two parallel queries: active providers and active capabilities matching the collected slugs.
 3. **Check model overrides** — each `modelOverride` must exist in the model registry and its provider must be active.
 4. **Check capability slugs** — each `capabilitySlug` must match an active capability.
@@ -142,11 +143,11 @@ The `/validate` and `/dry-run` endpoints run both structural and semantic valida
 
 Sessions 5.1a + 5.1b shipped the visual builder at `/admin/orchestration/workflows`, `/new`, and `/[id]`. The builder round-trips `WorkflowDefinition` JSON through React Flow via pure-TS mappers, persisting node x/y into `step.config._layout` so the next open restores the layout.
 
-**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 12 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
+**What it ships:** canvas + pattern palette, single `PatternNode` custom type for all 15 step types, per-step config editors, live debounced validation (this validator + FE-only extra checks), red-ring errors, and a save flow (create via details dialog → POST; edit via direct PATCH).
 
 **What it defers:** Chain sub-step editor and inline edge-condition editing are future work.
 
-**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 8 built-in composition recipes seeded from `prisma/seeds/data/templates/` and served to the UI via the workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning, Data Pipeline, Outreach Safety, Code Review). `prisma/seeds/004-builtin-templates.ts` upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
+**Built-in templates (5.1c).** The toolbar's "Use template" dropdown loads 9 built-in composition recipes seeded from `prisma/seeds/data/templates/` and served to the UI via the workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). Each recipe is a full `WorkflowDefinition` matching one of the agentic patterns in `.claude/skills/agent-architect/SKILL.md` (Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning, Data Pipeline, Outreach Safety, Code Review, Autonomous Research). `prisma/seeds/004-builtin-templates.ts` upserts each template as an `AiWorkflow` row with `isTemplate: true` so they show up in the list page and can be browsed via the CRUD surface; the upsert uses `update: {}` for idempotency so re-seeding is always a no-op against admin edits.
 
 **UI-side default config conventions.** The step registry's `defaultConfig` holds editor-facing defaults that the backend validator does not currently inspect — e.g. `llm_call.temperature = 0.7`, `parallel.timeoutMs = 60000`, `parallel.stragglerStrategy = 'wait-all'`, `rag_retrieve.topK = 5`, `rag_retrieve.similarityThreshold = 0.7`, `human_approval.timeoutMinutes = 60`. They ride along on the stored `WorkflowStep.config` JSON and are honoured opportunistically by the runtime executors (see [`engine.md`](./engine.md)). The same goes for `step.config._layout` — UI metadata, ignored by the validator and the engine.
 

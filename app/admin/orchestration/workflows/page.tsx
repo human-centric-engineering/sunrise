@@ -30,24 +30,30 @@ const EMPTY_META: PaginationMeta = {
  * client-side search / sort / pagination / mutations. Fetch failures
  * never throw — the table renders an empty-state banner.
  */
-async function getWorkflows(): Promise<{ workflows: AiWorkflowListItem[]; meta: PaginationMeta }> {
+async function getWorkflows(): Promise<{
+  workflows: AiWorkflowListItem[];
+  meta: PaginationMeta;
+  error: string | null;
+}> {
   try {
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=25`);
-    if (!res.ok) return { workflows: [], meta: EMPTY_META };
+    if (!res.ok) return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
     const body = await parseApiResponse<AiWorkflowListItem[]>(res);
-    if (!body.success) return { workflows: [], meta: EMPTY_META };
+    if (!body.success)
+      return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
     return {
       workflows: body.data,
       meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
+      error: null,
     };
   } catch (err) {
     logger.error('workflows list page: initial fetch failed', err);
-    return { workflows: [], meta: EMPTY_META };
+    return { workflows: [], meta: EMPTY_META, error: 'Failed to load workflows' };
   }
 }
 
 export default async function WorkflowsListPage() {
-  const { workflows, meta } = await getWorkflows();
+  const { workflows, meta, error } = await getWorkflows();
 
   return (
     <div className="space-y-6">
@@ -85,7 +91,7 @@ export default async function WorkflowsListPage() {
         </p>
       </header>
 
-      <WorkflowsTable initialWorkflows={workflows} initialMeta={meta} />
+      <WorkflowsTable initialWorkflows={workflows} initialMeta={meta} initialError={error} />
     </div>
   );
 }

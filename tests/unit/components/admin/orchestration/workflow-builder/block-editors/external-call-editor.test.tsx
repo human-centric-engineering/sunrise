@@ -17,6 +17,9 @@
  * - Header management: editing a header name calls onChange with updated headers
  * - Header management: editing a header value calls onChange with updated headers
  * - FieldHelp ⓘ info buttons are present
+ * - Response transform: renders the transform type select
+ * - Response transform: selecting JMESPath shows expression textarea
+ * - Response transform: selecting None clears responseTransform
  *
  * @see components/admin/orchestration/workflow-builder/block-editors/external-call-editor.tsx
  */
@@ -96,8 +99,8 @@ describe('ExternalCallEditor', () => {
     it('shows POST as the default method value', () => {
       render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
 
-      const methodSelect = document.getElementById('ext-method') as HTMLSelectElement;
-      expect(methodSelect.value).toBe('POST');
+      const trigger = document.getElementById('ext-method')!;
+      expect(trigger).toHaveTextContent('POST');
     });
 
     it('shows 30000 as the default timeout value', () => {
@@ -113,8 +116,8 @@ describe('ExternalCallEditor', () => {
     it('shows none as the default auth type', () => {
       render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
 
-      const authSelect = document.getElementById('ext-auth-type') as HTMLSelectElement;
-      expect(authSelect.value).toBe('none');
+      const trigger = document.getElementById('ext-auth-type')!;
+      expect(trigger).toHaveTextContent('None');
     });
 
     it('reflects provided URL value', () => {
@@ -177,9 +180,9 @@ describe('ExternalCallEditor', () => {
       const onChange = vi.fn();
       render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
 
-      // Act
-      const methodSelect = document.getElementById('ext-method')!;
-      await user.selectOptions(methodSelect, 'GET');
+      // Act — Radix Select: click trigger then option
+      await user.click(document.getElementById('ext-method')!);
+      await user.click(screen.getByRole('option', { name: /^GET$/i }));
 
       // Assert
       expect(onChange).toHaveBeenCalledWith({ method: 'GET' });
@@ -191,9 +194,9 @@ describe('ExternalCallEditor', () => {
       const onChange = vi.fn();
       render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
 
-      // Act
-      const methodSelect = document.getElementById('ext-method')!;
-      await user.selectOptions(methodSelect, 'PUT');
+      // Act — Radix Select: click trigger then option
+      await user.click(document.getElementById('ext-method')!);
+      await user.click(screen.getByRole('option', { name: /^PUT$/i }));
 
       // Assert
       expect(onChange).toHaveBeenCalledWith({ method: 'PUT' });
@@ -293,9 +296,9 @@ describe('ExternalCallEditor', () => {
       const onChange = vi.fn();
       render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
 
-      // Act
-      const authSelect = document.getElementById('ext-auth-type')!;
-      await user.selectOptions(authSelect, 'bearer');
+      // Act — Radix Select: click trigger then option
+      await user.click(document.getElementById('ext-auth-type')!);
+      await user.click(screen.getByRole('option', { name: /bearer token/i }));
 
       // Assert
       expect(onChange).toHaveBeenCalledWith({ authType: 'bearer' });
@@ -307,9 +310,9 @@ describe('ExternalCallEditor', () => {
       const onChange = vi.fn();
       render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
 
-      // Act
-      const authSelect = document.getElementById('ext-auth-type')!;
-      await user.selectOptions(authSelect, 'api-key');
+      // Act — Radix Select: click trigger then option
+      await user.click(document.getElementById('ext-auth-type')!);
+      await user.click(screen.getByRole('option', { name: /API key \(header\)/i }));
 
       // Assert
       expect(onChange).toHaveBeenCalledWith({ authType: 'api-key' });
@@ -322,9 +325,9 @@ describe('ExternalCallEditor', () => {
       const config: ExternalCallConfig = { url: '', method: 'POST', authType: 'bearer' };
       render(<ExternalCallEditor config={config} onChange={onChange} />);
 
-      // Act
-      const authSelect = document.getElementById('ext-auth-type')!;
-      await user.selectOptions(authSelect, 'none');
+      // Act — Radix Select: click trigger then option
+      await user.click(document.getElementById('ext-auth-type')!);
+      await user.click(screen.getByRole('option', { name: /^none$/i }));
 
       // Assert
       expect(onChange).toHaveBeenCalledWith({ authType: 'none' });
@@ -434,7 +437,7 @@ describe('ExternalCallEditor', () => {
       expect(screen.queryByLabelText(/header 1 name/i)).not.toBeInTheDocument();
     });
 
-    it('clicking Add header calls onChange with an extra empty header entry', async () => {
+    it('clicking Add header calls onChange with an extra header entry', async () => {
       // Arrange
       const user = userEvent.setup();
       const onChange = vi.fn();
@@ -448,11 +451,11 @@ describe('ExternalCallEditor', () => {
       const [arg] = onChange.mock.calls[0];
       expect(arg).toHaveProperty('headers');
       expect(typeof arg.headers).toBe('object');
-      // The new entry has an empty-string key
-      expect('' in (arg.headers as Record<string, string>)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      // The new entry gets a generated key like "header-1"
+      expect('header-1' in (arg.headers as Record<string, string>)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
-    it('clicking Add header when headers already exist appends a new empty entry', async () => {
+    it('clicking Add header when headers already exist appends a new entry', async () => {
       // Arrange
       const user = userEvent.setup();
       const onChange = vi.fn();
@@ -470,7 +473,7 @@ describe('ExternalCallEditor', () => {
       const [arg] = onChange.mock.calls[0];
       const keys = Object.keys(arg.headers as Record<string, string>);
       expect(keys).toContain('Authorization');
-      expect(keys).toContain('');
+      expect(keys).toContain('header-2');
     });
 
     it('clicking Remove button calls onChange with that header omitted', async () => {
@@ -515,6 +518,68 @@ describe('ExternalCallEditor', () => {
       const lastArg = calls[calls.length - 1][0] as { headers: Record<string, string> };
       expect(lastArg).toHaveProperty('headers');
       expect(lastArg.headers['Accept']).toBe('text/plains');
+    });
+  });
+
+  // ── Response transform ──────────────────────────────────────────────────────
+
+  describe('Response transform', () => {
+    it('renders the transform type select', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      expect(document.getElementById('ext-transform-type')).toBeInTheDocument();
+    });
+
+    it('defaults to "None" when responseTransform is not configured', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      const trigger = document.getElementById('ext-transform-type')!;
+      expect(trigger).toHaveTextContent(/none/i);
+    });
+
+    it('calls onChange with responseTransform when JMESPath is selected', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
+
+      await user.click(document.getElementById('ext-transform-type')!);
+      await user.click(screen.getByRole('option', { name: /jmespath/i }));
+
+      expect(onChange).toHaveBeenCalledWith({
+        responseTransform: { type: 'jmespath', expression: '' },
+      });
+    });
+
+    it('shows expression textarea when responseTransform is set', () => {
+      const config: ExternalCallConfig = {
+        url: '',
+        method: 'POST',
+        responseTransform: { type: 'jmespath', expression: 'data.results' },
+      };
+      render(<ExternalCallEditor config={config} onChange={vi.fn()} />);
+
+      const textarea = document.getElementById('ext-transform-expr') as HTMLTextAreaElement;
+      expect(textarea).toBeInTheDocument();
+      expect(textarea.value).toBe('data.results');
+    });
+
+    it('does not show expression textarea when responseTransform is not set', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      expect(document.getElementById('ext-transform-expr')).not.toBeInTheDocument();
+    });
+
+    it('calls onChange with undefined responseTransform when None is selected', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const config: ExternalCallConfig = {
+        url: '',
+        method: 'POST',
+        responseTransform: { type: 'jmespath', expression: 'data' },
+      };
+      render(<ExternalCallEditor config={config} onChange={onChange} />);
+
+      await user.click(document.getElementById('ext-transform-type')!);
+      await user.click(screen.getByRole('option', { name: /none/i }));
+
+      expect(onChange).toHaveBeenCalledWith({ responseTransform: undefined });
     });
   });
 });

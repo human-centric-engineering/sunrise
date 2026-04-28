@@ -12,7 +12,11 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { HelpCircle } from 'lucide-react';
 
-import { STEP_CATEGORY_COLOURS, getStepMetadata } from '@/lib/orchestration/engine/step-registry';
+import {
+  STEP_CATEGORY_COLOURS,
+  getStepMetadata,
+  getStepOutputs,
+} from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
 import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
@@ -23,7 +27,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const Icon = meta?.icon ?? HelpCircle;
 
   const inputs = meta?.inputs ?? 1;
-  const outputs = meta?.outputs ?? 1;
+  const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
 
   return (
@@ -63,18 +67,29 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
       </div>
 
       {/* Output handles — stacked on the right side */}
-      {Array.from({ length: outputs }).map((_, i) => (
-        <Handle
-          key={`out-${i}`}
-          id={`out-${i}`}
-          type="source"
-          position={Position.Right}
-          style={{
-            top: outputs === 1 ? '50%' : `${((i + 1) * 100) / (outputs + 1)}%`,
-          }}
-          className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
-        />
-      ))}
+      {Array.from({ length: outputs }).map((_, i) => {
+        const label = outputLabels?.[i];
+        const topPct = outputs === 1 ? '50%' : `${((i + 1) * 100) / (outputs + 1)}%`;
+        return (
+          <div key={`out-${i}`}>
+            <Handle
+              id={`out-${i}`}
+              type="source"
+              position={Position.Right}
+              style={{ top: topPct }}
+              className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
+            />
+            {label && (
+              <span
+                className="text-muted-foreground pointer-events-none absolute right-2.5 -translate-y-1/2 text-[9px] leading-none"
+                style={{ top: topPct }}
+              >
+                {label}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

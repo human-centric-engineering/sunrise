@@ -38,7 +38,12 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    aiAdminAuditLog: { create: vi.fn() },
   },
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({

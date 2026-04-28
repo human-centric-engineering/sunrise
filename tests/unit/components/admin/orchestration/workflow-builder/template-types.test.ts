@@ -39,7 +39,7 @@ const VALID_WORKFLOW_DEFINITION = {
     {
       id: 'step-1',
       name: 'First Step',
-      type: 'llm-call',
+      type: 'llm_call',
       config: {},
       nextSteps: [],
     },

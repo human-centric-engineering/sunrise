@@ -38,6 +38,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+/** Lightweight 5-field cron check (no external dependency for the client bundle). */
+const CRON_FIELD = String.raw`(\*|[0-9]{1,2}(-[0-9]{1,2})?(\/[0-9]{1,2})?(,[0-9]{1,2}(-[0-9]{1,2})?)*)`;
+const CRON_RE = new RegExp(`^${Array(5).fill(CRON_FIELD).join('\\s+')}$`);
+
+function isValidCronExpression(expr: string): boolean {
+  return CRON_RE.test(expr.trim());
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Schedule {
@@ -96,6 +106,15 @@ export function WorkflowSchedulesTab({ workflowId }: WorkflowSchedulesTabProps) 
     setCreating(true);
     setCreateError(null);
     try {
+      // Validate cron expression client-side before hitting the API
+      if (!isValidCronExpression(createCron)) {
+        setCreateError(
+          'Invalid cron expression. Use 5-field format: minute hour day-of-month month day-of-week'
+        );
+        setCreating(false);
+        return;
+      }
+
       let inputTemplate: Record<string, unknown> = {};
       if (createInput.trim()) {
         try {

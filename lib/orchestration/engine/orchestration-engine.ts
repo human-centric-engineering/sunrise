@@ -227,6 +227,10 @@ export class OrchestrationEngine {
 
       if (queue.length === 0) {
         // All remaining steps are pending with unmet dependencies — deadlock.
+        const pendingIds = [...pending].join(', ');
+        failureReason = `Workflow deadlocked: steps [${pendingIds}] have unmet dependencies`;
+        yield workflowFailed(failureReason);
+        failed = true;
         break;
       }
 
@@ -443,24 +447,29 @@ export class OrchestrationEngine {
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx));
       }
-      return Promise.race([
-        executor(step, snapshotContext(ctx)),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new ExecutorError(
-                  step.id,
-                  'step_timeout',
-                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
-                  undefined,
-                  false
-                )
-              ),
-            stepTimeoutMs
-          );
-        }),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          executor(step, snapshotContext(ctx)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ExecutorError(
+                    step.id,
+                    'step_timeout',
+                    `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                    undefined,
+                    false
+                  )
+                ),
+              stepTimeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
 
     if (strategy === 'retry') {
@@ -507,7 +516,7 @@ export class OrchestrationEngine {
 
       if (strategy === 'skip') {
         yield stepFailed(step.id, sanitizeError(execErr), false);
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: 0, costUsd: 0, skipped: true };
       }
 
       if (strategy === 'fallback') {
@@ -615,6 +624,11 @@ export class OrchestrationEngine {
         stepId: step.id,
         code: stepError.code,
       });
+      // Capture partial cost from the failed executor so it's not lost.
+      const failedTokens = stepError.tokensUsed;
+      const failedCost = stepError.costUsd;
+      ctx.totalTokensUsed += failedTokens;
+      ctx.totalCostUsd += failedCost;
       trace.push({
         stepId: step.id,
         stepType: step.type,
@@ -622,8 +636,8 @@ export class OrchestrationEngine {
         status: 'failed',
         output: null,
         error: sanitizeError(stepError),
-        tokensUsed: 0,
-        costUsd: 0,
+        tokensUsed: failedTokens,
+        costUsd: failedCost,
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
@@ -640,7 +654,7 @@ export class OrchestrationEngine {
       stepId: step.id,
       stepType: step.type,
       label: step.name,
-      status: 'completed',
+      status: result.skipped ? 'skipped' : 'completed',
       output: result.output,
       tokensUsed: result.tokensUsed,
       costUsd: result.costUsd,
@@ -693,6 +707,11 @@ export class OrchestrationEngine {
    * Results are merged into context **sequentially** after all settle to
    * avoid race conditions on `ctx.totalCostUsd` and `ctx.totalTokensUsed`.
    *
+   * **Budget note:** all branches run concurrently and complete before
+   * results are merged. Budget is checked after merging each branch's
+   * cost — if exceeded, remaining branch results are skipped and the
+   * batch is marked as failed.
+   *
    * Events from all branches are collected and returned — the caller
    * yields them after this method returns.
    */
@@ -701,7 +720,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
-    _budgetLimitUsd: number | undefined,
+    budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): Promise<{
     events: ExecutionEvent[];
@@ -797,6 +816,11 @@ export class OrchestrationEngine {
           stepId: step.id,
           code: error.code,
         });
+        // Capture partial cost from failed parallel branch.
+        const failedTokens = error.tokensUsed;
+        const failedCost = error.costUsd;
+        ctx.totalTokensUsed += failedTokens;
+        ctx.totalCostUsd += failedCost;
         trace.push({
           stepId: step.id,
           stepType: step.type,
@@ -804,8 +828,8 @@ export class OrchestrationEngine {
           status: 'failed',
           output: null,
           error: sanitizeError(error),
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: failedTokens,
+          costUsd: failedCost,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
@@ -824,7 +848,7 @@ export class OrchestrationEngine {
         stepId: step.id,
         stepType: step.type,
         label: step.name,
-        status: 'completed',
+        status: stepResult.skipped ? 'skipped' : 'completed',
         output: stepResult.output,
         tokensUsed: stepResult.tokensUsed,
         costUsd: stepResult.costUsd,
@@ -834,15 +858,19 @@ export class OrchestrationEngine {
       });
       await this.checkpoint(executionId, ctx, trace);
 
-      allEvents.push(
-        stepCompleted(
-          step.id,
-          stepResult.output,
-          stepResult.tokensUsed,
-          stepResult.costUsd,
-          durationMs
-        )
-      );
+      if (stepResult.skipped) {
+        allEvents.push(stepFailed(step.id, stepResult.skipError ?? 'Step skipped', false));
+      } else {
+        allEvents.push(
+          stepCompleted(
+            step.id,
+            stepResult.output,
+            stepResult.tokensUsed,
+            stepResult.costUsd,
+            durationMs
+          )
+        );
+      }
 
       lastOutput = stepResult.output;
 
@@ -851,6 +879,14 @@ export class OrchestrationEngine {
           ? stepResult.nextStepIds
           : step.nextSteps.map((edge) => edge.targetStepId);
       allNextIds.push(...nextIds);
+
+      // Budget check after merging branch cost.
+      if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
+        allEvents.push(workflowFailed('Budget exceeded during parallel batch', step.id));
+        batchFailed = true;
+        batchFailureReason = 'Budget exceeded during parallel batch';
+        break;
+      }
     }
 
     return {
@@ -859,7 +895,7 @@ export class OrchestrationEngine {
       paused: batchPaused,
       failureReason: batchFailureReason,
       lastOutput,
-      nextIds: allNextIds,
+      nextIds: [...new Set(allNextIds)],
     };
   }
 
@@ -882,31 +918,43 @@ export class OrchestrationEngine {
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx));
       }
-      return Promise.race([
-        executor(step, snapshotContext(ctx)),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new ExecutorError(
-                  step.id,
-                  'step_timeout',
-                  `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
-                  undefined,
-                  false
-                )
-              ),
-            stepTimeoutMs
-          );
-        }),
-      ]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          executor(step, snapshotContext(ctx)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ExecutorError(
+                    step.id,
+                    'step_timeout',
+                    `Step "${step.name}" timed out after ${stepTimeoutMs}ms`,
+                    undefined,
+                    false
+                  )
+                ),
+              stepTimeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     };
 
     if (strategy === 'retry') {
       let lastError: ExecutorError | null = null;
+      // Accumulate partial cost from failed attempts so retries don't lose tokens.
+      let accumulatedTokens = 0;
+      let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
-          return await invokeExecutor();
+          const result = await invokeExecutor();
+          // Include cost from prior failed attempts in the final result.
+          result.tokensUsed += accumulatedTokens;
+          result.costUsd += accumulatedCost;
+          return result;
         } catch (err) {
           if (err instanceof PausedForApproval) throw err;
           lastError =
@@ -918,6 +966,8 @@ export class OrchestrationEngine {
                   err instanceof Error ? err.message : 'Executor threw an unknown error',
                   err
                 );
+          accumulatedTokens += lastError.tokensUsed;
+          accumulatedCost += lastError.costUsd;
           if (!lastError.retriable) throw lastError;
           if (attempt < retryCount) {
             await sleep(backoffDelayMs(attempt));
@@ -941,20 +991,30 @@ export class OrchestrationEngine {
               err
             );
 
+      // Capture partial cost from the failed step for skip/fallback strategies.
+      const partialTokens = execErr.tokensUsed;
+      const partialCost = execErr.costUsd;
+
       if (strategy === 'skip') {
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          skipped: true,
+          skipError: sanitizeError(execErr),
+        };
       }
 
       if (strategy === 'fallback') {
         if (errorConfig.fallbackStepId) {
           return {
             output: null,
-            tokensUsed: 0,
-            costUsd: 0,
+            tokensUsed: partialTokens,
+            costUsd: partialCost,
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
       }
 
       // strategy === 'fail'
@@ -992,6 +1052,13 @@ export class OrchestrationEngine {
             return parsed.success ? [parsed.data as ExecutionTraceEntry] : [];
           })
         : [];
+      if (Array.isArray(rawTrace) && trace.length < rawTrace.length) {
+        baseLogger.warn('Resume: dropped corrupted trace entries', {
+          executionId: row.id,
+          totalEntries: rawTrace.length,
+          validEntries: trace.length,
+        });
+      }
       const ctx = createContext({
         executionId: row.id,
         workflowId: workflow.id,
@@ -1006,7 +1073,7 @@ export class OrchestrationEngine {
       ctx.totalTokensUsed = row.totalTokensUsed;
       ctx.totalCostUsd = row.totalCostUsd;
       for (const entry of trace) {
-        if (entry.status === 'completed') {
+        if (entry.status === 'completed' || entry.status === 'skipped') {
           ctx.stepOutputs[entry.stepId] = entry.output;
         }
       }

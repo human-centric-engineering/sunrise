@@ -36,6 +36,7 @@ import type { AiWorkflow } from '@/types/orchestration';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
+import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 
@@ -290,9 +291,20 @@ function WorkflowBuilderInner({
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      setEdges((eds) => addEdge({ ...connection, type: 'default' }, eds));
+      let label: string | undefined;
+      if (connection.sourceHandle) {
+        const sourceNode = nodes.find((n) => n.id === connection.source);
+        if (sourceNode) {
+          const { outputLabels } = getStepOutputs(sourceNode.data.type, sourceNode.data.config);
+          const idx = parseInt(connection.sourceHandle.replace('out-', ''), 10);
+          if (outputLabels && !isNaN(idx) && idx < outputLabels.length) {
+            label = outputLabels[idx].toLowerCase();
+          }
+        }
+      }
+      setEdges((eds) => addEdge({ ...connection, type: 'default', label }, eds));
     },
-    [setEdges]
+    [setEdges, nodes]
   );
 
   const handleNodeAdd = useCallback(
@@ -453,6 +465,13 @@ function WorkflowBuilderInner({
 
   const handleSaveAsTemplate = useCallback(async () => {
     if (!workflow) return;
+
+    if (
+      !confirm(
+        'Save this workflow as a reusable template? Other users will be able to create new workflows from it.'
+      )
+    )
+      return;
     setSavingAsTemplate(true);
     setSavedAsTemplate(false);
     try {

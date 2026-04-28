@@ -88,7 +88,7 @@ function makeValidDefinition() {
     steps: [
       {
         id: 'step-1',
-        type: 'llm',
+        type: 'llm_call',
         name: 'Ask AI',
         config: { prompt: 'Say hello to {{input.name}}' },
         nextSteps: [],

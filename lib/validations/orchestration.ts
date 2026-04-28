@@ -15,7 +15,7 @@ import {
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { TASK_TYPES, type TaskType } from '@/types/orchestration';
+import { KNOWN_STEP_TYPES, TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 
 // ============================================================================
@@ -709,7 +709,9 @@ const conditionalEdgeSchema = z.object({
 const workflowStepSchema = z.object({
   id: z.string().min(1, 'Step ID is required'),
   name: z.string().min(1, 'Step name is required').max(100),
-  type: z.string().min(1, 'Step type is required').max(50),
+  type: z.enum(KNOWN_STEP_TYPES, {
+    message: `Step type must be one of: ${KNOWN_STEP_TYPES.join(', ')}`,
+  }),
   config: z.record(z.string(), z.unknown()),
   nextSteps: z.array(conditionalEdgeSchema).default([]),
 });
@@ -726,7 +728,7 @@ export const workflowDefinitionSchema = z.object({
  * PATCH that actually changes `workflowDefinition`, and on every successful revert.
  */
 export const workflowDefinitionHistoryEntrySchema = z.object({
-  definition: z.record(z.string(), z.unknown()),
+  definition: workflowDefinitionSchema,
   changedAt: z.string().datetime(),
   changedBy: z.string().min(1),
 });
@@ -1310,8 +1312,16 @@ export const listExecutionsQuerySchema = paginationQuerySchema.extend({
  * this schema is body-only because the route takes the workflow id from
  * the URL.
  */
+/** Max serialised size for workflow input data (256 KB). */
+const MAX_INPUT_DATA_SIZE = 256 * 1024;
+
 export const executeWorkflowBodySchema = z.object({
-  inputData: z.record(z.string(), z.unknown()),
+  inputData: z
+    .record(z.string(), z.unknown())
+    .refine(
+      (data) => JSON.stringify(data).length <= MAX_INPUT_DATA_SIZE,
+      `Input data must be at most ${MAX_INPUT_DATA_SIZE / 1024} KB`
+    ),
   budgetLimitUsd: z
     .number()
     .positive('Budget limit must be positive')
@@ -1915,6 +1925,38 @@ export const orchestratorPlannerResponseSchema = z.object({
   /** Optional reasoning the planner provides about its decisions. */
   reasoning: z.string().optional(),
 });
+
+// ---------- Chain / Parallel / Notification ──────────────────────────────
+
+export const chainConfigSchema = stepErrorConfigSchema.extend({
+  /** Human-readable description of what the chain does. */
+  description: z.string().optional(),
+  /** Sub-steps are structural metadata; the engine walks DAG edges. */
+  steps: z.array(z.unknown()).optional(),
+});
+
+export const parallelConfigSchema = stepErrorConfigSchema.extend({
+  /** Branches are structural metadata; the engine fans out via DAG edges. */
+  branches: z.array(z.unknown()).optional(),
+  /** Timeout for waiting on all branches (ms). */
+  timeoutMs: z.number().int().positive().optional(),
+  /** Strategy for slow branches: 'wait-all' or 'first-success'. */
+  stragglerStrategy: z.enum(['wait-all', 'first-success']).optional(),
+});
+
+export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
+  stepErrorConfigSchema.extend({
+    channel: z.literal('email'),
+    to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
+    subject: z.string().min(1).max(200),
+    bodyTemplate: z.string().min(1).max(10_000),
+  }),
+  stepErrorConfigSchema.extend({
+    channel: z.literal('webhook'),
+    webhookUrl: z.string().url(),
+    bodyTemplate: z.string().min(1).max(10_000),
+  }),
+]);
 
 // ---------- Workflow Schedule ─────────────────────────────────────────────
 

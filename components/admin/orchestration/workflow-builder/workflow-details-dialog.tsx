@@ -141,7 +141,15 @@ export function WorkflowDetailsDialog({
               placeholder="Summarises call transcripts and drafts a follow-up email."
               rows={3}
               aria-invalid={!descriptionValid}
+              maxLength={5000}
             />
+            <p
+              className={`text-right text-xs ${
+                description.length > 5000 ? 'text-destructive' : 'text-muted-foreground'
+              }`}
+            >
+              {description.length}/5,000
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -156,6 +164,10 @@ export function WorkflowDetailsDialog({
                   <li>
                     <strong>Retry</strong> — try the failed step again. Use for transient issues
                     like network timeouts.
+                  </li>
+                  <li>
+                    <strong>Skip</strong> — mark the step as failed but continue to the next step.
+                    Use when the step is non-critical.
                   </li>
                   <li>
                     <strong>Fallback</strong> — run a backup path you&apos;ve connected in the

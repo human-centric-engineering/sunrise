@@ -24,14 +24,12 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { sseResponse } from '@/lib/api/sse';
-import { validateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import {
   executeWorkflowBodySchema,
   resumeExecutionQuerySchema,
 } from '@/lib/validations/orchestration';
-import { cuidSchema } from '@/lib/validations/common';
-import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -40,11 +38,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
 
   const body = await validateRequestBody(request, executeWorkflowBodySchema);
 
@@ -60,29 +53,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
   const { resumeFromExecutionId } = queryParsed.data;
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
-
-  if (!workflow.isActive) {
-    throw new ValidationError(`Workflow ${id} is not active`, {
-      isActive: ['Workflow must be active before it can be executed'],
-    });
-  }
-
-  // Pre-flight DAG validation — same shape clients get from /validate.
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
-  if (!defParsed.success) {
-    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
-      workflowDefinition: defParsed.error.issues.map((i) => i.message),
-    });
-  }
-  const definition = defParsed.data;
-  const dag = validateWorkflow(definition);
-  if (!dag.ok) {
-    throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {
-      workflowDefinition: dag.errors,
-    });
-  }
+  // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
+  const { workflow, definition } = await prepareWorkflowExecution(rawId);
 
   // Resume-path ownership guard — cross-user resume returns 404 (not 403)
   // to avoid confirming existence of another user's execution.
@@ -91,13 +63,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       where: { id: resumeFromExecutionId },
       select: { id: true, userId: true, workflowId: true },
     });
-    if (!existing || existing.userId !== session.user.id || existing.workflowId !== id) {
+    if (!existing || existing.userId !== session.user.id || existing.workflowId !== workflow.id) {
       throw new NotFoundError(`Execution ${resumeFromExecutionId} not found`);
     }
   }
 
   log.info('workflow execute started', {
-    workflowId: id,
+    workflowId: workflow.id,
     userId: session.user.id,
     budgetLimitUsd: body.budgetLimitUsd,
     resumeFromExecutionId,

@@ -31,7 +31,9 @@ export async function executeToolCall(
     throw new ExecutorError(
       step.id,
       'missing_capability_slug',
-      'tool_call step is missing capabilitySlug'
+      'tool_call step is missing capabilitySlug',
+      undefined,
+      false
     );
   }
 
@@ -43,10 +45,18 @@ export async function executeToolCall(
   });
 
   if (!result.success) {
+    const code = result.error?.code ?? 'capability_failed';
+    // Only rate_limited and execution_error are potentially transient;
+    // all other dispatcher errors (unknown_capability, capability_inactive,
+    // capability_disabled_for_agent, invalid_args, requires_approval) are
+    // permanent and should not be retried.
+    const TRANSIENT_CODES = new Set(['rate_limited', 'execution_error']);
     throw new ExecutorError(
       step.id,
-      result.error?.code ?? 'capability_failed',
-      result.error?.message ?? 'Capability dispatch failed'
+      code,
+      result.error?.message ?? 'Capability dispatch failed',
+      undefined,
+      TRANSIENT_CODES.has(code)
     );
   }
 

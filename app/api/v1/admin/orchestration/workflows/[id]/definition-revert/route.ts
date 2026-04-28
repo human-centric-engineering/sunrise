@@ -11,7 +11,6 @@
  * Authentication: Admin role required.
  */
 
-import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -21,10 +20,12 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import {
   workflowDefinitionHistorySchema,
   workflowDefinitionRevertSchema,
+  workflowDefinitionSchema,
   type WorkflowDefinitionHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -54,6 +55,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       id: true,
       workflowDefinition: true,
       workflowDefinitionHistory: true,
+      updatedAt: true,
     },
   });
   if (!current) throw new NotFoundError(`Workflow ${id} not found`);
@@ -78,29 +80,61 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const target = history[body.versionIndex];
 
+  // Validate the target definition against the current schema — it may have
+  // been stored under an older schema version and no longer conform.
+  const targetParse = workflowDefinitionSchema.safeParse(target.definition);
+  if (!targetParse.success) {
+    throw new ValidationError('Target definition is no longer compatible with the current schema');
+  }
+
   // Push the value we're reverting *from* onto history so it's recoverable.
+  const defParse = workflowDefinitionSchema.safeParse(current.workflowDefinition);
+  if (!defParse.success) {
+    throw new ValidationError('Current definition is corrupted and cannot be archived');
+  }
   const nextHistory: WorkflowDefinitionHistoryEntry[] = [
     ...history,
     {
-      definition: z.record(z.string(), z.unknown()).catch({}).parse(current.workflowDefinition),
+      definition: defParse.data,
       changedAt: new Date().toISOString(),
       changedBy: session.user.id,
     },
   ];
 
-  const workflow = await prisma.aiWorkflow.update({
-    where: { id },
-    data: {
-      workflowDefinition: target.definition as unknown as Prisma.InputJsonValue,
-      workflowDefinitionHistory: nextHistory as unknown as Prisma.InputJsonValue,
-    },
-  });
+  // Cap at 50 entries (oldest trimmed first) — mirrors the PATCH handler.
+  if (nextHistory.length > 50) nextHistory.splice(0, nextHistory.length - 50);
+
+  let workflow;
+  try {
+    workflow = await prisma.aiWorkflow.update({
+      where: { id, updatedAt: current.updatedAt },
+      data: {
+        workflowDefinition: targetParse.data as unknown as Prisma.InputJsonValue,
+        workflowDefinitionHistory: nextHistory as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+      throw new ValidationError('Workflow was modified by another request. Refresh and try again.');
+    }
+    throw err;
+  }
 
   log.info('Workflow definition reverted', {
     workflowId: id,
     versionIndex: body.versionIndex,
     adminId: session.user.id,
     historyLength: nextHistory.length,
+  });
+
+  logAdminAction({
+    userId: session.user.id,
+    action: 'workflow.definition_revert',
+    entityType: 'workflow',
+    entityId: id,
+    entityName: workflow.name,
+    metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
+    clientIp: clientIP,
   });
 
   return successResponse(workflow);

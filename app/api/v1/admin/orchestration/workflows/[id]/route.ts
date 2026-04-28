@@ -10,12 +10,11 @@
  * Authentication: Admin role required.
  */
 
-import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -25,6 +24,7 @@ import { logger } from '@/lib/logging';
 import {
   updateWorkflowSchema,
   workflowDefinitionHistorySchema,
+  workflowDefinitionSchema,
   type WorkflowDefinitionHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -38,6 +38,10 @@ function parseWorkflowId(raw: string): string {
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = parseWorkflowId(rawId);
@@ -80,11 +84,18 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       });
     }
     const history: WorkflowDefinitionHistoryEntry[] = historyParse.success ? historyParse.data : [];
-    history.push({
-      definition: z.record(z.string(), z.unknown()).catch({}).parse(current.workflowDefinition),
-      changedAt: new Date().toISOString(),
-      changedBy: session.user.id,
-    });
+    const defParse = workflowDefinitionSchema.safeParse(current.workflowDefinition);
+    if (defParse.success) {
+      history.push({
+        definition: defParse.data,
+        changedAt: new Date().toISOString(),
+        changedBy: session.user.id,
+      });
+    } else {
+      logger.warn('Workflow PATCH: current workflowDefinition malformed, skipping history push', {
+        workflowId: id,
+      });
+    }
     // Cap history at 50 entries (keep most recent)
     if (history.length > 50) {
       history.splice(0, history.length - 50);
@@ -121,9 +132,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     return successResponse(workflow);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ValidationError(`Workflow with slug '${body.slug}' already exists`, {
-        slug: ['Slug is already in use'],
-      });
+      throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
     }
     throw err;
   }

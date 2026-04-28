@@ -15,9 +15,15 @@ import { prisma } from '@/lib/db/client';
 import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { listExecutionsQuerySchema } from '@/lib/validations/orchestration';
 
 export const GET = withAdminAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
   const { page, limit, workflowId, status, startDate, endDate } = validateQueryParams(

@@ -317,7 +317,7 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 for P2002 slug conflict on PATCH', async () => {
+    it('returns 409 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
       const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
@@ -331,7 +331,7 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
         makeParams(WORKFLOW_ID)
       );
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(409);
     });
 
     it('returns 400 when updating workflowDefinition with invalid schema', async () => {

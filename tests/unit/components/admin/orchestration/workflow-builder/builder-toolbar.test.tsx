@@ -146,16 +146,16 @@ describe('BuilderToolbar', () => {
       expect(saveBtn.querySelector('svg')).toBeInTheDocument();
     });
 
-    it('applies the red-ring class when hasErrors=true', () => {
+    it('is disabled when hasErrors=true', () => {
       renderToolbar({ hasErrors: true });
       const saveBtn = screen.getByRole('button', { name: /validation errors/i });
-      expect(saveBtn.className).toContain('ring-red');
+      expect(saveBtn).toBeDisabled();
     });
 
-    it('does NOT apply the red-ring class when hasErrors=false', () => {
+    it('is enabled when hasErrors=false', () => {
       renderToolbar({ hasErrors: false });
       const saveBtn = screen.getByRole('button', { name: /create workflow/i });
-      expect(saveBtn.className).not.toContain('ring-red');
+      expect(saveBtn).toBeEnabled();
     });
   });
 
@@ -175,6 +175,13 @@ describe('BuilderToolbar', () => {
       expect(executeBtn).toBeEnabled();
       await user.click(executeBtn);
       expect(onExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it('is disabled in edit mode when hasErrors=true', () => {
+      renderToolbar({ mode: 'edit', hasErrors: true });
+      const executeBtn = screen.getByRole('button', { name: /execute/i });
+      expect(executeBtn).toBeDisabled();
+      expect(executeBtn).toHaveAttribute('title', 'Fix validation errors before executing');
     });
   });
 

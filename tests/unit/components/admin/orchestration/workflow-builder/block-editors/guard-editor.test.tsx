@@ -56,14 +56,14 @@ describe('GuardEditor', () => {
 
   it('defaults mode select to "llm" when config.mode is "llm"', () => {
     render(<GuardEditor config={defaultConfig} onChange={vi.fn()} />);
-    const select = document.getElementById('guard-mode') as HTMLSelectElement;
-    expect(select.value).toBe('llm');
+    const trigger = document.getElementById('guard-mode')!;
+    expect(trigger).toHaveTextContent('LLM');
   });
 
   it('defaults fail-action select to "block" when config.failAction is "block"', () => {
     render(<GuardEditor config={defaultConfig} onChange={vi.fn()} />);
-    const select = document.getElementById('guard-fail-action') as HTMLSelectElement;
-    expect(select.value).toBe('block');
+    const trigger = document.getElementById('guard-fail-action')!;
+    expect(trigger).toHaveTextContent('Block');
   });
 
   // ── Provided config values ─────────────────────────────────────────────────
@@ -78,15 +78,15 @@ describe('GuardEditor', () => {
   it('shows "regex" when config.mode is "regex"', () => {
     const config: GuardConfig = { rules: '', mode: 'regex', failAction: 'block' };
     render(<GuardEditor config={config} onChange={vi.fn()} />);
-    const select = document.getElementById('guard-mode') as HTMLSelectElement;
-    expect(select.value).toBe('regex');
+    const trigger = document.getElementById('guard-mode')!;
+    expect(trigger).toHaveTextContent('Regex');
   });
 
   it('shows "flag" when config.failAction is "flag"', () => {
     const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'flag' };
     render(<GuardEditor config={config} onChange={vi.fn()} />);
-    const select = document.getElementById('guard-fail-action') as HTMLSelectElement;
-    expect(select.value).toBe('flag');
+    const trigger = document.getElementById('guard-fail-action')!;
+    expect(trigger).toHaveTextContent('Flag');
   });
 
   // ── onChange callbacks — rules textarea ────────────────────────────────────
@@ -127,7 +127,8 @@ describe('GuardEditor', () => {
     const onChange = vi.fn();
     render(<GuardEditor config={defaultConfig} onChange={onChange} />);
 
-    await user.selectOptions(document.getElementById('guard-mode')!, 'regex');
+    await user.click(document.getElementById('guard-mode')!);
+    await user.click(screen.getByRole('option', { name: /regex/i }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange.mock.calls[0][0]).toEqual({ mode: 'regex' });
@@ -139,7 +140,8 @@ describe('GuardEditor', () => {
     const config: GuardConfig = { rules: '', mode: 'regex', failAction: 'block' };
     render(<GuardEditor config={config} onChange={onChange} />);
 
-    await user.selectOptions(document.getElementById('guard-mode')!, 'llm');
+    await user.click(document.getElementById('guard-mode')!);
+    await user.click(screen.getByRole('option', { name: /^llm$/i }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange.mock.calls[0][0]).toEqual({ mode: 'llm' });
@@ -152,7 +154,8 @@ describe('GuardEditor', () => {
     const onChange = vi.fn();
     render(<GuardEditor config={defaultConfig} onChange={onChange} />);
 
-    await user.selectOptions(document.getElementById('guard-fail-action')!, 'flag');
+    await user.click(document.getElementById('guard-fail-action')!);
+    await user.click(screen.getByRole('option', { name: /flag/i }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange.mock.calls[0][0]).toEqual({ failAction: 'flag' });
@@ -164,7 +167,8 @@ describe('GuardEditor', () => {
     const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'flag' };
     render(<GuardEditor config={config} onChange={onChange} />);
 
-    await user.selectOptions(document.getElementById('guard-fail-action')!, 'block');
+    await user.click(document.getElementById('guard-fail-action')!);
+    await user.click(screen.getByRole('option', { name: /block/i }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange.mock.calls[0][0]).toEqual({ failAction: 'block' });

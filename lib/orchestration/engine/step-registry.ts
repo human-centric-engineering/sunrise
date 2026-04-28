@@ -55,6 +55,8 @@ export interface StepRegistryEntry {
   inputs: number;
   /** Number of output handles (source side). */
   outputs: number;
+  /** Human-readable labels for each output handle (when outputs > 1). */
+  outputLabels?: string[];
   /** Optional pattern number for the "Learn more" forward-link. */
   patternNumber?: number;
   /** Seed config applied when a new block is dropped on the canvas. */
@@ -104,7 +106,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     type: 'parallel',
     label: 'Parallel',
     description: 'Fan out to concurrent branches and join the results.',
-    category: 'output',
+    category: 'decision',
     icon: GitFork,
     inputs: 1,
     outputs: 3,
@@ -259,6 +261,49 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
 /** Look up a registry entry by step type. Returns undefined for unknown types. */
 export function getStepMetadata(type: WorkflowStepType): StepRegistryEntry | undefined {
   return STEP_REGISTRY.find((entry) => entry.type === type);
+}
+
+/**
+ * Compute outputs and labels for a step, accounting for dynamic config.
+ *
+ * Guard steps always have 2 outputs (Pass / Fail). Route and parallel
+ * steps derive their output count from `config.routes` / `config.branches`
+ * respectively; all other types use the registry defaults.
+ */
+export function getStepOutputs(
+  type: WorkflowStepType,
+  config: Record<string, unknown>
+): { outputs: number; outputLabels?: string[] } {
+  if (type === 'guard') {
+    return { outputs: 2, outputLabels: ['Pass', 'Fail'] };
+  }
+
+  if (type === 'route') {
+    const routes = Array.isArray(config.routes) ? config.routes : [];
+    if (routes.length > 0) {
+      return {
+        outputs: routes.length,
+        outputLabels: routes.map((r: unknown, i: number) => {
+          const obj = r && typeof r === 'object' ? (r as Record<string, unknown>) : null;
+          const label = obj && typeof obj.label === 'string' ? obj.label : '';
+          return label || `Branch ${i + 1}`;
+        }),
+      };
+    }
+  }
+
+  if (type === 'parallel') {
+    const branches = Array.isArray(config.branches) ? config.branches : [];
+    if (branches.length > 0) {
+      return {
+        outputs: branches.length,
+        outputLabels: branches.map((_: unknown, i: number) => `Branch ${i + 1}`),
+      };
+    }
+  }
+
+  const meta = getStepMetadata(type);
+  return { outputs: meta?.outputs ?? 1, outputLabels: meta?.outputLabels };
 }
 
 /** Ordered list of categories for grouping in the palette. */

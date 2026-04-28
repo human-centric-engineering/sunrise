@@ -15,9 +15,20 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, StopCircle, ThumbsUp, X, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  RefreshCw,
+  StopCircle,
+  ThumbsUp,
+  X,
+  XCircle,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
@@ -226,11 +237,25 @@ export function ExecutionPanel({
         break;
       }
       case 'workflow_completed':
+        setBudgetWarning(null);
+        // Reconcile totals from the authoritative engine figures — the
+        // running sum from step_completed events may understate if steps
+        // were skipped or failed without emitting cost data.
+        if (typeof d.totalTokensUsed === 'number') setTotalTokens(d.totalTokensUsed);
+        if (typeof d.totalCostUsd === 'number') setTotalCost(d.totalCostUsd);
         setStatus('completed');
         break;
       case 'workflow_failed':
+        setBudgetWarning(null);
         setStatus('failed');
         setErrorMessage(typeof d.error === 'string' ? d.error : 'Workflow failed');
+        break;
+      case 'error':
+        // Terminal error frame from the SSE bridge (stream_error).
+        setStatus('failed');
+        setErrorMessage(
+          typeof d.message === 'string' ? d.message : 'Stream terminated unexpectedly'
+        );
         break;
     }
   }, []);
@@ -260,6 +285,7 @@ export function ExecutionPanel({
 
   const handleApprove = useCallback(async () => {
     if (!executionId) return;
+    setErrorMessage(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(executionId), {
         body: { approvalPayload: { approved: true } },
@@ -311,6 +337,8 @@ export function ExecutionPanel({
         return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />;
       case 'completed':
         return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      case 'awaiting_approval':
+        return <Clock className="h-4 w-4 text-amber-500" />;
       case 'failed':
       case 'aborted':
         return <XCircle className="h-4 w-4 text-red-500" />;
@@ -328,7 +356,22 @@ export function ExecutionPanel({
     >
       <div className="flex items-center gap-2 border-b px-4 py-3">
         {headerIcon}
-        <h2 className="flex-1 text-sm font-medium">Execution</h2>
+        <h2 className="flex-1 text-sm font-medium">
+          Execution{' '}
+          <FieldHelp title="Execution panel">
+            <p>
+              <strong>Status icons:</strong> spinning loader = running, green checkmark = completed,
+              red X = failed, skip arrow = skipped.
+            </p>
+            <p>
+              Token and cost counters show <strong>cumulative totals</strong> across all steps
+              executed so far.
+            </p>
+            <p>
+              Budget warnings trigger at <strong>80%</strong> of the configured budget limit.
+            </p>
+          </FieldHelp>
+        </h2>
         <Button
           size="icon"
           variant="ghost"
@@ -366,7 +409,7 @@ export function ExecutionPanel({
         {status === 'awaiting_approval' && approvingStepId && (
           <Button size="sm" className="mt-3 w-full" onClick={() => void handleApprove()}>
             <ThumbsUp className="mr-2 h-4 w-4" />
-            Approve &amp; continue
+            {errorMessage ? 'Retry approval' : 'Approve & continue'}
           </Button>
         )}
       </div>
@@ -389,8 +432,19 @@ export function ExecutionPanel({
           role="alert"
           className="flex items-center gap-2 border-b bg-red-50 px-4 py-2 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-200"
         >
-          <AlertCircle className="h-4 w-4" />
-          <span>{errorMessage}</span>
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span className="flex-1">{errorMessage}</span>
+          {executionId && status === 'failed' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 shrink-0 px-2 text-xs"
+              onClick={() => void streamRun(executionId)}
+            >
+              <RefreshCw className="mr-1 h-3 w-3" />
+              Reconnect
+            </Button>
+          )}
         </div>
       )}
 

@@ -69,8 +69,8 @@ export function RouteEditor({ config, onChange }: EditorProps<RouteConfig>) {
         <Label className="flex items-center text-xs">
           Branches{' '}
           <FieldHelp title="Branches">
-            The possible classification outcomes. Needs at least two. In Session 5.1c each label
-            will bind to an outgoing edge — for now they live in config only.
+            The possible classification outcomes. Each label maps to an output handle on the node —
+            connect edges from the matching handle to downstream steps.
           </FieldHelp>
         </Label>
         <div className="space-y-2">
@@ -80,7 +80,7 @@ export function RouteEditor({ config, onChange }: EditorProps<RouteConfig>) {
             </p>
           )}
           {routes.map((branch, index) => (
-            <div key={index} className="flex items-center gap-2">
+            <div key={`branch-${index}-${branch.label}`} className="flex items-center gap-2">
               <Input
                 aria-label={`Branch ${index + 1} label`}
                 value={branch.label}

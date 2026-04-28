@@ -13,6 +13,11 @@
  * - Changing threshold calls onChange with { threshold: number }
  * - Clearing threshold calls onChange with { threshold: undefined }
  * - Two FieldHelp info buttons are present (Rubric and Threshold)
+ * - Renders model override input with default empty value
+ * - Renders temperature input with default 0.7
+ * - Shows provided modelOverride value
+ * - Calls onChange with { modelOverride } when typing
+ * - Calls onChange with { temperature: number } when changing temperature
  *
  * @see components/admin/orchestration/workflow-builder/block-editors/evaluate-editor.tsx
  */
@@ -187,5 +192,57 @@ describe('EvaluateEditor', () => {
 
     const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
     expect(lastArg.scaleMax).toBe(5);
+  });
+
+  // ── Model override & temperature ──────────────────────────────────────────
+
+  it('renders the model override input', () => {
+    render(<EvaluateEditor config={emptyConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('evaluate-model-override')).toBeInTheDocument();
+  });
+
+  it('shows empty model override input by default', () => {
+    render(<EvaluateEditor config={emptyConfig} onChange={vi.fn()} />);
+    const input = document.getElementById('evaluate-model-override') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('shows the provided modelOverride value', () => {
+    const config: EvaluateConfig = { rubric: '', modelOverride: 'claude-haiku-4-5' };
+    render(<EvaluateEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('evaluate-model-override') as HTMLInputElement;
+    expect(input.value).toBe('claude-haiku-4-5');
+  });
+
+  it('calls onChange with { modelOverride } when typing', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<EvaluateEditor config={emptyConfig} onChange={onChange} />);
+
+    await user.type(document.getElementById('evaluate-model-override')!, 'g');
+
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(lastArg).toHaveProperty('modelOverride');
+    expect(lastArg.modelOverride).toBe('g');
+  });
+
+  it('renders the temperature input with default value 0.7', () => {
+    render(<EvaluateEditor config={emptyConfig} onChange={vi.fn()} />);
+    const input = document.getElementById('evaluate-temperature') as HTMLInputElement;
+    expect(Number(input.value)).toBe(0.7);
+  });
+
+  it('calls onChange with { temperature: number } when temperature changes', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<EvaluateEditor config={emptyConfig} onChange={onChange} />);
+
+    const input = document.getElementById('evaluate-temperature')!;
+    await user.clear(input);
+    await user.type(input, '0.3');
+
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(lastArg).toHaveProperty('temperature');
+    expect(typeof lastArg.temperature).toBe('number');
   });
 });

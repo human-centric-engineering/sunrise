@@ -54,13 +54,30 @@ export class ExecutorError extends Error {
    * Defaults to `true` for backward compatibility.
    */
   public readonly retriable: boolean;
+  /**
+   * Partial token/cost usage from the failed attempt. Executors that
+   * consume LLM tokens before failing should populate these so the
+   * engine can accumulate them across retries and fallbacks.
+   */
+  public readonly tokensUsed: number;
+  public readonly costUsd: number;
 
-  constructor(stepId: string, code: string, message: string, cause?: unknown, retriable = true) {
+  constructor(
+    stepId: string,
+    code: string,
+    message: string,
+    cause?: unknown,
+    retriable = true,
+    tokensUsed = 0,
+    costUsd = 0
+  ) {
     super(message);
     this.name = 'ExecutorError';
     this.stepId = stepId;
     this.code = code;
     this.cause = cause;
     this.retriable = retriable;
+    this.tokensUsed = tokensUsed;
+    this.costUsd = costUsd;
   }
 }

@@ -50,7 +50,14 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    aiAdminAuditLog: {
+      create: vi.fn(),
+    },
   },
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -90,12 +97,30 @@ const USER_ID = 'cmjbv4i3x00003wsloputgwul';
 const INVALID_ID = 'not-a-cuid';
 const BASE_URL = `http://localhost:3000/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/definition-revert`;
 
+/** A valid workflow definition that passes workflowDefinitionSchema */
+function makeValidDefinition(overrides: Record<string, unknown> = {}) {
+  return {
+    steps: [
+      {
+        id: 'step-1',
+        name: 'First Step',
+        type: 'llm_call',
+        config: { prompt: 'Hello' },
+        nextSteps: [],
+      },
+    ],
+    entryStepId: 'step-1',
+    errorStrategy: 'fail',
+    ...overrides,
+  };
+}
+
 /** A well-formed history entry that passes workflowDefinitionHistorySchema */
 function makeHistoryEntry(
   overrides: { definition?: Record<string, unknown>; changedAt?: string; changedBy?: string } = {}
 ) {
   return {
-    definition: { steps: [], name: 'Old version' },
+    definition: makeValidDefinition(),
     changedAt: '2024-01-01T00:00:00.000Z',
     changedBy: USER_ID,
     ...overrides,
@@ -111,7 +136,7 @@ function makeWorkflowRow(
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
-    workflowDefinition: { steps: [], name: 'Current version' },
+    workflowDefinition: makeValidDefinition(),
     workflowDefinitionHistory: [makeHistoryEntry()],
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
@@ -123,7 +148,7 @@ function makeUpdatedWorkflow() {
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
-    workflowDefinition: makeHistoryEntry().definition,
+    workflowDefinition: makeValidDefinition(),
     workflowDefinitionHistory: [makeHistoryEntry(), makeHistoryEntry()],
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-06-01'),
@@ -210,8 +235,8 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/definition-revert', () 
     it('pushes the current definition onto history before reverting', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const workflow = makeWorkflowRow({
-        workflowDefinition: { steps: [], name: 'Current' },
-        workflowDefinitionHistory: [makeHistoryEntry({ definition: { steps: [], name: 'v0' } })],
+        workflowDefinition: makeValidDefinition(),
+        workflowDefinitionHistory: [makeHistoryEntry()],
       });
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(workflow as never);
       vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeUpdatedWorkflow() as never);
@@ -225,7 +250,10 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/definition-revert', () 
     });
 
     it('updates the workflowDefinition to the target history entry', async () => {
-      const targetDef = { steps: [{ id: 'step-1' }], name: 'Target version' };
+      const targetDef = makeValidDefinition({
+        steps: [{ id: 'step-2', name: 'Target Step', type: 'chain', config: {}, nextSteps: [] }],
+        entryStepId: 'step-2',
+      });
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
         makeWorkflowRow({
