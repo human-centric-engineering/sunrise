@@ -59,13 +59,13 @@ function renderDialog(overrides: Partial<ExecutionInputDialogProps> = {}) {
 
 /** Sets the JSON textarea value via fireEvent (avoids userEvent `{` parsing). */
 function setTextarea(value: string) {
-  const textarea = screen.getByLabelText(/input data/i);
+  const textarea = document.getElementById('execution-input-data')!;
   fireEvent.change(textarea, { target: { value } });
 }
 
 /** Sets the budget input value via fireEvent. */
 function setBudgetValue(value: string) {
-  const input = screen.getByLabelText(/budget cap/i);
+  const input = document.getElementById('execution-budget')!;
   fireEvent.change(input, { target: { value } });
 }
 

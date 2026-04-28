@@ -36,8 +36,14 @@ vi.mock('@/lib/db/client', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      count: vi.fn(),
     },
+    aiAdminAuditLog: { create: vi.fn() },
   },
+}));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -191,6 +197,7 @@ describe('Schedule CRUD API', () => {
   describe('POST /workflows/:id/schedules', () => {
     it('creates a schedule with valid data (201)', async () => {
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0 as never);
       vi.mocked(prisma.aiWorkflowSchedule.create).mockResolvedValue(mockScheduleRecord as never);
 
       const res = await createSchedule(
@@ -205,6 +212,7 @@ describe('Schedule CRUD API', () => {
 
     it('rejects invalid cron expression (400)', async () => {
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0 as never);
 
       const res = await createSchedule(
         makePostRequest({ name: 'Bad cron', cronExpression: 'nope nope' }),

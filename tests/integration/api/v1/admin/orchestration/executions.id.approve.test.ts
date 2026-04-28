@@ -32,6 +32,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -112,13 +113,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-      const { where, data } = args as {
-        where: { id: string };
-        data: Record<string, unknown>;
-      };
-      return { id: where.id, ...data };
-    }) as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -189,10 +184,13 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(data.success).toBe(true);
     expect(data.data.resumeStepId).toBe('approval-step');
 
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledTimes(1);
-    const updateArg = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as unknown as {
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledTimes(1);
+    const updateArg = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock
+      .calls[0][0] as unknown as {
+      where: { id: string; status: string };
       data: { status: string; executionTrace: Array<{ stepId: string; status: string }> };
     };
+    expect(updateArg.where.status).toBe('paused_for_approval');
     expect(updateArg.data.status).toBe('pending');
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
   });
@@ -243,9 +241,12 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(data.success).toBe(true);
 
     // The trace should be passed through unchanged (no mutation since awaitingIdx === -1)
-    const updateArg = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as unknown as {
+    const updateArg = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock
+      .calls[0][0] as unknown as {
+      where: { id: string; status: string };
       data: { status: string; executionTrace: Array<{ status: string }> };
     };
+    expect(updateArg.where.status).toBe('paused_for_approval');
     expect(updateArg.data.status).toBe('pending');
     // The single trace entry should still be 'completed' — untouched
     expect(updateArg.data.executionTrace[0].status).toBe('completed');

@@ -69,10 +69,10 @@ describe('BlockConfigPanel', () => {
       expect(document.getElementById('llm-prompt')).toBeInTheDocument();
     });
 
-    it('chain: renders the placeholder message about Session 5.1c', () => {
+    it('chain: renders the placeholder message about sub-step configuration', () => {
       const node = makeNode('chain', {});
       render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
-      expect(screen.getByText(/session 5\.1c/i)).toBeInTheDocument();
+      expect(screen.getByText(/sub-step configuration/i)).toBeInTheDocument();
     });
 
     it('route: renders the classification prompt textarea', () => {

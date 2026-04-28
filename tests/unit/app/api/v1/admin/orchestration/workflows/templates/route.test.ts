@@ -34,6 +34,10 @@ vi.mock('@/lib/security/rate-limit', () => ({
   createRateLimitResponse: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
