@@ -10,6 +10,13 @@
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 
@@ -19,6 +26,8 @@ export interface LlmCallConfig extends Record<string, unknown> {
   prompt: string;
   modelOverride?: string;
   temperature?: number;
+  maxTokens?: number;
+  responseFormat?: 'text' | 'json';
 }
 
 export function LlmCallEditor({ config, onChange }: EditorProps<LlmCallConfig>) {
@@ -74,6 +83,48 @@ export function LlmCallEditor({ config, onChange }: EditorProps<LlmCallConfig>) 
           value={config.temperature ?? 0.7}
           onChange={(e) => onChange({ temperature: Number(e.target.value) })}
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="llm-max-tokens" className="flex items-center text-xs">
+          Max tokens{' '}
+          <FieldHelp title="Max tokens">
+            Maximum number of tokens the model can generate. Leave empty for the provider default.
+          </FieldHelp>
+        </Label>
+        <Input
+          id="llm-max-tokens"
+          type="number"
+          min={1}
+          step={100}
+          value={config.maxTokens ?? ''}
+          onChange={(e) =>
+            onChange({ maxTokens: e.target.value ? Number(e.target.value) : undefined })
+          }
+          placeholder="Provider default"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="llm-response-format" className="flex items-center text-xs">
+          Response format{' '}
+          <FieldHelp title="Response format">
+            <strong>Text</strong> returns free-form text. <strong>JSON</strong> asks the model to
+            return valid JSON — useful when the next step needs to parse structured data.
+          </FieldHelp>
+        </Label>
+        <Select
+          value={config.responseFormat ?? 'text'}
+          onValueChange={(value) => onChange({ responseFormat: value as 'text' | 'json' })}
+        >
+          <SelectTrigger id="llm-response-format">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="text">Text</SelectItem>
+            <SelectItem value="json">JSON</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </div>
   );

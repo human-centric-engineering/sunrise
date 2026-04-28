@@ -1312,8 +1312,16 @@ export const listExecutionsQuerySchema = paginationQuerySchema.extend({
  * this schema is body-only because the route takes the workflow id from
  * the URL.
  */
+/** Max serialised size for workflow input data (256 KB). */
+const MAX_INPUT_DATA_SIZE = 256 * 1024;
+
 export const executeWorkflowBodySchema = z.object({
-  inputData: z.record(z.string(), z.unknown()),
+  inputData: z
+    .record(z.string(), z.unknown())
+    .refine(
+      (data) => JSON.stringify(data).length <= MAX_INPUT_DATA_SIZE,
+      `Input data must be at most ${MAX_INPUT_DATA_SIZE / 1024} KB`
+    ),
   budgetLimitUsd: z
     .number()
     .positive('Budget limit must be positive')

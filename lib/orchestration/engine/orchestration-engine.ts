@@ -707,6 +707,11 @@ export class OrchestrationEngine {
    * Results are merged into context **sequentially** after all settle to
    * avoid race conditions on `ctx.totalCostUsd` and `ctx.totalTokensUsed`.
    *
+   * **Budget note:** budget is checked by the caller after this method
+   * returns, not between branches. All branches in the batch run to
+   * completion (or failure) before the budget guard fires. Use per-step
+   * `timeoutMs` to bound individual branch cost.
+   *
    * Events from all branches are collected and returned — the caller
    * yields them after this method returns.
    */

@@ -232,6 +232,13 @@ export function ExecutionPanel({
         setStatus('failed');
         setErrorMessage(typeof d.error === 'string' ? d.error : 'Workflow failed');
         break;
+      case 'error':
+        // Terminal error frame from the SSE bridge (stream_error).
+        setStatus('failed');
+        setErrorMessage(
+          typeof d.message === 'string' ? d.message : 'Stream terminated unexpectedly'
+        );
+        break;
     }
   }, []);
 
