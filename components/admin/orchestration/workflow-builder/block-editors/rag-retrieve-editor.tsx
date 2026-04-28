@@ -19,6 +19,7 @@ export interface RagRetrieveConfig extends Record<string, unknown> {
   query: string;
   topK?: number;
   similarityThreshold?: number;
+  filters?: Record<string, unknown>;
 }
 
 export function RagRetrieveEditor({ config, onChange }: EditorProps<RagRetrieveConfig>) {
@@ -75,6 +76,36 @@ export function RagRetrieveEditor({ config, onChange }: EditorProps<RagRetrieveC
           step={0.05}
           value={config.similarityThreshold ?? 0.7}
           onChange={(e) => onChange({ similarityThreshold: Number(e.target.value) })}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="rag-filters" className="flex items-center text-xs">
+          Filters (JSON){' '}
+          <FieldHelp title="Metadata filters">
+            Optional JSON object to filter chunks by metadata before similarity ranking. Keys must
+            match metadata fields set during document ingestion (e.g.{' '}
+            <code>{`{"source": "manual", "language": "en"}`}</code>).
+          </FieldHelp>
+        </Label>
+        <Textarea
+          id="rag-filters"
+          value={config.filters ? JSON.stringify(config.filters, null, 2) : ''}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw.trim() === '') {
+              onChange({ filters: undefined });
+              return;
+            }
+            try {
+              onChange({ filters: JSON.parse(raw) as Record<string, unknown> });
+            } catch {
+              // Let the user keep typing — only commit valid JSON
+            }
+          }}
+          placeholder={'{\n  "source": "manual"\n}'}
+          rows={4}
+          className="font-mono text-xs"
         />
       </div>
     </div>

@@ -32,6 +32,10 @@ export interface ExternalCallConfig extends Record<string, unknown> {
   authSecret?: string;
   authQueryParam?: string;
   maxResponseBytes?: number;
+  responseTransform?: {
+    type: 'jmespath' | 'template';
+    expression: string;
+  };
 }
 
 export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCallConfig>) {
@@ -197,6 +201,63 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           />
         </div>
       )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="ext-transform-type" className="flex items-center text-xs">
+          Response transform{' '}
+          <FieldHelp title="Response transform">
+            Optional. Transform the raw response before passing it as step output.{' '}
+            <strong>JMESPath</strong> extracts fields from JSON responses (e.g.{' '}
+            <code>data.results[0].text</code>). <strong>Template</strong> wraps the response in a
+            string template using <code>{'{{body}}'}</code> as a placeholder.
+          </FieldHelp>
+        </Label>
+        <Select
+          value={config.responseTransform?.type ?? 'none'}
+          onValueChange={(value) => {
+            if (value === 'none') {
+              onChange({ responseTransform: undefined });
+            } else {
+              onChange({
+                responseTransform: {
+                  type: value as 'jmespath' | 'template',
+                  expression: config.responseTransform?.expression ?? '',
+                },
+              });
+            }
+          }}
+        >
+          <SelectTrigger id="ext-transform-type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None (pass raw response)</SelectItem>
+            <SelectItem value="jmespath">JMESPath</SelectItem>
+            <SelectItem value="template">Template</SelectItem>
+          </SelectContent>
+        </Select>
+        {config.responseTransform && (
+          <Textarea
+            id="ext-transform-expr"
+            value={config.responseTransform.expression ?? ''}
+            onChange={(e) =>
+              onChange({
+                responseTransform: {
+                  ...config.responseTransform!,
+                  expression: e.target.value,
+                },
+              })
+            }
+            placeholder={
+              config.responseTransform.type === 'jmespath'
+                ? 'data.results[*].text'
+                : 'Extracted: {{body}}'
+            }
+            rows={3}
+            className="font-mono text-xs"
+          />
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
