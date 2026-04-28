@@ -21,7 +21,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 const saveAsTemplateSchema = z.object({
   name: z.string().min(1).max(200).trim().optional(),
@@ -72,7 +72,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   } catch (err: unknown) {
     // P2002: unique constraint violation — slug race between findUnique and create
-    if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'P2002') {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       throw new ValidationError('Template slug already exists — please try again', {
         slug: ['A template with this slug was just created'],
       });

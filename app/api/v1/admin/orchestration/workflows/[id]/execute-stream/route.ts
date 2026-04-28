@@ -22,7 +22,13 @@ import { getClientIP } from '@/lib/security/ip';
 import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 import { z } from 'zod';
 
-const inputDataSchema = z.record(z.string(), z.unknown());
+const MAX_INPUT_SIZE = 256 * 1024; // 256 KB
+
+const inputDataSchema = z
+  .record(z.string(), z.unknown())
+  .refine((val) => JSON.stringify(val).length <= MAX_INPUT_SIZE, {
+    message: `inputData must be under ${MAX_INPUT_SIZE / 1024} KB`,
+  });
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);

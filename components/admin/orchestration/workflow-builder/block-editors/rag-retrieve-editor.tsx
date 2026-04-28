@@ -8,6 +8,8 @@
  * keeping irrelevant chunks out of the downstream prompt.
  */
 
+import { z } from 'zod';
+
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -98,7 +100,10 @@ export function RagRetrieveEditor({ config, onChange }: EditorProps<RagRetrieveC
               return;
             }
             try {
-              onChange({ filters: JSON.parse(raw) as Record<string, unknown> });
+              const parsed = z.record(z.string(), z.unknown()).safeParse(JSON.parse(raw));
+              if (parsed.success) {
+                onChange({ filters: parsed.data });
+              }
             } catch {
               // Let the user keep typing — only commit valid JSON
             }
