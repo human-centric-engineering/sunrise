@@ -42,8 +42,12 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="evaluate-scale-min" className="text-xs">
-            Scale min
+          <Label htmlFor="evaluate-scale-min" className="flex items-center text-xs">
+            Scale min{' '}
+            <FieldHelp title="Scale minimum">
+              The lowest score the model can assign. Works with Scale max and Threshold to define
+              the evaluation range.
+            </FieldHelp>
           </Label>
           <Input
             id="evaluate-scale-min"
@@ -53,8 +57,11 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="evaluate-scale-max" className="text-xs">
-            Scale max
+          <Label htmlFor="evaluate-scale-max" className="flex items-center text-xs">
+            Scale max{' '}
+            <FieldHelp title="Scale maximum">
+              The highest score the model can assign. Must be greater than Scale min.
+            </FieldHelp>
           </Label>
           <Input
             id="evaluate-scale-max"

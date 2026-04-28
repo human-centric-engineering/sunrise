@@ -4,6 +4,7 @@
  * Guard step editor — safety rules, mode toggle, and fail action.
  */
 
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -88,6 +89,46 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
           </SelectContent>
         </Select>
       </div>
+
+      {(config.mode ?? 'llm') === 'llm' && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="guard-model-override" className="flex items-center text-xs">
+              Model override{' '}
+              <FieldHelp title="Model override">
+                Optional. Overrides the workflow&rsquo;s default model for just this guard step —
+                useful for using a cheaper model for simple rule checks.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="guard-model-override"
+              value={config.modelOverride ?? ''}
+              onChange={(e) => onChange({ modelOverride: e.target.value })}
+              placeholder="claude-haiku-4-5"
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="guard-temperature" className="flex items-center text-xs">
+              Temperature{' '}
+              <FieldHelp title="Temperature">
+                Controls randomness. <code>0</code> is deterministic (recommended for safety rules),{' '}
+                <code>1</code> is creative. Default: <code>0.1</code>.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="guard-temperature"
+              type="number"
+              step="0.05"
+              min={0}
+              max={2}
+              value={config.temperature ?? 0.1}
+              onChange={(e) => onChange({ temperature: Number(e.target.value) })}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

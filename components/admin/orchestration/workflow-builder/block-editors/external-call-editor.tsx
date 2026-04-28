@@ -75,8 +75,12 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label htmlFor="ext-method" className="text-xs">
-            Method
+          <Label htmlFor="ext-method" className="flex items-center text-xs">
+            Method{' '}
+            <FieldHelp title="HTTP method">
+              POST, PUT, and PATCH include the body template. GET and DELETE do not send a request
+              body.
+            </FieldHelp>
           </Label>
           <Select
             value={config.method ?? 'POST'}
@@ -99,8 +103,12 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="ext-timeout" className="text-xs">
-            Timeout (ms)
+          <Label htmlFor="ext-timeout" className="flex items-center text-xs">
+            Timeout (ms){' '}
+            <FieldHelp title="Request timeout">
+              Maximum time to wait for a response. The request is cancelled and the step fails if
+              exceeded. Default: 30,000 ms (30 seconds).
+            </FieldHelp>
           </Label>
           <Input
             id="ext-timeout"
@@ -137,7 +145,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
         </Label>
         <div className="space-y-2">
           {headerEntries.map(([key, value], index) => (
-            <div key={index} className="flex items-center gap-2">
+            <div key={`header-${key}`} className="flex items-center gap-2">
               <Input
                 aria-label={`Header ${index + 1} name`}
                 value={key}

@@ -80,7 +80,7 @@ export function RouteEditor({ config, onChange }: EditorProps<RouteConfig>) {
             </p>
           )}
           {routes.map((branch, index) => (
-            <div key={index} className="flex items-center gap-2">
+            <div key={`branch-${index}-${branch.label}`} className="flex items-center gap-2">
               <Input
                 aria-label={`Branch ${index + 1} label`}
                 value={branch.label}
