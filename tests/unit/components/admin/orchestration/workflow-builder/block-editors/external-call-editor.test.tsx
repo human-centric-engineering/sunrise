@@ -17,6 +17,9 @@
  * - Header management: editing a header name calls onChange with updated headers
  * - Header management: editing a header value calls onChange with updated headers
  * - FieldHelp ⓘ info buttons are present
+ * - Response transform: renders the transform type select
+ * - Response transform: selecting JMESPath shows expression textarea
+ * - Response transform: selecting None clears responseTransform
  *
  * @see components/admin/orchestration/workflow-builder/block-editors/external-call-editor.tsx
  */
@@ -515,6 +518,68 @@ describe('ExternalCallEditor', () => {
       const lastArg = calls[calls.length - 1][0] as { headers: Record<string, string> };
       expect(lastArg).toHaveProperty('headers');
       expect(lastArg.headers['Accept']).toBe('text/plains');
+    });
+  });
+
+  // ── Response transform ──────────────────────────────────────────────────────
+
+  describe('Response transform', () => {
+    it('renders the transform type select', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      expect(document.getElementById('ext-transform-type')).toBeInTheDocument();
+    });
+
+    it('defaults to "None" when responseTransform is not configured', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      const trigger = document.getElementById('ext-transform-type')!;
+      expect(trigger).toHaveTextContent(/none/i);
+    });
+
+    it('calls onChange with responseTransform when JMESPath is selected', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<ExternalCallEditor config={baseConfig} onChange={onChange} />);
+
+      await user.click(document.getElementById('ext-transform-type')!);
+      await user.click(screen.getByRole('option', { name: /jmespath/i }));
+
+      expect(onChange).toHaveBeenCalledWith({
+        responseTransform: { type: 'jmespath', expression: '' },
+      });
+    });
+
+    it('shows expression textarea when responseTransform is set', () => {
+      const config: ExternalCallConfig = {
+        url: '',
+        method: 'POST',
+        responseTransform: { type: 'jmespath', expression: 'data.results' },
+      };
+      render(<ExternalCallEditor config={config} onChange={vi.fn()} />);
+
+      const textarea = document.getElementById('ext-transform-expr') as HTMLTextAreaElement;
+      expect(textarea).toBeInTheDocument();
+      expect(textarea.value).toBe('data.results');
+    });
+
+    it('does not show expression textarea when responseTransform is not set', () => {
+      render(<ExternalCallEditor config={baseConfig} onChange={vi.fn()} />);
+      expect(document.getElementById('ext-transform-expr')).not.toBeInTheDocument();
+    });
+
+    it('calls onChange with undefined responseTransform when None is selected', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const config: ExternalCallConfig = {
+        url: '',
+        method: 'POST',
+        responseTransform: { type: 'jmespath', expression: 'data' },
+      };
+      render(<ExternalCallEditor config={config} onChange={onChange} />);
+
+      await user.click(document.getElementById('ext-transform-type')!);
+      await user.click(screen.getByRole('option', { name: /none/i }));
+
+      expect(onChange).toHaveBeenCalledWith({ responseTransform: undefined });
     });
   });
 });

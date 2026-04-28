@@ -11,6 +11,10 @@
  * - flowToWorkflowDefinition: writes _layout into every step config
  * - flowToWorkflowDefinition: entryStepId defaults to first node with no incoming edge
  * - flowToWorkflowDefinition: strips pre-existing _layout before re-writing
+ * - workflowDefinitionToFlow: guard step edges get sourceHandle from condition match
+ * - workflowDefinitionToFlow: edges get targetHandle 'in-0'
+ * - flowToWorkflowDefinition: derives condition from sourceHandle when label is missing
+ * - flowToWorkflowDefinition: label takes priority over sourceHandle-derived condition
  *
  * @see components/admin/orchestration/workflow-builder/workflow-mappers.ts
  */
@@ -222,6 +226,43 @@ describe('workflowDefinitionToFlow', () => {
     const stepC = nodes.find((n) => n.id === 'step-c');
     expect(stepC?.position).toEqual({ x: 440, y: 0 });
   });
+
+  it('guard step edges get sourceHandle matching the condition label', () => {
+    const definition: WorkflowDefinition = {
+      entryStepId: 'guard',
+      errorStrategy: 'fail',
+      steps: [
+        {
+          id: 'guard',
+          name: 'Guard',
+          type: 'guard',
+          config: {},
+          nextSteps: [
+            { targetStepId: 'pass-target', condition: 'pass' },
+            { targetStepId: 'fail-target', condition: 'fail' },
+          ],
+        },
+        { id: 'pass-target', name: 'Pass', type: 'llm_call', config: {}, nextSteps: [] },
+        { id: 'fail-target', name: 'Fail', type: 'llm_call', config: {}, nextSteps: [] },
+      ],
+    };
+
+    const { edges } = workflowDefinitionToFlow(definition);
+
+    const passEdge = edges.find((e) => e.target === 'pass-target');
+    expect(passEdge?.sourceHandle).toBe('out-0');
+
+    const failEdge = edges.find((e) => e.target === 'fail-target');
+    expect(failEdge?.sourceHandle).toBe('out-1');
+  });
+
+  it('edges get targetHandle "in-0"', () => {
+    const { edges } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
+
+    for (const edge of edges) {
+      expect(edge.targetHandle).toBe('in-0');
+    }
+  });
 });
 
 describe('flowToWorkflowDefinition', () => {
@@ -373,5 +414,50 @@ describe('flowToWorkflowDefinition', () => {
 
     const stepA = result.steps.find((s) => s.id === 'a');
     expect(stepA?.nextSteps[0]).not.toHaveProperty('condition');
+  });
+
+  it('derives condition from sourceHandle when edge has no label', () => {
+    const guardNode: PatternNode = {
+      id: 'guard',
+      type: 'pattern',
+      position: { x: 0, y: 0 },
+      data: { label: 'Guard', type: 'guard', config: {} },
+    };
+    const passNode = makeNode('pass', 'Pass Target', 'llm_call');
+    const edge = {
+      id: 'e1',
+      source: 'guard',
+      target: 'pass',
+      type: 'default',
+      sourceHandle: 'out-0',
+    };
+
+    const result = flowToWorkflowDefinition([guardNode, passNode], [edge]);
+
+    const guardStep = result.steps.find((s) => s.id === 'guard');
+    expect(guardStep?.nextSteps[0].condition).toBe('pass');
+  });
+
+  it('label takes priority over sourceHandle-derived condition', () => {
+    const guardNode: PatternNode = {
+      id: 'guard',
+      type: 'pattern',
+      position: { x: 0, y: 0 },
+      data: { label: 'Guard', type: 'guard', config: {} },
+    };
+    const targetNode = makeNode('target', 'Target', 'llm_call');
+    const edge = {
+      id: 'e1',
+      source: 'guard',
+      target: 'target',
+      type: 'default',
+      label: 'custom-condition',
+      sourceHandle: 'out-0',
+    };
+
+    const result = flowToWorkflowDefinition([guardNode, targetNode], [edge]);
+
+    const guardStep = result.steps.find((s) => s.id === 'guard');
+    expect(guardStep?.nextSteps[0].condition).toBe('custom-condition');
   });
 });
