@@ -91,6 +91,13 @@ export function WorkflowCanvas({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {nodes.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <p className="text-muted-foreground text-sm">
+            Empty canvas &mdash; drag a block from the palette to get started
+          </p>
+        </div>
+      )}
       <ReactFlow<PatternNode>
         nodes={nodes}
         edges={edges}

@@ -15,7 +15,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, StopCircle, ThumbsUp, X, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  StopCircle,
+  ThumbsUp,
+  X,
+  XCircle,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -267,6 +276,7 @@ export function ExecutionPanel({
 
   const handleApprove = useCallback(async () => {
     if (!executionId) return;
+    setErrorMessage(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(executionId), {
         body: { approvalPayload: { approved: true } },
@@ -373,7 +383,7 @@ export function ExecutionPanel({
         {status === 'awaiting_approval' && approvingStepId && (
           <Button size="sm" className="mt-3 w-full" onClick={() => void handleApprove()}>
             <ThumbsUp className="mr-2 h-4 w-4" />
-            Approve &amp; continue
+            {errorMessage ? 'Retry approval' : 'Approve & continue'}
           </Button>
         )}
       </div>
@@ -396,8 +406,19 @@ export function ExecutionPanel({
           role="alert"
           className="flex items-center gap-2 border-b bg-red-50 px-4 py-2 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-200"
         >
-          <AlertCircle className="h-4 w-4" />
-          <span>{errorMessage}</span>
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span className="flex-1">{errorMessage}</span>
+          {executionId && status === 'failed' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 shrink-0 px-2 text-xs"
+              onClick={() => void streamRun(executionId)}
+            >
+              <RefreshCw className="mr-1 h-3 w-3" />
+              Reconnect
+            </Button>
+          )}
         </div>
       )}
 
