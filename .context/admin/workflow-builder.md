@@ -177,6 +177,8 @@ All editors live under `components/admin/orchestration/workflow-builder/block-ed
 
 **Route branch labels.** `route-editor.tsx` writes to `config.routes = [{ label }]`. The 5.1b mapper does **not** sync these labels to outgoing edge labels — inline edge-condition editing is a Session 5.1c concern.
 
+**Static handle counts.** `route` and `parallel` nodes currently render a fixed number of source handles (3) defined in `step-registry.ts`. The handle count does not update dynamically when the user adds or removes branches in the editor. Dynamic handle adjustment based on `config.routes.length` / outgoing edge count is planned for Session 5.1c.
+
 ### Default configuration
 
 `lib/orchestration/engine/step-registry.ts` holds a `defaultConfig` per entry that matches the editor fields. Dropping a fresh block onto the canvas gives it sensible initial values so the first validation pass highlights only the empty _required_ fields.

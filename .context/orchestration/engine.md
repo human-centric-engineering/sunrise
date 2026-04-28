@@ -127,7 +127,7 @@ Executors receive a **frozen snapshot** (via `snapshotContext()`) so they cannot
 
 Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id.
 
-**Template limitations:** Interpolation supports one level of property access (`{{input.key}}`) but not deeper paths (`{{input.key.nested}}`). For nested data, flatten in an intermediate step or use an LLM step to extract the needed value. There is no size limit on interpolated values — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts.
+**Template limitations:** Interpolation supports one level of property access (`{{input.key}}`) but not deeper paths (`{{input.key.nested}}`). For nested data, flatten in an intermediate step or use an LLM step to extract the needed value. Interpolated values have no per-value size limit — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts. The workflow execution body is capped at 256 KB for `inputData` to prevent oversized payloads.
 
 ## Executor registry
 
@@ -215,7 +215,7 @@ The engine supports two cancellation paths:
 1. **Client-side abort** — the caller passes `signal: AbortSignal` in options. At the top of each DAG-walk iteration the engine checks `signal?.aborted` and yields `workflow_failed('Execution aborted by client')` if true.
 2. **DB-side cancel** — `POST /executions/:id/cancel` sets `status: 'cancelled'` and `completedAt` in the database. The engine performs a lightweight `SELECT status` between steps and yields `workflow_failed('Execution cancelled by user')` when the status is `'cancelled'`. This covers the case where the SSE stream is lost but the execution row should still be terminated.
 
-Both paths are checked before each step, not mid-step — a long-running LLM call will complete (and incur cost) before the cancellation is observed. Per-step `timeoutMs` is the recommended mitigation for expensive steps that might run longer than expected.
+Both paths are checked before each step, not mid-step — a long-running LLM call will complete (and incur cost) before the cancellation is observed. Per-step `timeoutMs` is the recommended mitigation for expensive steps that might run longer than expected. The `AbortSignal` is not propagated into individual executor functions — only the engine's DAG-walk loop checks it. Future work may thread the signal into executors for mid-step cancellation of LLM calls.
 
 ## Budget enforcement
 
@@ -225,6 +225,8 @@ After every step the engine checks `ctx.totalCostUsd > budgetLimitUsd` and emits
 - `workflow_failed { error: 'Budget exceeded' }` if the limit is overrun; the generator then returns.
 
 If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
+
+**Parallel batch note:** budget is checked after the entire parallel batch completes, not between branches. All branches run to completion (or failure) before the budget guard fires. Use per-step `timeoutMs` to bound individual branch cost.
 
 ## Execution statuses
 
