@@ -60,7 +60,11 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const budgetLimitRaw = url.searchParams.get('budgetLimitUsd');
   let budgetLimitUsd: number | undefined;
   if (budgetLimitRaw !== null) {
-    const parsed = z.coerce.number().positive().safeParse(budgetLimitRaw);
+    const parsed = z.coerce
+      .number()
+      .positive()
+      .max(1000, 'Budget limit must be at most $1,000')
+      .safeParse(budgetLimitRaw);
     if (!parsed.success) {
       throw new ValidationError('Invalid budgetLimitUsd', {
         budgetLimitUsd: ['Must be a positive number'],

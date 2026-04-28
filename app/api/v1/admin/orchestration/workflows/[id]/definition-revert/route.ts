@@ -80,6 +80,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const target = history[body.versionIndex];
 
+  // Validate the target definition against the current schema — it may have
+  // been stored under an older schema version and no longer conform.
+  const targetParse = workflowDefinitionSchema.safeParse(target.definition);
+  if (!targetParse.success) {
+    throw new ValidationError('Target definition is no longer compatible with the current schema');
+  }
+
   // Push the value we're reverting *from* onto history so it's recoverable.
   const defParse = workflowDefinitionSchema.safeParse(current.workflowDefinition);
   if (!defParse.success) {
@@ -102,7 +109,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     workflow = await prisma.aiWorkflow.update({
       where: { id, updatedAt: current.updatedAt },
       data: {
-        workflowDefinition: target.definition as unknown as Prisma.InputJsonValue,
+        workflowDefinition: targetParse.data as unknown as Prisma.InputJsonValue,
         workflowDefinitionHistory: nextHistory as unknown as Prisma.InputJsonValue,
       },
     });
