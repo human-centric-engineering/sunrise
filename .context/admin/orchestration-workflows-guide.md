@@ -92,7 +92,7 @@ The backend validator (`validateWorkflow`) enforces required config for these st
 - `external_call` must have `config.url` (error: `MISSING_EXTERNAL_URL`)
 - `agent_call` must have `config.agentSlug` (error: `MISSING_AGENT_SLUG`)
 
-The FE extra-checks (`runExtraChecks()`) extend this with additional required-config validations for `llm_call`, `rag_retrieve`, `plan`, `reflect`, `route`, `agent_call`, and `send_notification` — these show red-ring errors instantly on the canvas without waiting for a save round-trip.
+The FE extra-checks (`runExtraChecks()`) extend this with five additional checks: required-config validations for `llm_call`, `rag_retrieve`, `plan`, `reflect`, `route`, `agent_call`, and `send_notification`; plus `DISCONNECTED_NODE` (orphaned nodes), `PARALLEL_WITHOUT_MERGE` (divergent branches), `CYCLE_DETECTED` (DFS cycle check), and `DANGLING_EDGE` (edges referencing deleted nodes). These show red-ring errors instantly on the canvas without waiting for a save round-trip.
 
 ## Error Handling Strategies
 
@@ -235,7 +235,7 @@ if (!result.ok) {
 | `UNREACHABLE_STEP`            | Yes           | No          | Step not reachable from entry               |
 | `CYCLE_DETECTED`              | No            | Yes         | DAG contains a cycle                        |
 
-The builder UI also runs `runExtraChecks()` which adds `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, and `MISSING_REQUIRED_CONFIG` codes for instant canvas feedback.
+The builder UI also runs `runExtraChecks()` which adds five FE-only codes for instant canvas feedback: `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, `MISSING_REQUIRED_CONFIG`, `CYCLE_DETECTED` (lightweight DFS, distinct from the backend's structural check), and `DANGLING_EDGE` (edges referencing deleted nodes).
 
 ### Semantic validator
 

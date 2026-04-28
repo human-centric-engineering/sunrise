@@ -35,7 +35,9 @@ lib/orchestration/engine/
 ├── executor-registry.ts       # BE-only registry (no UI deps)
 ├── context.ts                 # ExecutionContext + createContext + mergeStepResult
 ├── events.ts                  # ExecutionEvent factory helpers
-├── errors.ts                  # ExecutorError (+ retriable flag), PausedForApproval, BudgetExceeded
+├── errors.ts                  # ExecutorError (+ retriable flag + partial cost), PausedForApproval, BudgetExceeded
+├── execution-reaper.ts        # zombie reaper — marks stale RUNNING/PENDING/PAUSED rows as FAILED
+├── step-registry.ts           # FE palette metadata: labels, colours, handle counts, defaultConfig
 ├── outbound-rate-limiter.ts   # per-host sliding-window rate limiter for external calls
 ├── llm-runner.ts              # shared LLM invocation + template interpolation
 └── executors/
