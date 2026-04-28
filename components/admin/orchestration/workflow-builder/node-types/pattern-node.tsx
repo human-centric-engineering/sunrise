@@ -12,7 +12,11 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { HelpCircle } from 'lucide-react';
 
-import { STEP_CATEGORY_COLOURS, getStepMetadata } from '@/lib/orchestration/engine/step-registry';
+import {
+  STEP_CATEGORY_COLOURS,
+  getStepMetadata,
+  getStepOutputs,
+} from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
 import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
@@ -23,8 +27,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const Icon = meta?.icon ?? HelpCircle;
 
   const inputs = meta?.inputs ?? 1;
-  const outputs = meta?.outputs ?? 1;
-  const outputLabels = meta?.outputLabels;
+  const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
 
   return (
