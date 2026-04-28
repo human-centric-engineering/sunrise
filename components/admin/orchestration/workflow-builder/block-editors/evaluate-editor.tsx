@@ -65,6 +65,12 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
         </div>
       </div>
 
+      {(config.scaleMin ?? 1) >= (config.scaleMax ?? 5) && (
+        <p className="text-xs text-red-600 dark:text-red-400">
+          Scale min must be less than scale max.
+        </p>
+      )}
+
       <div className="space-y-1.5">
         <Label htmlFor="evaluate-threshold" className="flex items-center text-xs">
           Threshold{' '}

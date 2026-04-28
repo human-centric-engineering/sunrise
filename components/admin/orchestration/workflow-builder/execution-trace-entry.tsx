@@ -95,12 +95,12 @@ export function ExecutionTraceEntryRow({
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">
           {error && (
-            <pre className="overflow-x-auto rounded bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-200">
+            <pre className="max-h-40 overflow-auto rounded bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-200">
               {error}
             </pre>
           )}
           {output !== undefined && output !== null && (
-            <pre className="bg-muted/40 overflow-x-auto rounded p-2 font-mono text-xs">
+            <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
               {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
             </pre>
           )}

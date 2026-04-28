@@ -235,9 +235,11 @@ export function ExecutionPanel({
         break;
       }
       case 'workflow_completed':
+        setBudgetWarning(null);
         setStatus('completed');
         break;
       case 'workflow_failed':
+        setBudgetWarning(null);
         setStatus('failed');
         setErrorMessage(typeof d.error === 'string' ? d.error : 'Workflow failed');
         break;

@@ -39,7 +39,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
   };
 
   const addHeader = (): void => {
-    onChange({ headers: { ...headers, '': '' } });
+    onChange({ headers: { ...headers, [`header-${headerEntries.length + 1}`]: '' } });
   };
 
   const removeHeader = (key: string): void => {
