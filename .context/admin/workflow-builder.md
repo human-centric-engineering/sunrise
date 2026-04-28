@@ -78,7 +78,7 @@ Each entry carries an `estimatedDuration` hint displayed in the palette below th
 | `llm_call`          | LLM Call          | agent         | 1       | 1       |
 | `chain`             | Chain Step        | agent         | 1       | 1       |
 | `route`             | Route             | decision      | 2       | 2       |
-| `parallel`          | Parallel          | output        | 3       | 3       |
+| `parallel`          | Parallel          | decision      | 3       | 3       |
 | `reflect`           | Reflect           | agent         | 1       | 4       |
 | `tool_call`         | Tool Call         | input         | 1       | 5       |
 | `plan`              | Plan              | agent         | 1       | 6       |
@@ -170,7 +170,7 @@ All editors live under `components/admin/orchestration/workflow-builder/block-ed
 | `evaluate`          | `evaluate-editor.tsx`       | `rubric` (Textarea), `scaleMin` (number, 1), `scaleMax` (number, 5), `threshold` (number, 3)                                                                                                                                                                                                                                                |
 | `external_call`     | `external-call-editor.tsx`  | `url` (Input), `method` (Select), `headers` (key-value editor), `bodyTemplate` (Textarea), `authType` (Select), `authSecret` (Input)                                                                                                                                                                                                        |
 | `orchestrator`      | `orchestrator-editor.tsx`   | `plannerPrompt` (Textarea), `availableAgentSlugs` (multi-checkbox from agents list), `selectionMode` (Select: auto/all), `maxRounds` (number, 3), `maxDelegationsPerRound` (number, 5), `timeoutMs` (number displayed as seconds, 120), `budgetLimitUsd` (number, optional), `modelOverride` (Input, optional), `temperature` (number, 0.3) |
-| `agent_call`        | `agent-call-editor.tsx`     | `agentSlug` (Select populated from pre-fetched agents list), `message` (Textarea)                                                                                                                                                                                                                                                           |
+| `agent_call`        | `agent-call-editor.tsx`     | `agentSlug` (Select populated from pre-fetched agents list), `message` (Textarea), `mode` (single-turn / multi-turn Select), `maxToolIterations` (number Input), `maxTurns` (number Input, shown in multi-turn mode)                                                                                                                        |
 | `send_notification` | `notification-editor.tsx`   | `channel` (Select: email/webhook), `bodyTemplate` (Textarea); conditional: `to` (Input, email channel), `subject` (Input, email), `webhookUrl` (Input, webhook channel)                                                                                                                                                                     |
 
 **Capabilities fetch.** The builder shell calls `apiClient.get(API.ADMIN.ORCHESTRATION.CAPABILITIES, { params: { limit: 100 } })` once on mount and passes the result down as `props.capabilities` to `BlockConfigPanel`. `tool-call-editor.tsx` validates the selected slug against this list before calling `onChange`, so an unknown slug can never reach the config.
