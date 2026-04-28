@@ -6,6 +6,7 @@ import { Sparkles, Trophy } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API } from '@/lib/api/endpoints';
 import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
@@ -38,8 +39,9 @@ const QUIZ_PROMPTS = [
 
 /** Parse a running quiz score from assistant text (best-effort). */
 function parseQuizScore(text: string): { correct: number; total: number } | null {
-  // Matches "Score: 3/5", "3 out of 5", "3/5", etc.
-  const match = /(?:score:\s*)?(\d+)\s*(?:out of|\/)\s*(\d+)/i.exec(text);
+  // Matches "Score: 3/5", "Score: 3 out of 5", etc. Requires "score:" prefix
+  // to avoid false positives on arbitrary fractions like "3/5 of the patterns".
+  const match = /\bscore:\s*(\d+)\s*(?:out of|\/)\s*(\d+)/i.exec(text);
   if (!match?.[1] || !match?.[2]) return null;
   const correct = parseInt(match[1], 10);
   const total = parseInt(match[2], 10);
@@ -163,6 +165,10 @@ export function LearningTabs({ patterns, defaultTab, contextType, contextId }: L
               <Badge variant="secondary" data-testid="quiz-score">
                 {quizScore.correct}/{quizScore.total}
               </Badge>
+              <FieldHelp title="Quiz score">
+                Your latest quiz score, parsed from the quiz-master agent&apos;s responses. Take a
+                quiz to update it. Scores are saved across sessions.
+              </FieldHelp>
             </div>
           )}
 

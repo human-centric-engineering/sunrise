@@ -33,9 +33,25 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-2">
                 <CardTitle className="text-base leading-tight">{p.patternName}</CardTitle>
-                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
-                  {p.patternNumber}
-                </Badge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {p.complexity && (
+                    <Badge
+                      variant={
+                        p.complexity === 'advanced'
+                          ? 'destructive'
+                          : p.complexity === 'intermediate'
+                            ? 'secondary'
+                            : 'default'
+                      }
+                      className="text-[10px]"
+                    >
+                      {p.complexity}
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className="font-mono text-[10px]">
+                    {p.patternNumber}
+                  </Badge>
+                </div>
               </div>
               {p.category && <span className="text-muted-foreground text-xs">{p.category}</span>}
             </CardHeader>
@@ -44,6 +60,11 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
                 <div className="prose prose-sm dark:prose-invert text-muted-foreground max-w-none">
                   <Markdown>{p.description}</Markdown>
                 </div>
+              )}
+              {p.chunkCount > 0 && (
+                <p className="text-muted-foreground mt-2 text-xs">
+                  {p.chunkCount} {p.chunkCount === 1 ? 'section' : 'sections'}
+                </p>
               )}
             </CardContent>
           </Card>

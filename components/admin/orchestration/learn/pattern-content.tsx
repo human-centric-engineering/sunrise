@@ -20,7 +20,11 @@ export function PatternContent({ content }: PatternContentProps) {
           code({ className, children, ...props }) {
             const match = /language-mermaid/.exec(className ?? '');
             if (match) {
-              const text = typeof children === 'string' ? children : '';
+              const text = Array.isArray(children)
+                ? children.map((c) => (typeof c === 'string' ? c : '')).join('')
+                : typeof children === 'string'
+                  ? children
+                  : '';
               return <MermaidDiagram code={text.trim()} />;
             }
             return (

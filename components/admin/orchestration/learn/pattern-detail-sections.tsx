@@ -9,14 +9,7 @@ import {
 import type { AiKnowledgeChunk } from '@/types/orchestration';
 
 import { PatternContent } from '@/components/admin/orchestration/learn/pattern-content';
-
-function stripEmbeddingPrefix(content: string): string {
-  const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);
-  if (withDash) return withDash[1];
-  const plain = content.match(/^[^\n]+\n\n([\s\S]*)$/);
-  if (plain) return plain[1];
-  return content;
-}
+import { stripEmbeddingPrefix } from '@/lib/orchestration/utils/strip-embedding-prefix';
 
 interface PatternDetailSectionsProps {
   chunks: AiKnowledgeChunk[];
@@ -24,7 +17,7 @@ interface PatternDetailSectionsProps {
 
 export function PatternDetailSections({ chunks }: PatternDetailSectionsProps) {
   return (
-    <Accordion type="multiple" defaultValue={[chunks[0]?.id ?? '']}>
+    <Accordion type="multiple" defaultValue={[]}>
       {chunks.map((chunk) => (
         <AccordionItem key={chunk.id} value={chunk.id} className="border-b-0">
           <div className="bg-card mb-3 rounded-lg border">

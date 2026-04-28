@@ -27,12 +27,16 @@ const quizMetadataSchema = z.object({
 const QUIZ_MASTER_SLUG = 'quiz-master';
 
 export const GET = withAdminAuth(async (request, session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
 
   const sessions = await prisma.aiEvaluationSession.findMany({
     where: {
       userId: session.user.id,
-      agent: { slug: QUIZ_MASTER_SLUG },
+      OR: [{ agent: { slug: QUIZ_MASTER_SLUG } }, { agentId: null, title: 'Quiz Score' }],
       metadata: { path: ['quizScore'], not: Prisma.DbNull },
     },
     orderBy: { completedAt: 'desc' },

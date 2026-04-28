@@ -4,8 +4,8 @@
  * @see components/admin/orchestration/learn/learning-tabs.tsx
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { LearningTabs } from '@/components/admin/orchestration/learn/learning-tabs';
@@ -46,6 +46,14 @@ vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
   ),
 }));
 
+vi.mock('@/components/admin/orchestration/knowledge/embedding-status-banner', () => ({
+  EmbeddingStatusBanner: ({ total, embedded }: { total: number; embedded: number }) => (
+    <div data-testid="embedding-status-banner">
+      {embedded}/{total} embedded
+    </div>
+  ),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const MOCK_PATTERNS: PatternSummary[] = [
@@ -70,6 +78,28 @@ const MOCK_PATTERNS: PatternSummary[] = [
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('LearningTabs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: embedding status and quiz scores return empty/ok
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: { total: 0, embedded: 0, pending: 0, hasActiveProvider: true },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (urlStr.includes('quiz-scores')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+  });
+
   it('renders all three tab triggers', () => {
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
@@ -128,5 +158,79 @@ describe('LearningTabs', () => {
     expect(advisorChat).toBeDefined();
     expect(advisorChat!.getAttribute('data-context-type')).toBe('pattern');
     expect(advisorChat!.getAttribute('data-context-id')).toBe('5');
+  });
+
+  it('shows embedding status banner when pending chunks exist', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: { total: 100, embedded: 60, pending: 40, hasActiveProvider: true },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (urlStr.includes('quiz-scores')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    const user = userEvent.setup();
+    render(<LearningTabs patterns={MOCK_PATTERNS} defaultTab="advisor" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('embedding-status-banner')).toBeInTheDocument();
+    });
+
+    // Also check quiz tab shows it
+    await user.click(screen.getByRole('tab', { name: /quiz/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId('embedding-status-banner')).toBeInTheDocument();
+    });
+  });
+
+  it('loads persisted quiz score on mount', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+      if (urlStr.includes('embedding-status')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: { total: 0, embedded: 0, pending: 0, hasActiveProvider: true },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (urlStr.includes('quiz-scores')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ data: [{ correct: 7, total: 10 }] }), { status: 200 })
+        );
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    const user = userEvent.setup();
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    await user.click(screen.getByRole('tab', { name: /quiz/i }));
+
+    await waitFor(() => {
+      const badge = screen.getByTestId('quiz-score');
+      expect(badge.textContent).toBe('7/10');
+    });
+  });
+
+  it('handles fetch failures gracefully (no crash)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    // Should still render without crashing
+    expect(screen.getByRole('tab', { name: /patterns/i })).toBeInTheDocument();
   });
 });
