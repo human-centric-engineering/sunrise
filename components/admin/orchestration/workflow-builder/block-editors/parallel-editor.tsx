@@ -24,7 +24,7 @@ import type { EditorProps } from '@/components/admin/orchestration/workflow-buil
 
 export interface ParallelConfig extends Record<string, unknown> {
   timeoutMs?: number;
-  stragglerStrategy?: 'wait-all' | 'best-effort';
+  stragglerStrategy?: 'wait-all' | 'first-success';
   branches?: unknown[];
 }
 
@@ -57,14 +57,14 @@ export function ParallelEditor({ config, onChange }: EditorProps<ParallelConfig>
           Straggler strategy{' '}
           <FieldHelp title="Straggler strategy">
             <strong>Wait for all</strong> blocks until every branch completes.{' '}
-            <strong>Best effort</strong> joins as soon as the timeout fires and returns whatever is
-            ready — missing branches yield <code>null</code>.
+            <strong>First success</strong> returns as soon as one branch succeeds — remaining
+            branches are abandoned. (Not yet implemented — currently behaves as wait-all.)
           </FieldHelp>
         </Label>
         <Select
           value={strategy}
           onValueChange={(value) =>
-            onChange({ stragglerStrategy: value as 'wait-all' | 'best-effort' })
+            onChange({ stragglerStrategy: value as 'wait-all' | 'first-success' })
           }
         >
           <SelectTrigger id="parallel-strategy">
@@ -72,7 +72,7 @@ export function ParallelEditor({ config, onChange }: EditorProps<ParallelConfig>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="wait-all">Wait for all branches</SelectItem>
-            <SelectItem value="best-effort">Best effort (return partial)</SelectItem>
+            <SelectItem value="first-success">First success (not yet implemented)</SelectItem>
           </SelectContent>
         </Select>
       </div>

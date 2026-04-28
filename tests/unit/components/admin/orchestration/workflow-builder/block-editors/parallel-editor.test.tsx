@@ -65,10 +65,10 @@ describe('ParallelEditor', () => {
     expect(screen.getByText(/wait for all branches/i)).toBeInTheDocument();
   });
 
-  it('shows "best-effort" strategy label when stragglerStrategy is best-effort', () => {
-    const config: ParallelConfig = { stragglerStrategy: 'best-effort' };
+  it('shows "first-success" strategy label when stragglerStrategy is first-success', () => {
+    const config: ParallelConfig = { stragglerStrategy: 'first-success' };
     render(<ParallelEditor config={config} onChange={vi.fn()} />);
-    expect(screen.getByText(/best effort/i)).toBeInTheDocument();
+    expect(screen.getByText(/first success/i)).toBeInTheDocument();
   });
 
   it('renders at least one FieldHelp info button', () => {

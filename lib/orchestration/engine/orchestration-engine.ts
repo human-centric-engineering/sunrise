@@ -624,6 +624,11 @@ export class OrchestrationEngine {
         stepId: step.id,
         code: stepError.code,
       });
+      // Capture partial cost from the failed executor so it's not lost.
+      const failedTokens = stepError.tokensUsed;
+      const failedCost = stepError.costUsd;
+      ctx.totalTokensUsed += failedTokens;
+      ctx.totalCostUsd += failedCost;
       trace.push({
         stepId: step.id,
         stepType: step.type,
@@ -631,8 +636,8 @@ export class OrchestrationEngine {
         status: 'failed',
         output: null,
         error: sanitizeError(stepError),
-        tokensUsed: 0,
-        costUsd: 0,
+        tokensUsed: failedTokens,
+        costUsd: failedCost,
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
@@ -806,6 +811,11 @@ export class OrchestrationEngine {
           stepId: step.id,
           code: error.code,
         });
+        // Capture partial cost from failed parallel branch.
+        const failedTokens = error.tokensUsed;
+        const failedCost = error.costUsd;
+        ctx.totalTokensUsed += failedTokens;
+        ctx.totalCostUsd += failedCost;
         trace.push({
           stepId: step.id,
           stepType: step.type,
@@ -813,8 +823,8 @@ export class OrchestrationEngine {
           status: 'failed',
           output: null,
           error: sanitizeError(error),
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: failedTokens,
+          costUsd: failedCost,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
@@ -918,9 +928,16 @@ export class OrchestrationEngine {
 
     if (strategy === 'retry') {
       let lastError: ExecutorError | null = null;
+      // Accumulate partial cost from failed attempts so retries don't lose tokens.
+      let accumulatedTokens = 0;
+      let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
-          return await invokeExecutor();
+          const result = await invokeExecutor();
+          // Include cost from prior failed attempts in the final result.
+          result.tokensUsed += accumulatedTokens;
+          result.costUsd += accumulatedCost;
+          return result;
         } catch (err) {
           if (err instanceof PausedForApproval) throw err;
           lastError =
@@ -932,6 +949,8 @@ export class OrchestrationEngine {
                   err instanceof Error ? err.message : 'Executor threw an unknown error',
                   err
                 );
+          accumulatedTokens += lastError.tokensUsed;
+          accumulatedCost += lastError.costUsd;
           if (!lastError.retriable) throw lastError;
           if (attempt < retryCount) {
             await sleep(backoffDelayMs(attempt));
@@ -955,20 +974,24 @@ export class OrchestrationEngine {
               err
             );
 
+      // Capture partial cost from the failed step for skip/fallback strategies.
+      const partialTokens = execErr.tokensUsed;
+      const partialCost = execErr.costUsd;
+
       if (strategy === 'skip') {
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
       }
 
       if (strategy === 'fallback') {
         if (errorConfig.fallbackStepId) {
           return {
             output: null,
-            tokensUsed: 0,
-            costUsd: 0,
+            tokensUsed: partialTokens,
+            costUsd: partialCost,
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
       }
 
       // strategy === 'fail'
