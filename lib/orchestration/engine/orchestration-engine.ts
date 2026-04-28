@@ -858,15 +858,19 @@ export class OrchestrationEngine {
       });
       await this.checkpoint(executionId, ctx, trace);
 
-      allEvents.push(
-        stepCompleted(
-          step.id,
-          stepResult.output,
-          stepResult.tokensUsed,
-          stepResult.costUsd,
-          durationMs
-        )
-      );
+      if (stepResult.skipped) {
+        allEvents.push(stepFailed(step.id, stepResult.skipError ?? 'Step skipped', false));
+      } else {
+        allEvents.push(
+          stepCompleted(
+            step.id,
+            stepResult.output,
+            stepResult.tokensUsed,
+            stepResult.costUsd,
+            durationMs
+          )
+        );
+      }
 
       lastOutput = stepResult.output;
 
@@ -992,7 +996,13 @@ export class OrchestrationEngine {
       const partialCost = execErr.costUsd;
 
       if (strategy === 'skip') {
-        return { output: null, tokensUsed: partialTokens, costUsd: partialCost, skipped: true };
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          skipped: true,
+          skipError: sanitizeError(execErr),
+        };
       }
 
       if (strategy === 'fallback') {
@@ -1063,7 +1073,7 @@ export class OrchestrationEngine {
       ctx.totalTokensUsed = row.totalTokensUsed;
       ctx.totalCostUsd = row.totalCostUsd;
       for (const entry of trace) {
-        if (entry.status === 'completed') {
+        if (entry.status === 'completed' || entry.status === 'skipped') {
           ctx.stepOutputs[entry.stepId] = entry.output;
         }
       }

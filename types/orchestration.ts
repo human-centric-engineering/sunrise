@@ -276,6 +276,11 @@ export interface StepResult {
    * The engine records a `'skipped'` trace entry instead of `'completed'`.
    */
   skipped?: boolean;
+  /**
+   * When `skipped` is true, carries the sanitised error message so the
+   * parallel batch handler can emit a `step_failed` SSE event.
+   */
+  skipError?: string;
 }
 
 /** Minimal summary of a workflow execution row, for list views. */
