@@ -114,7 +114,7 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 
 ### Algorithm
 
-1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate` steps) and capability slugs (from `tool_call` steps).
+1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate`, `plan`, `orchestrator` steps) and capability slugs (from `tool_call` steps).
 2. **Batch DB queries** — two parallel queries: active providers and active capabilities matching the collected slugs.
 3. **Check model overrides** — each `modelOverride` must exist in the model registry and its provider must be active.
 4. **Check capability slugs** — each `capabilitySlug` must match an active capability.

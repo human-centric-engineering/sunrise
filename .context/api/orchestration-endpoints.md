@@ -110,27 +110,29 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/save-as-template`         | POST               | Save a workflow as a reusable template                  | 5.1     |
 | `/workflows/:id/schedules`                | GET, POST          | List / create cron schedules for a workflow             | 5.1     |
 | `/workflows/:id/schedules/:sid`           | GET, PATCH, DELETE | Read / update / delete a workflow schedule              | 5.1     |
-| `/executions`                             | GET                | List workflow executions (paginated)                    | 5.1     |
-| `/conversations/export`                   | POST               | Export conversations as JSON                            | 5.1     |
-| `/conversations/:id/messages/:mid`        | GET                | Read a single message                                   | 5.1     |
-| `/conversations/search`                   | GET                | Full-text search across conversations                   | 5.1     |
-| `/knowledge/patterns`                     | GET                | List all design patterns                                | 3.3     |
-| `/knowledge/documents/:id/confirm`        | POST               | Confirm a PDF preview and proceed with chunking         | 5.1     |
-| `/hooks`                                  | GET, POST          | List / create event hooks                               | 5.1     |
-| `/hooks/:id`                              | GET, PATCH, DELETE | Read / update / delete an event hook                    | 5.1     |
-| `/maintenance/tick`                       | POST               | Trigger maintenance (retention, retries, schedules)     | 5.1     |
-| `/mcp/settings`                           | GET, PATCH         | MCP server configuration                                | 6       |
-| `/mcp/tools`                              | GET                | List MCP-exposed tools                                  | 6       |
-| `/mcp/tools/:id`                          | PATCH              | Toggle / configure MCP tool exposure                    | 6       |
-| `/mcp/resources`                          | GET                | List MCP-exposed resources                              | 6       |
-| `/mcp/resources/:id`                      | PATCH              | Toggle / configure MCP resource exposure                | 6       |
-| `/mcp/keys`                               | GET, POST          | List / create MCP API keys                              | 6       |
-| `/mcp/keys/:id`                           | GET, PATCH, DELETE | Read / update / revoke MCP API key                      | 6       |
-| `/mcp/keys/:id/rotate`                    | POST               | Rotate an MCP API key                                   | 6       |
-| `/mcp/audit`                              | GET                | Query MCP audit log                                     | 6       |
-| `/mcp/sessions`                           | GET                | List MCP sessions                                       | 6       |
-| `/mcp/sessions/:id`                       | GET                | Read a single MCP session                               | 6       |
-| `/audit-log`                              | GET                | Admin action audit trail (paginated, filterable)        | 8       |
+
+> **Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`.
+> | `/executions` | GET | List workflow executions (paginated) | 5.1 |
+> | `/conversations/export` | POST | Export conversations as JSON | 5.1 |
+> | `/conversations/:id/messages/:mid` | GET | Read a single message | 5.1 |
+> | `/conversations/search` | GET | Full-text search across conversations | 5.1 |
+> | `/knowledge/patterns` | GET | List all design patterns | 3.3 |
+> | `/knowledge/documents/:id/confirm` | POST | Confirm a PDF preview and proceed with chunking | 5.1 |
+> | `/hooks` | GET, POST | List / create event hooks | 5.1 |
+> | `/hooks/:id` | GET, PATCH, DELETE | Read / update / delete an event hook | 5.1 |
+> | `/maintenance/tick` | POST | Trigger maintenance (retention, retries, schedules) | 5.1 |
+> | `/mcp/settings` | GET, PATCH | MCP server configuration | 6 |
+> | `/mcp/tools` | GET | List MCP-exposed tools | 6 |
+> | `/mcp/tools/:id` | PATCH | Toggle / configure MCP tool exposure | 6 |
+> | `/mcp/resources` | GET | List MCP-exposed resources | 6 |
+> | `/mcp/resources/:id` | PATCH | Toggle / configure MCP resource exposure | 6 |
+> | `/mcp/keys` | GET, POST | List / create MCP API keys | 6 |
+> | `/mcp/keys/:id` | GET, PATCH, DELETE | Read / update / revoke MCP API key | 6 |
+> | `/mcp/keys/:id/rotate` | POST | Rotate an MCP API key | 6 |
+> | `/mcp/audit` | GET | Query MCP audit log | 6 |
+> | `/mcp/sessions` | GET | List MCP sessions | 6 |
+> | `/mcp/sessions/:id` | GET | Read a single MCP session | 6 |
+> | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
 107 admin route files, 8 consumer chat route files, 1 webhook trigger route file (116 total). For architecture detail see `.context/orchestration/admin-api.md`.
 
@@ -337,6 +339,14 @@ Replaces the current `workflowDefinition` with the value at `workflowDefinitionH
 
 Body: `{ versionIndex: number }`. Returns the updated workflow.
 
+**Constraints:**
+
+- `versionIndex` is bounds-checked against history length (out-of-range returns 400)
+- Optimistic locking via `updatedAt` in the WHERE clause prevents concurrent reverts
+- History is capped at 50 entries (oldest trimmed first)
+- The target definition is validated against the current schema — old incompatible definitions may be rejected
+- Audit-logged via `logAdminAction`
+
 ### `GET /executions/:id`
 
 Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `session.user.id` — cross-user returns 404.
@@ -355,7 +365,7 @@ Response: `{ success: true, executionId }`
 
 ### `POST /executions/:id/retry-step`
 
-Prepares a failed execution for retry from a specific step. Truncates the trace at the failed step, recalculates token/cost totals from remaining entries, and resets the execution status to `running`.
+Prepares a failed execution for retry from a specific step. Truncates the trace at the failed step, recalculates token/cost totals from remaining entries, and resets the execution status to `pending` (not `running` — signals "ready to resume but no engine attached yet").
 
 ```jsonc
 // Request
