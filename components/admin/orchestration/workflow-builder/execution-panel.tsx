@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  Clock,
   Loader2,
   RefreshCw,
   StopCircle,
@@ -236,6 +237,11 @@ export function ExecutionPanel({
       }
       case 'workflow_completed':
         setBudgetWarning(null);
+        // Reconcile totals from the authoritative engine figures — the
+        // running sum from step_completed events may understate if steps
+        // were skipped or failed without emitting cost data.
+        if (typeof d.totalTokensUsed === 'number') setTotalTokens(d.totalTokensUsed);
+        if (typeof d.totalCostUsd === 'number') setTotalCost(d.totalCostUsd);
         setStatus('completed');
         break;
       case 'workflow_failed':
@@ -330,6 +336,8 @@ export function ExecutionPanel({
         return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />;
       case 'completed':
         return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      case 'awaiting_approval':
+        return <Clock className="h-4 w-4 text-amber-500" />;
       case 'failed':
       case 'aborted':
         return <XCircle className="h-4 w-4 text-red-500" />;

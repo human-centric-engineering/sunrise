@@ -166,6 +166,10 @@ export function WorkflowDetailsDialog({
                     like network timeouts.
                   </li>
                   <li>
+                    <strong>Skip</strong> — mark the step as failed but continue to the next step.
+                    Use when the step is non-critical.
+                  </li>
+                  <li>
                     <strong>Fallback</strong> — run a backup path you&apos;ve connected in the
                     builder. Use when you have an alternative approach (e.g. try a different model).
                   </li>
