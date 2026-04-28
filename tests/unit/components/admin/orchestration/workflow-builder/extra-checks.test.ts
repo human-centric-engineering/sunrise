@@ -11,6 +11,8 @@
  * - MISSING_REQUIRED_CONFIG: rag_retrieve with empty query
  * - MISSING_REQUIRED_CONFIG: tool_call with no capabilitySlug
  * - MISSING_REQUIRED_CONFIG: human_approval with empty prompt
+ * - CYCLE_DETECTED: 2-node cycle, 3-node cycle, self-loop, diamond-with-cycle
+ * - DANGLING_EDGE: edge referencing deleted source or target node
  *
  * @see components/admin/orchestration/workflow-builder/extra-checks.ts
  */
@@ -248,6 +250,115 @@ describe('runExtraChecks', () => {
       const errors = runExtraChecks(nodes, edges);
       const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
       expect(missing).toHaveLength(0);
+    });
+  });
+
+  describe('CYCLE_DETECTED', () => {
+    it('flags a 2-node cycle (A→B→A)', () => {
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [makeEdge('a', 'b'), makeEdge('b', 'a')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].message).toContain('Cycle detected');
+    });
+
+    it('flags a 3-node cycle (A→B→C→A)', () => {
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+        makeNode('c', 'chain', {}, 'C'),
+      ];
+      const edges = [makeEdge('a', 'b'), makeEdge('b', 'c'), makeEdge('c', 'a')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].message).toContain('a');
+      expect(cycles[0].message).toContain('b');
+      expect(cycles[0].message).toContain('c');
+    });
+
+    it('flags a self-loop (A→A)', () => {
+      const nodes = [makeNode('a', 'chain', {}, 'A')];
+      const edges = [makeEdge('a', 'a')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].stepId).toBe('a');
+    });
+
+    it('flags a diamond-with-back-edge cycle (A→B, A→C, B→D, C→D, D→A)', () => {
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+        makeNode('c', 'chain', {}, 'C'),
+        makeNode('d', 'chain', {}, 'D'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        makeEdge('a', 'c'),
+        makeEdge('b', 'd'),
+        makeEdge('c', 'd'),
+        makeEdge('d', 'a'),
+      ];
+
+      const errors = runExtraChecks(nodes, edges);
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles.length).toBeGreaterThanOrEqual(1);
+      expect(cycles[0].message).toContain('Cycle detected');
+    });
+
+    it('does NOT flag a DAG (no cycles)', () => {
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+        makeNode('c', 'chain', {}, 'C'),
+      ];
+      const edges = [makeEdge('a', 'b'), makeEdge('b', 'c')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(0);
+    });
+  });
+
+  describe('DANGLING_EDGE', () => {
+    it('flags an edge whose target node no longer exists', () => {
+      const nodes = [makeNode('a', 'chain', {}, 'A')];
+      // Edge points to 'deleted' which is not in the node list
+      const edges = [makeEdge('a', 'deleted')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const dangling = errors.filter((e) => e.code === 'DANGLING_EDGE');
+      expect(dangling).toHaveLength(1);
+    });
+
+    it('flags an edge whose source node no longer exists', () => {
+      const nodes = [makeNode('b', 'chain', {}, 'B')];
+      // Edge from 'deleted' which is not in the node list
+      const edges = [makeEdge('deleted', 'b')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const dangling = errors.filter((e) => e.code === 'DANGLING_EDGE');
+      expect(dangling).toHaveLength(1);
+    });
+
+    it('does NOT flag edges when both source and target exist', () => {
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [makeEdge('a', 'b')];
+
+      const errors = runExtraChecks(nodes, edges);
+      const dangling = errors.filter((e) => e.code === 'DANGLING_EDGE');
+      expect(dangling).toHaveLength(0);
     });
   });
 
