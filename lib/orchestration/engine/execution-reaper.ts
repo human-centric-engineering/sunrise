@@ -51,7 +51,11 @@ export async function reapZombieExecutions(
     prisma.aiWorkflowExecution.updateMany({
       where: {
         status: WorkflowStatus.RUNNING,
-        startedAt: { lt: runningCutoff },
+        // Use updatedAt (not startedAt) so resumed executions aren't
+        // immediately reaped — the resume path preserves the original
+        // startedAt, but updatedAt is refreshed when status flips back
+        // to RUNNING.
+        updatedAt: { lt: runningCutoff },
       },
       data: {
         status: WorkflowStatus.FAILED,

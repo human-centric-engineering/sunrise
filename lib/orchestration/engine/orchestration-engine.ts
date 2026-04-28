@@ -883,7 +883,7 @@ export class OrchestrationEngine {
       paused: batchPaused,
       failureReason: batchFailureReason,
       lastOutput,
-      nextIds: allNextIds,
+      nextIds: [...new Set(allNextIds)],
     };
   }
 
@@ -1034,6 +1034,13 @@ export class OrchestrationEngine {
             return parsed.success ? [parsed.data as ExecutionTraceEntry] : [];
           })
         : [];
+      if (Array.isArray(rawTrace) && trace.length < rawTrace.length) {
+        baseLogger.warn('Resume: dropped corrupted trace entries', {
+          executionId: row.id,
+          totalEntries: rawTrace.length,
+          validEntries: trace.length,
+        });
+      }
       const ctx = createContext({
         executionId: row.id,
         workflowId: workflow.id,
