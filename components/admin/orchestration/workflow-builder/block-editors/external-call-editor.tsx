@@ -10,6 +10,13 @@ import { Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 
@@ -71,22 +78,25 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           <Label htmlFor="ext-method" className="text-xs">
             Method
           </Label>
-          <select
-            id="ext-method"
+          <Select
             value={config.method ?? 'POST'}
-            onChange={(e) =>
+            onValueChange={(value) =>
               onChange({
-                method: e.target.value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+                method: value as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
               })
             }
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="PATCH">PATCH</option>
-            <option value="DELETE">DELETE</option>
-          </select>
+            <SelectTrigger id="ext-method">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="GET">GET</SelectItem>
+              <SelectItem value="POST">POST</SelectItem>
+              <SelectItem value="PUT">PUT</SelectItem>
+              <SelectItem value="PATCH">PATCH</SelectItem>
+              <SelectItem value="DELETE">DELETE</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="ext-timeout" className="text-xs">
@@ -185,21 +195,24 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
           <Label htmlFor="ext-auth-type" className="text-xs">
             Auth type
           </Label>
-          <select
-            id="ext-auth-type"
+          <Select
             value={config.authType ?? 'none'}
-            onChange={(e) =>
+            onValueChange={(value) =>
               onChange({
-                authType: e.target.value as 'none' | 'bearer' | 'api-key' | 'query-param',
+                authType: value as 'none' | 'bearer' | 'api-key' | 'query-param',
               })
             }
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="none">None</option>
-            <option value="bearer">Bearer token</option>
-            <option value="api-key">API key (header)</option>
-            <option value="query-param">API key (query param)</option>
-          </select>
+            <SelectTrigger id="ext-auth-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="bearer">Bearer token</SelectItem>
+              <SelectItem value="api-key">API key (header)</SelectItem>
+              <SelectItem value="query-param">API key (query param)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {config.authType && config.authType !== 'none' && (
           <div className="space-y-1.5">

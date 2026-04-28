@@ -5,6 +5,13 @@
  */
 
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 
@@ -46,15 +53,18 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
             <strong>Regex</strong> — pattern match against input (fast, zero cost).
           </FieldHelp>
         </Label>
-        <select
-          id="guard-mode"
+        <Select
           value={config.mode ?? 'llm'}
-          onChange={(e) => onChange({ mode: e.target.value as 'llm' | 'regex' })}
-          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          onValueChange={(value) => onChange({ mode: value as 'llm' | 'regex' })}
         >
-          <option value="llm">LLM</option>
-          <option value="regex">Regex</option>
-        </select>
+          <SelectTrigger id="guard-mode">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="llm">LLM</SelectItem>
+            <SelectItem value="regex">Regex</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="space-y-1.5">
@@ -65,15 +75,18 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
             the failure but continue to the pass edge.
           </FieldHelp>
         </Label>
-        <select
-          id="guard-fail-action"
+        <Select
           value={config.failAction ?? 'block'}
-          onChange={(e) => onChange({ failAction: e.target.value as 'block' | 'flag' })}
-          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          onValueChange={(value) => onChange({ failAction: value as 'block' | 'flag' })}
         >
-          <option value="block">Block</option>
-          <option value="flag">Flag</option>
-        </select>
+          <SelectTrigger id="guard-fail-action">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="block">Block</SelectItem>
+            <SelectItem value="flag">Flag</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </div>
   );
