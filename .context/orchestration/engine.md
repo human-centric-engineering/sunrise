@@ -184,14 +184,25 @@ Each step carries `errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail'` in its
 
 `ExecutorError` carries a `retriable` flag (defaults to `true`). When `strategy === 'retry'` and the error has `retriable: false`, the engine skips retry attempts and fails immediately. This prevents pointless retries on HTTP 404, missing credentials, or host-not-allowed errors.
 
-Notable non-retriable error codes from the `external_call` executor:
+Notable non-retriable error codes by executor:
 
-| Code                    | Meaning                                                         |
-| ----------------------- | --------------------------------------------------------------- |
-| `request_aborted`       | Execution's `AbortSignal` was already triggered before the call |
-| `outbound_rate_limited` | Per-host outbound rate limit exceeded for the target            |
+| Executor        | Code                            | Meaning                                                         |
+| --------------- | ------------------------------- | --------------------------------------------------------------- |
+| `external_call` | `host_not_allowed`              | URL hostname not in `ORCHESTRATION_ALLOWED_HOSTS`               |
+| `external_call` | `missing_auth_secret`           | Auth env var not set                                            |
+| `external_call` | `http_error`                    | Non-retriable HTTP status (4xx except 429)                      |
+| `external_call` | `response_too_large`            | Response body exceeds `maxResponseBytes`                        |
+| `external_call` | `request_aborted`               | Execution's `AbortSignal` was already triggered before the call |
+| `tool_call`     | `missing_capability_slug`       | Step config has no `capabilitySlug`                             |
+| `tool_call`     | `unknown_capability`            | Capability slug not registered                                  |
+| `tool_call`     | `capability_inactive`           | Capability exists but is not active                             |
+| `tool_call`     | `capability_disabled_for_agent` | Capability disabled for the calling agent/workflow              |
+| `tool_call`     | `invalid_args`                  | Arguments failed Zod validation                                 |
+| `tool_call`     | `requires_approval`             | Capability requires admin approval                              |
 
-See [`external-calls.md`](./external-calls.md) for the full error code table.
+Retriable codes: `rate_limited`, `execution_error` (tool_call), `http_error_retriable` (429/502/503/504), `outbound_rate_limited` (external_call).
+
+See [`external-calls.md`](./external-calls.md) for the full external_call error code table.
 
 ### Per-step timeout
 
@@ -245,8 +256,8 @@ The `pending` → `running` transition happens inside `initRun()` when the engin
 
 The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
 
-- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect).
-- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry).
+- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect). Uses `updatedAt` so that resumed executions (which preserve the original `startedAt`) aren't prematurely reaped — the resume path refreshes `updatedAt` when it flips status back to `running`.
+- **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry). Uses `createdAt` (not `updatedAt`) so incidental DB writes don't reset the reap timer.
 - **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
 
 Called by the unified maintenance tick endpoint.
