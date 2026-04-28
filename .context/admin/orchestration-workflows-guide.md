@@ -62,11 +62,13 @@ interface ConditionalEdge {
 
 ### Input Steps
 
-| Type            | Label         | Purpose                           | Key Config                                                                        | Default Config                                                    |
-| --------------- | ------------- | --------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `tool_call`     | Tool Call     | Execute a registered capability   | `capabilitySlug` (required)                                                       | `{ capabilitySlug: '' }`                                          |
-| `rag_retrieve`  | RAG Retrieve  | Search knowledge base for context | `query`, `topK`, `similarityThreshold`                                            | `{ query: '', topK: 5, similarityThreshold: 0.7 }`                |
-| `external_call` | External Call | HTTP call to an external service  | `url`, `method`, `headers`, `bodyTemplate`, `timeoutMs`, `authType`, `authSecret` | `{ url: '', method: 'POST', timeoutMs: 30000, authType: 'none' }` |
+| Type            | Label         | Purpose                           | Key Config                                                                                             | Default Config                                                    |
+| --------------- | ------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `tool_call`     | Tool Call     | Execute a registered capability   | `capabilitySlug` (required)                                                                            | `{ capabilitySlug: '' }`                                          |
+| `rag_retrieve`  | RAG Retrieve  | Search knowledge base for context | `query`, `topK`, `similarityThreshold`                                                                 | `{ query: '', topK: 5, similarityThreshold: 0.7 }`                |
+| `external_call` | External Call | HTTP call to an external service  | `url`, `method`, `headers`, `bodyTemplate`, `timeoutMs`, `authType`, `authSecret`, `responseTransform` | `{ url: '', method: 'POST', timeoutMs: 30000, authType: 'none' }` |
+
+> **Note:** `external_call` supports an optional `responseTransform` field for extracting data from the HTTP response before passing it to the next step. Accepts JMESPath expressions or Handlebars templates.
 
 ### Output Steps
 
@@ -74,6 +76,8 @@ interface ConditionalEdge {
 | ------------------- | ----------------- | ------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------- |
 | `parallel`          | Parallel          | Fan out to concurrent branches, join results                 | `branches`, `timeoutMs`, `stragglerStrategy` | `{ branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' }`    |
 | `send_notification` | Send Notification | Send an email or webhook notification with templated content | `channel`, `to`, `subject`, `bodyTemplate`   | `{ channel: 'email', to: '', subject: '', bodyTemplate: '{{input}}' }` |
+
+> **Note:** `send_notification` config is discriminated by `channel`: email mode requires `to` and `subject`; webhook mode requires `webhookUrl`. The UI editor switches fields dynamically based on the selected channel.
 
 ### Orchestration Steps
 
@@ -93,6 +97,8 @@ The backend validator (`validateWorkflow`) enforces required config for these st
 - `agent_call` must have `config.agentSlug` (error: `MISSING_AGENT_SLUG`)
 
 The FE extra-checks (`runExtraChecks()`) extend this with five additional checks: required-config validations for `llm_call`, `rag_retrieve`, `plan`, `reflect`, `route`, `agent_call`, and `send_notification`; plus `DISCONNECTED_NODE` (orphaned nodes), `PARALLEL_WITHOUT_MERGE` (divergent branches), `CYCLE_DETECTED` (DFS cycle check), and `DANGLING_EDGE` (edges referencing deleted nodes). These show red-ring errors instantly on the canvas without waiting for a save round-trip.
+
+> **FE/BE asymmetry:** The backend validator does **not** check for empty `llm_call.prompt`, `rag_retrieve.query`, `plan.objective`, or `reflect.critiquePrompt`. These are enforced only by the FE extra-checks. Workflows created via the API without the builder UI can pass structural validation with empty config fields and will fail at runtime. This is a known limitation — the backend validates graph structure and the six types listed above, while the FE validates operational completeness.
 
 ## Error Handling Strategies
 
