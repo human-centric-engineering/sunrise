@@ -84,7 +84,7 @@ export function BuilderToolbar({
   saved,
   hasErrors,
 }: BuilderToolbarProps) {
-  const executeDisabled = mode !== 'edit';
+  const executeDisabled = mode !== 'edit' || hasErrors;
   return (
     <div
       data-testid="builder-toolbar"
@@ -188,7 +188,11 @@ export function BuilderToolbar({
           onClick={onExecute}
           disabled={executeDisabled}
           title={
-            executeDisabled ? EXECUTE_CREATE_TOOLTIP : 'Run this workflow now with a test input'
+            mode !== 'edit'
+              ? EXECUTE_CREATE_TOOLTIP
+              : hasErrors
+                ? 'Fix validation errors before executing'
+                : 'Run this workflow now with a test input'
           }
         >
           <Play className="h-4 w-4 sm:mr-2" />

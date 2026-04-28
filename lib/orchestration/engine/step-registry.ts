@@ -55,6 +55,8 @@ export interface StepRegistryEntry {
   inputs: number;
   /** Number of output handles (source side). */
   outputs: number;
+  /** Human-readable labels for each output handle (when outputs > 1). */
+  outputLabels?: string[];
   /** Optional pattern number for the "Learn more" forward-link. */
   patternNumber?: number;
   /** Seed config applied when a new block is dropped on the canvas. */
@@ -96,6 +98,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitBranch,
     inputs: 1,
     outputs: 2,
+    outputLabels: ['Match', 'No match'],
     patternNumber: 2,
     defaultConfig: { classificationPrompt: '', routes: [] },
     estimatedDuration: '~1-3s',
@@ -108,6 +111,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitFork,
     inputs: 1,
     outputs: 3,
+    outputLabels: ['Branch 1', 'Branch 2', 'Branch 3'],
     patternNumber: 3,
     defaultConfig: { branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' },
     estimatedDuration: 'varies',
@@ -180,6 +184,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: ShieldCheck,
     inputs: 1,
     outputs: 2,
+    outputLabels: ['Pass', 'Fail'],
     patternNumber: 18,
     defaultConfig: { rules: '', mode: 'llm', failAction: 'block', temperature: 0.1 },
     estimatedDuration: '~1-3s',

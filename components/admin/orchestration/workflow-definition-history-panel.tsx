@@ -15,6 +15,8 @@
 import { useCallback, useState } from 'react';
 import { ChevronDown, ChevronRight, GitCompare, RotateCcw } from 'lucide-react';
 
+import { FieldHelp } from '@/components/ui/field-help';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -128,6 +130,10 @@ export function WorkflowDefinitionHistoryPanel({
       >
         {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         Definition history
+        <FieldHelp title="Definition history">
+          Every save creates a versioned snapshot. You can compare any two versions with the Diff
+          button, or revert to a previous version — reverts are also tracked, so nothing is lost.
+        </FieldHelp>
         {data && (
           <span className="text-muted-foreground ml-1 text-xs">
             ({data.history.length} {data.history.length === 1 ? 'version' : 'versions'})
