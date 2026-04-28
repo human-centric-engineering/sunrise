@@ -68,7 +68,7 @@ interface ConditionalEdge {
 | `rag_retrieve`  | RAG Retrieve  | Search knowledge base for context | `query`, `topK`, `similarityThreshold`                                                                 | `{ query: '', topK: 5, similarityThreshold: 0.7 }`                |
 | `external_call` | External Call | HTTP call to an external service  | `url`, `method`, `headers`, `bodyTemplate`, `timeoutMs`, `authType`, `authSecret`, `responseTransform` | `{ url: '', method: 'POST', timeoutMs: 30000, authType: 'none' }` |
 
-> **Note:** `external_call` supports an optional `responseTransform` field for extracting data from the HTTP response before passing it to the next step. Accepts JMESPath expressions or Handlebars templates. This field is available via the API and JSON editor only — the visual builder does not expose it.
+> **Note:** `external_call` supports an optional `responseTransform` field for extracting data from the HTTP response before passing it to the next step. Accepts JMESPath expressions or Handlebars-style templates. The visual builder exposes this under "Response transform" in the external-call editor.
 
 ### Output Steps
 

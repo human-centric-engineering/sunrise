@@ -75,6 +75,8 @@ Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `pri
 
 If the process dies mid-run, the row reflects the **last completed checkpoint**. Mid-run resume of LLM failures is not yet implemented — the one resume path that is implemented is `human_approval`, handled by the approve route at `app/api/v1/admin/orchestration/executions/[id]/approve/route.ts`.
 
+**Resume rehydration.** When resuming, `initRun()` rebuilds `ctx.stepOutputs` from the persisted trace. Both `completed` and `skipped` entries are rehydrated — skipped steps contribute `null` to `stepOutputs` so downstream template interpolation finds `null` (not `undefined`) for skipped predecessors.
+
 ## Parallel Execution
 
 When a `parallel` node completes, its `nextSteps` targets are all pushed to the ready queue. The engine detects multiple ready steps (those whose predecessors have all been visited) and runs them concurrently:
@@ -87,6 +89,8 @@ When a `parallel` node completes, its `nextSteps` targets are all pushed to the 
 6. **Convergence** — a join step (with in-degree > 1) stays in the `pending` set until all its predecessors complete, then becomes ready on the next iteration.
 
 The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
+
+**Parallel skip events.** When a parallel branch fails and the step's error strategy is `skip`, the engine emits a `step_failed` SSE event (with `willRetry: false`) so SSE clients learn about the failure immediately — without this, the client wouldn't see the failure until trace reconciliation. The `skipError` field on `StepResult` carries the sanitised error message for the event payload.
 
 ## `ExecutionEvent` (SSE payloads)
 
@@ -123,7 +127,7 @@ interface ExecutionContext {
 }
 ```
 
-Executors receive a **frozen snapshot** (via `snapshotContext()`) so they cannot silently mutate totals or sibling outputs. They return a `StepResult { output, tokensUsed, costUsd, nextStepIds? }`; the engine merges that back into the live context via `mergeStepResult()` and checkpoints.
+Executors receive a **frozen snapshot** (via `snapshotContext()`) so they cannot silently mutate totals or sibling outputs. They return a `StepResult { output, tokensUsed, costUsd, nextStepIds?, skipped?, skipError? }`; the engine merges that back into the live context via `mergeStepResult()` and checkpoints. When `skipped` is true (set by the `skip` error strategy), the engine records a `'skipped'` trace entry and `skipError` carries the sanitised error message for SSE event emission.
 
 Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id.
 
