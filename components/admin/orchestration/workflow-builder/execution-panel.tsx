@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
@@ -355,7 +356,22 @@ export function ExecutionPanel({
     >
       <div className="flex items-center gap-2 border-b px-4 py-3">
         {headerIcon}
-        <h2 className="flex-1 text-sm font-medium">Execution</h2>
+        <h2 className="flex-1 text-sm font-medium">
+          Execution{' '}
+          <FieldHelp title="Execution panel">
+            <p>
+              <strong>Status icons:</strong> spinning loader = running, green checkmark = completed,
+              red X = failed, skip arrow = skipped.
+            </p>
+            <p>
+              Token and cost counters show <strong>cumulative totals</strong> across all steps
+              executed so far.
+            </p>
+            <p>
+              Budget warnings trigger at <strong>80%</strong> of the configured budget limit.
+            </p>
+          </FieldHelp>
+        </h2>
         <Button
           size="icon"
           variant="ghost"
