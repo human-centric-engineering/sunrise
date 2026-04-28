@@ -55,6 +55,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       id: true,
       workflowDefinition: true,
       workflowDefinitionHistory: true,
+      updatedAt: true,
     },
   });
   if (!current) throw new NotFoundError(`Workflow ${id} not found`);
@@ -89,13 +90,24 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     },
   ];
 
-  const workflow = await prisma.aiWorkflow.update({
-    where: { id },
-    data: {
-      workflowDefinition: target.definition as unknown as Prisma.InputJsonValue,
-      workflowDefinitionHistory: nextHistory as unknown as Prisma.InputJsonValue,
-    },
-  });
+  // Cap at 50 entries (oldest trimmed first) — mirrors the PATCH handler.
+  if (nextHistory.length > 50) nextHistory.splice(0, nextHistory.length - 50);
+
+  let workflow;
+  try {
+    workflow = await prisma.aiWorkflow.update({
+      where: { id, updatedAt: current.updatedAt },
+      data: {
+        workflowDefinition: target.definition as unknown as Prisma.InputJsonValue,
+        workflowDefinitionHistory: nextHistory as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+      throw new ValidationError('Workflow was modified by another request. Refresh and try again.');
+    }
+    throw err;
+  }
 
   log.info('Workflow definition reverted', {
     workflowId: id,

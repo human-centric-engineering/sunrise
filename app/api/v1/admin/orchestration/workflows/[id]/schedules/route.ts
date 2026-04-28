@@ -59,6 +59,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
+  const existingCount = await prisma.aiWorkflowSchedule.count({
+    where: { workflowId: parsed.data },
+  });
+  if (existingCount >= 10) {
+    throw new ValidationError('Maximum of 10 schedules per workflow');
+  }
+
   const body = await validateRequestBody(request, createScheduleSchema);
 
   if (!isValidCron(body.cronExpression)) {
