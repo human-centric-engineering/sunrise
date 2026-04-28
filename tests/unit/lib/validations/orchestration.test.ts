@@ -95,7 +95,7 @@ const VALID_WORKFLOW_DEF = {
     {
       id: 'step-1',
       name: 'Step One',
-      type: 'agent',
+      type: 'llm_call',
       config: { agentId: VALID_CUID },
       nextSteps: [],
     },
@@ -449,7 +449,19 @@ describe('workflowDefinitionSchema', () => {
 
 describe('workflowDefinitionHistoryEntrySchema', () => {
   const VALID_ENTRY = {
-    definition: { steps: [], entryStepId: 'step-1', errorStrategy: 'fail' },
+    definition: {
+      steps: [
+        {
+          id: 'step-1',
+          name: 'Step One',
+          type: 'llm_call',
+          config: {},
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'step-1',
+      errorStrategy: 'fail',
+    },
     changedAt: '2025-06-01T00:00:00.000Z',
     changedBy: 'cmjbv4i3x00003wsloputgwul',
   };
@@ -495,9 +507,21 @@ describe('workflowDefinitionHistoryEntrySchema', () => {
 
 describe('workflowDefinitionHistorySchema', () => {
   const VALID_ENTRY = {
-    definition: { steps: [] },
+    definition: {
+      steps: [
+        {
+          id: 'step-1',
+          name: 'Step One',
+          type: 'llm_call',
+          config: {},
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'step-1',
+      errorStrategy: 'fail',
+    },
     changedAt: '2025-06-01T00:00:00.000Z',
-    changedBy: 'user-abc',
+    changedBy: 'cmjbv4i3x00003wsloputgwul',
   };
 
   it('accepts an empty array', () => {

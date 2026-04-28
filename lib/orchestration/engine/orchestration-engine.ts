@@ -516,7 +516,7 @@ export class OrchestrationEngine {
 
       if (strategy === 'skip') {
         yield stepFailed(step.id, sanitizeError(execErr), false);
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: 0, costUsd: 0, skipped: true };
       }
 
       if (strategy === 'fallback') {
@@ -654,7 +654,7 @@ export class OrchestrationEngine {
       stepId: step.id,
       stepType: step.type,
       label: step.name,
-      status: 'completed',
+      status: result.skipped ? 'skipped' : 'completed',
       output: result.output,
       tokensUsed: result.tokensUsed,
       costUsd: result.costUsd,
@@ -707,10 +707,10 @@ export class OrchestrationEngine {
    * Results are merged into context **sequentially** after all settle to
    * avoid race conditions on `ctx.totalCostUsd` and `ctx.totalTokensUsed`.
    *
-   * **Budget note:** budget is checked by the caller after this method
-   * returns, not between branches. All branches in the batch run to
-   * completion (or failure) before the budget guard fires. Use per-step
-   * `timeoutMs` to bound individual branch cost.
+   * **Budget note:** all branches run concurrently and complete before
+   * results are merged. Budget is checked after merging each branch's
+   * cost — if exceeded, remaining branch results are skipped and the
+   * batch is marked as failed.
    *
    * Events from all branches are collected and returned — the caller
    * yields them after this method returns.
@@ -720,7 +720,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
-    _budgetLimitUsd: number | undefined,
+    budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): Promise<{
     events: ExecutionEvent[];
@@ -848,7 +848,7 @@ export class OrchestrationEngine {
         stepId: step.id,
         stepType: step.type,
         label: step.name,
-        status: 'completed',
+        status: stepResult.skipped ? 'skipped' : 'completed',
         output: stepResult.output,
         tokensUsed: stepResult.tokensUsed,
         costUsd: stepResult.costUsd,
@@ -875,6 +875,14 @@ export class OrchestrationEngine {
           ? stepResult.nextStepIds
           : step.nextSteps.map((edge) => edge.targetStepId);
       allNextIds.push(...nextIds);
+
+      // Budget check after merging branch cost.
+      if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
+        allEvents.push(workflowFailed('Budget exceeded during parallel batch', step.id));
+        batchFailed = true;
+        batchFailureReason = 'Budget exceeded during parallel batch';
+        break;
+      }
     }
 
     return {
@@ -984,7 +992,7 @@ export class OrchestrationEngine {
       const partialCost = execErr.costUsd;
 
       if (strategy === 'skip') {
-        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost, skipped: true };
       }
 
       if (strategy === 'fallback') {

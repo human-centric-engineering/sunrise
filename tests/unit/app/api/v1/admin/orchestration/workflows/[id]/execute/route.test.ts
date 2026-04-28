@@ -73,6 +73,7 @@ vi.mock('@/lib/api/sse', () => ({
 
 vi.mock('@/lib/orchestration/workflows', () => ({
   validateWorkflow: vi.fn(() => ({ ok: true, errors: [] })),
+  semanticValidateWorkflow: vi.fn(() => Promise.resolve({ ok: true, errors: [] })),
 }));
 
 const mockExecute = vi.fn(() => (async function* () {})());
@@ -110,7 +111,7 @@ const VALID_DEFINITION = {
     {
       id: 'step-1',
       name: 'LLM Step',
-      type: 'llm',
+      type: 'llm_call',
       config: { model: 'gpt-4o-mini', prompt: 'Hello' },
       nextSteps: [],
     },

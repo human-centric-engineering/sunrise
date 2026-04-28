@@ -1940,8 +1940,8 @@ export const parallelConfigSchema = stepErrorConfigSchema.extend({
   branches: z.array(z.unknown()).optional(),
   /** Timeout for waiting on all branches (ms). */
   timeoutMs: z.number().int().positive().optional(),
-  /** Strategy for slow branches: 'wait-all' or 'first-settled'. */
-  stragglerStrategy: z.enum(['wait-all', 'first-settled']).optional(),
+  /** Strategy for slow branches: 'wait-all' or 'first-success'. */
+  stragglerStrategy: z.enum(['wait-all', 'first-success']).optional(),
 });
 
 export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [

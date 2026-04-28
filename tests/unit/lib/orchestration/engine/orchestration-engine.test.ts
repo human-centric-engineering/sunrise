@@ -1501,7 +1501,7 @@ describe('OrchestrationEngine', () => {
       ExecutionEvent,
       { type: 'workflow_failed' }
     >;
-    expect(failed.error).toBe('Budget exceeded');
+    expect(failed.error).toBe('Budget exceeded during parallel batch');
   });
 
   // ─── Parallel batch: budget warning after batch ───────────────────

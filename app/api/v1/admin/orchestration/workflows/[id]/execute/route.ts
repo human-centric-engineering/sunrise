@@ -24,7 +24,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { sseResponse } from '@/lib/api/sse';
-import { validateWorkflow } from '@/lib/orchestration/workflows';
+import { validateWorkflow, semanticValidateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import {
   executeWorkflowBodySchema,
@@ -81,6 +81,12 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   if (!dag.ok) {
     throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {
       workflowDefinition: dag.errors,
+    });
+  }
+  const semantic = await semanticValidateWorkflow(definition);
+  if (!semantic.ok) {
+    throw new ValidationError(`Workflow ${id} references invalid agents or capabilities`, {
+      workflowDefinition: semantic.errors,
     });
   }
 

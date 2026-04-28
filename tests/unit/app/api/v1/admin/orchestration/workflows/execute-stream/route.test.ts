@@ -27,7 +27,13 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
-  createRateLimitResponse: vi.fn(),
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
 vi.mock('@/lib/api/context', () => ({
@@ -50,6 +56,7 @@ vi.mock('@/lib/api/sse', () => ({
 
 vi.mock('@/lib/orchestration/workflows', () => ({
   validateWorkflow: vi.fn(() => ({ ok: true, errors: [] })),
+  semanticValidateWorkflow: vi.fn(() => Promise.resolve({ ok: true, errors: [] })),
 }));
 
 const mockExecuteWithSubscriber = vi.fn(() => (async function* () {})());
@@ -81,7 +88,7 @@ const VALID_DEFINITION = {
     {
       id: 'step-1',
       name: 'LLM Step',
-      type: 'llm',
+      type: 'llm_call',
       config: { model: 'gpt-4o-mini', prompt: 'Hello' },
       nextSteps: [],
     },

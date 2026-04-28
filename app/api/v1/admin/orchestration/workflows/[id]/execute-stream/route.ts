@@ -17,7 +17,7 @@ import { prisma } from '@/lib/db/client';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
-import { validateWorkflow } from '@/lib/orchestration/workflows';
+import { validateWorkflow, semanticValidateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -93,6 +93,12 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   if (!dag.ok) {
     throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {
       workflowDefinition: dag.errors,
+    });
+  }
+  const semantic = await semanticValidateWorkflow(definition);
+  if (!semantic.ok) {
+    throw new ValidationError(`Workflow ${id} references invalid agents or capabilities`, {
+      workflowDefinition: semantic.errors,
     });
   }
 
