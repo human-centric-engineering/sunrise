@@ -70,8 +70,8 @@ describe('extractWorkflowDefinition', () => {
       expect(result).toBe(jsonString);
     });
 
-    it('returns the JSON string for a minimal definition with only a steps array', () => {
-      // Arrange — minimal valid shape (steps array is the only required field)
+    it('returns null for a definition with an empty steps array', () => {
+      // Arrange — empty steps array is invalid (workflow must have at least one step)
       const minimal = { steps: [] };
       const jsonString = JSON.stringify(minimal);
       const text = makeCodeBlock(jsonString);
@@ -79,8 +79,8 @@ describe('extractWorkflowDefinition', () => {
       // Act
       const result = extractWorkflowDefinition(text);
 
-      // Assert
-      expect(result).toBe(jsonString);
+      // Assert — rejected early so users don't hit a late validation error in the builder
+      expect(result).toBeNull();
     });
 
     it('returns the JSON string with a pretty-printed (multi-line) definition', () => {

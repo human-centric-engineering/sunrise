@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -10,6 +11,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
+import { stripEmbeddingPrefix } from '@/lib/orchestration/utils/strip-embedding-prefix';
 import type { AiKnowledgeChunk, PatternSummary } from '@/types/orchestration';
 
 interface PatternDetail {
@@ -22,7 +24,7 @@ interface PageProps {
   params: Promise<{ number: string }>;
 }
 
-async function getPatternDetail(num: number): Promise<PatternDetail | null> {
+const getPatternDetail = cache(async (num: number): Promise<PatternDetail | null> => {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num));
     if (!res.ok) return null;
@@ -32,7 +34,7 @@ async function getPatternDetail(num: number): Promise<PatternDetail | null> {
     logger.error('pattern detail page: fetch failed', err);
     return null;
   }
-}
+});
 
 async function getPatternNames(): Promise<Map<number, string>> {
   try {
@@ -57,21 +59,6 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       ? `${detail.patternName} · Learning · AI Orchestration`
       : 'Pattern Not Found · AI Orchestration',
   };
-}
-
-/**
- * Strip the embedding prefix ("PatternName — SectionName\n\n" or "PatternName\n\n")
- * that the chunker prepends for vector search context. The detail page already
- * displays the pattern name and section heading separately.
- */
-function stripEmbeddingPrefix(content: string): string {
-  // The chunker prepends "PatternName — SectionName\n\n" or "PatternName\n\n"
-  // for embedding context. Strip whichever form matches the first line.
-  const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);
-  if (withDash) return withDash[1];
-  const plain = content.match(/^[^\n]+\n\n([\s\S]*)$/);
-  if (plain) return plain[1];
-  return content;
 }
 
 export default async function PatternDetailPage({ params }: PageProps) {
@@ -112,7 +99,9 @@ export default async function PatternDetailPage({ params }: PageProps) {
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
-  const relatedPatterns = extractRelatedPatterns(detail.chunks, num, patternNames);
+  const relatedPatterns = extractRelatedPatterns(detail.chunks, num, patternNames).filter((p) =>
+    patternNames.has(p.number)
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

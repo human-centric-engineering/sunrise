@@ -28,7 +28,7 @@ export const GET = withAdminAuth(async (request) => {
     prisma.aiProviderConfig.findFirst({ where: { isActive: true }, select: { id: true } }),
   ]);
 
-  const embedded = Number(embeddedRows[0].count);
+  const embedded = Number(embeddedRows[0]?.count ?? 0);
   const hasOpenAiKey = !!process.env['OPENAI_API_KEY'];
 
   return successResponse({

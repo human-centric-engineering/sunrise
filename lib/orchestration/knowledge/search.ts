@@ -304,13 +304,34 @@ export async function listPatterns(): Promise<PatternSummary[]> {
   const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
   const tldrByPattern = new Map(tldrChunks.map((c) => [c.patternNumber, c]));
 
-  const summaries: PatternSummary[] = [];
-
+  // Deduplicate by patternNumber — groupBy includes category in the key so
+  // a pattern with chunks in different categories would produce duplicate rows.
+  const merged = new Map<
+    number,
+    { patternName: string | null; category: string | null; chunkCount: number }
+  >();
   for (const group of groups) {
     if (group.patternNumber === null) continue;
+    const existing = merged.get(group.patternNumber);
+    if (existing) {
+      existing.chunkCount += group._count.id;
+      // Keep the first non-null values
+      existing.patternName ??= group.patternName;
+      existing.category ??= group.category;
+    } else {
+      merged.set(group.patternNumber, {
+        patternName: group.patternName,
+        category: group.category,
+        chunkCount: group._count.id,
+      });
+    }
+  }
 
-    const overviewChunk = overviewByPattern.get(group.patternNumber) ?? null;
-    const tldrChunk = tldrByPattern.get(group.patternNumber) ?? null;
+  const summaries: PatternSummary[] = [];
+
+  for (const [patternNumber, { patternName, category, chunkCount }] of merged) {
+    const overviewChunk = overviewByPattern.get(patternNumber) ?? null;
+    const tldrChunk = tldrByPattern.get(patternNumber) ?? null;
 
     const rawMeta: unknown = overviewChunk?.metadata ?? null;
     const metadata =
@@ -323,12 +344,12 @@ export async function listPatterns(): Promise<PatternSummary[]> {
       firstParagraph(tldrChunk?.content) ?? firstParagraph(overviewChunk?.content) ?? null;
 
     summaries.push({
-      patternNumber: group.patternNumber,
-      patternName: group.patternName ?? `Pattern ${group.patternNumber}`,
-      category: group.category,
+      patternNumber,
+      patternName: patternName ?? `Pattern ${patternNumber}`,
+      category,
       complexity,
       description,
-      chunkCount: group._count.id,
+      chunkCount,
     });
   }
 

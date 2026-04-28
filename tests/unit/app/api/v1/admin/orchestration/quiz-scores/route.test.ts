@@ -159,4 +159,69 @@ describe('GET /api/v1/admin/orchestration/quiz-scores', () => {
 
     expect(body.data).toEqual([]);
   });
+
+  it('queries with OR clause to find both agent-linked and orphaned scores', async () => {
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockResolvedValue([]);
+
+    await GET(makeGetRequest());
+
+    expect(prisma.aiEvaluationSession.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ agent: { slug: 'quiz-master' } }, { agentId: null, title: 'Quiz Score' }],
+        }),
+      })
+    );
+  });
+
+  it('handles scores with missing quizScore metadata gracefully', async () => {
+    vi.mocked(prisma.aiEvaluationSession.findMany).mockResolvedValue([
+      {
+        id: 'session-bad',
+        metadata: { quizScore: undefined },
+        completedAt: new Date('2026-04-17T10:00:00Z'),
+      },
+    ] as never);
+
+    const res = await GET(makeGetRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data[0].correct).toBe(0);
+    expect(body.data[0].total).toBe(0);
+  });
+
+  it('rejects unauthenticated requests', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser() as never);
+
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /api/v1/admin/orchestration/quiz-scores — agent fallback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser() as never);
+    vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
+      id: 'session-orphan',
+      metadata: { quizScore: { correct: 1, total: 2 } },
+    } as never);
+  });
+
+  it('creates score with null agentId when quiz-master agent does not exist', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+
+    const res = await POST(makePostRequest({ correct: 1, total: 2 }));
+    expect(res.status).toBe(201);
+
+    expect(prisma.aiEvaluationSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          agentId: null,
+          title: 'Quiz Score',
+        }),
+      })
+    );
+  });
 });

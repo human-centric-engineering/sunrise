@@ -107,18 +107,31 @@ describe('LearningTabs — Quiz tab', () => {
     expect(badge.textContent).toBe('3/5');
   });
 
-  it('parses "X out of Y" score format', async () => {
+  it('parses "Score: X out of Y" format', async () => {
     const user = userEvent.setup();
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
     act(() => {
-      capturedQuizOnStreamComplete?.('You got 2 out of 4 correct so far.');
+      capturedQuizOnStreamComplete?.('Your Score: 2 out of 4 correct so far.');
     });
 
     const badge = screen.getByTestId('quiz-score');
     expect(badge.textContent).toBe('2/4');
+  });
+
+  it('ignores fractions without "score:" prefix (false positive prevention)', async () => {
+    const user = userEvent.setup();
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
+
+    await user.click(screen.getByRole('tab', { name: /quiz/i }));
+
+    act(() => {
+      capturedQuizOnStreamComplete?.('3/5 of the patterns involve chaining.');
+    });
+
+    expect(screen.queryByTestId('quiz-score')).not.toBeInTheDocument();
   });
 
   it('does not show score badge when text has no score', async () => {

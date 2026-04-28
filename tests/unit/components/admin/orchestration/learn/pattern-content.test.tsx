@@ -69,4 +69,24 @@ describe('PatternContent', () => {
 
     expect(screen.getByTestId('mermaid-diagram')).toBeInTheDocument();
   });
+
+  it('renders inline code (no language class) as normal code element', () => {
+    const content = 'Use the `fetch()` function.';
+
+    render(<PatternContent content={content} />);
+
+    const codeEl = screen.getByText('fetch()');
+    expect(codeEl.tagName).toBe('CODE');
+    expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
+  });
+
+  it('preserves pre wrapper for non-mermaid fenced code blocks', () => {
+    const content = '```python\nprint("hello")\n```';
+
+    const { container } = render(<PatternContent content={content} />);
+
+    const preElements = container.querySelectorAll('pre');
+    expect(preElements).toHaveLength(1);
+    expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
+  });
 });

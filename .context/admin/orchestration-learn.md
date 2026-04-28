@@ -17,11 +17,11 @@ The Patterns tab fetches from `GET /api/v1/admin/orchestration/knowledge/pattern
 
 ### Components
 
-| Component         | Type              | File                                                         |
-| ----------------- | ----------------- | ------------------------------------------------------------ |
-| `LearningTabs`    | Client            | `components/admin/orchestration/learn/learning-tabs.tsx`     |
-| `PatternCardGrid` | Server-compatible | `components/admin/orchestration/learn/pattern-card-grid.tsx` |
-| `ChatInterface`   | Client            | `components/admin/orchestration/chat/chat-interface.tsx`     |
+| Component         | Type   | File                                                         |
+| ----------------- | ------ | ------------------------------------------------------------ |
+| `LearningTabs`    | Client | `components/admin/orchestration/learn/learning-tabs.tsx`     |
+| `PatternCardGrid` | Client | `components/admin/orchestration/learn/pattern-card-grid.tsx` |
+| `ChatInterface`   | Client | `components/admin/orchestration/chat/chat-interface.tsx`     |
 
 ### Deep-linking
 
@@ -57,7 +57,7 @@ The quiz tab embeds a `<ChatInterface>` connected to the `quiz-master` agent for
 - **Starter prompts**: "Start a quiz — I'm a beginner", "Start a quiz — I'm intermediate", "Test me on Pattern 14 (RAG)", "Quiz me on workflow composition"
 - **Adaptive difficulty**: The agent adjusts question difficulty based on consecutive correct/incorrect answers
 - **Knowledge-grounded**: Uses `search_knowledge_base` and `get_pattern_detail` to ground explanations in the actual pattern content
-- **Score badge**: A `<Badge>` above the chat displays the running score (e.g. `3/5`), parsed best-effort from the agent's responses via regex matching of "Score: X/Y" or "X out of Y" patterns
+- **Score badge**: A `<Badge>` above the chat displays the running score (e.g. `3/5`), parsed from the agent's responses via regex matching of "Score: X/Y" or "Score: X out of Y" patterns (requires "Score:" prefix to avoid false positives on arbitrary fractions). A `<FieldHelp>` popover explains the badge to new users
 - **Score persistence**: Quiz scores are saved to the database via `POST /api/v1/admin/orchestration/quiz-scores`. On mount, the latest persisted score is loaded via `GET` so scores survive page navigations
 
 ### Question types
@@ -66,7 +66,7 @@ Multiple choice, scenario-based, trade-off analysis, true/false with explanation
 
 ### Card grid layout
 
-`grid gap-4 sm:grid-cols-2 lg:grid-cols-3`. Each card shows pattern name, description snippet, complexity badge, and section count. Complexity badge variants: beginner=default, intermediate=secondary, advanced=destructive.
+`grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3`. Each card shows pattern name, description snippet, complexity badge, and section count. Complexity badge variants: beginner=default, intermediate=secondary, advanced=destructive.
 
 ## Pattern Detail
 
@@ -85,13 +85,14 @@ Cross-references to other patterns are extracted from chunk content via regex (`
 
 ### Components
 
-| Component              | Type              | File                                                              |
-| ---------------------- | ----------------- | ----------------------------------------------------------------- |
-| `PatternContent`       | Client            | `components/admin/orchestration/learn/pattern-content.tsx`        |
-| `MermaidDiagram`       | Client            | `components/admin/orchestration/learn/mermaid-diagram.tsx`        |
-| `UsePatternButton`     | Client            | `components/admin/orchestration/learn/use-pattern-button.tsx`     |
-| `DiscussPatternButton` | Server-compatible | `components/admin/orchestration/learn/discuss-pattern-button.tsx` |
-| `RelatedPatterns`      | Server-compatible | `components/admin/orchestration/learn/related-patterns.tsx`       |
+| Component               | Type              | File                                                               |
+| ----------------------- | ----------------- | ------------------------------------------------------------------ |
+| `PatternContent`        | Client            | `components/admin/orchestration/learn/pattern-content.tsx`         |
+| `MermaidDiagram`        | Client            | `components/admin/orchestration/learn/mermaid-diagram.tsx`         |
+| `UsePatternButton`      | Client            | `components/admin/orchestration/learn/use-pattern-button.tsx`      |
+| `DiscussPatternButton`  | Server-compatible | `components/admin/orchestration/learn/discuss-pattern-button.tsx`  |
+| `RelatedPatterns`       | Server-compatible | `components/admin/orchestration/learn/related-patterns.tsx`        |
+| `PatternDetailSections` | Client            | `components/admin/orchestration/learn/pattern-detail-sections.tsx` |
 
 `PatternContent` uses `react-markdown` with a custom `code` component that intercepts `language-mermaid` blocks and renders them via `MermaidDiagram`.
 

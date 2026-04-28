@@ -12,7 +12,8 @@ export function extractWorkflowDefinition(text: string): string | null {
       parsed !== null &&
       typeof parsed === 'object' &&
       'steps' in parsed &&
-      Array.isArray((parsed as Record<string, unknown>).steps)
+      Array.isArray((parsed as Record<string, unknown>).steps) &&
+      ((parsed as Record<string, unknown>).steps as unknown[]).length > 0
     ) {
       return match[1];
     }
