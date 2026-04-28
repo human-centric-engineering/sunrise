@@ -146,8 +146,10 @@ describe('PatternDetailPage (server component)', () => {
 
     render(await PatternDetailPage({ params: Promise.resolve({ number: '1' }) }));
 
+    // Hero section content is always visible
     expect(screen.getByText(/overview content/i)).toBeInTheDocument();
-    expect(screen.getByText(/how chain of thought works/i)).toBeInTheDocument();
+    // Non-hero sections render as collapsed accordion items — trigger text is visible
+    expect(screen.getByText(/how it works/i)).toBeInTheDocument();
   });
 
   it('renders not-found when pattern does not exist', async () => {
