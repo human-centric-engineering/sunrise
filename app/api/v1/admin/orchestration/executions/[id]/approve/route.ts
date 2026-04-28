@@ -55,7 +55,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   // Persist the approval payload onto the awaiting trace entry so the
   // engine can pick it up on resume.
-  const trace = executionTraceSchema.parse(execution.executionTrace);
+  const traceParse = executionTraceSchema.safeParse(execution.executionTrace);
+  if (!traceParse.success) {
+    throw new ValidationError('Execution trace is corrupted and cannot be modified');
+  }
+  const trace = traceParse.data;
   const awaitingIdx = trace.findIndex((e) => e.status === 'awaiting_approval');
   if (awaitingIdx !== -1) {
     trace[awaitingIdx] = {

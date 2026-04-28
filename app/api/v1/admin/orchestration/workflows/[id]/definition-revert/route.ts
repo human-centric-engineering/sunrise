@@ -81,10 +81,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const target = history[body.versionIndex];
 
   // Push the value we're reverting *from* onto history so it's recoverable.
+  const defParse = workflowDefinitionSchema.safeParse(current.workflowDefinition);
+  if (!defParse.success) {
+    throw new ValidationError('Current definition is corrupted and cannot be archived');
+  }
   const nextHistory: WorkflowDefinitionHistoryEntry[] = [
     ...history,
     {
-      definition: workflowDefinitionSchema.parse(current.workflowDefinition),
+      definition: defParse.data,
       changedAt: new Date().toISOString(),
       changedBy: session.user.id,
     },

@@ -54,7 +54,11 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
-  const trace = executionTraceSchema.parse(execution.executionTrace);
+  const traceParse = executionTraceSchema.safeParse(execution.executionTrace);
+  if (!traceParse.success) {
+    throw new ValidationError('Execution trace is corrupted and cannot be modified');
+  }
+  const trace = traceParse.data;
 
   // Find the failed step in the trace
   const failedIdx = trace.findIndex((e) => e.stepId === body.stepId && e.status === 'failed');
