@@ -13,16 +13,13 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { prisma } from '@/lib/db/client';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
-import { validateWorkflow, semanticValidateWorkflow } from '@/lib/orchestration/workflows';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
-import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
-import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 import { z } from 'zod';
 
 const inputDataSchema = z.record(z.string(), z.unknown());
@@ -34,11 +31,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
 
   const url = new URL(request.url);
   const inputDataRaw = url.searchParams.get('inputData');
@@ -73,42 +65,16 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     budgetLimitUsd = parsed.data;
   }
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
-
-  if (!workflow.isActive) {
-    throw new ValidationError(`Workflow ${id} is not active`, {
-      isActive: ['Workflow must be active before it can be executed'],
-    });
-  }
-
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
-  if (!defParsed.success) {
-    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
-      workflowDefinition: defParsed.error.issues.map((i) => i.message),
-    });
-  }
-  const definition = defParsed.data;
-  const dag = validateWorkflow(definition);
-  if (!dag.ok) {
-    throw new ValidationError(`Workflow ${id} has a structurally invalid definition`, {
-      workflowDefinition: dag.errors,
-    });
-  }
-  const semantic = await semanticValidateWorkflow(definition);
-  if (!semantic.ok) {
-    throw new ValidationError(`Workflow ${id} references invalid agents or capabilities`, {
-      workflowDefinition: semantic.errors,
-    });
-  }
+  // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
+  const { workflow, definition } = await prepareWorkflowExecution(rawId);
 
   log.info('workflow execute-stream started', {
-    workflowId: id,
+    workflowId: workflow.id,
     userId: session.user.id,
   });
 
   const engine = new OrchestrationEngine();
-  const events = engine.executeWithSubscriber({ id: workflow.id, definition }, inputData, {
+  const events = engine.execute({ id: workflow.id, definition }, inputData, {
     userId: session.user.id,
     budgetLimitUsd,
     signal: request.signal,

@@ -59,11 +59,11 @@ vi.mock('@/lib/orchestration/workflows', () => ({
   semanticValidateWorkflow: vi.fn(() => Promise.resolve({ ok: true, errors: [] })),
 }));
 
-const mockExecuteWithSubscriber = vi.fn(() => (async function* () {})());
+const mockExecute = vi.fn(() => (async function* () {})());
 
 vi.mock('@/lib/orchestration/engine/orchestration-engine', () => {
   class MockOrchestrationEngine {
-    executeWithSubscriber = mockExecuteWithSubscriber;
+    execute = mockExecute;
   }
   return { OrchestrationEngine: MockOrchestrationEngine };
 });
@@ -146,7 +146,7 @@ beforeEach(() => {
       headers: { 'Content-Type': 'text/event-stream' },
     })
   );
-  mockExecuteWithSubscriber.mockReturnValue((async function* () {})());
+  mockExecute.mockReturnValue((async function* () {})());
 });
 
 describe('GET /workflows/:id/execute-stream', () => {
@@ -294,7 +294,7 @@ describe('GET /workflows/:id/execute-stream', () => {
       makeParams(WORKFLOW_ID)
     );
 
-    expect(mockExecuteWithSubscriber).toHaveBeenCalledWith(
+    expect(mockExecute).toHaveBeenCalledWith(
       expect.anything(),
       { key: 'value' },
       expect.anything()
@@ -310,7 +310,7 @@ describe('GET /workflows/:id/execute-stream', () => {
       makeParams(WORKFLOW_ID)
     );
 
-    expect(mockExecuteWithSubscriber).toHaveBeenCalledWith(
+    expect(mockExecute).toHaveBeenCalledWith(
       expect.anything(),
       {},
       expect.objectContaining({ budgetLimitUsd: 5 })
