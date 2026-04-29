@@ -226,6 +226,70 @@ describe('ExecutionDetailView', () => {
     });
   });
 
+  describe('Approval prompt card', () => {
+    it('shows approval prompt card for paused_for_approval execution with awaiting trace entry', () => {
+      const approvalTrace: ExecutionTraceEntry = {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Please review the generated content before publishing.' },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2025-01-01T10:00:00.000Z',
+        completedAt: '2025-01-01T10:00:00.000Z',
+        durationMs: 0,
+      };
+
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[TRACE_ENTRY, approvalTrace]}
+        />
+      );
+
+      expect(screen.getByText('Approval prompt')).toBeInTheDocument();
+      expect(
+        screen.getByText('Please review the generated content before publishing.')
+      ).toBeInTheDocument();
+    });
+
+    it('does not show prompt card for completed executions', () => {
+      const approvalTrace: ExecutionTraceEntry = {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Please review the generated content.' },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2025-01-01T10:00:00.000Z',
+        completedAt: '2025-01-01T10:00:00.000Z',
+        durationMs: 0,
+      };
+
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'completed' })}
+          trace={[approvalTrace]}
+        />
+      );
+
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+    });
+
+    it('does not show prompt card when trace has no awaiting_approval entry', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Status badge — cancelled', () => {
     it('renders cancelled status with explicit badge variant', () => {
       render(<ExecutionDetailView execution={makeExecution({ status: 'cancelled' })} trace={[]} />);

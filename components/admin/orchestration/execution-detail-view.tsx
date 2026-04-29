@@ -118,6 +118,13 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
   );
 }
 
+function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
+  const entry = trace.find((e) => e.status === 'awaiting_approval');
+  if (!entry?.output || typeof entry.output !== 'object') return null;
+  const output = entry.output as Record<string, unknown>;
+  return typeof output.prompt === 'string' ? output.prompt : null;
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 
 export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewProps) {
@@ -232,6 +239,9 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
   const canRetry = execution.status === 'failed';
   const failedStepId = canRetry ? trace.find((e) => e.status === 'failed')?.stepId : undefined;
 
+  // Extract approval prompt from awaiting trace entry
+  const approvalPrompt = canApprove ? getApprovalPrompt(trace) : null;
+
   return (
     <div className="space-y-6">
       {/* Action result banner */}
@@ -296,6 +306,14 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
               Retry Failed Step
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Approval prompt card */}
+      {approvalPrompt && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+          <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Approval prompt</p>
+          <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">{approvalPrompt}</p>
         </div>
       )}
 
