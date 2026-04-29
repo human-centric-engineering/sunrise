@@ -55,13 +55,13 @@ When `showClearButton` is true, a trash icon appears in the top-right of the mes
 
 Uses `fetch` + `ReadableStream.getReader()` (not EventSource). Parses standard SSE frames (`event:` + `data:` separated by `\n\n`). Reads `delta` field from `content` events.
 
-Events handled: `start` (tracks conversationId), `content` (appends delta or buffers for animation), `content_reset` (clears accumulated text), `status` (shows inline status), `warning` (shows reconnecting banner), `capability_result` (forwards via callback), `done` (flushes animation, calls onStreamComplete), `error` (shows friendly fallback via `getUserFacingError()`).
+Events handled: `start` (tracks conversationId), `content` (appends delta or buffers for animation), `content_reset` (clears accumulated text), `status` (shows inline status), `warning` (shows reconnecting banner), `capability_result` (forwards single result via callback), `capability_results` (forwards each result from parallel tools via callback), `done` (flushes animation, calls onStreamComplete), `error` (shows friendly fallback via `getUserFacingError()`).
 
 Raw error text is never forwarded to the DOM. The AbortController is cleaned up on unmount.
 
 ### Reconnection
 
-Network failures trigger up to 3 reconnect attempts with exponential backoff (1s, 2s, 4s cap). HTTP-level errors (429, 4xx, 5xx) are not retriable and show specific error messages via `getUserFacingError()`. During reconnection, a warning banner shows "Connection interrupted. Reconnecting..." with an amber `AlertTriangle` icon. After all retries are exhausted, a "Connection Lost" error is displayed. This matches the pattern in `agent-test-chat.tsx`.
+Network failures trigger up to 3 reconnect attempts with exponential backoff (1s, 2s, 4s cap). HTTP-level errors (429, 4xx, 5xx) are not retriable and show specific error messages via `getUserFacingError()`. During reconnection, a warning banner shows "Connection interrupted. Reconnecting..." with an amber `AlertTriangle` icon. After all retries are exhausted, a "Connection Lost" error is displayed. Note: `AgentTestChat` deliberately does **not** retry — chat POSTs are not idempotent, so retrying would duplicate the message on the server.
 
 ## Usage
 

@@ -884,6 +884,41 @@ Supports `ETag` / `If-None-Match` for conditional GET (returns 304 when unchange
 
 ---
 
+## Embed Endpoints
+
+Public (non-admin) routes for the embeddable chat widget. Base path: `/api/v1/embed`.
+
+### GET `/embed/widget.js`
+
+Serves a self-contained JavaScript snippet that renders a Shadow DOM chat bubble. Configured via data attributes (`data-token`, `data-position`, `data-theme`). No authentication required — the token is validated when the user sends a message.
+
+**Response:** `application/javascript`, `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *`.
+
+**Key file:** `app/api/v1/embed/widget.js/route.ts`
+
+### POST `/embed/chat/stream`
+
+SSE streaming chat for the embed widget. Authenticates via `X-Embed-Token` header (not session). CORS headers are set dynamically from the token's `allowedOrigins`.
+
+**Request headers:** `X-Embed-Token: <token>` (required), `Content-Type: application/json`.
+
+**Request body:**
+
+```jsonc
+{
+  "message": "string (1–10000 chars, required)",
+  "conversationId": "string (optional — continue existing conversation)",
+}
+```
+
+**Response:** `text/event-stream` (SSE) — same event types as admin chat stream (see `ChatEvent` in `types/orchestration.ts`).
+
+**Rate limiting:** `embedChatLimiter` per IP.
+
+**Key files:** `app/api/v1/embed/chat/stream/route.ts`, `lib/embed/auth.ts`
+
+---
+
 ## Related
 
 - [`.context/orchestration/admin-api.md`](../orchestration/admin-api.md) — Architecture + design rationale
