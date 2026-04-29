@@ -106,6 +106,7 @@ export const POST = withAuth(async (request, session) => {
     agentSlug: body.agentSlug,
     userId: session.user.id,
     conversationId: body.conversationId,
+    attachments: body.attachments,
     requestId,
     signal: request.signal,
   });
