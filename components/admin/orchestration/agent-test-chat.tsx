@@ -200,7 +200,7 @@ export function AgentTestChat({
       )}
 
       <div
-        className={`bg-muted/30 ${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}
+        className={`${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}
         role="log"
         aria-live="polite"
         aria-label="Agent reply"

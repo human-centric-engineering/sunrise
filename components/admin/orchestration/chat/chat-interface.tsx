@@ -434,9 +434,7 @@ export function ChatInterface({
             key={i}
             className={cn(
               'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
-              msg.role === 'user'
-                ? 'bg-primary text-primary-foreground ml-auto'
-                : 'bg-muted mr-auto'
+              msg.role === 'user' ? 'bg-muted text-foreground ml-auto' : 'mr-auto'
             )}
           >
             {isLastAssistantEmpty(i, msg) ? (
