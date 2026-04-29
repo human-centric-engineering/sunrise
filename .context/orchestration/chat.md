@@ -53,7 +53,7 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ChatRequest`          | type     | Input shape (see below)                                                     |
 | `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
 | `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
-| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
+| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `50`)                                  |
 | `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
 | `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
 | `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
@@ -154,7 +154,7 @@ Reasoning plus acting is a reflex loop.
 
 ## Rolling Conversation Summary
 
-When conversation history exceeds `MAX_HISTORY_MESSAGES` (20), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+When conversation history exceeds `MAX_HISTORY_MESSAGES` (50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
 
 **How it works:**
 
@@ -372,7 +372,7 @@ The message builder supports token-aware truncation to prevent exceeding model c
 
 Token estimation uses a character-based heuristic (`1 token ≈ 3.5 chars` + 4 tokens overhead per message) from `lib/orchestration/chat/token-estimator.ts`. This is intentionally conservative — it slightly over-estimates, truncating earlier rather than exceeding the context window.
 
-When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 20` limit.
+When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 50` limit.
 
 **Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
 
