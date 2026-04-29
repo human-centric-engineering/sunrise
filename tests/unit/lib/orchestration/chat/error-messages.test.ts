@@ -12,6 +12,10 @@ describe('getUserFacingError', () => {
     'internal_error',
     'stream_error',
     'rate_limited',
+    'input_blocked',
+    'output_blocked',
+    'conversation_length_cap_reached',
+    'conversation_cap_reached',
   ];
 
   it.each(KNOWN_CODES)('returns structured error for "%s"', (code) => {
@@ -43,6 +47,19 @@ describe('getUserFacingError', () => {
     const result = getUserFacingError('');
     const internal = getUserFacingError('internal_error');
     expect(result).toEqual(internal);
+  });
+
+  it('returns distinct messages for input_blocked vs output_blocked', () => {
+    const input = getUserFacingError('input_blocked');
+    const output = getUserFacingError('output_blocked');
+    expect(input.title).not.toBe(output.title);
+  });
+
+  it('returns conversation-specific messages for cap errors', () => {
+    const lengthCap = getUserFacingError('conversation_length_cap_reached');
+    const convCap = getUserFacingError('conversation_cap_reached');
+    expect(lengthCap.message).toContain('maximum number of messages');
+    expect(convCap.message).toContain('maximum number of conversations');
   });
 
   it('never returns empty title or message', () => {

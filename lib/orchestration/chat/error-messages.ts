@@ -53,6 +53,26 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'You are sending messages too quickly.',
     action: 'Wait a moment before sending another message.',
   },
+  input_blocked: {
+    title: 'Message Blocked',
+    message: 'Your message was flagged by the security policy.',
+    action: 'Try rephrasing your message.',
+  },
+  output_blocked: {
+    title: 'Response Blocked',
+    message: 'The response was blocked by content policy.',
+    action: 'Try a different question or contact an admin.',
+  },
+  conversation_length_cap_reached: {
+    title: 'Conversation Limit Reached',
+    message: 'This conversation has reached the maximum number of messages.',
+    action: 'Start a new conversation to continue.',
+  },
+  conversation_cap_reached: {
+    title: 'Conversation Limit Reached',
+    message: 'You have reached the maximum number of conversations for this agent.',
+    action: 'Delete an older conversation or contact an admin.',
+  },
 };
 
 /**
