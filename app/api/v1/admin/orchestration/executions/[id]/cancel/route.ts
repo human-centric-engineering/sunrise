@@ -16,7 +16,7 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -51,14 +51,18 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
-  await prisma.aiWorkflowExecution.update({
-    where: { id },
+  const result = await prisma.aiWorkflowExecution.updateMany({
+    where: { id, status: { in: [...CANCELLABLE_STATUSES] } },
     data: {
       status: WorkflowStatus.CANCELLED,
       completedAt: new Date(),
       errorMessage: 'Cancelled by user',
     },
   });
+
+  if (result.count === 0) {
+    throw new ConflictError('Execution status changed before cancellation could complete');
+  }
 
   log.info('execution cancelled', {
     executionId: id,

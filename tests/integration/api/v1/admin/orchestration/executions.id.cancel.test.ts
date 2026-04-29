@@ -36,7 +36,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
       findUnique: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -106,9 +106,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
-    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue(
-      makeExecution({ status: 'cancelled', errorMessage: 'Cancelled by user' }) as never
-    );
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   describe('Authentication & Authorization', () => {
@@ -210,7 +208,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
       expect(data.data.executionId).toBe(EXECUTION_ID);
     });
 
-    it('calls prisma.update with cancelled status, completedAt, and errorMessage', async () => {
+    it('calls prisma.updateMany with status guard, cancelled status, and errorMessage', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
         makeExecution({ status: 'running' }) as never
@@ -218,15 +216,28 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
 
       await POST(makePostRequest(), makeParams(EXECUTION_ID));
 
-      expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledOnce();
-      const updateCall = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0] as {
-        where: { id: string };
+      expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledOnce();
+      const updateCall = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls[0][0] as {
+        where: { id: string; status: { in: string[] } };
         data: { status: string; completedAt: Date; errorMessage: string };
       };
       expect(updateCall.where.id).toBe(EXECUTION_ID);
+      expect(updateCall.where.status.in).toContain('running');
+      expect(updateCall.where.status.in).toContain('paused_for_approval');
       expect(updateCall.data.status).toBe('cancelled');
       expect(updateCall.data.completedAt).toBeInstanceOf(Date);
       expect(updateCall.data.errorMessage).toBe('Cancelled by user');
+    });
+
+    it('returns 409 when execution status changed between find and update (race)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({ status: 'running' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 0 } as never);
+
+      const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+      expect(response.status).toBe(409);
     });
   });
 
