@@ -32,9 +32,11 @@ import {
   Hammer,
   Activity,
   ClipboardList,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCallback, useMemo, useState } from 'react';
+import { API } from '@/lib/api/endpoints';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface NavItem {
   href: string;
@@ -42,6 +44,7 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   description: string;
   exact?: boolean;
+  badge?: number;
 }
 
 interface NavSubgroup {
@@ -146,6 +149,12 @@ const navSections: NavSection[] = [
         label: 'Operate',
         icon: Activity,
         items: [
+          {
+            href: '/admin/orchestration/approvals',
+            label: 'Approval Queue',
+            icon: ShieldCheck,
+            description: 'Pending approvals',
+          },
           {
             href: '/admin/orchestration/knowledge',
             label: 'Knowledge Base',
@@ -253,7 +262,12 @@ function NavItemList({
               aria-current={active ? 'page' : undefined}
             >
               <Icon className={cn('shrink-0', nested ? 'h-4 w-4' : 'h-5 w-5')} />
-              {!collapsed && <span>{item.label}</span>}
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && item.badge != null && item.badge > 0 && (
+                <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] leading-none font-medium text-white">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           </li>
         );
@@ -347,9 +361,47 @@ interface AdminSidebarProps {
   className?: string;
 }
 
+function useApprovalCount(pathname: string): number | undefined {
+  const [count, setCount] = useState<number | undefined>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?status=paused_for_approval&limit=1`, {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { meta?: { total?: number } } | null) => {
+        if (body?.meta?.total != null) setCount(body.meta.total);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [pathname]);
+
+  return count;
+}
+
+function injectApprovalBadge(sections: NavSection[], badgeCount: number | undefined): NavSection[] {
+  if (badgeCount == null) return sections;
+  return sections.map((section) => {
+    if (!section.subgroups) return section;
+    return {
+      ...section,
+      subgroups: section.subgroups.map((group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.href === '/admin/orchestration/approvals' ? { ...item, badge: badgeCount } : item
+        ),
+      })),
+    };
+  });
+}
+
 export function AdminSidebar({ className }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const approvalCount = useApprovalCount(pathname);
+  const sections = useMemo(() => injectApprovalBadge(navSections, approvalCount), [approvalCount]);
 
   return (
     <aside
@@ -380,7 +432,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
 
         {/* Navigation */}
         <nav className="flex-1 space-y-6 overflow-y-auto p-4">
-          {navSections.map((section) => (
+          {sections.map((section) => (
             <div key={section.title}>
               {!collapsed && (
                 <h3 className="text-muted-foreground mb-2 px-2 text-xs font-semibold tracking-wider uppercase">
