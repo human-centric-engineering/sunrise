@@ -238,7 +238,7 @@ export interface ExecutionTraceEntry {
   stepId: string;
   stepType: WorkflowStepType;
   label: string;
-  status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval';
+  status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval' | 'rejected';
   output: unknown;
   error?: string;
   tokensUsed: number;

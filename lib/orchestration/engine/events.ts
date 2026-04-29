@@ -37,12 +37,8 @@ export function stepFailed(stepId: string, error: string, willRetry: boolean): E
 }
 
 export function approvalRequired(stepId: string, payload: unknown): ExecutionEvent {
-  dispatchWebhookEvent('approval_required', { stepId, payload }).catch((err) => {
-    logger.warn('Webhook dispatch failed for approval_required', {
-      stepId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  // Webhook dispatch for approval_required is handled by pauseForApproval()
+  // in the engine, which has richer context (workflowId, userId, prompt).
   return { type: 'approval_required', stepId, payload };
 }
 

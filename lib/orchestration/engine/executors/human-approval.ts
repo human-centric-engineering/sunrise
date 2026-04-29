@@ -45,6 +45,7 @@ export function executeHumanApproval(
       previous,
       timeoutMinutes: config.timeoutMinutes,
       notificationChannel: config.notificationChannel,
+      approverUserIds: config.approverUserIds,
     })
   );
 }

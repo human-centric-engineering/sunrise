@@ -77,6 +77,10 @@ import {
 } from '@/lib/orchestration/engine/events';
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
+import { dispatchApprovalNotification } from '@/lib/orchestration/notifications/dispatcher';
+import { env } from '@/lib/env';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
@@ -591,7 +595,11 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        const approvalData =
+          typeof err.payload === 'object' && err.payload !== null
+            ? (err.payload as Record<string, unknown>)
+            : undefined;
+        await this.pauseForApproval(executionId, ctx, trace, step.id, approvalData);
         yield approvalRequired(step.id, err.payload);
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
@@ -804,7 +812,11 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        const batchApprovalData =
+          typeof outcome.value.payload === 'object' && outcome.value.payload !== null
+            ? (outcome.value.payload as Record<string, unknown>)
+            : undefined;
+        await this.pauseForApproval(executionId, ctx, trace, step.id, batchApprovalData);
         allEvents.push(approvalRequired(step.id, outcome.value.payload));
         batchPaused = true;
         continue;
@@ -1163,7 +1175,8 @@ export class OrchestrationEngine {
     executionId: string,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
-    stepId: string
+    stepId: string,
+    approvalPayload?: Record<string, unknown>
   ): Promise<void> {
     try {
       await prisma.aiWorkflowExecution.update({
@@ -1178,7 +1191,46 @@ export class OrchestrationEngine {
       });
     } catch (err) {
       ctx.logger.error('pauseForApproval: DB update failed', err, { executionId });
+      return; // Don't emit events if DB update failed
     }
+
+    const rawTimeout = approvalPayload?.timeoutMinutes;
+    const timeoutMinutes = typeof rawTimeout === 'number' ? rawTimeout : undefined;
+    const { approveUrl, rejectUrl, expiresAt } = buildApprovalUrls(
+      executionId,
+      env.BETTER_AUTH_URL,
+      timeoutMinutes
+    );
+
+    const tokenExpiresAt = expiresAt.toISOString();
+
+    const channel = dispatchApprovalNotification({
+      executionId,
+      workflowId: ctx.workflowId,
+      stepId,
+      prompt: approvalPayload?.prompt,
+      notificationChannel: approvalPayload?.notificationChannel,
+      approveUrl,
+      rejectUrl,
+      tokenExpiresAt,
+    });
+
+    const eventData = {
+      executionId,
+      workflowId: ctx.workflowId,
+      userId: ctx.userId,
+      stepId,
+      prompt: approvalPayload?.prompt,
+      notificationChannel: channel ?? approvalPayload?.notificationChannel,
+      timeoutMinutes,
+      approverUserIds: approvalPayload?.approverUserIds,
+      approveUrl,
+      rejectUrl,
+      tokenExpiresAt,
+    };
+
+    emitHookEvent('workflow.paused_for_approval', eventData);
+    void dispatchWebhookEvent('approval_required', eventData);
   }
 
   private async finalize(

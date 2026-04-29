@@ -315,6 +315,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Observability Dashboard  | `.context/admin/orchestration-observability.md`       | Dashboard metrics, trace viewers, logging audit              |
 | Analytics (admin)        | `.context/admin/orchestration-analytics.md`           | Usage, popular topics, unanswered, feedback, gaps            |
 | Audit Log (admin)        | `.context/admin/orchestration-audit-log.md`           | Immutable config change log, entity filters                  |
+| Approval Queue (admin)   | `.context/admin/orchestration-approvals.md`           | Pending approvals list, approve/reject, sidebar badge        |
 | Setup Wizard             | `.context/admin/setup-wizard.md`                      | 5-step guided setup flow, resume behavior                    |
 | Contextual Help          | `.context/ui/contextual-help.md`                      | `<FieldHelp>` directive for form fields                      |
 | UI Hooks                 | `.context/ui/hooks.md`                                | `useLocalStorage`, `useWizard`                               |

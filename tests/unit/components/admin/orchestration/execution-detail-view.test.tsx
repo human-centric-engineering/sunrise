@@ -81,7 +81,7 @@ describe('ExecutionDetailView', () => {
       expect(screen.getByText('Failed')).toBeInTheDocument();
     });
 
-    it('formats underscored status as title-case words', () => {
+    it('formats underscored status as sentence-case', () => {
       render(
         <ExecutionDetailView
           execution={makeExecution({ status: 'paused_for_approval' })}
@@ -89,7 +89,7 @@ describe('ExecutionDetailView', () => {
         />
       );
 
-      expect(screen.getByText('Paused For Approval')).toBeInTheDocument();
+      expect(screen.getByText('Paused for approval')).toBeInTheDocument();
     });
   });
 
@@ -223,6 +223,70 @@ describe('ExecutionDetailView', () => {
       render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
 
       expect(screen.getByRole('heading', { name: /step timeline/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Approval prompt card', () => {
+    it('shows approval prompt card for paused_for_approval execution with awaiting trace entry', () => {
+      const approvalTrace: ExecutionTraceEntry = {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Please review the generated content before publishing.' },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2025-01-01T10:00:00.000Z',
+        completedAt: '2025-01-01T10:00:00.000Z',
+        durationMs: 0,
+      };
+
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[TRACE_ENTRY, approvalTrace]}
+        />
+      );
+
+      expect(screen.getByText('Approval prompt')).toBeInTheDocument();
+      expect(
+        screen.getByText('Please review the generated content before publishing.')
+      ).toBeInTheDocument();
+    });
+
+    it('does not show prompt card for completed executions', () => {
+      const approvalTrace: ExecutionTraceEntry = {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Please review the generated content.' },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2025-01-01T10:00:00.000Z',
+        completedAt: '2025-01-01T10:00:00.000Z',
+        durationMs: 0,
+      };
+
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'completed' })}
+          trace={[approvalTrace]}
+        />
+      );
+
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+    });
+
+    it('does not show prompt card when trace has no awaiting_approval entry', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
     });
   });
 
@@ -391,7 +455,7 @@ describe('ExecutionDetailView', () => {
       expect(mockPost).toHaveBeenCalledWith(
         expect.stringContaining('/approve'),
         expect.objectContaining({
-          body: { approvalPayload: { approved: true } },
+          body: {},
         })
       );
       expect(await screen.findByRole('alert')).toHaveTextContent(/approved/i);
@@ -494,6 +558,112 @@ describe('ExecutionDetailView', () => {
 
       // Resolve the pending request
       resolvePost({ success: true });
+    });
+
+    it('shows Reject button when execution is paused_for_approval', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.getByRole('button', { name: /^reject$/i })).toBeInTheDocument();
+    });
+
+    it('does not show Reject button for completed executions', () => {
+      render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
+
+      expect(screen.queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
+    });
+
+    it('does not show Reject button for running executions', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
+    });
+
+    it('Reject button opens dialog with required reason textarea', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+
+      expect(screen.getByText('Reject execution?')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/does not meet compliance/i)).toBeInTheDocument();
+    });
+
+    it('Reject dialog submit button is disabled when reason is empty', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+
+      // The dialog's "Reject" action button should be disabled
+      const dialogRejectBtn = screen.getAllByRole('button', { name: /reject/i }).pop()!;
+      expect(dialogRejectBtn).toBeDisabled();
+    });
+
+    it('Reject dialog submits reason and shows success banner', async () => {
+      mockPost.mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+      await user.type(screen.getByPlaceholderText(/does not meet compliance/i), 'Not compliant');
+
+      // Click the dialog's Reject action button
+      const dialogRejectBtn = screen.getAllByRole('button', { name: /reject/i }).pop()!;
+      await user.click(dialogRejectBtn);
+
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.stringContaining('/reject'),
+        expect.objectContaining({
+          body: { reason: 'Not compliant' },
+        })
+      );
+      expect(await screen.findByRole('alert')).toHaveTextContent(/rejected/i);
+      expect(mockRefresh).toHaveBeenCalled();
+    });
+
+    it('Reject dialog shows error banner on failure', async () => {
+      const { APIClientError } = await import('@/lib/api/client');
+      mockPost.mockRejectedValueOnce(new APIClientError('Already processed'));
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+      await user.type(screen.getByPlaceholderText(/does not meet compliance/i), 'Not compliant');
+
+      const dialogRejectBtn = screen.getAllByRole('button', { name: /reject/i }).pop()!;
+      await user.click(dialogRejectBtn);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Already processed');
     });
 
     it('does not show Retry button for failed execution with no failed trace entry', () => {

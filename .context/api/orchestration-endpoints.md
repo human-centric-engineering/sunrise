@@ -56,6 +56,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/definition-revert`        | POST               | Revert to previous definition version                   | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace                           | 3.2     |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                | 3.2     |
+| `/executions/:id/reject`                  | POST               | Reject paused execution with reason                     | —       |
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                       | 5.1     |
 | `/executions/:id/retry-step`              | POST               | Retry from a failed step                                | 7.0     |
 | `/chat/stream`                            | POST               | Streaming chat turn (SSE)                               | 3.3     |
@@ -135,7 +136,18 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/mcp/sessions/:id` | GET | Read a single MCP session | 6 |
 | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
-107 admin route files, 8 consumer chat route files, 1 webhook trigger route file (116 total). For architecture detail see `.context/orchestration/admin-api.md`.
+109 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (120 total). For architecture detail see `.context/orchestration/admin-api.md`.
+
+### Public Approval Endpoints (Token-Authenticated)
+
+These endpoints live outside the admin base path and require no session — a signed HMAC token in the query string is the authorization.
+
+| Endpoint                                      | Methods | Purpose                                   | Auth       |
+| --------------------------------------------- | ------- | ----------------------------------------- | ---------- |
+| `/api/v1/orchestration/approvals/:id/approve` | POST    | Approve via signed token                  | `?token=…` |
+| `/api/v1/orchestration/approvals/:id/reject`  | POST    | Reject via signed token (reason required) | `?token=…` |
+
+Rate limited via `apiLimiter`. See [Event Hooks — External Approval Endpoints](../orchestration/hooks.md#external-approval-endpoints) for details.
 
 ---
 
@@ -354,13 +366,31 @@ Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `sess
 
 ### `POST /executions/:id/approve`
 
-Approves a `paused_for_approval` execution. Body: `{ approved: true }`. The execution resumes from the approval step. Non-paused executions return 400.
+Approves a `paused_for_approval` execution. Body: `{ notes?: string, approvalPayload?: object }`. The execution resumes from the approval step (status → `pending`, awaiting trace entry → `completed`). Non-paused executions return 400. Concurrent races return 409.
+
+Scoped to `session.user.id` OR approver delegation — if the caller's ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry, access is allowed even if they don't own the execution. Non-authorized users get 404 (not 403).
+
+Delegates to shared `executeApproval()` in `lib/orchestration/approval-actions.ts`.
+
+### `POST /executions/:id/reject`
+
+Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Corrupted execution traces (missing `awaiting_approval` entry) return 400. Concurrent races return 409.
+
+```jsonc
+// Request
+{ "reason": "Does not meet compliance requirements" }
+
+// Response
+{ "success": true, "data": { "success": true, "executionId": "<cuid>" } }
+```
+
+Same ownership + approver scoping as approve. Delegates to shared `executeRejection()` in `lib/orchestration/approval-actions.ts`.
 
 ### `POST /executions/:id/cancel`
 
 Cancels a `running` or `paused_for_approval` execution. Sets status to `cancelled` and records `completedAt`. The engine polls execution status between steps and stops when it sees `cancelled`.
 
-Scoped to `session.user.id` — cross-user returns 404. Non-cancellable statuses return 400.
+Scoped to `session.user.id` — cross-user returns 404. Non-cancellable statuses return 400. Delegated approvers (listed in the step's `approverUserIds`) can cancel `paused_for_approval` executions they are authorised for, but not `running` executions. Concurrent status changes return 409.
 
 Response: `{ success: true, executionId }`
 

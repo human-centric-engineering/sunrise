@@ -15,19 +15,34 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Loader2,
   RotateCcw,
   StopCircle,
   ThumbsUp,
+  XCircle,
 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
+import { formatStatus } from '@/lib/utils/format-status';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
@@ -65,10 +80,6 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destru
   pending: 'outline',
 };
 
-function formatStatus(status: string): string {
-  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 // ─── Collapsible JSON card ──────────────────────────────────────────────────
 
 function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) {
@@ -102,6 +113,13 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
       )}
     </Card>
   );
+}
+
+function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
+  const entry = trace.find((e) => e.status === 'awaiting_approval');
+  if (!entry?.output || typeof entry.output !== 'object') return null;
+  const output = entry.output as Record<string, unknown>;
+  return typeof output.prompt === 'string' ? output.prompt : null;
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────
@@ -142,7 +160,7 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     setActionResult(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(execution.id), {
-        body: { approvalPayload: { approved: true } },
+        body: {},
       });
       setActionResult({
         type: 'success',
@@ -158,6 +176,35 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
       setActionLoading(false);
     }
   }, [execution.id, router]);
+
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectLoading, setRejectLoading] = useState(false);
+
+  const handleReject = useCallback(async () => {
+    setRejectLoading(true);
+    setActionResult(null);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.executionReject(execution.id), {
+        body: { reason: rejectReason },
+      });
+      setActionResult({
+        type: 'success',
+        message: 'Execution rejected and cancelled.',
+      });
+      setRejectDialogOpen(false);
+      setRejectReason('');
+      router.refresh();
+    } catch (err) {
+      setActionResult({
+        type: 'error',
+        message: err instanceof APIClientError ? err.message : 'Rejection failed',
+      });
+      setRejectDialogOpen(false);
+    } finally {
+      setRejectLoading(false);
+    }
+  }, [execution.id, rejectReason, router]);
 
   const handleRetryStep = useCallback(
     async (stepId: string) => {
@@ -188,6 +235,9 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
   const canApprove = execution.status === 'paused_for_approval';
   const canRetry = execution.status === 'failed';
   const failedStepId = canRetry ? trace.find((e) => e.status === 'failed')?.stepId : undefined;
+
+  // Extract approval prompt from awaiting trace entry
+  const approvalPrompt = canApprove ? getApprovalPrompt(trace) : null;
 
   return (
     <div className="space-y-6">
@@ -220,6 +270,17 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
               Approve &amp; Continue
             </Button>
           )}
+          {canApprove && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setRejectDialogOpen(true)}
+              disabled={actionLoading}
+            >
+              <XCircle className="mr-2 h-4 w-4" />
+              Reject
+            </Button>
+          )}
           {canCancel && (
             <Button
               size="sm"
@@ -242,6 +303,14 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
               Retry Failed Step
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Approval prompt card */}
+      {approvalPrompt && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+          <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Approval prompt</p>
+          <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">{approvalPrompt}</p>
         </div>
       )}
 
@@ -394,6 +463,62 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
           </div>
         )}
       </section>
+
+      {/* ─── Reject Dialog ───────────────────────────────────────────────── */}
+      <AlertDialog
+        open={rejectDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRejectDialogOpen(false);
+            setRejectReason('');
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject execution?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The workflow will be cancelled and cannot be resumed. A reason is required for the
+              audit trail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reject-reason-detail">
+              Reason <span className="text-destructive">*</span>{' '}
+              <FieldHelp title="Rejection reason">
+                A clear explanation of why this execution is being rejected. This is stored in the
+                execution&apos;s error message (prefixed with &quot;Rejected:&quot;) and recorded in
+                the audit trail. The workflow will be permanently cancelled and cannot be resumed.
+              </FieldHelp>
+            </Label>
+            <Textarea
+              id="reject-reason-detail"
+              placeholder="Does not meet compliance requirements..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rejectLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleReject();
+              }}
+              disabled={rejectLoading || !rejectReason.trim()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {rejectLoading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="mr-2 h-4 w-4" />
+              )}
+              Reject
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

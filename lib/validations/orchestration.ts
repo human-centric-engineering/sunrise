@@ -1335,6 +1335,14 @@ export const approveExecutionBodySchema = z.object({
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
+/** Reject paused execution request body (POST /executions/[id]/reject). */
+export const rejectExecutionBodySchema = z.object({
+  reason: z
+    .string()
+    .min(1, 'Reason is required')
+    .max(5000, 'Reason must be less than 5000 characters'),
+});
+
 /** Retry failed step request body (POST /executions/[id]/retry-step). */
 export const retryStepBodySchema = z.object({
   stepId: z.string().min(1, 'stepId is required'),
@@ -1748,7 +1756,7 @@ export const executionTraceEntrySchema = z.object({
   stepId: z.string(),
   stepType: z.string(),
   label: z.string(),
-  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval']),
+  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval', 'rejected']),
   output: z.unknown(),
   error: z.string().optional(),
   tokensUsed: z.number(),
@@ -1824,10 +1832,22 @@ export const planConfigSchema = stepErrorConfigSchema.extend({
   temperature: z.number().optional(),
 });
 
+/** Structured notification channel config for human_approval steps. */
+export const notificationChannelSchema = z.union([
+  z.string(), // backward compat: 'slack', 'email', etc.
+  z.object({
+    type: z.string(),
+    target: z.string().optional(), // e.g., channel ID, email address
+    metadata: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
 export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
   prompt: z.string().optional(),
   timeoutMinutes: z.number().optional(),
-  notificationChannel: z.string().optional(),
+  notificationChannel: notificationChannelSchema.optional(),
+  /** User IDs who are allowed to approve/reject (in addition to the execution owner). */
+  approverUserIds: z.array(z.string().cuid2()).optional(),
 });
 
 export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
@@ -2092,6 +2112,7 @@ export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
 export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
 export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
 export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;
+export type RejectExecutionBodyInput = z.infer<typeof rejectExecutionBodySchema>;
 export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;

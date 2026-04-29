@@ -150,7 +150,7 @@ describe('ExecutionPanel', () => {
     });
     const call = postMock.mock.calls[0] as unknown[];
     expect(call[0]).toMatch(/\/executions\/exec-42\/approve$/);
-    expect(call[1]).toMatchObject({ body: { approvalPayload: { approved: true } } });
+    expect(call[1]).toMatchObject({ body: {} });
   });
 
   // ─── workflow_failed frame ────────────────────────────────────────────────
@@ -402,7 +402,442 @@ describe('ExecutionPanel', () => {
     // Confirm the POST was called with the right approve URL
     expect(postMock).toHaveBeenCalledWith(
       expect.stringMatching(/\/executions\/exec-apperr\/approve$/),
-      expect.objectContaining({ body: { approvalPayload: { approved: true } } })
+      expect.objectContaining({ body: {} })
     );
+  });
+
+  // ─── Reconnect button ──────────────────────────────────────────────────────
+
+  it('shows a Reconnect button on workflow_failed and re-streams on click', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-rc', workflowId: WORKFLOW_ID }),
+      frame('workflow_failed', { error: 'Something broke' }),
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    // Wait for failed state with error alert
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/something broke/i);
+    });
+
+    // Reconnect button should be visible
+    const reconnectBtn = screen.getByRole('button', { name: /reconnect/i });
+    expect(reconnectBtn).toBeInTheDocument();
+
+    // Set up the resume stream
+    const resumeStream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-rc', workflowId: WORKFLOW_ID }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    fetchMock.mockResolvedValue({ ok: true, body: resumeStream });
+
+    await user.click(reconnectBtn);
+
+    // Verify a new fetch was made with the resumeFromExecutionId query param
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    const lastCallUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0] as string;
+    expect(lastCallUrl).toContain('resumeFromExecutionId=exec-rc');
+  });
+
+  // ─── Abort button + cancel API ──────────────────────────────────────────────
+
+  it('calls the cancel endpoint and aborts the stream when Abort is clicked', async () => {
+    // Arrange: a stream that stays open (never closes) so Abort button is visible
+    const neverClosingStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            frame('workflow_started', { executionId: 'exec-abort', workflowId: WORKFLOW_ID })
+          )
+        );
+        // Don't close — keep stream running
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: neverClosingStream }));
+    postMock.mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    // Wait for running state and Abort button
+    const abortBtn = await screen.findByRole('button', { name: /abort/i });
+
+    await user.click(abortBtn);
+
+    // The cancel endpoint should have been called with the execution ID
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledTimes(1);
+    });
+    expect(postMock.mock.calls[0][0]).toMatch(/\/executions\/exec-abort\/cancel$/);
+  });
+
+  // ─── handleRetryStep ──────────────────────────────────────────────────────
+
+  it('calls retry-step API and reconnects when onRetry fires on a failed trace entry', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-rtr', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'step-x', stepType: 'llm_call', label: 'Broken Step' }),
+      frame('step_failed', { stepId: 'step-x', error: 'LLM timeout', willRetry: false }),
+      frame('workflow_failed', { error: 'Step step-x failed' }),
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+    vi.stubGlobal('fetch', fetchMock);
+    postMock.mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    // Wait for the failed step to render
+    await waitFor(() => {
+      expect(screen.getByText('Broken Step')).toBeInTheDocument();
+    });
+
+    // The trace entry row should have a retry button (expand it first)
+    // ExecutionTraceEntryRow is a button that expands — click on the row first
+    const traceEntry = screen.getByTestId('trace-entry-step-x');
+    await user.click(traceEntry.querySelector('button')!);
+
+    // Now click the retry button
+    const retryBtn = await screen.findByRole('button', { name: /retry from this step/i });
+
+    // Set up resume stream
+    const resumeStream = makeSseStream([
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 5, totalCostUsd: 0.001 }),
+    ]);
+    fetchMock.mockResolvedValue({ ok: true, body: resumeStream });
+
+    await user.click(retryBtn);
+
+    // Verify retry API was called
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/executions\/exec-rtr\/retry-step$/),
+        expect.objectContaining({ body: { stepId: 'step-x' } })
+      );
+    });
+  });
+
+  // ─── parseSseBlock: invalid JSON ──────────────────────────────────────────
+
+  it('silently ignores SSE frames with invalid JSON data', async () => {
+    // Arrange: stream with a valid frame, an invalid-JSON frame, then a valid completion
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            frame('workflow_started', { executionId: 'exec-json', workflowId: WORKFLOW_ID })
+          )
+        );
+        // Malformed data line — not valid JSON
+        controller.enqueue(encoder.encode('event: step_started\ndata: {not valid json\n\n'));
+        controller.enqueue(
+          encoder.encode(
+            frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 })
+          )
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    // The invalid frame is silently skipped; workflow completes normally
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+    // No error alert should be shown
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // ─── SSE bridge error frame ───────────────────────────────────────────────
+
+  it('renders "Stream terminated unexpectedly" from an error event type', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-sse-err', workflowId: WORKFLOW_ID }),
+      frame('error', { message: 'Internal server error' }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/internal server error/i);
+    });
+    expect(screen.getAllByText(/failed/i).length).toBeGreaterThan(0);
+  });
+
+  it('renders fallback message when error event has no message field', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-sse-err2', workflowId: WORKFLOW_ID }),
+      frame('error', {}),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/stream terminated unexpectedly/i);
+    });
+  });
+
+  // ─── handleRetryStep error path ───────────────────────────────────────────
+
+  it('shows error message when handleRetryStep API call fails', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-rtr-fail', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'step-rf', stepType: 'llm_call', label: 'Fail Retry' }),
+      frame('step_failed', { stepId: 'step-rf', error: 'LLM timeout', willRetry: false }),
+      frame('workflow_failed', { error: 'Step failed' }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+    postMock.mockRejectedValue(new APIClientError('Execution not found', 'NOT_FOUND', 404));
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText('Fail Retry')).toBeInTheDocument();
+    });
+
+    const traceEntry = screen.getByTestId('trace-entry-step-rf');
+    await user.click(traceEntry.querySelector('button')!);
+
+    const retryBtn = await screen.findByRole('button', { name: /retry from this step/i });
+    await user.click(retryBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/execution not found/i);
+    });
+  });
+
+  // ─── Panel closed ────────────────────────────────────────────────────────
+
+  it('returns null when open=false', () => {
+    const { container } = render(
+      <ExecutionPanel
+        open={false}
+        workflowId={WORKFLOW_ID}
+        inputData={{ query: 'hello' }}
+        onClose={vi.fn()}
+      />
+    );
+    expect(container.innerHTML).toBe('');
+  });
+
+  // ─── Events with missing/wrong-type fields (defensive branch guards) ──────
+
+  it('ignores step_started event when stepId is not a string', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bad', workflowId: WORKFLOW_ID }),
+      // stepId is a number, not a string — the guard should skip this event
+      frame('step_started', { stepId: 123, stepType: 'llm_call', label: 'Ghost' }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+    // The step with non-string stepId should not have been added
+    expect(screen.queryByText('Ghost')).toBeNull();
+  });
+
+  it('ignores step_completed event when stepId is not a string', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bad2', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'step-ok', stepType: 'llm_call', label: 'Step OK' }),
+      // step_completed with non-string stepId — should be ignored, step stays running
+      frame('step_completed', { stepId: null, output: 'done', tokensUsed: 10, costUsd: 0.001 }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 10, totalCostUsd: 0.001 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText('Step OK')).toBeInTheDocument();
+    });
+  });
+
+  it('ignores step_failed event when stepId is not a string', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bad3', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'step-sf', stepType: 'llm_call', label: 'Step SF' }),
+      frame('step_failed', { stepId: undefined, error: 'Oops', willRetry: false }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('ignores approval_required event when stepId is not a string', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bad4', workflowId: WORKFLOW_ID }),
+      frame('approval_required', { stepId: null, payload: { prompt: 'ignored' } }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+    // Should not enter awaiting_approval state
+    expect(screen.queryByText(/awaiting approval/i)).toBeNull();
+  });
+
+  it('ignores budget_warning when limitUsd is 0', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bw0', workflowId: WORKFLOW_ID }),
+      frame('budget_warning', { usedUsd: 0.01, limitUsd: 0 }),
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+    // No budget warning alert should appear
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('ignores event frames with no type field in data', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-notype', workflowId: WORKFLOW_ID }),
+      // Craft a frame where data.type is missing (applyEvent returns early)
+      'event: mystery\ndata: {"noType": true}\n\n',
+      frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('reconciles totals from workflow_completed even when step events had zero cost', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-rec', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 's1', stepType: 'llm_call', label: 'S1' }),
+      // Step completes with 0 cost (maybe skipped)
+      frame('step_completed', { stepId: 's1', output: 'ok', tokensUsed: 0, costUsd: 0 }),
+      // workflow_completed has the authoritative totals
+      frame('workflow_completed', {
+        output: 'ok',
+        totalTokensUsed: 999,
+        totalCostUsd: 0.42,
+      }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    // The authoritative totals from workflow_completed should override
+    await waitFor(() => {
+      expect(screen.getByText('$0.4200')).toBeInTheDocument();
+    });
+    expect(screen.getByText('999')).toBeInTheDocument();
+  });
+
+  // ─── SSE comment lines and empty data ─────────────────────────────────────
+
+  it('skips SSE comment lines (starting with ":")', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            frame('workflow_started', { executionId: 'exec-comment', workflowId: WORKFLOW_ID })
+          )
+        );
+        // SSE comment line followed by empty event (no data lines) — parseSseBlock returns null
+        controller.enqueue(encoder.encode(': this is a comment\n\n'));
+        controller.enqueue(encoder.encode('event: keepalive\n\n'));
+        controller.enqueue(
+          encoder.encode(
+            frame('workflow_completed', { output: 'ok', totalTokensUsed: 0, totalCostUsd: 0 })
+          )
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/completed/i).length).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── handleApprove generic Error path ─────────────────────────────────────
+
+  it('shows generic Error message when approve fails with a plain Error', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-generr', workflowId: WORKFLOW_ID }),
+      frame('step_started', {
+        stepId: 'gate-g',
+        stepType: 'human_approval',
+        label: 'Gate',
+      }),
+      frame('approval_required', { stepId: 'gate-g', payload: {} }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+    postMock.mockRejectedValue(new Error('Network down'));
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    const approveBtn = await screen.findByRole('button', { name: /approve/i });
+    await user.click(approveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/network down/i);
+    });
+  });
+
+  it('shows "Approval failed" when approve rejects with a non-Error value', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-nonstr', workflowId: WORKFLOW_ID }),
+      frame('step_started', {
+        stepId: 'gate-ns',
+        stepType: 'human_approval',
+        label: 'Gate',
+      }),
+      frame('approval_required', { stepId: 'gate-ns', payload: {} }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+    postMock.mockRejectedValue('string rejection');
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    const approveBtn = await screen.findByRole('button', { name: /approve/i });
+    await user.click(approveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/approval failed/i);
+    });
   });
 });

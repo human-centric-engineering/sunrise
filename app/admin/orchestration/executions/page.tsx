@@ -27,11 +27,13 @@ interface PageProps {
 }
 
 async function getExecutions(
-  workflowId?: string
+  workflowId?: string,
+  status?: string
 ): Promise<{ executions: ExecutionListItem[]; meta: PaginationMeta }> {
   try {
     const params = new URLSearchParams({ page: '1', limit: '25' });
     if (workflowId) params.set('workflowId', workflowId);
+    if (status && status !== 'all') params.set('status', status);
     const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?${params.toString()}`);
     if (!res.ok) return { executions: [], meta: EMPTY_META };
     const body = await parseApiResponse<ExecutionListItem[]>(res);
@@ -50,7 +52,9 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const workflowId =
     typeof resolvedParams.workflowId === 'string' ? resolvedParams.workflowId : undefined;
-  const { executions, meta } = await getExecutions(workflowId);
+  const initialStatus =
+    typeof resolvedParams.status === 'string' ? resolvedParams.status : undefined;
+  const { executions, meta } = await getExecutions(workflowId, initialStatus);
 
   return (
     <div className="space-y-6">
@@ -85,6 +89,7 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
         initialExecutions={executions}
         initialMeta={meta}
         initialWorkflowId={workflowId}
+        initialStatus={initialStatus}
       />
     </div>
   );

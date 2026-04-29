@@ -2,7 +2,7 @@
 
 Competitive assessment of Sunrise's agent orchestration against production-ready platforms. Covers functional capabilities, architectural gaps, and prioritised improvements.
 
-**Last updated:** 2026-04-25
+**Last updated:** 2026-04-29
 
 ## TL;DR
 
@@ -10,7 +10,7 @@ Sunrise is a **full-stack agent orchestration platform** embedded in a productio
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-4 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state, approval queue UI). 20 improvements are prioritised across P0–P3 tiers.
+3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). 19 improvements are prioritised across P0–P3 tiers. The approval queue UI (previously P0 #4) shipped in April 2026.
 
 ---
 
@@ -82,14 +82,14 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | Capability registry (DB-backed)                      | Strong   | None      | None     | None     | None       | Adequate | None       |
 | Dispatch pipeline (7-stage)                          | Strong   | Adequate  | Weak     | Adequate | Adequate   | Adequate | Adequate   |
 | Rate limiting per capability                         | Strong   | None      | None     | None     | None       | None     | None       |
-| Approval gating                                      | Adequate | Strong    | None     | None     | Adequate   | None     | Adequate   |
+| Approval gating                                      | Strong   | Strong    | None     | None     | Adequate   | None     | Adequate   |
 | Zod validation on args                               | Strong   | Adequate  | Weak     | Adequate | Strong     | None     | Adequate   |
 | Default-allow dispatch / default-deny LLM visibility | Strong   | None      | None     | None     | None       | None     | None       |
 | Built-in capability library                          | Adequate | Strong    | Adequate | Strong   | Strong     | Strong   | Strong     |
 | MCP integration                                      | Strong   | Adequate  | Adequate | None     | Strong     | Adequate | Strong     |
 | Third-party tool integrations                        | Weak     | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   |
 
-**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. **Key gaps:** The approval queue UI is incomplete (gate exists, no admin UI to service it). Built-in capability count (7) is thin vs. LangChain's 1000+ integrations.
+**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. **Key gap:** Built-in capability count (7) is thin vs. LangChain's 1000+ integrations.
 
 ### Multi-Agent Coordination
 
@@ -128,12 +128,14 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | --------------------------------- | ------- | --------- | ------------- | -------- | ---------- |
 | Pause/resume on approval          | Strong  | Strong    | Strong        | Adequate | Adequate   |
 | State serialisation at pause      | Strong  | Strong    | Strong        | Adequate | Adequate   |
-| Approval queue UI                 | None    | N/A       | Adequate      | None     | None       |
+| Approval queue UI                 | Strong  | N/A       | Adequate      | None     | None       |
+| External approval channels        | Strong  | Adequate  | None          | None     | None       |
+| Approver delegation (scoping)     | Strong  | None      | None          | None     | None       |
 | Multi-interrupt parallel branches | None    | Strong    | None          | None     | None       |
 | Mid-run human edit of state       | None    | Strong    | None          | Adequate | None       |
 | Resume after process restart      | Weak    | Strong    | Strong        | Weak     | None       |
 
-**Key gap:** LangGraph's `interrupt()` model is the gold standard — serialises full graph state, supports multiple concurrent interrupts, allows human edits before resume, and survives process restarts. Sunrise's `human_approval` step covers the core use case but lacks the depth.
+**Sunrise advantage:** The approval system is the most complete of any evaluated platform. The admin UI (expandable rows, approve/reject actions, sidebar badge) handles browser-based approvals. Token-authenticated public endpoints (`/api/v1/orchestration/approvals/:id/{approve,reject}`) enable external channel approvals (Slack, email, WhatsApp, SMS) via stateless HMAC-signed tokens — no session cookies required. A notification dispatcher emits `workflow.paused_for_approval` hook and `approval_required` webhook events with pre-signed approve/reject URLs, so external consumers can build approval flows without generating tokens themselves. Approver scoping via `approverUserIds` enables delegation to non-owner admins. **Key gap:** LangGraph's `interrupt()` model is the gold standard — serialises full graph state, supports multiple concurrent interrupts, allows human edits before resume, and survives process restarts. Sunrise's `human_approval` step covers the core use case with a production-ready admin + external channel workflow but lacks LangGraph's depth on multi-interrupt and state-editing.
 
 ### Observability & Evaluation
 
@@ -213,7 +215,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 11. **Horizontal scaling** — in-memory circuit breaker, budget mutex, and maintenance tick state. Structural issue, not a feature gap.
 
-12. **Human-in-the-loop depth** — `human_approval` pause covers the base case but lacks LangGraph's multi-interrupt, state-edit, and crash-recovery capabilities.
+12. **Human-in-the-loop depth** — `human_approval` with admin UI, token-authenticated external channel endpoints, notification dispatcher, and approver scoping covers the production use case well. Lacks LangGraph's multi-interrupt, state-edit, and crash-recovery capabilities.
 
 13. **Evaluation tooling** — LLM-driven completion handler vs. Haystack's 8 named evaluators or LangSmith's regression testing.
 
@@ -227,12 +229,13 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 Issues that would prevent recommending Sunrise orchestration for production workloads under load.
 
-| #   | Improvement                           | Current State                                                    | Target State                                                     | Benchmark                 |
-| --- | ------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------- |
-| 1   | **OTEL tracing instrumentation**      | No span emission from engine or chat                             | Per-step spans with token/cost attributes, pluggable backend     | Haystack (5+ backends)    |
-| 2   | **Distributed circuit breaker state** | In-memory per instance                                           | Redis or Postgres-backed shared state                            | Standard practice         |
-| 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE`     | Standard practice         |
-| 4   | **Approval queue UI**                 | Dispatcher gate exists, no admin UI to service it                | Admin page listing pending approvals with approve/reject actions | LangGraph interrupt model |
+| #   | Improvement                           | Current State                                                    | Target State                                                 | Benchmark              |
+| --- | ------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------- |
+| 1   | **OTEL tracing instrumentation**      | No span emission from engine or chat                             | Per-step spans with token/cost attributes, pluggable backend | Haystack (5+ backends) |
+| 2   | **Distributed circuit breaker state** | In-memory per instance                                           | Redis or Postgres-backed shared state                        | Standard practice      |
+| 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE` | Standard practice      |
+
+> **Resolved:** Approval queue (previously P0 #4) — shipped April 2026. Admin UI with expandable rows, approve/reject actions, sidebar badge. External approval channels via HMAC-signed token endpoints, notification dispatcher with hook/webhook events, and approver scoping for delegated decisions.
 
 ### P1 — Meaningful Quality Gaps
 
@@ -240,11 +243,11 @@ Issues that limit capability or reliability in real-world use.
 
 | #   | Improvement                           | Current State                                                     | Target State                                                                   | Benchmark              |
 | --- | ------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------- |
-| 5   | **Exact tokenisation**                | Heuristic (1 token ≈ 3.5 chars), 20–30% error on code/non-English | Per-provider tokeniser (tiktoken for OpenAI, Anthropic counter)                | LangChain, OpenAI SDK  |
-| 6   | **Full checkpoint recovery**          | Resume only from `human_approval` pauses                          | Persist execution state at every step; resume from any step after crash/deploy | LangGraph checkpointer |
-| 7   | **Background execution model**        | Synchronous workflow execution; caller blocks for duration        | Fire-and-forget with async result polling for cron/webhook triggers            | LangGraph Platform     |
-| 8   | **Maintenance tick distributed lock** | In-memory flag; multiple instances run duplicate maintenance      | Postgres advisory lock or Redis-based leader election                          | Standard practice      |
-| 9   | **Hybrid search (BM25 + vector)**     | pgvector cosine similarity only                                   | BM25 keyword scoring + vector re-ranking for improved recall                   | Haystack, Dify         |
+| 4   | **Exact tokenisation**                | Heuristic (1 token ≈ 3.5 chars), 20–30% error on code/non-English | Per-provider tokeniser (tiktoken for OpenAI, Anthropic counter)                | LangChain, OpenAI SDK  |
+| 5   | **Full checkpoint recovery**          | Resume only from `human_approval` pauses                          | Persist execution state at every step; resume from any step after crash/deploy | LangGraph checkpointer |
+| 6   | **Background execution model**        | Synchronous workflow execution; caller blocks for duration        | Fire-and-forget with async result polling for cron/webhook triggers            | LangGraph Platform     |
+| 7   | **Maintenance tick distributed lock** | In-memory flag; multiple instances run duplicate maintenance      | Postgres advisory lock or Redis-based leader election                          | Standard practice      |
+| 8   | **Hybrid search (BM25 + vector)**     | pgvector cosine similarity only                                   | BM25 keyword scoring + vector re-ranking for improved recall                   | Haystack, Dify         |
 
 ### P2 — Competitive Parity
 
@@ -252,12 +255,12 @@ Improvements that bring Sunrise to feature parity with leading platforms.
 
 | #   | Improvement                        | Current State                        | Target State                                                                           | Benchmark               |
 | --- | ---------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------- | ----------------------- |
-| 10  | **Named multi-agent patterns**     | Informal planner-driven coordination | Explicit typed patterns: handoff, supervisor, round-robin, selector                    | LangGraph, AutoGen      |
-| 11  | **Langfuse/MLflow integration**    | No external observability backend    | First-class integration with at least one open-source tracing platform                 | Haystack                |
-| 12  | **Named evaluation metrics**       | LLM completion handler only          | Faithfulness, relevance, groundedness evaluators with baseline comparison              | Haystack (8 evaluators) |
-| 13  | **Operator RBAC tier**             | Binary admin/consumer split          | Admin (full CRUD) / Operator (execute, monitor, read-only config) / Consumer (chat)    | Azure Foundry, Bedrock  |
-| 14  | **Workflow definition versioning** | DB-stored with history array         | Git-native format (JSON/YAML files), tagged versions (v1, v2), rollback to any version | Azure Foundry           |
-| 15  | **Knowledge namespace isolation**  | Global knowledge base                | Per-team or per-agent knowledge scoping                                                | Dify, Bedrock           |
+| 9   | **Named multi-agent patterns**     | Informal planner-driven coordination | Explicit typed patterns: handoff, supervisor, round-robin, selector                    | LangGraph, AutoGen      |
+| 10  | **Langfuse/MLflow integration**    | No external observability backend    | First-class integration with at least one open-source tracing platform                 | Haystack                |
+| 11  | **Named evaluation metrics**       | LLM completion handler only          | Faithfulness, relevance, groundedness evaluators with baseline comparison              | Haystack (8 evaluators) |
+| 12  | **Operator RBAC tier**             | Binary admin/consumer split          | Admin (full CRUD) / Operator (execute, monitor, read-only config) / Consumer (chat)    | Azure Foundry, Bedrock  |
+| 13  | **Workflow definition versioning** | DB-stored with history array         | Git-native format (JSON/YAML files), tagged versions (v1, v2), rollback to any version | Azure Foundry           |
+| 14  | **Knowledge namespace isolation**  | Global knowledge base                | Per-team or per-agent knowledge scoping                                                | Dify, Bedrock           |
 
 ### P3 — Strategic Positioning
 
@@ -265,11 +268,11 @@ Forward-looking improvements that would establish competitive advantages.
 
 | #   | Improvement                         | Current State                                   | Target State                                                               | Benchmark          |
 | --- | ----------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------- | ------------------ |
-| 16  | **A2A protocol support**            | No inter-agent communication standard           | Implement Google's Agent-to-Agent protocol for cross-system agent calls    | Google ADK         |
-| 17  | **First-success parallel strategy** | `wait-all` only                                 | `first-success` and `first-N` strategies for parallel step execution       | LangGraph Send API |
-| 18  | **Multi-interrupt HITL**            | Single `human_approval` interrupt per execution | Multiple concurrent interrupts across parallel branches with state editing | LangGraph          |
-| 19  | **Managed hosting option**          | Self-hosted only                                | Docker Compose → Kubernetes → managed option progression                   | LangGraph Platform |
-| 20  | **Evaluation regression testing**   | No baseline comparison                          | Eval runs compared against historical baselines with drift alerts          | LangSmith          |
+| 15  | **A2A protocol support**            | No inter-agent communication standard           | Implement Google's Agent-to-Agent protocol for cross-system agent calls    | Google ADK         |
+| 16  | **First-success parallel strategy** | `wait-all` only                                 | `first-success` and `first-N` strategies for parallel step execution       | LangGraph Send API |
+| 17  | **Multi-interrupt HITL**            | Single `human_approval` interrupt per execution | Multiple concurrent interrupts across parallel branches with state editing | LangGraph          |
+| 18  | **Managed hosting option**          | Self-hosted only                                | Docker Compose → Kubernetes → managed option progression                   | LangGraph Platform |
+| 19  | **Evaluation regression testing**   | No baseline comparison                          | Eval runs compared against historical baselines with drift alerts          | LangSmith          |
 
 ---
 
@@ -507,7 +510,7 @@ Sunrise ships orchestration as one layer within a complete, typed application st
 | **Authentication**       | better-auth with session management, admin roles                           | Build your own                      | Built-in (less configurable)    |
 | **Database**             | Prisma 7 + PostgreSQL with migrations                                      | Build your own                      | PostgreSQL (managed internally) |
 | **Admin dashboard**      | 20+ pages for agents, providers, capabilities, workflows, costs, analytics | Build your own                      | Built-in (visual-first)         |
-| **API layer**            | 99 typed endpoints with auth guards, rate limiting, Zod validation         | Build your own                      | REST API (auto-generated)       |
+| **API layer**            | 100 typed endpoints with auth guards, rate limiting, Zod validation        | Build your own                      | REST API (auto-generated)       |
 | **Consumer chat**        | SSE streaming + embed widget with Shadow DOM                               | Build your own                      | iframe/JS embed                 |
 | **Orchestration engine** | 15-step DAG with budget enforcement                                        | Graph-based DAG (strongest)         | Visual DAG (adequate)           |
 | **Deployment**           | Docker Compose, single-repo                                                | Multi-service (Python + web app)    | Docker Compose                  |

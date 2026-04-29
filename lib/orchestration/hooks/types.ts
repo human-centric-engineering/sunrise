@@ -32,6 +32,7 @@ export const HOOK_EVENT_TYPES = [
   'workflow.started',
   'workflow.completed',
   'workflow.failed',
+  'workflow.paused_for_approval',
   'agent.updated',
 ] as const;
 

@@ -12,6 +12,7 @@
 
 import { useCallback, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +36,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { formatDuration } from '@/lib/utils/format-duration';
+import { formatStatus } from '@/lib/utils/format-status';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
@@ -62,16 +64,20 @@ export interface ExecutionsTableProps {
   initialExecutions: ExecutionListItem[];
   initialMeta: PaginationMeta;
   initialWorkflowId?: string;
+  initialStatus?: string;
 }
 
 export function ExecutionsTable({
   initialExecutions,
   initialMeta,
   initialWorkflowId,
+  initialStatus,
 }: ExecutionsTableProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [executions, setExecutions] = useState(initialExecutions);
   const [meta, setMeta] = useState(initialMeta);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(initialStatus ?? 'all');
   const [workflowId] = useState(initialWorkflowId ?? '');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,8 +119,18 @@ export function ExecutionsTable({
     (value: string) => {
       setStatusFilter(value);
       void fetchExecutions(1, { status: value });
+
+      // Sync filter to URL for bookmarking/sharing
+      const params = new URLSearchParams(searchParams.toString());
+      if (value === 'all') {
+        params.delete('status');
+      } else {
+        params.set('status', value);
+      }
+      const qs = params.toString();
+      router.replace(qs ? `?${qs}` : '?', { scroll: false });
     },
-    [fetchExecutions]
+    [fetchExecutions, router, searchParams]
   );
 
   const handlePage = useCallback(
@@ -225,7 +241,7 @@ export function ExecutionsTable({
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[ex.status] ?? 'outline'}>
-                      {ex.status.replace(/_/g, ' ')}
+                      {formatStatus(ex.status)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums">

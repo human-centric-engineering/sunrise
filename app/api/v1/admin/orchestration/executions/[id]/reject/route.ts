@@ -1,12 +1,12 @@
 /**
- * Admin Orchestration — Approve paused execution
+ * Admin Orchestration — Reject paused execution
  *
- * POST /api/v1/admin/orchestration/executions/:id/approve
+ * POST /api/v1/admin/orchestration/executions/:id/reject
  *
- * Transitions a `paused_for_approval` row back to `running` and writes
- * the approval payload onto the awaiting step's trace entry so the
- * engine sees it when the client reconnects via
- * `POST /workflows/:workflowId/execute?resumeFromExecutionId=<id>`.
+ * Transitions a `paused_for_approval` row to `cancelled` with a
+ * rejection reason recorded in `errorMessage`. Unlike cancel (which is
+ * an abort), reject is a deliberate review decision with a required
+ * reason.
  *
  * Ownership: rows are scoped to `session.user.id`. Cross-user access
  * returns 404 (not 403).
@@ -21,9 +21,9 @@ import { NotFoundError, ValidationError, ConflictError } from '@/lib/api/errors'
 import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { approveExecutionBodySchema } from '@/lib/validations/orchestration';
+import { rejectExecutionBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { executeApproval } from '@/lib/orchestration/approval-actions';
+import { executeRejection } from '@/lib/orchestration/approval-actions';
 import { isApproverInTrace } from '@/lib/orchestration/approval-scoping';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -38,7 +38,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
   const id = parsed.data;
 
-  const body = await validateRequestBody(request, approveExecutionBodySchema);
+  const body = await validateRequestBody(request, rejectExecutionBodySchema);
 
   // Ownership + approver scoping check
   const execution = await prisma.aiWorkflowExecution.findUnique({
@@ -57,9 +57,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   try {
-    const result = await executeApproval(id, {
-      notes: body.notes,
-      approvalPayload: body.approvalPayload,
+    const result = await executeRejection(id, {
+      reason: body.reason,
       actorLabel: `admin:${session.user.id}`,
     });
     return successResponse(result);
@@ -75,7 +74,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       case 'TRACE_CORRUPTED':
         throw new ValidationError('Execution trace is corrupted and cannot be modified');
       case 'CONCURRENT':
-        throw new ConflictError('Execution was already approved by another request');
+        throw new ConflictError('Execution was already processed by another request');
       default:
         throw err;
     }

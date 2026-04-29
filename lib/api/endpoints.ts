@@ -122,6 +122,8 @@ export const API = {
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionApprove: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/approve`,
+      executionReject: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/reject`,
       executionCancel: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/cancel`,
       executionRetryStep: (id: string): string =>
@@ -219,6 +221,11 @@ export const API = {
   },
 
   /** Public endpoints */
+  /** Public orchestration endpoints (token-authenticated, no session) */
+  ORCHESTRATION: {
+    approvalApprove: (id: string): string => `/api/v1/orchestration/approvals/${id}/approve`,
+    approvalReject: (id: string): string => `/api/v1/orchestration/approvals/${id}/reject`,
+  },
   PUBLIC: {
     HEALTH: '/api/health',
     CONTACT: '/api/v1/contact',

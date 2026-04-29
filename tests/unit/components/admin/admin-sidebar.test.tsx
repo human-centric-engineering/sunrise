@@ -6,8 +6,8 @@
  * collapse toggle.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
@@ -19,9 +19,24 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('AdminSidebar', () => {
+  let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
+
   beforeEach(() => {
     pathnameMock.mockReset();
     pathnameMock.mockReturnValue('/admin/overview');
+    mockFetch = vi.fn<typeof fetch>();
+    global.fetch = mockFetch as typeof fetch;
+    // Default: approval count fetch returns 0
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: [], meta: { total: 0 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders all four top-level sections', () => {
@@ -32,7 +47,7 @@ describe('AdminSidebar', () => {
     expect(screen.getByText('System')).toBeInTheDocument();
   });
 
-  it('renders all 9 orchestration items with correct hrefs', () => {
+  it('renders all 10 orchestration items with correct hrefs', () => {
     render(<AdminSidebar />);
 
     const expected: Array<{ label: string; href: string }> = [
@@ -41,6 +56,7 @@ describe('AdminSidebar', () => {
       { label: 'Capabilities', href: '/admin/orchestration/capabilities' },
       { label: 'Providers', href: '/admin/orchestration/providers' },
       { label: 'Workflows', href: '/admin/orchestration/workflows' },
+      { label: 'Executions', href: '/admin/orchestration/executions' },
       { label: 'Knowledge Base', href: '/admin/orchestration/knowledge' },
       { label: 'Costs & Budget', href: '/admin/orchestration/costs' },
       { label: 'Learning', href: '/admin/orchestration/learn' },
@@ -98,5 +114,49 @@ describe('AdminSidebar', () => {
       'href',
       '/admin/orchestration/settings'
     );
+  });
+
+  it('shows approval badge when pending approvals exist', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: [], meta: { total: 3 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    render(<AdminSidebar />);
+
+    await waitFor(() => {
+      expect(screen.getByText('3')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show approval badge when count is zero', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: [], meta: { total: 0 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    render(<AdminSidebar />);
+
+    // Wait for fetch to complete, then check no badge number rendered
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('handles approval count fetch failure gracefully', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'));
+
+    render(<AdminSidebar />);
+
+    // Should render without crashing
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+    expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
   });
 });

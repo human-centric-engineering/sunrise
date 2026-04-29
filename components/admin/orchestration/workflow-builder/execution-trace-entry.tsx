@@ -43,6 +43,7 @@ const STATUS_STYLES: Record<Status, { icon: React.ElementType; colour: string; t
   failed: { icon: XCircle, colour: 'text-red-500', text: 'Failed' },
   skipped: { icon: ChevronRight, colour: 'text-muted-foreground', text: 'Skipped' },
   awaiting_approval: { icon: Clock, colour: 'text-amber-500', text: 'Awaiting approval' },
+  rejected: { icon: XCircle, colour: 'text-red-500', text: 'Rejected' },
 };
 
 export function ExecutionTraceEntryRow({
