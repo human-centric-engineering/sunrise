@@ -56,6 +56,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/definition-revert`        | POST               | Revert to previous definition version                   | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace                           | 3.2     |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                | 3.2     |
+| `/executions/:id/reject`                  | POST               | Reject paused execution with reason                     | —       |
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                       | 5.1     |
 | `/executions/:id/retry-step`              | POST               | Retry from a failed step                                | 7.0     |
 | `/chat/stream`                            | POST               | Streaming chat turn (SSE)                               | 3.3     |
@@ -355,6 +356,20 @@ Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `sess
 ### `POST /executions/:id/approve`
 
 Approves a `paused_for_approval` execution. Body: `{ approved: true }`. The execution resumes from the approval step. Non-paused executions return 400.
+
+### `POST /executions/:id/reject`
+
+Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Uses optimistic locking to prevent concurrent approve/reject races.
+
+```jsonc
+// Request
+{ "reason": "Does not meet compliance requirements" }
+
+// Response
+{ "success": true, "data": { "success": true, "executionId": "<cuid>" } }
+```
+
+Scoped to `session.user.id` — cross-user returns 404.
 
 ### `POST /executions/:id/cancel`
 
