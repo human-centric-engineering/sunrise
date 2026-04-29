@@ -1335,6 +1335,14 @@ export const approveExecutionBodySchema = z.object({
   notes: z.string().max(5000, 'Notes must be less than 5000 characters').optional(),
 });
 
+/** Reject paused execution request body (POST /executions/[id]/reject). */
+export const rejectExecutionBodySchema = z.object({
+  reason: z
+    .string()
+    .min(1, 'Reason is required')
+    .max(5000, 'Reason must be less than 5000 characters'),
+});
+
 /** Retry failed step request body (POST /executions/[id]/retry-step). */
 export const retryStepBodySchema = z.object({
   stepId: z.string().min(1, 'stepId is required'),
@@ -2092,6 +2100,7 @@ export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>;
 export type ListExecutionsQuery = z.infer<typeof listExecutionsQuerySchema>;
 export type ExecuteWorkflowBodyInput = z.infer<typeof executeWorkflowBodySchema>;
 export type ApproveExecutionBodyInput = z.infer<typeof approveExecutionBodySchema>;
+export type RejectExecutionBodyInput = z.infer<typeof rejectExecutionBodySchema>;
 export type ResumeExecutionQueryInput = z.infer<typeof resumeExecutionQuerySchema>;
 export type ChatStreamRequestInput = z.infer<typeof chatStreamRequestSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsQuerySchema>;
