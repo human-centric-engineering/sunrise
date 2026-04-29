@@ -232,6 +232,49 @@ describe('POST /api/v1/admin/orchestration/executions/:id/reject', () => {
     expect(response.status).toBe(409);
   });
 
+  // ─── Trace integrity ─────────────────────────────────────────────────────────
+
+  it('returns 400 when execution trace is corrupted (not parseable)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ executionTrace: 'not-an-array' }) as never
+    );
+
+    const response = await POST(
+      makePostRequest({ reason: 'Not appropriate' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when trace has no awaiting_approval entry', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        executionTrace: [
+          {
+            stepId: 'step-1',
+            stepType: 'llm_call',
+            label: 'Generate',
+            status: 'completed',
+            output: {},
+            tokensUsed: 100,
+            costUsd: 0.01,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:01Z',
+            durationMs: 1000,
+          },
+        ],
+      }) as never
+    );
+
+    const response = await POST(
+      makePostRequest({ reason: 'Not appropriate' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
+  });
+
   // ─── Approver scoping ───────────────────────────────────────────────────────
 
   const APPROVER_ID = 'cmjbv4i3x00003wsloputgwz8';

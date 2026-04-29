@@ -71,6 +71,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
         throw new ValidationError('Execution is not awaiting approval', {
           status: [`Expected "paused_for_approval", got "${error.currentStatus}"`],
         });
+      case 'TRACE_CORRUPTED':
+        throw new ValidationError('Execution trace is corrupted and cannot be modified');
       case 'CONCURRENT':
         throw new ConflictError('Execution was already processed by another request');
       default:

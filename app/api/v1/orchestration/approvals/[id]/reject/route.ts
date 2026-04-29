@@ -101,6 +101,11 @@ export async function POST(
           code: 'VALIDATION_ERROR',
           status: 400,
         });
+      case 'TRACE_CORRUPTED':
+        return errorResponse('Execution trace is corrupted', {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+        });
       case 'CONCURRENT':
         return errorResponse('Execution was already processed', { code: 'CONFLICT', status: 409 });
       default:

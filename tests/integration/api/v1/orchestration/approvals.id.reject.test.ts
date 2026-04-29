@@ -53,7 +53,20 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
     userId: 'user-1',
     status: 'paused_for_approval',
     currentStep: 'approval-step',
-    executionTrace: [],
+    executionTrace: [
+      {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Approve this action?' },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2025-01-01T00:00:00Z',
+        completedAt: '2025-01-01T00:00:00Z',
+        durationMs: 0,
+      },
+    ],
     ...overrides,
   };
 }
@@ -229,5 +242,48 @@ describe('POST /api/v1/orchestration/approvals/:id/reject (token auth)', () => {
       makeParams(EXECUTION_ID)
     );
     expect(response.status).toBe(500);
+  });
+
+  // ─── Trace integrity ─────────────────────────────────────────────────────────
+
+  it('returns 400 when execution trace is corrupted (not parseable)', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ executionTrace: 'not-an-array' }) as never
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'reject', 60);
+
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { reason: 'Not appropriate' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when trace has no awaiting_approval entry', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        executionTrace: [
+          {
+            stepId: 'step-1',
+            stepType: 'llm_call',
+            label: 'Generate',
+            status: 'completed',
+            output: {},
+            tokensUsed: 100,
+            costUsd: 0.01,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:01Z',
+            durationMs: 1000,
+          },
+        ],
+      }) as never
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'reject', 60);
+
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { reason: 'Not appropriate' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
   });
 });
