@@ -437,39 +437,10 @@ export class StreamingChatHandler {
           }
         }
 
-        if (assistantText.length > 0) {
-          const assistantMsg = await this.persistMessage({
-            conversationId: conversation.id,
-            role: 'assistant',
-            content: assistantText,
-            ...(usage
-              ? {
-                  metadata: {
-                    tokenUsage: {
-                      inputTokens: usage.inputTokens,
-                      outputTokens: usage.outputTokens,
-                      totalTokens: usage.inputTokens + usage.outputTokens,
-                    },
-                  },
-                }
-              : {}),
-          });
-          // Queue async embedding for semantic search (non-blocking)
-          queueMessageEmbedding(assistantMsg.id, assistantText);
-          emitHookEvent('message.created', {
-            conversationId: conversation.id,
-            messageId: assistantMsg.id,
-            agentSlug: request.agentSlug,
-            agentId: agent.id,
-            userId: request.userId,
-            role: 'assistant',
-          });
-        }
-
         if (toolCalls.size === 0) {
-          // Output guard — scan assistant response BEFORE logging cost.
-          // If the guard blocks, we skip cost logging since the user
-          // never sees the response.
+          // Output guard — scan BEFORE persisting the message. If the
+          // guard blocks, the response must not be saved to the
+          // conversation (the user never sees it via SSE).
           if (assistantText.length > 0) {
             const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
             if (outputScan.flagged) {
@@ -509,7 +480,41 @@ export class StreamingChatHandler {
               }
             }
           }
+        }
 
+        // Persist assistant message AFTER output guard (blocked responses
+        // are never saved). Tool-call turns also persist here so the
+        // conversation history is complete for the next LLM iteration.
+        if (assistantText.length > 0) {
+          const assistantMsg = await this.persistMessage({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: assistantText,
+            ...(usage
+              ? {
+                  metadata: {
+                    tokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      totalTokens: usage.inputTokens + usage.outputTokens,
+                    },
+                  },
+                }
+              : {}),
+          });
+          // Queue async embedding for semantic search (non-blocking)
+          queueMessageEmbedding(assistantMsg.id, assistantText);
+          emitHookEvent('message.created', {
+            conversationId: conversation.id,
+            messageId: assistantMsg.id,
+            agentSlug: request.agentSlug,
+            agentId: agent.id,
+            userId: request.userId,
+            role: 'assistant',
+          });
+        }
+
+        if (toolCalls.size === 0) {
           if (usage) {
             void logCost({
               agentId: agent.id,
