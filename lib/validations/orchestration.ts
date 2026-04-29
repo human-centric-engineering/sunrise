@@ -1393,9 +1393,9 @@ export const chatAttachmentSchema = z.object({
 export const chatStreamRequestSchema = z.object({
   message: z
     .string()
+    .trim()
     .min(1, 'Message is required')
-    .max(50000, 'Message must be less than 50000 characters')
-    .trim(),
+    .max(50000, 'Message must be less than 50000 characters'),
 
   agentSlug: slugSchema,
 
@@ -2160,9 +2160,9 @@ export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestratio
 export const consumerChatRequestSchema = z.object({
   message: z
     .string()
+    .trim()
     .min(1, 'Message is required')
-    .max(50000, 'Message must be less than 50000 characters')
-    .trim(),
+    .max(50000, 'Message must be less than 50000 characters'),
 
   agentSlug: slugSchema,
 

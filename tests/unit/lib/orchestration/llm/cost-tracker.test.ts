@@ -269,6 +269,32 @@ describe('calculateCost — unknown model ID', () => {
   });
 });
 
+describe('calculateCost — invalid token counts', () => {
+  it('returns zero cost for NaN input tokens', () => {
+    const cost = calculateCost('anthropic/claude-sonnet-4-20250514', NaN, 100);
+    expect(cost.totalCostUsd).toBe(0);
+    expect(cost.isLocal).toBe(false);
+  });
+
+  it('returns zero cost for NaN output tokens', () => {
+    const cost = calculateCost('anthropic/claude-sonnet-4-20250514', 100, NaN);
+    expect(cost.totalCostUsd).toBe(0);
+    expect(cost.isLocal).toBe(false);
+  });
+
+  it('returns zero cost for negative input tokens', () => {
+    const cost = calculateCost('anthropic/claude-sonnet-4-20250514', -500, 100);
+    expect(cost.totalCostUsd).toBe(0);
+    expect(cost.isLocal).toBe(false);
+  });
+
+  it('returns zero cost for Infinity output tokens', () => {
+    const cost = calculateCost('anthropic/claude-sonnet-4-20250514', 100, Infinity);
+    expect(cost.totalCostUsd).toBe(0);
+    expect(cost.isLocal).toBe(false);
+  });
+});
+
 describe('checkBudget — global budget cap', () => {
   it('returns globalCapExceeded=true when global spend meets or exceeds the cap', async () => {
     // Arrange: agent has no per-agent budget; global cap is $100 and $100 has been spent

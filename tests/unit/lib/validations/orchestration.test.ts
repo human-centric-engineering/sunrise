@@ -1529,6 +1529,14 @@ describe('chatStreamRequestSchema', () => {
     const result = chatStreamRequestSchema.safeParse({ message: 'hi' });
     expect(result.success).toBe(false);
   });
+
+  it('rejects whitespace-only messages after trim', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: '     ',
+      agentSlug: 'test-agent',
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('listConversationsQuerySchema', () => {
