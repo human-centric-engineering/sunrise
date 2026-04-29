@@ -14,6 +14,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'crypto';
+import { z } from 'zod';
 import { env } from '@/lib/env';
 
 /** Default token lifetime when the step config doesn't specify a timeout. */
@@ -21,11 +22,13 @@ const DEFAULT_EXPIRY_MINUTES = 7 * 24 * 60; // 7 days
 
 export type ApprovalAction = 'approve' | 'reject';
 
-interface TokenPayload {
-  executionId: string;
-  action: ApprovalAction;
-  expiresAt: string; // ISO 8601
-}
+const tokenPayloadSchema = z.object({
+  executionId: z.string().min(1),
+  action: z.enum(['approve', 'reject']),
+  expiresAt: z.string().min(1),
+});
+
+type TokenPayload = z.infer<typeof tokenPayloadSchema>;
 
 function getSecret(): string {
   return env.BETTER_AUTH_SECRET;
@@ -100,13 +103,15 @@ export function verifyApprovalToken(token: string): TokenPayload {
 
   let payload: TokenPayload;
   try {
-    payload = JSON.parse(payloadJson) as TokenPayload;
-  } catch {
+    const raw: unknown = JSON.parse(payloadJson);
+    const parsed = tokenPayloadSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('Incomplete approval token payload');
+    }
+    payload = parsed.data;
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Incomplete approval token payload') throw err;
     throw new Error('Invalid approval token payload');
-  }
-
-  if (!payload.executionId || !payload.action || !payload.expiresAt) {
-    throw new Error('Incomplete approval token payload');
   }
 
   const expiresAt = new Date(payload.expiresAt);

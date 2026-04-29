@@ -595,13 +595,11 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(
-          executionId,
-          ctx,
-          trace,
-          step.id,
-          err.payload as Record<string, unknown> | undefined
-        );
+        const approvalData =
+          typeof err.payload === 'object' && err.payload !== null
+            ? (err.payload as Record<string, unknown>)
+            : undefined;
+        await this.pauseForApproval(executionId, ctx, trace, step.id, approvalData);
         yield approvalRequired(step.id, err.payload);
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
@@ -814,13 +812,11 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(
-          executionId,
-          ctx,
-          trace,
-          step.id,
-          outcome.value.payload as Record<string, unknown> | undefined
-        );
+        const batchApprovalData =
+          typeof outcome.value.payload === 'object' && outcome.value.payload !== null
+            ? (outcome.value.payload as Record<string, unknown>)
+            : undefined;
+        await this.pauseForApproval(executionId, ctx, trace, step.id, batchApprovalData);
         allEvents.push(approvalRequired(step.id, outcome.value.payload));
         batchPaused = true;
         continue;
@@ -1198,7 +1194,8 @@ export class OrchestrationEngine {
       return; // Don't emit events if DB update failed
     }
 
-    const timeoutMinutes = approvalPayload?.timeoutMinutes as number | undefined;
+    const rawTimeout = approvalPayload?.timeoutMinutes;
+    const timeoutMinutes = typeof rawTimeout === 'number' ? rawTimeout : undefined;
     const { approveUrl, rejectUrl, expiresAt } = buildApprovalUrls(
       executionId,
       env.BETTER_AUTH_URL,

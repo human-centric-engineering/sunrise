@@ -24,6 +24,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { rejectExecutionBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { executeRejection } from '@/lib/orchestration/approval-actions';
+import { isApproverInTrace } from '@/lib/orchestration/approval-scoping';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -50,16 +51,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   // Allow if the user owns the execution or is in the approverUserIds list
   const isOwner = execution.userId === session.user.id;
-  let isApprover = false;
-  if (!isOwner && Array.isArray(execution.executionTrace)) {
-    const trace = execution.executionTrace as Array<Record<string, unknown>>;
-    const awaitingEntry = trace.find((e) => e.status === 'awaiting_approval');
-    const output = awaitingEntry?.output as Record<string, unknown> | undefined;
-    const approverIds = output?.approverUserIds;
-    if (Array.isArray(approverIds) && approverIds.includes(session.user.id)) {
-      isApprover = true;
-    }
-  }
+  const isApprover = !isOwner && isApproverInTrace(execution.executionTrace, session.user.id);
   if (!isOwner && !isApprover) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
