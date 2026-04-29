@@ -33,7 +33,7 @@ export function ThinkingIndicator({ message, className }: ThinkingIndicatorProps
         <span className="bg-muted-foreground/60 inline-block h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:0.15s]" />
         <span className="bg-muted-foreground/60 inline-block h-1.5 w-1.5 animate-bounce rounded-full [animation-delay:0.3s]" />
       </span>
-      <span className="text-muted-foreground text-xs italic">{label}</span>
+      <span className="text-muted-foreground max-w-[250px] truncate text-xs italic">{label}</span>
     </div>
   );
 }
