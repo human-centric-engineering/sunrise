@@ -43,6 +43,7 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
@@ -838,7 +839,11 @@ export class StreamingChatHandler {
           agentSlug: request.agentSlug,
           conversationId,
         });
-        yield errorEvent(err.code, err.message);
+        // Use the registry's safe message — raw ProviderError messages
+        // contain internal details (env var names, provider slugs, base URLs)
+        // that must not reach the browser.
+        const safe = getUserFacingError(err.code);
+        yield errorEvent(err.code, safe.message);
         return;
       }
       if (resolvedProviderSlug) {
