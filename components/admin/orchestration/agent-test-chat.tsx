@@ -44,6 +44,9 @@ export interface AgentTestChatProps {
 const DEFAULT_PLACEHOLDER =
   'Try a question your users would ask, e.g. "Summarise last week\'s tickets"';
 
+/** Minimum time the "Streaming…" state stays visible before showing errors. */
+const MIN_THINKING_MS = 1500;
+
 export function AgentTestChat({
   agentSlug,
   placeholder = DEFAULT_PLACEHOLDER,
@@ -78,6 +81,14 @@ export function AgentTestChat({
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const streamStartedAt = Date.now();
+
+    const ensureMinThinking = async (): Promise<void> => {
+      const elapsed = Date.now() - streamStartedAt;
+      if (elapsed < MIN_THINKING_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_THINKING_MS - elapsed));
+      }
+    };
 
     // Chat POSTs are not idempotent — retrying would duplicate the message
     // on the server. On network failure, show an error and let the user retry.
@@ -91,6 +102,7 @@ export function AgentTestChat({
       });
 
       if (!res.ok || !res.body) {
+        await ensureMinThinking();
         if (res.status === 429) {
           setError(getUserFacingError('rate_limited'));
         } else {
@@ -124,6 +136,7 @@ export function AgentTestChat({
             setWarning(parsed.data.message);
           } else if (parsed.type === 'error') {
             const code = typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+            await ensureMinThinking();
             setError(getUserFacingError(code));
             return;
           } else if (parsed.type === 'done') {
@@ -134,6 +147,7 @@ export function AgentTestChat({
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
 
+      await ensureMinThinking();
       setError({
         title: 'Connection Lost',
         message: 'The chat stream was interrupted.',

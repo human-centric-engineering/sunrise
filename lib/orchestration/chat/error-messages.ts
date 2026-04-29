@@ -40,13 +40,13 @@ const ERROR_MAP: Record<string, UserFacingError> = {
   },
   internal_error: {
     title: 'Something Went Wrong',
-    message: 'The AI provider returned an error.',
-    action: 'Try again, or switch to a different model in the agent settings.',
+    message: 'An unexpected error occurred while processing your message.',
+    action: 'Try again. If the problem persists, the agent may need a different model or provider.',
   },
   stream_error: {
-    title: 'Something Went Wrong',
-    message: 'The AI provider returned an error.',
-    action: 'Try again, or switch to a different model in the agent settings.',
+    title: 'Unable to Connect',
+    message: 'Could not reach the AI service. This is usually temporary.',
+    action: 'Wait a few seconds and try again.',
   },
   rate_limited: {
     title: 'Too Many Requests',

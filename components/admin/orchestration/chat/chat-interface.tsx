@@ -52,6 +52,13 @@ import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinkin
 /** Network-failure retry ceiling. HTTP errors are never retried. */
 const MAX_RECONNECT_ATTEMPTS = 3;
 
+/**
+ * Minimum time (ms) the thinking indicator stays visible before an error
+ * replaces it. Prevents jarring instant-error flashes on fast failures
+ * (e.g. 429, validation) and makes the chat feel more considered.
+ */
+const MIN_THINKING_MS = 1500;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ChatInterfaceProps {
@@ -165,6 +172,15 @@ export function ChatInterface({
       const controller = new AbortController();
       abortRef.current = controller;
       let fullText = '';
+      const streamStartedAt = Date.now();
+
+      /** Wait until MIN_THINKING_MS has elapsed since stream start. */
+      const ensureMinThinking = async (): Promise<void> => {
+        const elapsed = Date.now() - streamStartedAt;
+        if (elapsed < MIN_THINKING_MS) {
+          await new Promise((resolve) => setTimeout(resolve, MIN_THINKING_MS - elapsed));
+        }
+      };
 
       for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
         try {
@@ -183,7 +199,8 @@ export function ChatInterface({
           });
 
           if (!res.ok || !res.body) {
-            // HTTP-level errors are not retriable
+            // HTTP-level errors are not retriable — wait for thinking to feel natural
+            await ensureMinThinking();
             if (res.status === 429) {
               setError(getUserFacingError('rate_limited'));
             } else {
@@ -268,6 +285,7 @@ export function ChatInterface({
               } else if (parsed.type === 'error') {
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+                await ensureMinThinking();
                 setError(getUserFacingError(code));
                 return;
               } else if (parsed.type === 'done') {
@@ -293,6 +311,7 @@ export function ChatInterface({
             continue;
           }
 
+          await ensureMinThinking();
           setError({
             title: 'Connection Lost',
             message: 'Could not reconnect to the chat stream.',

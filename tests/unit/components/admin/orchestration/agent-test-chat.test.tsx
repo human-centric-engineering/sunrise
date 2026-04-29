@@ -109,9 +109,12 @@ describe('AgentTestChat', () => {
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     // Assert: structured error shown (title from error registry)
-    await waitFor(() => {
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // Assert: raw secret never reaches DOM
     expect(document.body.textContent ?? '').not.toContain(SECRET);
@@ -127,9 +130,12 @@ describe('AgentTestChat', () => {
 
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/monthly budget reached/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/monthly budget reached/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
   });
 
   it('renders warning banner from warning event', async () => {
@@ -261,7 +267,7 @@ describe('AgentTestChat', () => {
     });
   });
 
-  it('shows connection lost error immediately on network failure (no retry)', async () => {
+  it('shows connection lost error on network failure (no retry)', async () => {
     // Arrange — fetch rejects; chat POSTs are not idempotent so no retry
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
@@ -271,11 +277,14 @@ describe('AgentTestChat', () => {
     // Act
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    // Assert — error shown immediately without reconnect attempts
-    await waitFor(() => {
-      expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
-      expect(screen.getByText(/chat stream was interrupted/i)).toBeInTheDocument();
-    });
+    // Assert — error shown after brief thinking delay (no reconnect attempts)
+    await waitFor(
+      () => {
+        expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
+        expect(screen.getByText(/chat stream was interrupted/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // Assert — fetch was only called once (no retries)
     expect(fetch).toHaveBeenCalledOnce();

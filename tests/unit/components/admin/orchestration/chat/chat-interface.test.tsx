@@ -147,10 +147,14 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('internal_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('internal_error') → title: 'Something Went Wrong'
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     expect(document.body.textContent ?? '').not.toContain(SECRET);
   });
@@ -378,10 +382,14 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('stream_error') → title: 'Unable to Connect'
+        expect(screen.getByText(/unable to connect/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // User message should still be visible, but the empty assistant message should be removed
     expect(screen.getByText('Hi')).toBeInTheDocument();
@@ -400,10 +408,13 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('rate_limited') → title: 'Too Many Requests'
-      expect(screen.getByText(/too many requests/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        // getUserFacingError('rate_limited') → title: 'Too Many Requests'
+        expect(screen.getByText(/too many requests/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
   });
 
   // ─── Clear conversation tests ───────────────────────────────────────────────
@@ -586,9 +597,13 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('stream_error') → title: 'Unable to Connect'
+        expect(screen.getByText(/unable to connect/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
   });
 });
