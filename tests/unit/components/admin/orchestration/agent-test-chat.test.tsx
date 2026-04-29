@@ -138,12 +138,84 @@ describe('AgentTestChat', () => {
     );
   });
 
-  it('renders warning banner from warning event', async () => {
+  it('renders warning banner from warning event during streaming', async () => {
+    // Use a controlled stream so warning is visible before stream completes
+    const encoder = new TextEncoder();
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(warningFrame('budget_warning', 'Agent at 85% budget')));
+        controller.enqueue(encoder.encode(contentFrame('Hello')));
+        resolver.fn = () => {
+          controller.enqueue(
+            encoder.encode(
+              'event: done\ndata: {"tokenUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"costUsd":0.001}\n\n'
+            )
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+    });
+
+    // Clean up
+    resolver.fn?.();
+  });
+
+  it('clears warning banner after stream completes', async () => {
+    // Use a controlled stream so we can observe the warning mid-stream
+    const encoder = new TextEncoder();
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(warningFrame('budget_warning', 'Agent at 85% budget')));
+        controller.enqueue(encoder.encode(contentFrame('Hello')));
+        resolver.fn = () => {
+          controller.enqueue(
+            encoder.encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Warning appears during streaming
+    await waitFor(() => {
+      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
+    });
+
+    // Close the stream — finally block should clear the warning
+    resolver.fn?.();
+    await waitFor(() => {
+      expect(screen.queryByText(/agent at 85% budget/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('clears reply on content_reset event (provider fallback)', async () => {
     const user = userEvent.setup();
     const stream = makeSseStream([
-      warningFrame('budget_warning', 'Agent at 85% budget'),
-      contentFrame('Hello'),
-      'event: done\ndata: {"tokenUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"costUsd":0.001}\n\n',
+      contentFrame('Stale text from failed provider'),
+      'event: content_reset\ndata: {"reason":"provider_fallback"}\n\n',
+      contentFrame('Fresh response'),
+      'event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n',
     ]);
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
@@ -153,9 +225,11 @@ describe('AgentTestChat', () => {
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
-      expect(screen.getByText('Hello')).toBeInTheDocument();
+      expect(screen.getByText('Fresh response')).toBeInTheDocument();
     });
+
+    // Stale text should have been cleared
+    expect(screen.queryByText(/Stale text from failed provider/i)).not.toBeInTheDocument();
   });
 
   it('calls AbortController.abort() on unmount during active stream', async () => {

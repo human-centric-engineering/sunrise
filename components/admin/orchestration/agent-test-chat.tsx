@@ -135,6 +135,8 @@ export function AgentTestChat({
             setStatus(parsed.data.message);
           } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
             setWarning(parsed.data.message);
+          } else if (parsed.type === 'content_reset') {
+            setReply('');
           } else if (parsed.type === 'error') {
             const code = typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
             await ensureMinThinking();
@@ -157,6 +159,7 @@ export function AgentTestChat({
     } finally {
       setStreaming(false);
       setStatus(null);
+      setWarning(null);
       abortRef.current = null;
     }
   }
