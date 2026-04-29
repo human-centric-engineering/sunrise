@@ -2,7 +2,7 @@
 
 Real-world opportunities for the Sunrise agentic orchestration platform, framed for a venture studio exploring where to deploy this technology to create commercial value and genuine positive impact.
 
-**Last updated:** 2026-04-26
+**Last updated:** 2026-04-29
 
 ## How This Document Works
 
@@ -23,7 +23,7 @@ These three properties together mean a Sunrise deployment can act as a knowledge
 - Embeddable chat widget means you can deploy into a partner's existing site without rebuilding anything
 - Multi-provider LLM support with cost tracking means you can start cheap (Ollama/local) and scale to production (Anthropic/OpenAI) without re-architecture
 - Knowledge base with document ingestion means domain expertise can be loaded, not coded
-- Workflow engine with approval gates means human oversight is built in — critical for regulated domains
+- Workflow engine with approval gates and a dedicated admin approval queue means human oversight is built in — critical for regulated domains
 - Budget controls and cost tracking mean you can offer predictable pricing from day one
 - Admin UI means non-technical partners can manage agents, update knowledge, and monitor costs
 

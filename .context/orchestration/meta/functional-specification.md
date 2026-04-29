@@ -2,7 +2,7 @@
 
 A comprehensive specification of the AI agent orchestration system built into the Sunrise platform.
 
-**Last updated:** 2026-04-27
+**Last updated:** 2026-04-29
 
 ---
 
@@ -10,7 +10,7 @@ A comprehensive specification of the AI agent orchestration system built into th
 
 Sunrise ships a **full-stack AI agent orchestration platform** embedded within a production-grade Next.js 16 / TypeScript application. Unlike standalone orchestration libraries (LangGraph, CrewAI) or managed cloud services (AWS Bedrock, Azure Foundry), Sunrise delivers the orchestration engine, admin interface, consumer API, security layer, and deployment infrastructure as a single typed codebase.
 
-The orchestration layer comprises **116 TypeScript source files** across 19 modules, backed by **29 Prisma models**, exposed through **130 API route files** (119 admin + 8 consumer chat + 2 embed + 1 MCP), and managed via a **20+ page admin dashboard**.
+The orchestration layer comprises **116 TypeScript source files** across 19 modules, backed by **29 Prisma models**, exposed through **131 API route files** (120 admin + 8 consumer chat + 2 embed + 1 MCP), and managed via a **20+ page admin dashboard**.
 
 This is not a wrapper around a third-party AI library. It is a purpose-built orchestration engine with cost enforcement, provider resilience, multi-format knowledge retrieval, DAG workflow execution, and production security — all sharing types, validation schemas, and authentication with the application layer beneath it.
 
@@ -267,7 +267,8 @@ Each step can define its own error handling:
 ### 5.5 Execution Management
 
 - **Execution records**: `AiWorkflowExecution` tracks state, results, timing
-- **Approval service**: Pending approvals can be approved/rejected via admin API
+- **Approval queue**: Admin page listing `paused_for_approval` executions with expandable rows showing approval prompt, cost summary, previous steps, and input data. Approve with optional notes or reject with required reason. Sidebar badge shows pending count.
+- **Approval service**: Pending approvals can be approved/rejected via admin API (approve endpoint resumes workflow, reject endpoint cancels with `"Rejected: <reason>"` in `errorMessage`)
 - **Step retry**: Individual failed steps can be retried without re-running the workflow
 - **Cancellation**: In-flight executions can be cancelled
 
@@ -600,6 +601,7 @@ Covers approximately 6/10 OWASP Agentic Application Top 10 categories natively:
 | **Observability**   | Dashboard                     | Health, latency, errors                          |
 | **Evaluations**     | Runner, Annotations           | Quality assessment, completion                   |
 | **Experiments**     | List, Run                     | A/B testing management                           |
+| **Approvals**       | Queue page                    | Browse, approve/reject pending executions        |
 | **Audit Log**       | Filterable list               | Config change history                            |
 | **MCP**             | 7 sub-pages                   | Tools, resources, sessions, audit, keys          |
 | **Learning**        | Pattern explorer, Quiz        | 21 patterns, advisor chatbot                     |
