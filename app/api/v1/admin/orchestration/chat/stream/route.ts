@@ -51,6 +51,7 @@ export const POST = withAdminAuth(async (request, session) => {
     contextType: body.contextType,
     contextId: body.contextId,
     entityContext: body.entityContext,
+    attachments: body.attachments,
     requestId,
     signal: request.signal,
   });
