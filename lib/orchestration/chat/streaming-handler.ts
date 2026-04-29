@@ -167,13 +167,20 @@ export class StreamingChatHandler {
       conversationId = conversation.id;
       const history = await this.loadHistory(conversation.id);
 
-      // Enforce message-per-conversation cap
+      // Enforce message-per-conversation cap using actual DB count
+      // (loadHistory returns at most 200 rows, so history.length can't
+      // detect conversations that exceed 200 messages).
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
-      if (maxMessages !== null && history.length >= maxMessages) {
-        throw new ChatError(
-          'conversation_length_cap_reached',
-          `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
-        );
+      if (maxMessages !== null) {
+        const messageCount = await prisma.aiMessage.count({
+          where: { conversationId: conversation.id },
+        });
+        if (messageCount >= maxMessages) {
+          throw new ChatError(
+            'conversation_length_cap_reached',
+            `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
+          );
+        }
       }
 
       // Persist the user message up front so a mid-stream crash still
@@ -934,11 +941,17 @@ export class StreamingChatHandler {
   }
 
   private async loadHistory(conversationId: string): Promise<AiMessage[]> {
-    return prisma.aiMessage.findMany({
+    // Fetch the 200 most recent messages (desc) then reverse to
+    // chronological order. Previous `asc + take: 200` loaded the
+    // oldest 200 — wrong for conversations with >200 messages.
+    // Secondary sort on `id` ensures deterministic ordering for
+    // messages persisted in the same millisecond.
+    const messages = await prisma.aiMessage.findMany({
       where: { conversationId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 200,
     });
+    return messages.reverse();
   }
 
   private async persistMessage(params: PersistMessageParams): Promise<AiMessage> {
