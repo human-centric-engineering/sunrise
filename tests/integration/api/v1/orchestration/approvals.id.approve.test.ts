@@ -173,4 +173,53 @@ describe('POST /api/v1/orchestration/approvals/:id/approve (token auth)', () => 
     const response = await POST(makeRequest(EXECUTION_ID, token), makeParams(EXECUTION_ID));
     expect(response.status).toBe(404);
   });
+
+  it('returns 400 when execution is not paused_for_approval (INVALID_STATUS)', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ status: 'running' }) as never
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+
+    const response = await POST(makeRequest(EXECUTION_ID, token), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 500 when executeApproval throws unexpected error', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockRejectedValue(
+      new Error('DB connection lost')
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+
+    const response = await POST(makeRequest(EXECUTION_ID, token), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(500);
+  });
+
+  it('returns 200 with notes in body', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { notes: 'LGTM' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it('returns 200 even when body is not valid JSON (non-fatal for approve)', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+    const url = new URL(
+      `http://localhost:3000/api/v1/orchestration/approvals/${EXECUTION_ID}/approve`
+    );
+    url.searchParams.set('token', token);
+    const request = new NextRequest(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not json',
+    });
+
+    const response = await POST(request, makeParams(EXECUTION_ID));
+    expect(response.status).toBe(200);
+  });
 });

@@ -184,4 +184,50 @@ describe('POST /api/v1/orchestration/approvals/:id/reject (token auth)', () => {
     );
     expect(response.status).toBe(404);
   });
+
+  it('returns 400 for invalid CUID param', async () => {
+    const invalidId = 'not-a-cuid';
+    const { token } = generateApprovalToken(invalidId, 'reject', 60);
+    const response = await POST(
+      makeRequest(invalidId, token, { reason: 'test' }),
+      makeParams(invalidId)
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when token execution id does not match URL param', async () => {
+    const { token } = generateApprovalToken('other-exec-id', 'reject', 60);
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { reason: 'test' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 400 when execution is not paused_for_approval (INVALID_STATUS)', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ status: 'completed' }) as never
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'reject', 60);
+
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { reason: 'test' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 500 when executeRejection throws unexpected error', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockRejectedValue(
+      new Error('DB connection lost')
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'reject', 60);
+
+    const response = await POST(
+      makeRequest(EXECUTION_ID, token, { reason: 'test' }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(500);
+  });
 });

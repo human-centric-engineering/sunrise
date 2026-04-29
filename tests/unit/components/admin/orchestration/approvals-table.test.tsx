@@ -427,4 +427,135 @@ describe('ApprovalsTable', () => {
       });
     });
   });
+
+  describe('dialog dismiss', () => {
+    it('dismissing approve dialog clears state', async () => {
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      // Open approve dialog
+      const approveButtons = screen.getAllByText('Approve');
+      await userEvent.click(approveButtons[0]);
+      expect(screen.getByText('Approve execution?')).toBeInTheDocument();
+
+      // Type some notes
+      const textarea = screen.getByPlaceholderText(/Looks good/);
+      await userEvent.type(textarea, 'some notes');
+
+      // Click Cancel to dismiss
+      await userEvent.click(screen.getByText('Cancel'));
+
+      // Reopen — notes should be cleared
+      await userEvent.click(approveButtons[0]);
+      await waitFor(() => {
+        const newTextarea = screen.getByPlaceholderText(/Looks good/);
+        expect(newTextarea).toHaveValue('');
+      });
+    });
+
+    it('dismissing reject dialog clears state', async () => {
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      // Open reject dialog
+      const rejectButtons = screen.getAllByText('Reject');
+      await userEvent.click(rejectButtons[0]);
+      expect(screen.getByText('Reject execution?')).toBeInTheDocument();
+
+      // Type a reason
+      const textarea = screen.getByPlaceholderText(/compliance/i);
+      await userEvent.type(textarea, 'Some reason');
+
+      // Click Cancel to dismiss
+      const cancelButtons = screen.getAllByText('Cancel');
+      await userEvent.click(cancelButtons[cancelButtons.length - 1]);
+
+      // Reopen — reason should be cleared
+      await userEvent.click(rejectButtons[0]);
+      await waitFor(() => {
+        const newTextarea = screen.getByPlaceholderText(/compliance/i);
+        expect(newTextarea).toHaveValue('');
+      });
+    });
+  });
+
+  describe('error states', () => {
+    it('shows error when approve API call fails', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse(
+          { success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
+          500
+        )
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const approveButtons = screen.getAllByText('Approve');
+      await userEvent.click(approveButtons[0]);
+
+      const dialogApprove = screen.getAllByText('Approve');
+      const confirmButton = dialogApprove[dialogApprove.length - 1];
+      await userEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Server error')).toBeInTheDocument();
+      });
+    });
+
+    it('shows error when reject API call fails', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse(
+          { success: false, error: { code: 'INTERNAL_ERROR', message: 'Server error' } },
+          500
+        )
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const rejectButtons = screen.getAllByText('Reject');
+      await userEvent.click(rejectButtons[0]);
+
+      const textarea = screen.getByPlaceholderText(/compliance/i);
+      await userEvent.type(textarea, 'Bad content');
+
+      const dialogReject = screen.getAllByText('Reject');
+      const confirmButton = dialogReject[dialogReject.length - 1];
+      await userEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Server error')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('expand detail', () => {
+    it('shows input data when expanded', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: makeExecutionDetail() })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('Input data')).toBeInTheDocument();
+      });
+    });
+
+    it('shows previous steps in expanded view', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: makeExecutionDetail() })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Completed steps before approval/)).toBeInTheDocument();
+        expect(screen.getByText('Draft response')).toBeInTheDocument();
+      });
+    });
+  });
 });
