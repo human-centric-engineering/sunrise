@@ -222,12 +222,12 @@ describe('POST /api/v1/admin/orchestration/executions/:id/reject', () => {
     expect(updateArg.data.completedAt).toBeInstanceOf(Date);
   });
 
-  it('returns 400 when concurrent rejection races (updateMany count === 0)', async () => {
+  it('returns 409 when concurrent rejection races (updateMany count === 0)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
     vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 0 } as never);
 
     const response = await POST(makePostRequest({ reason: 'Rejected' }), makeParams(EXECUTION_ID));
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(409);
   });
 });
