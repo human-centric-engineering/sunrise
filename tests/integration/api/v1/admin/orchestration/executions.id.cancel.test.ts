@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/executions/[id]/cancel/route';
 import {
+  createMockAuthSession,
   mockAdminUser,
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
@@ -251,6 +252,94 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
       const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
 
       expect(response.status).toBe(200);
+    });
+  });
+
+  // ─── Approver scoping ───────────────────────────────────────────────────────
+
+  describe('Approver scoping', () => {
+    const APPROVER_ID = 'cmjbv4i3x00003wsloputgwz8';
+
+    function mockAdminWithId(id: string) {
+      return createMockAuthSession({
+        session: {
+          id: 'session_123',
+          userId: id,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          token: 'mock_session_token',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        user: {
+          id,
+          email: 'approver@example.com',
+          name: 'Approver',
+          emailVerified: true,
+          image: null,
+          role: 'ADMIN',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    function makeTraceWithApprover(approverIds: string[]) {
+      return [
+        {
+          stepId: 'approval-step',
+          stepType: 'human_approval',
+          label: 'Review',
+          status: 'awaiting_approval',
+          output: { prompt: 'Approve?', approverUserIds: approverIds },
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: '2025-01-01T00:00:00Z',
+          completedAt: '2025-01-01T00:00:00Z',
+          durationMs: 0,
+        },
+      ];
+    }
+
+    it('allows delegated approver to cancel a paused_for_approval execution', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminWithId(APPROVER_ID));
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({
+          userId: OTHER_USER_ID,
+          status: 'paused_for_approval',
+          executionTrace: makeTraceWithApprover([APPROVER_ID]),
+        }) as never
+      );
+
+      const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+      expect(response.status).toBe(200);
+    });
+
+    it('returns 404 for delegated approver trying to cancel a running execution', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminWithId(APPROVER_ID));
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({
+          userId: OTHER_USER_ID,
+          status: 'running',
+          executionTrace: makeTraceWithApprover([APPROVER_ID]),
+        }) as never
+      );
+
+      const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+      expect(response.status).toBe(404);
+    });
+
+    it('returns 404 for non-owner admin not in approverUserIds', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminWithId(APPROVER_ID));
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({
+          userId: OTHER_USER_ID,
+          status: 'paused_for_approval',
+          executionTrace: makeTraceWithApprover(['cmjbv4i3x00003wsloputgwx1']),
+        }) as never
+      );
+
+      const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+      expect(response.status).toBe(404);
     });
   });
 });

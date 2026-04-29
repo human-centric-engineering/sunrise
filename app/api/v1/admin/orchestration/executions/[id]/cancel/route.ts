@@ -21,6 +21,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
+import { isApproverInTrace } from '@/lib/orchestration/approval-scoping';
 import { WorkflowStatus } from '@/types/orchestration';
 
 const CANCELLABLE_STATUSES = new Set<string>([
@@ -42,7 +43,17 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const id = parsed.data;
 
   const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
-  if (!execution || execution.userId !== session.user.id) {
+  if (!execution) {
+    throw new NotFoundError(`Execution ${id} not found`);
+  }
+
+  // Ownership + approver scoping: delegated approvers can cancel paused executions only
+  const isOwner = execution.userId === session.user.id;
+  const isApprover =
+    !isOwner &&
+    execution.status === WorkflowStatus.PAUSED_FOR_APPROVAL &&
+    isApproverInTrace(execution.executionTrace, session.user.id);
+  if (!isOwner && !isApprover) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
   if (!CANCELLABLE_STATUSES.has(execution.status)) {
