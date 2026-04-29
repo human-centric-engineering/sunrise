@@ -86,11 +86,13 @@ Pre-check via `checkBudget(agentId)` in `streaming-handler.ts`:
 
 ## Input Sanitisation
 
-`scanForInjection(message)` detects three pattern categories:
+`scanForInjection(message)` detects five pattern categories:
 
 - `system_override` — "ignore/disregard/forget previous instructions"
 - `role_confusion` — "you are now", "act as if you", "pretend you"
 - `delimiter_injection` — `###`, `---`, `***`, `<system>`, `</system>`, etc.
+- `output_manipulation` — "do not mention/reveal/disclose", "keep this secret"
+- `encoding_evasion` — base64, atob/btoa, hex escapes, unicode escapes, HTML entities
 
 **Configurable mode** via `OrchestrationSettings.inputGuardMode`:
 
