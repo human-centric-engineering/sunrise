@@ -1226,6 +1226,7 @@ export class OrchestrationEngine {
       prompt: approvalPayload?.prompt,
       notificationChannel: channel ?? approvalPayload?.notificationChannel,
       timeoutMinutes,
+      approverUserIds: approvalPayload?.approverUserIds,
       approveUrl,
       rejectUrl,
       tokenExpiresAt,

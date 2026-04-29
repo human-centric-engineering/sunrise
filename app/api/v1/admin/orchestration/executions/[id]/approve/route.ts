@@ -39,12 +39,28 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const body = await validateRequestBody(request, approveExecutionBodySchema);
 
-  // Ownership check: verify the execution belongs to this admin
+  // Ownership + approver scoping check
   const execution = await prisma.aiWorkflowExecution.findUnique({
     where: { id },
-    select: { userId: true },
+    select: { userId: true, executionTrace: true },
   });
-  if (!execution || execution.userId !== session.user.id) {
+  if (!execution) {
+    throw new NotFoundError(`Execution ${id} not found`);
+  }
+
+  // Allow if the user owns the execution or is in the approverUserIds list
+  const isOwner = execution.userId === session.user.id;
+  let isApprover = false;
+  if (!isOwner && Array.isArray(execution.executionTrace)) {
+    const trace = execution.executionTrace as Array<Record<string, unknown>>;
+    const awaitingEntry = trace.find((e) => e.status === 'awaiting_approval');
+    const output = awaitingEntry?.output as Record<string, unknown> | undefined;
+    const approverIds = output?.approverUserIds;
+    if (Array.isArray(approverIds) && approverIds.includes(session.user.id)) {
+      isApprover = true;
+    }
+  }
+  if (!isOwner && !isApprover) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
 

@@ -1846,6 +1846,8 @@ export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
   prompt: z.string().optional(),
   timeoutMinutes: z.number().optional(),
   notificationChannel: notificationChannelSchema.optional(),
+  /** User IDs who are allowed to approve/reject (in addition to the execution owner). */
+  approverUserIds: z.array(z.string().cuid2()).optional(),
 });
 
 export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({

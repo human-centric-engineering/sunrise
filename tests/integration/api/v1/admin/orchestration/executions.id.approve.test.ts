@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/executions/[id]/approve/route';
 import {
+  createMockAuthSession,
   mockAdminUser,
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
@@ -250,5 +251,87 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(updateArg.data.status).toBe('pending');
     // The single trace entry should still be 'completed' — untouched
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
+  });
+
+  // ─── Approver scoping ───────────────────────────────────────────────────────
+
+  const APPROVER_ID = 'cmjbv4i3x00003wsloputgwz8';
+
+  function mockAdminWithId(id: string) {
+    return createMockAuthSession({
+      session: {
+        id: 'session_123',
+        userId: id,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        token: 'mock_session_token',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      user: {
+        id,
+        email: 'approver@example.com',
+        name: 'Approver',
+        emailVerified: true,
+        image: null,
+        role: 'ADMIN',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  it('allows non-owner admin who is in approverUserIds', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminWithId(APPROVER_ID));
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        userId: OTHER_USER_ID, // not the approver
+        executionTrace: [
+          {
+            stepId: 'approval-step',
+            stepType: 'human_approval',
+            label: 'Review',
+            status: 'awaiting_approval',
+            output: { prompt: 'Approve?', approverUserIds: [APPROVER_ID] },
+            tokensUsed: 0,
+            costUsd: 0,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:00Z',
+            durationMs: 0,
+          },
+        ],
+      }) as never
+    );
+
+    const response = await POST(
+      makePostRequest({ approvalPayload: { decision: 'approved' } }),
+      makeParams(EXECUTION_ID)
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it('returns 404 for non-owner admin NOT in approverUserIds', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminWithId(APPROVER_ID));
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        userId: OTHER_USER_ID,
+        executionTrace: [
+          {
+            stepId: 'approval-step',
+            stepType: 'human_approval',
+            label: 'Review',
+            status: 'awaiting_approval',
+            output: { prompt: 'Approve?', approverUserIds: ['cmjbv4i3x00003wsloputgwx1'] },
+            tokensUsed: 0,
+            costUsd: 0,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:00Z',
+            durationMs: 0,
+          },
+        ],
+      }) as never
+    );
+
+    const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(404);
   });
 });
