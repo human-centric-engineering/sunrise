@@ -15,15 +15,29 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Loader2,
   RotateCcw,
   StopCircle,
   ThumbsUp,
+  XCircle,
 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
@@ -159,6 +173,35 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     }
   }, [execution.id, router]);
 
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectLoading, setRejectLoading] = useState(false);
+
+  const handleReject = useCallback(async () => {
+    setRejectLoading(true);
+    setActionResult(null);
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.executionReject(execution.id), {
+        body: { reason: rejectReason },
+      });
+      setActionResult({
+        type: 'success',
+        message: 'Execution rejected and cancelled.',
+      });
+      setRejectDialogOpen(false);
+      setRejectReason('');
+      router.refresh();
+    } catch (err) {
+      setActionResult({
+        type: 'error',
+        message: err instanceof APIClientError ? err.message : 'Rejection failed',
+      });
+      setRejectDialogOpen(false);
+    } finally {
+      setRejectLoading(false);
+    }
+  }, [execution.id, rejectReason, router]);
+
   const handleRetryStep = useCallback(
     async (stepId: string) => {
       setActionLoading(true);
@@ -218,6 +261,17 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
             <Button size="sm" onClick={() => void handleApprove()} disabled={actionLoading}>
               <ThumbsUp className="mr-2 h-4 w-4" />
               Approve &amp; Continue
+            </Button>
+          )}
+          {canApprove && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setRejectDialogOpen(true)}
+              disabled={actionLoading}
+            >
+              <XCircle className="mr-2 h-4 w-4" />
+              Reject
             </Button>
           )}
           {canCancel && (
@@ -394,6 +448,62 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
           </div>
         )}
       </section>
+
+      {/* ─── Reject Dialog ───────────────────────────────────────────────── */}
+      <AlertDialog
+        open={rejectDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRejectDialogOpen(false);
+            setRejectReason('');
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject execution?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The workflow will be cancelled and cannot be resumed. A reason is required for the
+              audit trail.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reject-reason-detail">
+              Reason <span className="text-destructive">*</span>{' '}
+              <FieldHelp title="Rejection reason">
+                A clear explanation of why this execution is being rejected. This is stored in the
+                execution&apos;s error message (prefixed with &quot;Rejected:&quot;) and recorded in
+                the audit trail. The workflow will be permanently cancelled and cannot be resumed.
+              </FieldHelp>
+            </Label>
+            <Textarea
+              id="reject-reason-detail"
+              placeholder="Does not meet compliance requirements..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rejectLoading}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleReject();
+              }}
+              disabled={rejectLoading || !rejectReason.trim()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {rejectLoading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="mr-2 h-4 w-4" />
+              )}
+              Reject
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
