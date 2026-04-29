@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Tip } from '@/components/ui/tooltip';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -309,13 +310,21 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
           <TableHeader>
             <TableRow>
               <TableHead className="w-8" />
-              <TableHead>Workflow</TableHead>
               <TableHead>
-                <Tip label="Truncated execution identifier">
+                <Tip label="The workflow that triggered this execution">
+                  <span>Workflow</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
+                <Tip label="Truncated execution identifier — click to view full detail">
                   <span>Execution</span>
                 </Tip>
               </TableHead>
-              <TableHead>Paused</TableHead>
+              <TableHead>
+                <Tip label="When the execution paused for approval">
+                  <span>Paused</span>
+                </Tip>
+              </TableHead>
               <TableHead>
                 <Tip label="Time elapsed since execution paused for approval">
                   <span>Waiting</span>
@@ -441,7 +450,12 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                             {getApprovalPrompt(detail.trace) && (
                               <div className="rounded-md border bg-amber-50 p-3 dark:bg-amber-950">
                                 <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
-                                  Approval prompt
+                                  Approval prompt{' '}
+                                  <FieldHelp title="What is this?">
+                                    The message configured in the workflow&apos;s human_approval
+                                    step. It explains what the workflow has done so far and why it
+                                    needs your review before continuing.
+                                  </FieldHelp>
                                 </p>
                                 <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">
                                   {getApprovalPrompt(detail.trace)}
@@ -450,26 +464,32 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                             )}
 
                             {/* Cost summary */}
-                            <div className="flex gap-4 text-xs">
-                              <span className="text-muted-foreground">
-                                Tokens:{' '}
-                                <span className="text-foreground font-medium">
-                                  {detail.execution.totalTokensUsed.toLocaleString()}
-                                </span>
-                              </span>
-                              <span className="text-muted-foreground">
-                                Cost:{' '}
-                                <span className="text-foreground font-medium">
-                                  ${detail.execution.totalCostUsd.toFixed(4)}
-                                </span>
-                              </span>
-                              {detail.execution.budgetLimitUsd && (
+                            <div className="flex items-center gap-4 text-xs">
+                              <Tip label="Total LLM tokens consumed by this execution so far">
                                 <span className="text-muted-foreground">
-                                  Budget:{' '}
+                                  Tokens:{' '}
                                   <span className="text-foreground font-medium">
-                                    ${detail.execution.budgetLimitUsd.toFixed(2)}
+                                    {detail.execution.totalTokensUsed.toLocaleString()}
                                   </span>
                                 </span>
+                              </Tip>
+                              <Tip label="Cumulative LLM cost in USD for all steps so far">
+                                <span className="text-muted-foreground">
+                                  Cost:{' '}
+                                  <span className="text-foreground font-medium">
+                                    ${detail.execution.totalCostUsd.toFixed(4)}
+                                  </span>
+                                </span>
+                              </Tip>
+                              {detail.execution.budgetLimitUsd && (
+                                <Tip label="Maximum spend allowed for this execution before it is automatically halted">
+                                  <span className="text-muted-foreground">
+                                    Budget:{' '}
+                                    <span className="text-foreground font-medium">
+                                      ${detail.execution.budgetLimitUsd.toFixed(2)}
+                                    </span>
+                                  </span>
+                                </Tip>
                               )}
                             </div>
 
@@ -477,7 +497,12 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                             {getPreviousSteps(detail.trace).length > 0 && (
                               <div>
                                 <p className="text-muted-foreground mb-2 text-xs font-medium">
-                                  Completed steps before approval
+                                  Completed steps before approval{' '}
+                                  <FieldHelp title="Previous steps">
+                                    The workflow steps that ran successfully before reaching the
+                                    human_approval gate. Review these to understand what the
+                                    workflow has already done and whether its outputs look correct.
+                                  </FieldHelp>
                                 </p>
                                 <div className="space-y-1">
                                   {getPreviousSteps(detail.trace).map((step) => (
@@ -507,7 +532,12 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                               .length > 0 ? (
                               <div>
                                 <p className="text-muted-foreground mb-1 text-xs font-medium">
-                                  Input data
+                                  Input data{' '}
+                                  <FieldHelp title="Execution input">
+                                    The data passed to this workflow when it was triggered. This
+                                    could include user queries, parameters from a scheduled run, or
+                                    webhook payload data.
+                                  </FieldHelp>
                                 </p>
                                 <pre className="bg-muted/40 max-h-40 overflow-auto rounded p-2 font-mono text-xs">
                                   {JSON.stringify(detail.execution.inputData, null, 2)}
@@ -580,7 +610,14 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="approve-notes">Notes (optional)</Label>
+            <Label htmlFor="approve-notes">
+              Notes (optional){' '}
+              <FieldHelp title="Approval notes">
+                Optional context for why this execution was approved. Recorded in the audit trail
+                for compliance and team visibility. Useful for noting any conditions or follow-up
+                actions.
+              </FieldHelp>
+            </Label>
             <Textarea
               id="approve-notes"
               placeholder="Looks good, approved for production..."
@@ -632,7 +669,12 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
           </AlertDialogHeader>
           <div className="space-y-2">
             <Label htmlFor="reject-reason">
-              Reason <span className="text-destructive">*</span>
+              Reason <span className="text-destructive">*</span>{' '}
+              <FieldHelp title="Rejection reason">
+                A clear explanation of why this execution is being rejected. This is stored in the
+                execution&apos;s error message (prefixed with &quot;Rejected:&quot;) and recorded in
+                the audit trail. The workflow will be permanently cancelled and cannot be resumed.
+              </FieldHelp>
             </Label>
             <Textarea
               id="reject-reason"

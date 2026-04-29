@@ -71,8 +71,23 @@ export default async function ApprovalQueuePage() {
             </p>
             <p className="text-foreground mt-2 font-medium">This page</p>
             <p>
-              Lists all paused executions awaiting your decision. Expand a row to see context, then
-              approve with optional notes or reject with a reason.
+              Lists all paused executions awaiting your decision. Expand a row to see context
+              (approval prompt, cost summary, previous steps, input data), then approve with
+              optional notes or reject with a required reason.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Approve vs Reject</p>
+            <p>
+              <strong>Approve</strong> resumes the workflow from the approval step. Add optional
+              notes for the audit trail.
+            </p>
+            <p className="mt-1">
+              <strong>Reject</strong> permanently cancels the execution with your reason recorded in
+              the error message. This cannot be undone.
+            </p>
+            <p className="text-foreground mt-2 font-medium">Sidebar badge</p>
+            <p>
+              The orange badge next to &quot;Approval Queue&quot; in the sidebar shows the number of
+              pending approvals. It refreshes on each page navigation.
             </p>
           </FieldHelp>
         </h1>
