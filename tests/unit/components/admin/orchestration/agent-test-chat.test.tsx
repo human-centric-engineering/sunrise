@@ -223,7 +223,7 @@ describe('AgentTestChat', () => {
   });
 
   it('shows inline status from status SSE event during streaming', async () => {
-    let resolveStream: (() => void) | null = null;
+    const resolver: { fn: (() => void) | null } = { fn: null };
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -233,7 +233,7 @@ describe('AgentTestChat', () => {
             `event: status\ndata: ${JSON.stringify({ message: 'Executing search_documents' })}\n\n`
           )
         );
-        resolveStream = () => {
+        resolver.fn = () => {
           controller.enqueue(
             encoder.encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
           );
@@ -255,7 +255,7 @@ describe('AgentTestChat', () => {
     });
 
     // Clean up
-    resolveStream?.();
+    resolver.fn?.();
     await waitFor(() => {
       expect(screen.queryByText('Executing search_documents')).not.toBeInTheDocument();
     });
