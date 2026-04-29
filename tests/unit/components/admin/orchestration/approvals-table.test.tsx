@@ -526,6 +526,157 @@ describe('ApprovalsTable', () => {
     });
   });
 
+  describe('collapse', () => {
+    it('clicking an expanded row collapses it', async () => {
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: makeExecutionDetail() })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('Approval prompt')).toBeInTheDocument();
+      });
+
+      // Click again to collapse
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('detail error', () => {
+    it('shows error message when detail fetch fails', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network failure'));
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('Could not load execution details.')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('detail variations', () => {
+    it('shows budget limit when present', async () => {
+      const detailWithBudget = makeExecutionDetail();
+      (detailWithBudget.execution as Record<string, unknown>).budgetLimitUsd = 5.0;
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: detailWithBudget })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('$5.00')).toBeInTheDocument();
+      });
+    });
+
+    it('hides approval prompt when trace has no awaiting_approval entry', async () => {
+      const detailNoPrompt = makeExecutionDetail();
+      detailNoPrompt.trace = [detailNoPrompt.trace[0]]; // only the completed step
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: detailNoPrompt })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('$0.0015')).toBeInTheDocument(); // detail loaded
+      });
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+    });
+
+    it('hides input data when inputData is null', async () => {
+      const detailNoInput = makeExecutionDetail();
+      (detailNoInput.execution as Record<string, unknown>).inputData = null;
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: detailNoInput })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('$0.0015')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Input data')).not.toBeInTheDocument();
+    });
+
+    it('hides previous steps when approval is the first step', async () => {
+      const detailNoPrev = makeExecutionDetail();
+      detailNoPrev.trace = [detailNoPrev.trace[1]]; // only the approval step
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: detailNoPrev })
+      );
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('Approval prompt')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Completed steps before approval')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('list fetch error', () => {
+    it('shows error when pagination fetch fails', async () => {
+      const multiMeta: PaginationMeta = { page: 1, limit: 25, total: 50, totalPages: 2 };
+      mockFetch.mockRejectedValueOnce(new Error('Network failure'));
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={multiMeta} />);
+
+      await userEvent.click(screen.getByText('Next'));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Could not load approvals. Try refreshing the page.')
+        ).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('pending count text', () => {
+    it('shows singular text for 1 pending approval', () => {
+      const singleMeta: PaginationMeta = { page: 1, limit: 25, total: 1, totalPages: 1 };
+      render(<ApprovalsTable initialApprovals={[makeApproval()]} initialMeta={singleMeta} />);
+
+      expect(screen.getByText('1 pending approval')).toBeInTheDocument();
+    });
+
+    it('shows plural text for multiple pending approvals', () => {
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      expect(screen.getByText('2 pending approvals')).toBeInTheDocument();
+    });
+
+    it('shows "No pending approvals" for zero total', () => {
+      const emptyMeta: PaginationMeta = { page: 1, limit: 25, total: 0, totalPages: 1 };
+      render(<ApprovalsTable initialApprovals={[]} initialMeta={emptyMeta} />);
+
+      expect(screen.getByText('No pending approvals')).toBeInTheDocument();
+    });
+  });
+
   describe('expand detail', () => {
     it('shows input data when expanded', async () => {
       mockFetch.mockResolvedValueOnce(
