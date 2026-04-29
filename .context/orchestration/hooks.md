@@ -44,14 +44,15 @@ lib/orchestration/hooks/
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type             | Currently Emitted By                                  |
-| ---------------------- | ----------------------------------------------------- |
-| `workflow.started`     | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `workflow.completed`   | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `workflow.failed`      | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `message.created`      | `lib/orchestration/chat/streaming-handler.ts`         |
-| `conversation.started` | `lib/orchestration/chat/streaming-handler.ts`         |
-| `agent.updated`        | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
+| Event Type                     | Currently Emitted By                                  |
+| ------------------------------ | ----------------------------------------------------- |
+| `workflow.started`             | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.completed`           | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.failed`              | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.paused_for_approval` | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `message.created`              | `lib/orchestration/chat/streaming-handler.ts`         |
+| `conversation.started`         | `lib/orchestration/chat/streaming-handler.ts`         |
+| `agent.updated`                | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
 
 ## Event Payload
 
@@ -64,6 +65,36 @@ interface HookEventPayload {
 ```
 
 The `data` shape is not validated or typed per event — callers of `emitHookEvent()` decide what to include.
+
+### `workflow.paused_for_approval` Payload
+
+Emitted when a `human_approval` step pauses execution. The payload includes pre-signed approval/rejection URLs that external systems (Slack, email, WhatsApp) can use to complete the approval flow without requiring an admin session.
+
+```ts
+{
+  eventType: 'workflow.paused_for_approval',
+  timestamp: string,
+  data: {
+    executionId: string,
+    workflowId: string,
+    userId: string,
+    stepId: string,
+    prompt: string,              // reviewer-facing instructions
+    notificationChannel?: {      // from step config — tells consumers where to route
+      type: string,
+      target?: string,           // e.g., channel ID, email address
+      metadata?: Record<string, string>,
+    },
+    timeoutMinutes?: number,
+    approverUserIds?: string[],  // delegated approvers (CUIDs)
+    approveUrl: string,          // pre-signed URL for approve action
+    rejectUrl: string,           // pre-signed URL for reject action
+    tokenExpiresAt: string,      // ISO-8601 expiry of the signed tokens
+  }
+}
+```
+
+The `approveUrl` / `rejectUrl` point to the public token-authenticated endpoints (see [External Approval Endpoints](#external-approval-endpoints)). Tokens are HMAC-SHA256 signed with `BETTER_AUTH_SECRET` — no database state, no cleanup needed. The same event is also dispatched as an `approval_required` webhook via `dispatchWebhookEvent`.
 
 ## Filter Syntax
 
@@ -219,6 +250,33 @@ Delivery rows persist across process restarts so admins can audit failures and m
 - **Target table**: `AiEventHookDelivery`. Deletes rows whose `createdAt` is older than `now - webhookRetentionDays`.
 
 See [Retention Pruning](./scheduling.md#retention-pruning) for the full list of prune sweeps.
+
+## External Approval Endpoints
+
+Public endpoints for approving/rejecting executions via HMAC-signed tokens. No session required — the token is the authorization.
+
+| Method | Path                                          | Body                            | Auth       |
+| ------ | --------------------------------------------- | ------------------------------- | ---------- |
+| `POST` | `/api/v1/orchestration/approvals/:id/approve` | `{ notes?: string }`            | `?token=…` |
+| `POST` | `/api/v1/orchestration/approvals/:id/reject`  | `{ reason: string }` (required) | `?token=…` |
+
+Rate limited via `apiLimiter`. Tokens embed `executionId`, `action`, and `expiresAt`; endpoint verifies the HMAC signature and confirms the action matches. Calls the same `executeApproval()` / `executeRejection()` shared logic as the admin endpoints.
+
+Token generation: `lib/orchestration/approval-tokens.ts` — `generateApprovalToken()`, `verifyApprovalToken()`, `buildApprovalUrls()`.
+
+## Notification Dispatcher
+
+`lib/orchestration/notifications/dispatcher.ts` — called from the engine's `pauseForApproval()` method after the DB update. Routes approval notifications to external channels by including channel metadata in hook/webhook payloads.
+
+The dispatcher normalizes `notificationChannel` from the step config (strings like `'slack'` become `{ type: 'slack' }`), logs the dispatch, and includes the normalized channel in the event payload. Actual delivery (posting to Slack, sending email, etc.) is handled by external webhook consumers — the dispatcher does not integrate with any channel SDKs.
+
+## Approver Scoping
+
+Workflow steps can specify `approverUserIds` (array of CUIDs) in the `human_approval` step config. This enables delegated approval:
+
+- **Admin endpoints** (`/admin/orchestration/executions/:id/approve|reject`): Allow access if the caller owns the execution OR their user ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry. Non-authorized users get 404 (not 403).
+- **Token endpoints** (`/orchestration/approvals/:id/approve|reject`): Token is the authorization — no ownership check needed. Anyone with a valid, unexpired token can act.
+- **Event payloads**: `approverUserIds` is included in hook/webhook payloads so external routing systems can target specific approvers.
 
 ## Related Docs
 

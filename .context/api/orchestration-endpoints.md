@@ -136,7 +136,18 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/mcp/sessions/:id` | GET | Read a single MCP session | 6 |
 | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
-107 admin route files, 8 consumer chat route files, 1 webhook trigger route file (116 total). For architecture detail see `.context/orchestration/admin-api.md`.
+109 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (120 total). For architecture detail see `.context/orchestration/admin-api.md`.
+
+### Public Approval Endpoints (Token-Authenticated)
+
+These endpoints live outside the admin base path and require no session — a signed HMAC token in the query string is the authorization.
+
+| Endpoint                                      | Methods | Purpose                                   | Auth       |
+| --------------------------------------------- | ------- | ----------------------------------------- | ---------- |
+| `/api/v1/orchestration/approvals/:id/approve` | POST    | Approve via signed token                  | `?token=…` |
+| `/api/v1/orchestration/approvals/:id/reject`  | POST    | Reject via signed token (reason required) | `?token=…` |
+
+Rate limited via `apiLimiter`. See [Event Hooks — External Approval Endpoints](../orchestration/hooks.md#external-approval-endpoints) for details.
 
 ---
 
@@ -355,11 +366,15 @@ Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `sess
 
 ### `POST /executions/:id/approve`
 
-Approves a `paused_for_approval` execution. Body: `{ approved: true }`. The execution resumes from the approval step. Non-paused executions return 400.
+Approves a `paused_for_approval` execution. Body: `{ notes?: string, approvalPayload?: object }`. The execution resumes from the approval step (status → `pending`, awaiting trace entry → `completed`). Non-paused executions return 400. Concurrent races return 409.
+
+Scoped to `session.user.id` OR approver delegation — if the caller's ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry, access is allowed even if they don't own the execution. Non-authorized users get 404 (not 403).
+
+Delegates to shared `executeApproval()` in `lib/orchestration/approval-actions.ts`.
 
 ### `POST /executions/:id/reject`
 
-Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Uses optimistic locking to prevent concurrent approve/reject races.
+Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Concurrent races return 409.
 
 ```jsonc
 // Request
@@ -369,7 +384,7 @@ Rejects a `paused_for_approval` execution with a required reason. Sets status to
 { "success": true, "data": { "success": true, "executionId": "<cuid>" } }
 ```
 
-Scoped to `session.user.id` — cross-user returns 404.
+Same ownership + approver scoping as approve. Delegates to shared `executeRejection()` in `lib/orchestration/approval-actions.ts`.
 
 ### `POST /executions/:id/cancel`
 

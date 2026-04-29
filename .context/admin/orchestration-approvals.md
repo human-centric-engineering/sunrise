@@ -6,19 +6,25 @@ Admin UI for reviewing, approving, and rejecting paused workflow executions that
 
 ## Quick Reference
 
-| What               | Path                                                                                           |
-| ------------------ | ---------------------------------------------------------------------------------------------- |
-| List page          | `app/admin/orchestration/approvals/page.tsx`                                                   |
-| Table component    | `components/admin/orchestration/approvals-table.tsx`                                           |
-| Approve endpoint   | `app/api/v1/admin/orchestration/executions/[id]/approve/route.ts`                              |
-| Reject endpoint    | `app/api/v1/admin/orchestration/executions/[id]/reject/route.ts`                               |
-| Cancel endpoint    | `app/api/v1/admin/orchestration/executions/[id]/cancel/route.ts`                               |
-| List endpoint      | `app/api/v1/admin/orchestration/executions/route.ts` (with `?status=paused_for_approval`)      |
-| Detail endpoint    | `app/api/v1/admin/orchestration/executions/[id]/route.ts`                                      |
-| Validation schemas | `lib/validations/orchestration.ts` (`approveExecutionBodySchema`, `rejectExecutionBodySchema`) |
-| Sidebar badge      | `components/admin/admin-sidebar.tsx` (`useApprovalCount`, `injectApprovalBadge`)               |
-| Integration tests  | `tests/integration/api/v1/admin/orchestration/executions.id.reject.test.ts`                    |
-| Unit tests         | `tests/unit/components/admin/orchestration/approvals-table.test.tsx`                           |
+| What                  | Path                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| List page             | `app/admin/orchestration/approvals/page.tsx`                                                   |
+| Table component       | `components/admin/orchestration/approvals-table.tsx`                                           |
+| Approve endpoint      | `app/api/v1/admin/orchestration/executions/[id]/approve/route.ts`                              |
+| Reject endpoint       | `app/api/v1/admin/orchestration/executions/[id]/reject/route.ts`                               |
+| Cancel endpoint       | `app/api/v1/admin/orchestration/executions/[id]/cancel/route.ts`                               |
+| List endpoint         | `app/api/v1/admin/orchestration/executions/route.ts` (with `?status=paused_for_approval`)      |
+| Detail endpoint       | `app/api/v1/admin/orchestration/executions/[id]/route.ts`                                      |
+| Validation schemas    | `lib/validations/orchestration.ts` (`approveExecutionBodySchema`, `rejectExecutionBodySchema`) |
+| Shared actions        | `lib/orchestration/approval-actions.ts` (`executeApproval`, `executeRejection`)                |
+| Approval tokens       | `lib/orchestration/approval-tokens.ts` (HMAC token generate/verify/URL builder)                |
+| Notification dispatch | `lib/orchestration/notifications/dispatcher.ts` (channel routing for external notifications)   |
+| Token approve route   | `app/api/v1/orchestration/approvals/[id]/approve/route.ts` (public, token-auth)                |
+| Token reject route    | `app/api/v1/orchestration/approvals/[id]/reject/route.ts` (public, token-auth)                 |
+| Sidebar badge         | `components/admin/admin-sidebar.tsx` (`useApprovalCount`, `injectApprovalBadge`)               |
+| Integration tests     | `tests/integration/api/v1/admin/orchestration/executions.id.{approve,reject}.test.ts`          |
+| Token endpoint tests  | `tests/integration/api/v1/orchestration/approvals.id.{approve,reject}.test.ts`                 |
+| Unit tests            | `tests/unit/components/admin/orchestration/approvals-table.test.tsx`                           |
 
 ## What admins can do from the UI
 
@@ -98,8 +104,63 @@ The sidebar's "Operate" subgroup shows an orange badge count next to "Approval Q
 
 Implementation: `useApprovalCount` hook in `admin-sidebar.tsx` fetches `GET /executions?status=paused_for_approval&limit=1` and reads `meta.total`. Re-fetches on each pathname change (navigation). Count is stale-on-load — no polling or SSE.
 
+## External Approval Channels
+
+The approval system supports approvals from external channels (Slack, email, WhatsApp, SMS) via stateless HMAC-signed tokens. No database migration was needed.
+
+### How it works
+
+1. **Execution pauses** — A `human_approval` step runs and throws `PausedForApproval`.
+2. **Engine emits events** — `pauseForApproval()` generates signed approval/rejection URLs, then emits:
+   - `workflow.paused_for_approval` hook event (with URLs, channel metadata, approver list)
+   - `approval_required` webhook event (same payload)
+   - Notification dispatch log (via `dispatchApprovalNotification`)
+3. **External system delivers** — A webhook consumer (e.g., Slack bot, email sender) receives the event and posts the approve/reject URLs to the target channel.
+4. **Recipient clicks URL** — The signed URL hits the public token-authenticated endpoint, which verifies the HMAC token and calls the shared approval action.
+
+### Token design
+
+Tokens are stateless HMAC-SHA256 signatures using `BETTER_AUTH_SECRET`:
+
+- Format: `base64url(payload).base64url(HMAC-SHA256(secret, payloadJSON))`
+- Payload: `{ executionId, action, expiresAt }`
+- Default expiry: 7 days (overridden by step's `timeoutMinutes`)
+- Verified with constant-time comparison (`timingSafeEqual`)
+- No token table, no cleanup job, no migration
+
+### Step config for external channels
+
+```jsonc
+{
+  "type": "human_approval",
+  "config": {
+    "prompt": "Review the generated report before publishing",
+    "notificationChannel": "slack", // string shorthand
+    // OR:
+    "notificationChannel": {
+      // object form
+      "type": "slack",
+      "target": "#approvals",
+      "metadata": { "urgency": "high" },
+    },
+    "timeoutMinutes": 1440, // token expiry (24h)
+    "approverUserIds": ["cuid1", "cuid2"], // optional delegation
+  },
+}
+```
+
+### Approver scoping
+
+By default only the execution owner can approve/reject via the admin endpoints. Adding `approverUserIds` to the step config enables delegated approval:
+
+- **Admin endpoints**: Allow access if `session.user.id` matches `execution.userId` (owner) OR is in the `approverUserIds` list from the trace's `awaiting_approval` output entry.
+- **Token endpoints**: Token is the authorization — anyone with a valid unexpired token can act. No ownership check.
+- Non-authorized admin users receive 404 (not 403) to avoid confirming existence.
+
 ## Anti-patterns
 
 - **Don't add a new list endpoint.** The existing `GET /executions?status=paused_for_approval` is sufficient. Adding a separate `/approvals` endpoint would duplicate query logic.
 - **Don't add a new Prisma status for rejection.** Rejection reuses `cancelled` with a prefixed `errorMessage`. Adding `rejected` to the status enum would require a migration and updates to every place that handles status (engine, reaper, SSE events, badges, tables).
 - **Don't poll for real-time updates.** The sidebar badge re-fetches on navigation. If real-time is needed later, add SSE or a lightweight polling interval — don't build it preemptively.
+- **Don't store approval tokens in the database.** Tokens are stateless HMAC signatures verified on the fly. Adding a token table would add migration complexity and cleanup jobs for no benefit.
+- **Don't build channel-specific SDKs into the app.** The notification dispatcher includes channel metadata in webhook payloads. Actual delivery (Slack API, SendGrid, Twilio) is handled by external webhook consumers.
