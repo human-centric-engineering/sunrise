@@ -12,6 +12,7 @@
 
 import { useCallback, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -62,16 +63,20 @@ export interface ExecutionsTableProps {
   initialExecutions: ExecutionListItem[];
   initialMeta: PaginationMeta;
   initialWorkflowId?: string;
+  initialStatus?: string;
 }
 
 export function ExecutionsTable({
   initialExecutions,
   initialMeta,
   initialWorkflowId,
+  initialStatus,
 }: ExecutionsTableProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [executions, setExecutions] = useState(initialExecutions);
   const [meta, setMeta] = useState(initialMeta);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(initialStatus ?? 'all');
   const [workflowId] = useState(initialWorkflowId ?? '');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,8 +118,18 @@ export function ExecutionsTable({
     (value: string) => {
       setStatusFilter(value);
       void fetchExecutions(1, { status: value });
+
+      // Sync filter to URL for bookmarking/sharing
+      const params = new URLSearchParams(searchParams.toString());
+      if (value === 'all') {
+        params.delete('status');
+      } else {
+        params.set('status', value);
+      }
+      const qs = params.toString();
+      router.replace(qs ? `?${qs}` : '?', { scroll: false });
     },
-    [fetchExecutions]
+    [fetchExecutions, router, searchParams]
   );
 
   const handlePage = useCallback(

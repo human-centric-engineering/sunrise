@@ -203,6 +203,74 @@ describe('ExecutionsTable', () => {
     });
   });
 
+  describe('URL-persisted status filter', () => {
+    it('initializes filter from initialStatus prop', () => {
+      render(
+        <ExecutionsTable
+          initialExecutions={TWO_EXECUTIONS}
+          initialMeta={MOCK_META}
+          initialStatus="failed"
+        />
+      );
+
+      // The select trigger should show the "Failed" label
+      expect(screen.getByText('Failed')).toBeInTheDocument();
+    });
+
+    it('updates URL when status filter changes', async () => {
+      const { useRouter } = await import('next/navigation');
+      const mockReplace = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        replace: mockReplace,
+        push: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        refresh: vi.fn(),
+        prefetch: vi.fn(),
+      } as never);
+
+      const user = userEvent.setup();
+      render(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
+
+      const trigger = screen.getByRole('combobox');
+      await user.click(trigger);
+      await user.click(screen.getByRole('option', { name: /^Failed$/i }));
+
+      expect(mockReplace).toHaveBeenCalledWith(
+        expect.stringContaining('status=failed'),
+        expect.objectContaining({ scroll: false })
+      );
+    });
+
+    it('removes status from URL when filter reset to "all"', async () => {
+      const { useRouter } = await import('next/navigation');
+      const mockReplace = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        replace: mockReplace,
+        push: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        refresh: vi.fn(),
+        prefetch: vi.fn(),
+      } as never);
+
+      const user = userEvent.setup();
+      render(
+        <ExecutionsTable
+          initialExecutions={TWO_EXECUTIONS}
+          initialMeta={MOCK_META}
+          initialStatus="failed"
+        />
+      );
+
+      const trigger = screen.getByRole('combobox');
+      await user.click(trigger);
+      await user.click(screen.getByRole('option', { name: /all statuses/i }));
+
+      expect(mockReplace).toHaveBeenCalledWith('?', expect.objectContaining({ scroll: false }));
+    });
+  });
+
   describe('duration', () => {
     it('computes duration from startedAt, not createdAt', () => {
       const exec = makeExecution({
