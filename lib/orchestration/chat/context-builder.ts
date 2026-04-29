@@ -18,6 +18,7 @@ import { logger } from '@/lib/logging';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
+const CONTEXT_CACHE_MAX_SIZE = 500;
 
 interface CacheEntry {
   value: string;
@@ -67,6 +68,13 @@ export async function buildContext(type: string, id: string): Promise<string> {
   }
 
   const framed = formatLockedContext(type, id, body);
+
+  // Evict oldest entry if cache is at capacity
+  if (cache.size >= CONTEXT_CACHE_MAX_SIZE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+
   cache.set(key, { value: framed, expiresAt: Date.now() + CONTEXT_CACHE_TTL_MS });
   return framed;
 }
