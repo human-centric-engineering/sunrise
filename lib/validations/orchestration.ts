@@ -1756,7 +1756,7 @@ export const executionTraceEntrySchema = z.object({
   stepId: z.string(),
   stepType: z.string(),
   label: z.string(),
-  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval']),
+  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval', 'rejected']),
   output: z.unknown(),
   error: z.string().optional(),
   tokensUsed: z.number(),

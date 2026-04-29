@@ -141,13 +141,39 @@ describe('executeApproval', () => {
     );
   });
 
-  it('succeeds even with empty trace (no awaiting entry to update)', async () => {
+  it('throws TRACE_CORRUPTED when trace has no awaiting_approval entry', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
       makeExecution({ executionTrace: [] }) as never
     );
 
-    const result = await executeApproval(EXECUTION_ID, { actorLabel: 'test' });
-    expect(result.success).toBe(true);
+    await expect(executeApproval(EXECUTION_ID, { actorLabel: 'test' })).rejects.toThrow(
+      expect.objectContaining({ code: 'TRACE_CORRUPTED' })
+    );
+  });
+
+  it('throws TRACE_CORRUPTED when trace entries exist but none awaiting', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        executionTrace: [
+          {
+            stepId: 'step-1',
+            stepType: 'llm_call',
+            label: 'Generate',
+            status: 'completed',
+            output: {},
+            tokensUsed: 100,
+            costUsd: 0.01,
+            startedAt: '2025-01-01T00:00:00Z',
+            completedAt: '2025-01-01T00:00:01Z',
+            durationMs: 1000,
+          },
+        ],
+      }) as never
+    );
+
+    await expect(executeApproval(EXECUTION_ID, { actorLabel: 'test' })).rejects.toThrow(
+      expect.objectContaining({ code: 'TRACE_CORRUPTED' })
+    );
   });
 
   it('throws CONCURRENT when updateMany returns count 0', async () => {
@@ -166,7 +192,7 @@ describe('executeRejection', () => {
     vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
-  it('transitions execution to CANCELLED with prefixed errorMessage', async () => {
+  it('transitions execution to CANCELLED and updates trace entry to rejected', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
 
     const result = await executeRejection(EXECUTION_ID, {
@@ -181,6 +207,15 @@ describe('executeRejection', () => {
     expect(updateCall.data.status).toBe('cancelled');
     expect(updateCall.data.errorMessage).toBe('Rejected: Not appropriate');
     expect(updateCall.data.completedAt).toBeInstanceOf(Date);
+
+    // Trace entry should be updated to rejected
+    const trace = updateCall.data.executionTrace as Array<Record<string, unknown>>;
+    expect(trace[0].status).toBe('rejected');
+    const output = trace[0].output as Record<string, unknown>;
+    expect(output.rejected).toBe(true);
+    expect(output.reason).toBe('Not appropriate');
+    expect(output.actor).toBe('admin:user-1');
+    expect(trace[0].completedAt).toBeDefined();
   });
 
   it('logs rejection with actor and reason', async () => {
@@ -216,6 +251,26 @@ describe('executeRejection', () => {
     await expect(
       executeRejection(EXECUTION_ID, { reason: 'r', actorLabel: 'test' })
     ).rejects.toThrow(expect.objectContaining({ code: 'INVALID_STATUS' }));
+  });
+
+  it('throws TRACE_CORRUPTED when trace has no awaiting_approval entry', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ executionTrace: [] }) as never
+    );
+
+    await expect(
+      executeRejection(EXECUTION_ID, { reason: 'r', actorLabel: 'test' })
+    ).rejects.toThrow(expect.objectContaining({ code: 'TRACE_CORRUPTED' }));
+  });
+
+  it('throws TRACE_CORRUPTED when trace is malformed', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ executionTrace: 'not-an-array' }) as never
+    );
+
+    await expect(
+      executeRejection(EXECUTION_ID, { reason: 'r', actorLabel: 'test' })
+    ).rejects.toThrow(expect.objectContaining({ code: 'TRACE_CORRUPTED' }));
   });
 
   it('throws CONCURRENT when updateMany returns count 0', async () => {

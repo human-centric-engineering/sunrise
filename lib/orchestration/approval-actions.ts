@@ -72,18 +72,22 @@ export async function executeApproval(
 
   const trace = traceParse.data;
   const awaitingIdx = trace.findIndex((e) => e.status === 'awaiting_approval');
-  if (awaitingIdx !== -1) {
-    trace[awaitingIdx] = {
-      ...trace[awaitingIdx],
-      status: 'completed',
-      output: opts.approvalPayload ?? {
-        approved: true,
-        notes: opts.notes ?? null,
-        actor: opts.actorLabel,
-      },
-      completedAt: new Date().toISOString(),
-    };
+  if (awaitingIdx === -1) {
+    throw Object.assign(new Error('Execution trace has no awaiting_approval entry'), {
+      code: 'TRACE_CORRUPTED',
+    });
   }
+
+  trace[awaitingIdx] = {
+    ...trace[awaitingIdx],
+    status: 'completed',
+    output: opts.approvalPayload ?? {
+      approved: true,
+      notes: opts.notes ?? null,
+      actor: opts.actorLabel,
+    },
+    completedAt: new Date().toISOString(),
+  };
 
   // Optimistic lock: WHERE includes status to prevent double-approve
   const result = await prisma.aiWorkflowExecution.updateMany({
@@ -136,12 +140,38 @@ export async function executeRejection(
     });
   }
 
+  // Update the awaiting trace entry with the rejection result
+  const traceParse = executionTraceSchema.safeParse(execution.executionTrace);
+  if (!traceParse.success) {
+    throw Object.assign(new Error('Execution trace is corrupted'), { code: 'TRACE_CORRUPTED' });
+  }
+
+  const trace = traceParse.data;
+  const awaitingIdx = trace.findIndex((e) => e.status === 'awaiting_approval');
+  if (awaitingIdx === -1) {
+    throw Object.assign(new Error('Execution trace has no awaiting_approval entry'), {
+      code: 'TRACE_CORRUPTED',
+    });
+  }
+
+  trace[awaitingIdx] = {
+    ...trace[awaitingIdx],
+    status: 'rejected',
+    output: {
+      rejected: true,
+      reason: opts.reason,
+      actor: opts.actorLabel,
+    },
+    completedAt: new Date().toISOString(),
+  };
+
   const result = await prisma.aiWorkflowExecution.updateMany({
     where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
     data: {
       status: WorkflowStatus.CANCELLED,
       completedAt: new Date(),
       errorMessage: `Rejected: ${opts.reason}`,
+      executionTrace: trace as unknown as object,
     },
   });
 
