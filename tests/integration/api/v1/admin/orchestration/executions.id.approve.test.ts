@@ -205,10 +205,11 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(response.status).toBe(400);
   });
 
-  it('succeeds even when trace has no awaiting_approval entry (awaitingIdx === -1)', async () => {
+  it('returns 400 when trace has no awaiting_approval entry (trace integrity)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     // Execution is paused_for_approval but the trace entries are all 'completed' —
     // this can happen if the trace was manually edited or a bug in checkpoint.
+    // executeApproval now validates trace integrity and throws TRACE_CORRUPTED.
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
       makeExecution({
         executionTrace: [
@@ -233,24 +234,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
       makeParams(EXECUTION_ID)
     );
 
-    expect(response.status).toBe(200);
-    const data = await parseJson<{
-      success: boolean;
-      data: { success: boolean; resumeStepId: string };
-    }>(response);
-    // test-review:accept tobe_true — structural boolean assertion on API response field
-    expect(data.success).toBe(true);
-
-    // The trace should be passed through unchanged (no mutation since awaitingIdx === -1)
-    const updateArg = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock
-      .calls[0][0] as unknown as {
-      where: { id: string; status: string };
-      data: { status: string; executionTrace: Array<{ status: string }> };
-    };
-    expect(updateArg.where.status).toBe('paused_for_approval');
-    expect(updateArg.data.status).toBe('pending');
-    // The single trace entry should still be 'completed' — untouched
-    expect(updateArg.data.executionTrace[0].status).toBe('completed');
+    expect(response.status).toBe(400);
   });
 
   // ─── Approver scoping ───────────────────────────────────────────────────────
