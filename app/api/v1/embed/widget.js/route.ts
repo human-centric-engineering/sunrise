@@ -89,6 +89,7 @@ export function GET(request: NextRequest): Response {
       .msg.user { text-align: right; }
       .msg.user span { background: \${bubbleBg}; color: #fff; padding: 6px 12px; border-radius: 12px 12px 0 12px; display: inline-block; max-width: 85%; }
       .msg.assistant span { background: \${isDark ? '#374151' : '#f3f4f6'}; padding: 6px 12px; border-radius: 12px 12px 12px 0; display: inline-block; max-width: 85%; }
+      .status { font-size: 12px; color: \${isDark ? '#9ca3af' : '#6b7280'}; font-style: italic; padding: 0 16px 4px; }
       .input-area {
         padding: 8px 12px; border-top: 1px solid \${border}; display: flex; gap: 8px;
       }
@@ -108,6 +109,7 @@ export function GET(request: NextRequest): Response {
     <div class="panel">
       <div class="header"><span>Chat</span><button class="new-chat" aria-label="New chat" title="New chat" style="float:right;background:none;border:none;cursor:pointer;font-size:14px;color:inherit;opacity:0.6;">&#x1F5D1;</button></div>
       <div class="messages"></div>
+      <div class="status" style="display:none;"></div>
       <div class="input-area">
         <input type="text" placeholder="Type a message\u2026" />
         <button type="button">Send</button>
@@ -120,8 +122,10 @@ export function GET(request: NextRequest): Response {
   var messagesEl = shadow.querySelector('.messages');
   var input = shadow.querySelector('.input-area input');
   var sendBtn = shadow.querySelector('.input-area button');
+  var statusEl = shadow.querySelector('.status');
   var conversationId = null;
   var sending = false;
+  var activeAbort = null;
 
   var newChatBtn = shadow.querySelector('.new-chat');
 
@@ -131,9 +135,14 @@ export function GET(request: NextRequest): Response {
   });
 
   newChatBtn.addEventListener('click', function() {
+    if (activeAbort) { activeAbort.abort(); activeAbort = null; }
     conversationId = null;
     messagesEl.innerHTML = '';
+    statusEl.style.display = 'none';
+    statusEl.textContent = '';
     input.value = '';
+    sending = false;
+    sendBtn.disabled = false;
     input.focus();
   });
 
@@ -148,6 +157,42 @@ export function GET(request: NextRequest): Response {
     return span;
   }
 
+  function parseSseBlocks(buffer) {
+    var blocks = buffer.split('\\n\\n');
+    var remaining = blocks.pop() || '';
+    var events = [];
+    for (var b = 0; b < blocks.length; b++) {
+      var block = blocks[b];
+      if (!block.trim()) continue;
+      var lines = block.split('\\n');
+      var eventType = null;
+      var dataLines = [];
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.charAt(0) === ':') continue;
+        if (line.indexOf('event:') === 0) {
+          eventType = line.slice(6).trim();
+        } else if (line.indexOf('data:') === 0) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (!eventType || dataLines.length === 0) continue;
+      try {
+        var data = JSON.parse(dataLines.join('\\n'));
+        events.push({ type: eventType, data: data });
+      } catch(e) {}
+    }
+    return { events: events, remaining: remaining };
+  }
+
+  function endStream() {
+    sending = false;
+    sendBtn.disabled = false;
+    activeAbort = null;
+    statusEl.style.display = 'none';
+    statusEl.textContent = '';
+  }
+
   function send() {
     var msg = input.value.trim();
     if (!msg || sending) return;
@@ -157,10 +202,14 @@ export function GET(request: NextRequest): Response {
     addMsg('user', msg);
     var assistantSpan = addMsg('assistant', '\\u2026');
 
+    var controller = new AbortController();
+    activeAbort = controller;
+
     fetch(apiBase + '/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Embed-Token': token },
       body: JSON.stringify({ message: msg, conversationId: conversationId || undefined }),
+      signal: controller.signal,
     }).then(function(res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var reader = res.body.getReader();
@@ -170,37 +219,48 @@ export function GET(request: NextRequest): Response {
 
       function read() {
         reader.read().then(function(result) {
-          if (result.done) { sending = false; sendBtn.disabled = false; return; }
+          if (result.done) { endStream(); return; }
           buffer += decoder.decode(result.value, { stream: true });
-          var lines = buffer.split('\\n');
-          buffer = lines.pop() || '';
-          for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            if (line.startsWith('data: ')) {
-              try {
-                var evt = JSON.parse(line.slice(6));
-                if (evt.type === 'start') {
-                  conversationId = evt.conversationId;
-                  fullText = '';
-                  assistantSpan.textContent = '';
-                } else if (evt.type === 'content') {
-                  fullText += evt.delta;
-                  assistantSpan.textContent = fullText;
-                  messagesEl.scrollTop = messagesEl.scrollHeight;
-                } else if (evt.type === 'error') {
-                  assistantSpan.textContent = 'Error: ' + evt.message;
-                }
-              } catch(e) {}
+          var parsed = parseSseBlocks(buffer);
+          buffer = parsed.remaining;
+          for (var i = 0; i < parsed.events.length; i++) {
+            var evt = parsed.events[i];
+            if (evt.type === 'start') {
+              conversationId = evt.data.conversationId;
+              fullText = '';
+              assistantSpan.textContent = '';
+            } else if (evt.type === 'content' && typeof evt.data.delta === 'string') {
+              fullText += evt.data.delta;
+              assistantSpan.textContent = fullText;
+              messagesEl.scrollTop = messagesEl.scrollHeight;
+              statusEl.style.display = 'none';
+            } else if (evt.type === 'content_reset') {
+              fullText = '';
+              assistantSpan.textContent = '';
+            } else if (evt.type === 'status' && typeof evt.data.message === 'string') {
+              statusEl.textContent = evt.data.message;
+              statusEl.style.display = '';
+            } else if (evt.type === 'error') {
+              assistantSpan.textContent = fullText || 'Something went wrong.';
+              endStream();
+              return;
+            } else if (evt.type === 'done') {
+              endStream();
+              return;
             }
           }
           read();
-        }).catch(function() { sending = false; sendBtn.disabled = false; });
+        }).catch(function(err) {
+          if (err && err.name === 'AbortError') return;
+          assistantSpan.textContent = fullText || 'Connection lost.';
+          endStream();
+        });
       }
       read();
     }).catch(function(err) {
+      if (err && err.name === 'AbortError') return;
       assistantSpan.textContent = 'Failed to connect.';
-      sending = false;
-      sendBtn.disabled = false;
+      endStream();
     });
   }
 
