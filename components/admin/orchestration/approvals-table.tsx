@@ -50,8 +50,13 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
+import { z } from 'zod';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem, ExecutionTraceEntry } from '@/types/orchestration';
+
+const apiErrorBodySchema = z
+  .object({ error: z.object({ message: z.string().optional() }).optional() })
+  .nullable();
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -216,10 +221,8 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
         body: JSON.stringify({ notes: approveNotes || undefined }),
       });
       if (!res.ok) {
-        const errBody = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(errBody?.error?.message ?? 'Approve failed');
+        const errBody = apiErrorBodySchema.safeParse(await res.json().catch(() => null));
+        throw new Error((errBody.success && errBody.data?.error?.message) || 'Approve failed');
       }
 
       setApprovals((prev) => prev.filter((a) => a.id !== approveTarget));
@@ -250,10 +253,8 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
         body: JSON.stringify({ reason: rejectReason.trim() }),
       });
       if (!res.ok) {
-        const errBody = (await res.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(errBody?.error?.message ?? 'Reject failed');
+        const errBody = apiErrorBodySchema.safeParse(await res.json().catch(() => null));
+        throw new Error((errBody.success && errBody.data?.error?.message) || 'Reject failed');
       }
 
       setApprovals((prev) => prev.filter((a) => a.id !== rejectTarget));

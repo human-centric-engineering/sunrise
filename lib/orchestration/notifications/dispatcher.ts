@@ -17,6 +17,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { notificationChannelSchema } from '@/lib/validations/orchestration';
 
 export interface NotificationChannel {
   type: string;
@@ -43,28 +44,19 @@ export interface DispatchApprovalNotificationOpts {
 export function normalizeChannel(raw: unknown): NotificationChannel | undefined {
   if (!raw) return undefined;
 
-  if (typeof raw === 'string') {
-    return { type: raw };
+  const parsed = notificationChannelSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+
+  const channel = parsed.data;
+  if (typeof channel === 'string') {
+    return { type: channel };
   }
 
-  if (typeof raw === 'object' && raw !== null && 'type' in raw) {
-    const obj: Record<string, unknown> = raw as Record<string, unknown>;
-    let metadata: Record<string, string> | undefined;
-    if (obj.metadata && typeof obj.metadata === 'object' && !Array.isArray(obj.metadata)) {
-      const entries = Object.entries(obj.metadata as Record<string, unknown>);
-      metadata = Object.fromEntries(entries.filter(([, v]) => typeof v === 'string')) as Record<
-        string,
-        string
-      >;
-    }
-    return {
-      type: String(obj.type),
-      target: typeof obj.target === 'string' ? obj.target : undefined,
-      metadata,
-    };
-  }
-
-  return undefined;
+  return {
+    type: channel.type,
+    target: channel.target,
+    metadata: channel.metadata,
+  };
 }
 
 /**
