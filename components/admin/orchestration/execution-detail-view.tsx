@@ -45,6 +45,7 @@ import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
+import { z } from 'zod';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -117,9 +118,9 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
 
 function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
   const entry = trace.find((e) => e.status === 'awaiting_approval');
-  if (!entry?.output || typeof entry.output !== 'object') return null;
-  const output = entry.output as Record<string, unknown>;
-  return typeof output.prompt === 'string' ? output.prompt : null;
+  if (!entry?.output) return null;
+  const parsed = z.object({ prompt: z.string() }).safeParse(entry.output);
+  return parsed.success ? parsed.data.prompt : null;
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────
