@@ -157,6 +157,60 @@ By default only the execution owner can approve/reject via the admin endpoints. 
 - **Token endpoints**: Token is the authorization — anyone with a valid unexpired token can act. No ownership check.
 - Non-authorized admin users receive 404 (not 403) to avoid confirming existence.
 
+## Trace Entry Output Shape
+
+When an execution pauses for approval, the engine writes an `awaiting_approval` trace entry. Approval or rejection updates that entry in place. The output shape varies by action:
+
+### Approval (default path)
+
+When the client sends `{}` or `{ notes: "..." }` (no `approvalPayload`), the shared action writes:
+
+```json
+{
+  "approved": true,
+  "notes": "Looks good" | null,
+  "actor": "admin:cuid123" | "token:external"
+}
+```
+
+Trace entry status transitions: `awaiting_approval` → `completed`.
+
+### Approval (custom payload)
+
+When the client sends `{ approvalPayload: { ... } }`, the payload **replaces** the entire output — `actor` and `notes` are **not** included. Use this only when the consuming step needs structured approval data. The admin UI and approval queue table do **not** use custom payloads (they send `{}`).
+
+### Rejection
+
+```json
+{
+  "rejected": true,
+  "reason": "Does not meet compliance requirements",
+  "actor": "admin:cuid123" | "token:external"
+}
+```
+
+Trace entry status transitions: `awaiting_approval` → `rejected`. The `rejected` status is distinct from `failed` and `skipped` — it indicates a deliberate human decision, not a system error.
+
+Additionally, the execution record gets:
+
+- `status: "cancelled"`
+- `errorMessage: "Rejected: <reason>"`
+- `completedAt: <now>`
+
+### Distinguishing rejection from cancellation
+
+Both result in `status: cancelled` on the execution. To tell them apart:
+
+- **In the trace**: A rejection has a trace entry with `status: "rejected"`. A cancellation leaves the `awaiting_approval` entry unchanged.
+- **In errorMessage**: Rejection prefixes the reason with `"Rejected: "`. Cancellation has no error message (or a generic one).
+
+### Actor format
+
+The `actor` field follows the pattern `<source>:<identifier>`:
+
+- `admin:<userId>` — admin dashboard approval/rejection
+- `token:external` — token-authenticated endpoint (external channel)
+
 ## Anti-patterns
 
 - **Don't add a new list endpoint.** The existing `GET /executions?status=paused_for_approval` is sufficient. Adding a separate `/approvals` endpoint would duplicate query logic.
