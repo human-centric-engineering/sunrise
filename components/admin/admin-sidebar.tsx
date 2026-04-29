@@ -33,6 +33,7 @@ import {
   Activity,
   ClipboardList,
   ShieldCheck,
+  PlayCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
@@ -154,6 +155,12 @@ const navSections: NavSection[] = [
             label: 'Approval Queue',
             icon: ShieldCheck,
             description: 'Pending approvals',
+          },
+          {
+            href: '/admin/orchestration/executions',
+            label: 'Executions',
+            icon: PlayCircle,
+            description: 'Runtime history',
           },
           {
             href: '/admin/orchestration/knowledge',
@@ -290,9 +297,17 @@ function CollapsibleSubgroup({
     [group.items, pathname]
   );
 
-  const [open, setOpen] = useState(hasActiveChild);
+  const hasBadge = useMemo(
+    () => group.items.some((item) => item.badge != null && item.badge > 0),
+    [group.items]
+  );
 
-  const toggle = useCallback(() => setOpen((prev) => !prev), []);
+  const [manualOpen, setManualOpen] = useState(hasActiveChild);
+
+  // Open if user toggled it open, has an active child, or has a badge
+  const open = manualOpen || hasBadge;
+
+  const toggle = useCallback(() => setManualOpen((prev) => !prev), []);
 
   const GroupIcon = group.icon;
 
