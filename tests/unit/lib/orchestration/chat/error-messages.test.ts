@@ -16,6 +16,11 @@ describe('getUserFacingError', () => {
     'output_blocked',
     'conversation_length_cap_reached',
     'conversation_cap_reached',
+    'provider_not_found',
+    'provider_disabled',
+    'missing_api_key',
+    'missing_base_url',
+    'unknown_provider_type',
   ];
 
   it.each(KNOWN_CODES)('returns structured error for "%s"', (code) => {
@@ -53,6 +58,19 @@ describe('getUserFacingError', () => {
     const input = getUserFacingError('input_blocked');
     const output = getUserFacingError('output_blocked');
     expect(input.title).not.toBe(output.title);
+  });
+
+  it('returns actionable provider setup messages', () => {
+    const notFound = getUserFacingError('provider_not_found');
+    expect(notFound.title).toContain('No Provider');
+    expect(notFound.action).toContain('Providers');
+
+    const disabled = getUserFacingError('provider_disabled');
+    expect(disabled.title).toContain('Disabled');
+
+    const missingKey = getUserFacingError('missing_api_key');
+    expect(missingKey.title).toContain('API Key');
+    expect(missingKey.action).toContain('API key');
   });
 
   it('returns conversation-specific messages for cap errors', () => {

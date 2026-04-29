@@ -29,6 +29,7 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
@@ -810,6 +811,16 @@ export class StreamingChatHandler {
     } catch (err) {
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {
+          code: err.code,
+          message: err.message,
+          agentSlug: request.agentSlug,
+          conversationId,
+        });
+        yield errorEvent(err.code, err.message);
+        return;
+      }
+      if (err instanceof ProviderError) {
+        log.warn('Provider error during chat', {
           code: err.code,
           message: err.message,
           agentSlug: request.agentSlug,
