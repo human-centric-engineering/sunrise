@@ -180,5 +180,21 @@ describe('Event factory helpers', () => {
         );
       });
     });
+
+    it('logs stringified error when webhook rejects with non-Error value', async () => {
+      vi.mocked(dispatchWebhookEvent).mockRejectedValueOnce('raw string error');
+
+      workflowFailed('step exploded', 'step-6');
+
+      await vi.waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Webhook dispatch failed for workflow_failed',
+          expect.objectContaining({
+            failedStepId: 'step-6',
+            error: 'raw string error',
+          })
+        );
+      });
+    });
   });
 });

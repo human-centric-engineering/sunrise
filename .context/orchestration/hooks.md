@@ -274,7 +274,7 @@ The dispatcher normalizes `notificationChannel` from the step config (strings li
 
 Workflow steps can specify `approverUserIds` (array of CUIDs) in the `human_approval` step config. This enables delegated approval:
 
-- **Admin endpoints** (`/admin/orchestration/executions/:id/approve|reject`): Allow access if the caller owns the execution OR their user ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry. Non-authorized users get 404 (not 403).
+- **Admin endpoints** (`/admin/orchestration/executions/:id/approve|reject|cancel`): Allow access if the caller owns the execution OR their user ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry. Delegated approvers can only cancel `paused_for_approval` executions, not `running` ones. Non-authorized users get 404 (not 403).
 - **Token endpoints** (`/orchestration/approvals/:id/approve|reject`): Token is the authorization — no ownership check needed. Anyone with a valid, unexpired token can act.
 - **Event payloads**: `approverUserIds` is included in hook/webhook payloads so external routing systems can target specific approvers.
 

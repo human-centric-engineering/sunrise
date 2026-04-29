@@ -374,7 +374,7 @@ Delegates to shared `executeApproval()` in `lib/orchestration/approval-actions.t
 
 ### `POST /executions/:id/reject`
 
-Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Concurrent races return 409.
+Rejects a `paused_for_approval` execution with a required reason. Sets status to `cancelled`, `errorMessage` to `"Rejected: <reason>"`, and `completedAt` to now. Non-paused executions return 400. Corrupted execution traces (missing `awaiting_approval` entry) return 400. Concurrent races return 409.
 
 ```jsonc
 // Request
@@ -390,7 +390,7 @@ Same ownership + approver scoping as approve. Delegates to shared `executeReject
 
 Cancels a `running` or `paused_for_approval` execution. Sets status to `cancelled` and records `completedAt`. The engine polls execution status between steps and stops when it sees `cancelled`.
 
-Scoped to `session.user.id` — cross-user returns 404. Non-cancellable statuses return 400.
+Scoped to `session.user.id` — cross-user returns 404. Non-cancellable statuses return 400. Delegated approvers (listed in the step's `approverUserIds`) can cancel `paused_for_approval` executions they are authorised for, but not `running` executions. Concurrent status changes return 409.
 
 Response: `{ success: true, executionId }`
 

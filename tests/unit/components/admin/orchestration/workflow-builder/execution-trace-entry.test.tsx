@@ -13,7 +13,7 @@
  * @see components/admin/orchestration/workflow-builder/execution-trace-entry.tsx
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -170,6 +170,49 @@ describe('ExecutionTraceEntryRow', () => {
     it('renders "Awaiting approval" for awaiting_approval status', () => {
       render(<ExecutionTraceEntryRow {...BASE_PROPS} status="awaiting_approval" />);
       expect(screen.getByText('Awaiting approval')).toBeInTheDocument();
+    });
+  });
+
+  describe('retry button', () => {
+    it('shows retry button for failed step when onRetry is provided', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          status="failed"
+          error="LLM timeout"
+          onRetry={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByRole('button'));
+      expect(screen.getByRole('button', { name: /retry from this step/i })).toBeInTheDocument();
+    });
+
+    it('calls onRetry with stepId when retry button is clicked', async () => {
+      const onRetry = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          status="failed"
+          error="LLM timeout"
+          onRetry={onRetry}
+        />
+      );
+
+      await user.click(screen.getByRole('button'));
+      await user.click(screen.getByRole('button', { name: /retry from this step/i }));
+
+      expect(onRetry).toHaveBeenCalledWith('step-1');
+    });
+
+    it('does not show retry button for non-failed steps', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="completed" onRetry={vi.fn()} />);
+
+      await user.click(screen.getByRole('button'));
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     });
   });
 });

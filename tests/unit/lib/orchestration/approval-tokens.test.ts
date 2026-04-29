@@ -11,6 +11,7 @@
  * - buildApprovalUrls produces valid URLs with tokens
  */
 
+import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -120,6 +121,27 @@ describe('approval-tokens', () => {
       expect(() => verifyApprovalToken('!!!invalid.sig')).toThrow(
         'Invalid approval token signature'
       );
+    });
+
+    it('throws on validly-signed token with incomplete payload (missing fields)', () => {
+      // Craft a token with valid HMAC but incomplete JSON payload
+      const secret = 'test-secret-that-is-at-least-32-characters-long';
+      const payload = JSON.stringify({ executionId: 'exec-1' }); // missing action + expiresAt
+      const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
+      const sig = createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
+      const token = `${encodedPayload}.${sig}`;
+
+      expect(() => verifyApprovalToken(token)).toThrow('Incomplete approval token payload');
+    });
+
+    it('throws on validly-signed token with non-JSON payload', () => {
+      const secret = 'test-secret-that-is-at-least-32-characters-long';
+      const payload = 'not-json-at-all';
+      const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
+      const sig = createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
+      const token = `${encodedPayload}.${sig}`;
+
+      expect(() => verifyApprovalToken(token)).toThrow('Invalid approval token payload');
     });
 
     it('returns the correct action without modifying it', () => {
