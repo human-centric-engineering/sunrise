@@ -10,7 +10,7 @@ A comprehensive specification of the AI agent orchestration system built into th
 
 Sunrise ships a **full-stack AI agent orchestration platform** embedded within a production-grade Next.js 16 / TypeScript application. Unlike standalone orchestration libraries (LangGraph, CrewAI) or managed cloud services (AWS Bedrock, Azure Foundry), Sunrise delivers the orchestration engine, admin interface, consumer API, security layer, and deployment infrastructure as a single typed codebase.
 
-The orchestration layer comprises **116 TypeScript source files** across 19 modules, backed by **29 Prisma models**, exposed through **131 API route files** (120 admin + 8 consumer chat + 2 embed + 1 MCP), and managed via a **20+ page admin dashboard**.
+The orchestration layer comprises **116 TypeScript source files** across 19 modules, backed by **29 Prisma models**, exposed through **133 API route files** (120 admin + 2 public approval + 8 consumer chat + 2 embed + 1 MCP), and managed via a **20+ page admin dashboard**.
 
 This is not a wrapper around a third-party AI library. It is a purpose-built orchestration engine with cost enforcement, provider resilience, multi-format knowledge retrieval, DAG workflow execution, and production security — all sharing types, validation schemas, and authentication with the application layer beneath it.
 
@@ -267,8 +267,13 @@ Each step can define its own error handling:
 ### 5.5 Execution Management
 
 - **Execution records**: `AiWorkflowExecution` tracks state, results, timing
-- **Approval queue**: Admin page listing `paused_for_approval` executions with expandable rows showing approval prompt, cost summary, previous steps, and input data. Approve with optional notes or reject with required reason. Sidebar badge shows pending count.
-- **Approval service**: Pending approvals can be approved/rejected via admin API (approve endpoint resumes workflow, reject endpoint cancels with `"Rejected: <reason>"` in `errorMessage`)
+- **Executions list**: Admin page (`/admin/orchestration/executions`) listing all executions with status filter, workflow filter, and links to step-by-step trace detail. Accessible from the Operate sidebar section.
+- **Approval queue**: Admin page listing `paused_for_approval` executions with expandable rows showing approval prompt, cost summary, previous steps, and input data. Approve with optional notes or reject with required reason. Sidebar badge shows pending count; Operate subgroup auto-opens when approvals are pending.
+- **Admin approval endpoints**: Session-authenticated approve/reject via admin API. Supports ownership check and approver delegation — non-owner admins can approve if their user ID is in the step's `approverUserIds` list.
+- **External approval endpoints**: Token-authenticated public endpoints (`/api/v1/orchestration/approvals/:id/{approve,reject}`) using stateless HMAC-SHA256 signed tokens. No session cookies required — the token IS the auth. Rate limited.
+- **Shared approval actions**: Both admin and external endpoints delegate to shared `executeApproval()` / `executeRejection()` functions for consistent DB updates, optimistic locking, and event emission.
+- **Notification dispatcher**: When an execution pauses, a `workflow.paused_for_approval` hook event and `approval_required` webhook event are emitted with pre-signed approve/reject URLs and channel metadata. External consumers (Slack bots, email services) build approval UIs from these payloads.
+- **Approver scoping**: Optional `approverUserIds` in `humanApprovalConfigSchema` enables delegation to specific admins beyond the execution owner.
 - **Step retry**: Individual failed steps can be retried without re-running the workflow
 - **Cancellation**: In-flight executions can be cancelled
 
@@ -413,6 +418,7 @@ In-process event dispatch for internal and external handlers:
 - Separate delivery tracking (`AiEventHookDelivery`)
 - Hook registry with 60s cache TTL + invalidation on CRUD
 - Same retry strategy as webhooks
+- `workflow.paused_for_approval` event emitted when execution pauses, with pre-signed approve/reject URLs and channel metadata for external approval flows
 
 ---
 
@@ -557,16 +563,16 @@ Keys can be scoped to specific agents, capabilities, or operations — providing
 
 ### 17.1 Defence in Depth
 
-| Layer              | Mechanism                                                                        |
-| ------------------ | -------------------------------------------------------------------------------- |
-| **Network**        | Rate limiting (IP-level: 30/min, per-user: 20/min, per-capability: configurable) |
-| **Authentication** | Session-based (admin), token-based (API keys, embed tokens, invite tokens)       |
-| **Authorisation**  | Role-based (admin/consumer), ownership scoping (404 not 403 for cross-user)      |
-| **Input**          | Zod validation at every boundary, injection detection (3 pattern types)          |
-| **Output**         | Content filtering, PII detection, topic boundaries                               |
-| **External calls** | SSRF protection via host allowlist, timeout enforcement                          |
-| **Credentials**    | Environment variable resolution, never in LLM context, redacted in audit         |
-| **Data isolation** | All user data scoped by `userId`, cross-user lookups return 404                  |
+| Layer              | Mechanism                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------- |
+| **Network**        | Rate limiting (IP-level: 30/min, per-user: 20/min, per-capability: configurable)                        |
+| **Authentication** | Session-based (admin), token-based (API keys, embed tokens, invite tokens, HMAC approval tokens)        |
+| **Authorisation**  | Role-based (admin/consumer), ownership scoping (404 not 403), approver delegation via `approverUserIds` |
+| **Input**          | Zod validation at every boundary, injection detection (3 pattern types)                                 |
+| **Output**         | Content filtering, PII detection, topic boundaries                                                      |
+| **External calls** | SSRF protection via host allowlist, timeout enforcement                                                 |
+| **Credentials**    | Environment variable resolution, never in LLM context, redacted in audit                                |
+| **Data isolation** | All user data scoped by `userId`, cross-user lookups return 404                                         |
 
 ### 17.2 OWASP Agentic Coverage
 
@@ -601,6 +607,7 @@ Covers approximately 6/10 OWASP Agentic Application Top 10 categories natively:
 | **Observability**   | Dashboard                     | Health, latency, errors                          |
 | **Evaluations**     | Runner, Annotations           | Quality assessment, completion                   |
 | **Experiments**     | List, Run                     | A/B testing management                           |
+| **Executions**      | List, Detail (trace)          | Browse runs, filter by status/workflow, inspect  |
 | **Approvals**       | Queue page                    | Browse, approve/reject pending executions        |
 | **Audit Log**       | Filterable list               | Config change history                            |
 | **MCP**             | 7 sub-pages                   | Tools, resources, sessions, audit, keys          |
@@ -683,6 +690,7 @@ The Learning UI provides interactive exploration, an advisor chatbot for pattern
 | ------------------ | ---------------------- | -------------------------------- |
 | Admin API          | REST (130 routes)      | Session (admin role)             |
 | Consumer Chat API  | REST + SSE (8 routes)  | Session (any authenticated user) |
+| Approval endpoints | REST (2 routes)        | HMAC-SHA256 signed token         |
 | MCP Server         | JSON-RPC 2.0 over HTTP | Bearer token (API key)           |
 | Embed Widget       | SSE                    | Embed token + CORS               |
 | Webhooks (inbound) | HTTP POST              | HMAC-SHA256 signature            |

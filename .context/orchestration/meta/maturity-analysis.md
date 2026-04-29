@@ -89,7 +89,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | MCP integration                                      | Strong   | Adequate  | Adequate | None     | Strong     | Adequate | Strong     |
 | Third-party tool integrations                        | Weak     | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   |
 
-**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI for servicing human approval gates — admins can browse pending approvals, expand rows for context (approval prompt, cost summary, previous steps), approve with notes, or reject with a reason. **Key gap:** Built-in capability count (7) is thin vs. LangChain's 1000+ integrations.
+**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. **Key gap:** Built-in capability count (7) is thin vs. LangChain's 1000+ integrations.
 
 ### Multi-Agent Coordination
 
@@ -129,11 +129,13 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | Pause/resume on approval          | Strong  | Strong    | Strong        | Adequate | Adequate   |
 | State serialisation at pause      | Strong  | Strong    | Strong        | Adequate | Adequate   |
 | Approval queue UI                 | Strong  | N/A       | Adequate      | None     | None       |
+| External approval channels        | Strong  | Adequate  | None          | None     | None       |
+| Approver delegation (scoping)     | Strong  | None      | None          | None     | None       |
 | Multi-interrupt parallel branches | None    | Strong    | None          | None     | None       |
 | Mid-run human edit of state       | None    | Strong    | None          | Adequate | None       |
 | Resume after process restart      | Weak    | Strong    | Strong        | Weak     | None       |
 
-**Sunrise advantage:** The approval queue UI (admin page with expandable rows, approve/reject actions, sidebar badge with pending count) provides a complete workflow for servicing human approval gates — ahead of most frameworks which leave UI to the adopter. **Key gap:** LangGraph's `interrupt()` model is the gold standard — serialises full graph state, supports multiple concurrent interrupts, allows human edits before resume, and survives process restarts. Sunrise's `human_approval` step covers the core use case with a production-ready UI but lacks LangGraph's depth on multi-interrupt and state-editing.
+**Sunrise advantage:** The approval system is the most complete of any evaluated platform. The admin UI (expandable rows, approve/reject actions, sidebar badge) handles browser-based approvals. Token-authenticated public endpoints (`/api/v1/orchestration/approvals/:id/{approve,reject}`) enable external channel approvals (Slack, email, WhatsApp, SMS) via stateless HMAC-signed tokens — no session cookies required. A notification dispatcher emits `workflow.paused_for_approval` hook and `approval_required` webhook events with pre-signed approve/reject URLs, so external consumers can build approval flows without generating tokens themselves. Approver scoping via `approverUserIds` enables delegation to non-owner admins. **Key gap:** LangGraph's `interrupt()` model is the gold standard — serialises full graph state, supports multiple concurrent interrupts, allows human edits before resume, and survives process restarts. Sunrise's `human_approval` step covers the core use case with a production-ready admin + external channel workflow but lacks LangGraph's depth on multi-interrupt and state-editing.
 
 ### Observability & Evaluation
 
@@ -213,7 +215,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 11. **Horizontal scaling** — in-memory circuit breaker, budget mutex, and maintenance tick state. Structural issue, not a feature gap.
 
-12. **Human-in-the-loop depth** — `human_approval` pause with full admin UI (approval queue, approve/reject actions, sidebar badge) covers the production use case well, but lacks LangGraph's multi-interrupt, state-edit, and crash-recovery capabilities.
+12. **Human-in-the-loop depth** — `human_approval` with admin UI, token-authenticated external channel endpoints, notification dispatcher, and approver scoping covers the production use case well. Lacks LangGraph's multi-interrupt, state-edit, and crash-recovery capabilities.
 
 13. **Evaluation tooling** — LLM-driven completion handler vs. Haystack's 8 named evaluators or LangSmith's regression testing.
 
@@ -233,7 +235,7 @@ Issues that would prevent recommending Sunrise orchestration for production work
 | 2   | **Distributed circuit breaker state** | In-memory per instance                                           | Redis or Postgres-backed shared state                        | Standard practice      |
 | 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE` | Standard practice      |
 
-> **Resolved:** Approval queue UI (previously P0 #4) — shipped April 2026. Admin page with expandable rows, approve/reject actions, reject endpoint, and sidebar badge with pending count.
+> **Resolved:** Approval queue (previously P0 #4) — shipped April 2026. Admin UI with expandable rows, approve/reject actions, sidebar badge. External approval channels via HMAC-signed token endpoints, notification dispatcher with hook/webhook events, and approver scoping for delegated decisions.
 
 ### P1 — Meaningful Quality Gaps
 
