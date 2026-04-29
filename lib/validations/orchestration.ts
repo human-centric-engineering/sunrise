@@ -2151,7 +2151,7 @@ export const chatAttachmentSchema = z.object({
     'text/markdown',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   ]),
-  data: z.string().min(1), // base64-encoded content
+  data: z.string().min(1).max(10_000_000, 'Attachment exceeds 10MB limit'), // base64-encoded content
 });
 
 export const consumerChatRequestSchema = z.object({
