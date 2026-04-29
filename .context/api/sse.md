@@ -133,17 +133,17 @@ Unit tests at `tests/unit/lib/api/sse.test.ts` cover framing, keepalive (with `v
 
 ## Chat SSE Event Types
 
-| `type`               | Fields                        | Description                                                           |
-| -------------------- | ----------------------------- | --------------------------------------------------------------------- |
-| `start`              | `conversationId`, `messageId` | Emitted once after user message is persisted                          |
-| `content`            | `delta`                       | Incremental text from the LLM                                         |
-| `status`             | `message`                     | Status update (e.g. "Thinking...", "Executing tool...")               |
-| `warning`            | `code`, `message`             | Non-fatal warning (budget_warning, provider_retry, etc.)              |
-| `content_reset`      | `reason`                      | Client must discard buffered content deltas; follows `provider_retry` |
-| `capability_result`  | `capabilitySlug`, `result`    | Single tool call result                                               |
-| `capability_results` | `results[]`                   | Multiple parallel tool call results                                   |
-| `done`               | `tokenUsage`, `costUsd`, etc. | Normal completion                                                     |
-| `error`              | `code`, `message`             | Terminal error — stream ends after this                               |
+| `type`               | Fields                        | Description                                                                                                                                   |
+| -------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`              | `conversationId`, `messageId` | Emitted once after user message is persisted                                                                                                  |
+| `content`            | `delta`                       | Incremental text from the LLM                                                                                                                 |
+| `status`             | `message`                     | Status update (e.g. "Thinking...", "Executing tool...")                                                                                       |
+| `warning`            | `code`, `message`             | Non-fatal warning (budget_warning, provider_retry, etc.)                                                                                      |
+| `content_reset`      | `reason`                      | Client must discard buffered content deltas, reset typing animations, and clear displayed assistant message; follows `provider_retry` warning |
+| `capability_result`  | `capabilitySlug`, `result`    | Single tool call result                                                                                                                       |
+| `capability_results` | `results[]`                   | Multiple parallel tool call results                                                                                                           |
+| `done`               | `tokenUsage`, `costUsd`, etc. | Normal completion                                                                                                                             |
+| `error`              | `code`, `message`             | Terminal error — stream ends after this                                                                                                       |
 
 ## Related Documentation
 

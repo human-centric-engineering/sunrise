@@ -45,13 +45,15 @@ Status is cleared automatically when streaming completes.
 
 ### Clear Conversation
 
-When `showClearButton` is true, a trash icon appears in the top-right of the messages area (hidden during streaming). Clicking it opens an `AlertDialog` confirmation. On confirm:
+When `showClearButton` is true, a trash icon appears in the top-right of the messages area. The button is hidden while streaming to prevent state conflicts. Clicking it opens an `AlertDialog` confirmation. On confirm:
 
 - Sends `DELETE` to the conversation endpoint (if a `conversationId` exists)
 - Resets all local state (messages, error, status, warning)
 - Fires `onConversationCleared` callback
 
 ## SSE Contract
+
+Hits `POST /api/v1/admin/orchestration/chat/stream` (admin-only endpoint with `contextType`/`contextId` support). See `consumer-chat.md` for the public-facing equivalent.
 
 Uses `fetch` + `ReadableStream.getReader()` (not EventSource). Parses standard SSE frames (`event:` + `data:` separated by `\n\n`). Reads `delta` field from `content` events.
 

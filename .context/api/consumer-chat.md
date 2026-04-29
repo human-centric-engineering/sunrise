@@ -34,6 +34,8 @@ Start or continue a streaming chat conversation with a public agent.
   "message": "string (1–50000 chars, required)",
   "agentSlug": "string (required — must match a public, active agent)",
   "conversationId": "string (optional — CUID of existing conversation to continue)",
+  "inviteToken": "string (optional — required for invite_only agents)",
+  "attachments": "[{ name, mediaType, data }] (optional — max 10, base64, 10MB per item)",
 }
 ```
 
