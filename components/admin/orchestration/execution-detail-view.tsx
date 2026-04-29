@@ -142,7 +142,7 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     setActionResult(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(execution.id), {
-        body: { approvalPayload: { approved: true } },
+        body: {},
       });
       setActionResult({
         type: 'success',

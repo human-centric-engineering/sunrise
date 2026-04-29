@@ -150,7 +150,7 @@ describe('ExecutionPanel', () => {
     });
     const call = postMock.mock.calls[0] as unknown[];
     expect(call[0]).toMatch(/\/executions\/exec-42\/approve$/);
-    expect(call[1]).toMatchObject({ body: { approvalPayload: { approved: true } } });
+    expect(call[1]).toMatchObject({ body: {} });
   });
 
   // ─── workflow_failed frame ────────────────────────────────────────────────
@@ -402,7 +402,7 @@ describe('ExecutionPanel', () => {
     // Confirm the POST was called with the right approve URL
     expect(postMock).toHaveBeenCalledWith(
       expect.stringMatching(/\/executions\/exec-apperr\/approve$/),
-      expect.objectContaining({ body: { approvalPayload: { approved: true } } })
+      expect.objectContaining({ body: {} })
     );
   });
 });

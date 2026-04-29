@@ -288,7 +288,7 @@ export function ExecutionPanel({
     setErrorMessage(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.executionApprove(executionId), {
-        body: { approvalPayload: { approved: true } },
+        body: {},
       });
       // Reconnect to drain remaining events.
       void streamRun(executionId);

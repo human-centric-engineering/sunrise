@@ -391,7 +391,7 @@ describe('ExecutionDetailView', () => {
       expect(mockPost).toHaveBeenCalledWith(
         expect.stringContaining('/approve'),
         expect.objectContaining({
-          body: { approvalPayload: { approved: true } },
+          body: {},
         })
       );
       expect(await screen.findByRole('alert')).toHaveTextContent(/approved/i);
