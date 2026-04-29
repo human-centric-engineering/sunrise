@@ -21,6 +21,13 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+vi.mock('@/lib/env', () => ({
+  env: {
+    BETTER_AUTH_SECRET: 'test-secret-that-is-at-least-32-characters-long',
+    BETTER_AUTH_URL: 'https://app.example.com',
+  },
+}));
+
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';

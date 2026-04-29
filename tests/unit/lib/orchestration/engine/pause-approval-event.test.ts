@@ -30,6 +30,13 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('@/lib/env', () => ({
+  env: {
+    BETTER_AUTH_SECRET: 'test-secret-that-is-at-least-32-characters-long',
+    BETTER_AUTH_URL: 'https://app.example.com',
+  },
+}));
+
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
@@ -134,15 +141,25 @@ describe('pauseForApproval event emission', () => {
 
     await collect(new OrchestrationEngine(), makeWorkflow(approvalDefinition()));
 
-    expect(emitHookEvent).toHaveBeenCalledWith('workflow.paused_for_approval', {
-      executionId: 'exec_test',
-      workflowId: WORKFLOW_ID,
-      userId: USER_ID,
-      stepId: 'gate',
-      prompt: 'Please approve this',
-      notificationChannel: 'slack',
-      timeoutMinutes: 60,
-    });
+    expect(emitHookEvent).toHaveBeenCalledWith(
+      'workflow.paused_for_approval',
+      expect.objectContaining({
+        executionId: 'exec_test',
+        workflowId: WORKFLOW_ID,
+        userId: USER_ID,
+        stepId: 'gate',
+        prompt: 'Please approve this',
+        notificationChannel: 'slack',
+        timeoutMinutes: 60,
+        approveUrl: expect.stringContaining(
+          '/api/v1/orchestration/approvals/exec_test/approve?token='
+        ),
+        rejectUrl: expect.stringContaining(
+          '/api/v1/orchestration/approvals/exec_test/reject?token='
+        ),
+        tokenExpiresAt: expect.any(String),
+      })
+    );
   });
 
   it('dispatches approval_required webhook event with correct payload', async () => {
@@ -156,15 +173,20 @@ describe('pauseForApproval event emission', () => {
 
     await collect(new OrchestrationEngine(), makeWorkflow(approvalDefinition()));
 
-    expect(dispatchWebhookEvent).toHaveBeenCalledWith('approval_required', {
-      executionId: 'exec_test',
-      workflowId: WORKFLOW_ID,
-      userId: USER_ID,
-      stepId: 'gate',
-      prompt: 'Review required',
-      notificationChannel: 'email',
-      timeoutMinutes: 120,
-    });
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'approval_required',
+      expect.objectContaining({
+        executionId: 'exec_test',
+        workflowId: WORKFLOW_ID,
+        userId: USER_ID,
+        stepId: 'gate',
+        prompt: 'Review required',
+        notificationChannel: 'email',
+        timeoutMinutes: 120,
+        approveUrl: expect.stringContaining('token='),
+        rejectUrl: expect.stringContaining('token='),
+      })
+    );
   });
 
   it('includes undefined fields when approval payload omits optional values', async () => {

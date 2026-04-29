@@ -78,6 +78,8 @@ import {
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
+import { env } from '@/lib/env';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
@@ -1195,6 +1197,13 @@ export class OrchestrationEngine {
       return; // Don't emit events if DB update failed
     }
 
+    const timeoutMinutes = approvalPayload?.timeoutMinutes as number | undefined;
+    const { approveUrl, rejectUrl, expiresAt } = buildApprovalUrls(
+      executionId,
+      env.BETTER_AUTH_URL,
+      timeoutMinutes
+    );
+
     const eventData = {
       executionId,
       workflowId: ctx.workflowId,
@@ -1202,7 +1211,10 @@ export class OrchestrationEngine {
       stepId,
       prompt: approvalPayload?.prompt,
       notificationChannel: approvalPayload?.notificationChannel,
-      timeoutMinutes: approvalPayload?.timeoutMinutes,
+      timeoutMinutes,
+      approveUrl,
+      rejectUrl,
+      tokenExpiresAt: expiresAt.toISOString(),
     };
 
     emitHookEvent('workflow.paused_for_approval', eventData);
