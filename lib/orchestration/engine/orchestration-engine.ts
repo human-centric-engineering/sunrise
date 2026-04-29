@@ -77,6 +77,7 @@ import {
 } from '@/lib/orchestration/engine/events';
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
@@ -591,7 +592,13 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        await this.pauseForApproval(
+          executionId,
+          ctx,
+          trace,
+          step.id,
+          err.payload as Record<string, unknown> | undefined
+        );
         yield approvalRequired(step.id, err.payload);
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
@@ -804,7 +811,13 @@ export class OrchestrationEngine {
           completedAt: new Date().toISOString(),
           durationMs,
         });
-        await this.pauseForApproval(executionId, ctx, trace, step.id);
+        await this.pauseForApproval(
+          executionId,
+          ctx,
+          trace,
+          step.id,
+          outcome.value.payload as Record<string, unknown> | undefined
+        );
         allEvents.push(approvalRequired(step.id, outcome.value.payload));
         batchPaused = true;
         continue;
@@ -1163,7 +1176,8 @@ export class OrchestrationEngine {
     executionId: string,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
-    stepId: string
+    stepId: string,
+    approvalPayload?: Record<string, unknown>
   ): Promise<void> {
     try {
       await prisma.aiWorkflowExecution.update({
@@ -1178,7 +1192,21 @@ export class OrchestrationEngine {
       });
     } catch (err) {
       ctx.logger.error('pauseForApproval: DB update failed', err, { executionId });
+      return; // Don't emit events if DB update failed
     }
+
+    const eventData = {
+      executionId,
+      workflowId: ctx.workflowId,
+      userId: ctx.userId,
+      stepId,
+      prompt: approvalPayload?.prompt,
+      notificationChannel: approvalPayload?.notificationChannel,
+      timeoutMinutes: approvalPayload?.timeoutMinutes,
+    };
+
+    emitHookEvent('workflow.paused_for_approval', eventData);
+    void dispatchWebhookEvent('approval_required', eventData);
   }
 
   private async finalize(

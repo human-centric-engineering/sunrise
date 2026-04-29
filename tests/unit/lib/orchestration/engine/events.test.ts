@@ -5,8 +5,9 @@
  *
  * Coverage targets:
  * - All 8 factory functions return correct event shapes
- * - approvalRequired + workflowFailed fire webhook dispatch
+ * - workflowFailed fires webhook dispatch
  * - .catch() branch: webhook errors are logged, not thrown
+ * - approvalRequired webhook dispatch is handled by the engine (pauseForApproval)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -103,7 +104,7 @@ describe('Event factory helpers', () => {
   });
 
   describe('approvalRequired', () => {
-    it('returns an approval_required event and dispatches webhook', () => {
+    it('returns an approval_required event', () => {
       const payload = { prompt: 'Please review', context: 'step output' };
       const event = approvalRequired('step-1', payload);
 
@@ -112,42 +113,11 @@ describe('Event factory helpers', () => {
         stepId: 'step-1',
         payload,
       });
-      expect(dispatchWebhookEvent).toHaveBeenCalledWith('approval_required', {
-        stepId: 'step-1',
-        payload,
-      });
     });
 
-    it('logs a warning when webhook dispatch rejects (does not throw)', async () => {
-      vi.mocked(dispatchWebhookEvent).mockRejectedValueOnce(new Error('Connection refused'));
-
-      // The function itself should not throw — it fires and forgets
-      const event = approvalRequired('step-2', { prompt: 'review' });
-      expect(event.type).toBe('approval_required');
-
-      // Flush the microtask queue so the .catch() handler runs
-      await vi.waitFor(() => {
-        expect(logger.warn).toHaveBeenCalledWith(
-          'Webhook dispatch failed for approval_required',
-          expect.objectContaining({
-            stepId: 'step-2',
-            error: 'Connection refused',
-          })
-        );
-      });
-    });
-
-    it('logs non-Error rejections as strings', async () => {
-      vi.mocked(dispatchWebhookEvent).mockRejectedValueOnce('network down');
-
-      approvalRequired('step-3', {});
-
-      await vi.waitFor(() => {
-        expect(logger.warn).toHaveBeenCalledWith(
-          'Webhook dispatch failed for approval_required',
-          expect.objectContaining({ error: 'network down' })
-        );
-      });
+    it('does not dispatch webhook (engine pauseForApproval handles that)', () => {
+      approvalRequired('step-2', { prompt: 'review' });
+      expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('approval_required', expect.anything());
     });
   });
 
