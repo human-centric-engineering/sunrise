@@ -57,6 +57,7 @@ export function AgentTestChat({
   const [message, setMessage] = useState(initialMessage);
   const [reply, setReply] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -75,6 +76,7 @@ export function AgentTestChat({
     }
     setError(null);
     setWarning(null);
+    setStatus(null);
     setReply('');
     setStreaming(true);
 
@@ -120,6 +122,8 @@ export function AgentTestChat({
           if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
             const delta: string = parsed.data.delta;
             setReply((prev) => prev + delta);
+          } else if (parsed.type === 'status' && typeof parsed.data.message === 'string') {
+            setStatus(parsed.data.message);
           } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
             setWarning(parsed.data.message);
           } else if (parsed.type === 'error') {
@@ -141,6 +145,7 @@ export function AgentTestChat({
       });
     } finally {
       setStreaming(false);
+      setStatus(null);
       abortRef.current = null;
     }
   }
@@ -198,6 +203,9 @@ export function AgentTestChat({
       >
         {reply || (
           <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
+        )}
+        {streaming && status && (
+          <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
         )}
       </div>
 

@@ -106,7 +106,7 @@ export function GET(request: NextRequest): Response {
     </style>
     <button class="bubble" aria-label="Chat">&#x1F4AC;</button>
     <div class="panel">
-      <div class="header">Chat</div>
+      <div class="header"><span>Chat</span><button class="new-chat" aria-label="New chat" title="New chat" style="float:right;background:none;border:none;cursor:pointer;font-size:14px;color:inherit;opacity:0.6;">&#x1F5D1;</button></div>
       <div class="messages"></div>
       <div class="input-area">
         <input type="text" placeholder="Type a message\u2026" />
@@ -123,9 +123,18 @@ export function GET(request: NextRequest): Response {
   var conversationId = null;
   var sending = false;
 
+  var newChatBtn = shadow.querySelector('.new-chat');
+
   bubble.addEventListener('click', function() {
     panel.classList.toggle('open');
     if (panel.classList.contains('open')) input.focus();
+  });
+
+  newChatBtn.addEventListener('click', function() {
+    conversationId = null;
+    messagesEl.innerHTML = '';
+    input.value = '';
+    input.focus();
   });
 
   function addMsg(role, content) {

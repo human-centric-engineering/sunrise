@@ -222,6 +222,45 @@ describe('AgentTestChat', () => {
     });
   });
 
+  it('shows inline status from status SSE event during streaming', async () => {
+    let resolveStream: (() => void) | null = null;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(contentFrame('Working...')));
+        controller.enqueue(
+          encoder.encode(
+            `event: status\ndata: ${JSON.stringify({ message: 'Executing search_documents' })}\n\n`
+          )
+        );
+        resolveStream = () => {
+          controller.enqueue(
+            encoder.encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Status should appear inline during streaming
+    await waitFor(() => {
+      expect(screen.getByText('Executing search_documents')).toBeInTheDocument();
+    });
+
+    // Clean up
+    resolveStream?.();
+    await waitFor(() => {
+      expect(screen.queryByText('Executing search_documents')).not.toBeInTheDocument();
+    });
+  });
+
   it('shows connection lost error immediately on network failure (no retry)', async () => {
     // Arrange — fetch rejects; chat POSTs are not idempotent so no retry
     const user = userEvent.setup();
