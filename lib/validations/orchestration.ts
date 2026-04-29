@@ -1832,10 +1832,20 @@ export const planConfigSchema = stepErrorConfigSchema.extend({
   temperature: z.number().optional(),
 });
 
+/** Structured notification channel config for human_approval steps. */
+export const notificationChannelSchema = z.union([
+  z.string(), // backward compat: 'slack', 'email', etc.
+  z.object({
+    type: z.string(),
+    target: z.string().optional(), // e.g., channel ID, email address
+    metadata: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
 export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
   prompt: z.string().optional(),
   timeoutMinutes: z.number().optional(),
-  notificationChannel: z.string().optional(),
+  notificationChannel: notificationChannelSchema.optional(),
 });
 
 export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({

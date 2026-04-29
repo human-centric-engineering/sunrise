@@ -79,6 +79,7 @@ import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
+import { dispatchApprovalNotification } from '@/lib/orchestration/notifications/dispatcher';
 import { env } from '@/lib/env';
 
 // Ensure every executor self-registers before the engine touches the
@@ -1204,17 +1205,30 @@ export class OrchestrationEngine {
       timeoutMinutes
     );
 
+    const tokenExpiresAt = expiresAt.toISOString();
+
+    const channel = dispatchApprovalNotification({
+      executionId,
+      workflowId: ctx.workflowId,
+      stepId,
+      prompt: approvalPayload?.prompt,
+      notificationChannel: approvalPayload?.notificationChannel,
+      approveUrl,
+      rejectUrl,
+      tokenExpiresAt,
+    });
+
     const eventData = {
       executionId,
       workflowId: ctx.workflowId,
       userId: ctx.userId,
       stepId,
       prompt: approvalPayload?.prompt,
-      notificationChannel: approvalPayload?.notificationChannel,
+      notificationChannel: channel ?? approvalPayload?.notificationChannel,
       timeoutMinutes,
       approveUrl,
       rejectUrl,
-      tokenExpiresAt: expiresAt.toISOString(),
+      tokenExpiresAt,
     };
 
     emitHookEvent('workflow.paused_for_approval', eventData);

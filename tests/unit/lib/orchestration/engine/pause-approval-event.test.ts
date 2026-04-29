@@ -149,7 +149,7 @@ describe('pauseForApproval event emission', () => {
         userId: USER_ID,
         stepId: 'gate',
         prompt: 'Please approve this',
-        notificationChannel: 'slack',
+        notificationChannel: { type: 'slack' },
         timeoutMinutes: 60,
         approveUrl: expect.stringContaining(
           '/api/v1/orchestration/approvals/exec_test/approve?token='
@@ -181,7 +181,7 @@ describe('pauseForApproval event emission', () => {
         userId: USER_ID,
         stepId: 'gate',
         prompt: 'Review required',
-        notificationChannel: 'email',
+        notificationChannel: { type: 'email' },
         timeoutMinutes: 120,
         approveUrl: expect.stringContaining('token='),
         rejectUrl: expect.stringContaining('token='),
