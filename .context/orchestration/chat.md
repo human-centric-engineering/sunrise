@@ -87,8 +87,10 @@ interface ChatRequest {
 All events are defined in `types/orchestration.ts`. Every turn produces this ordered sequence (zero or more `content` in place of `content*`):
 
 ```
-start → content* → [status → capability_result → (content* | done)]* → (done | error)
+start → [warning]? → content* → [content_reset → content*]? → [status → capability_result → (content* | done)]* → (done | error)
 ```
+
+`warning` and `content_reset` can appear at any point in the sequence; the diagram above shows their most common positions.
 
 Concretely:
 
@@ -99,6 +101,8 @@ Concretely:
 5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
 6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
 7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
+8. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `provider_retry` (falling back to next provider). Clients should display transiently and clear when the stream ends.
+9. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
 
 ## Tool Loop Semantics
 
