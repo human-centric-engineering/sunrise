@@ -251,6 +251,18 @@ export function ChatInterface({
                 if (typeof slug === 'string') {
                   onCapabilityResult?.(slug, parsed.data.result);
                 }
+              } else if (
+                parsed.type === 'capability_results' &&
+                Array.isArray(parsed.data.results)
+              ) {
+                for (const r of parsed.data.results as Array<{
+                  capabilitySlug: string;
+                  result: unknown;
+                }>) {
+                  if (typeof r.capabilitySlug === 'string') {
+                    onCapabilityResult?.(r.capabilitySlug, r.result);
+                  }
+                }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
                 setWarning(parsed.data.message);
               } else if (parsed.type === 'error') {

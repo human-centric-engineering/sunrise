@@ -57,6 +57,12 @@ function statusFrame(message: string): string {
   return `event: status\ndata: ${JSON.stringify({ message })}\n\n`;
 }
 
+function capabilityResultsFrame(
+  results: Array<{ capabilitySlug: string; result: unknown }>
+): string {
+  return `event: capability_results\ndata: ${JSON.stringify({ results })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ChatInterface', () => {
@@ -169,6 +175,34 @@ describe('ChatInterface', () => {
 
     await waitFor(() => {
       expect(onCapabilityResult).toHaveBeenCalledWith('search_knowledge_base', { results: [] });
+    });
+  });
+
+  it('calls onCapabilityResult for each result in capability_results (plural) event', async () => {
+    const user = userEvent.setup();
+    const onCapabilityResult = vi.fn();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      capabilityResultsFrame([
+        { capabilitySlug: 'search_docs', result: { hits: 3 } },
+        { capabilitySlug: 'fetch_url', result: { status: 200 } },
+      ]),
+      contentFrame('Done.'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" onCapabilityResult={onCapabilityResult} />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Search');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(onCapabilityResult).toHaveBeenCalledTimes(2);
+      expect(onCapabilityResult).toHaveBeenCalledWith('search_docs', { hits: 3 });
+      expect(onCapabilityResult).toHaveBeenCalledWith('fetch_url', { status: 200 });
     });
   });
 
