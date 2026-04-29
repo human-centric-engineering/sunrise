@@ -21,11 +21,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
@@ -186,14 +187,7 @@ export function AgentTestChat({
         />
         <div className="flex justify-end">
           <Button type="submit" size="sm" disabled={streaming || !message.trim()}>
-            {streaming ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                Streaming…
-              </>
-            ) : (
-              'Send'
-            )}
+            {streaming ? 'Streaming…' : 'Send'}
           </Button>
         </div>
       </form>
@@ -211,11 +205,17 @@ export function AgentTestChat({
         aria-live="polite"
         aria-label="Agent reply"
       >
-        {reply || (
+        {streaming && !reply ? (
+          <ThinkingIndicator message={status} />
+        ) : reply ? (
+          <>
+            {reply}
+            {streaming && status && (
+              <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
+            )}
+          </>
+        ) : (
           <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
-        )}
-        {streaming && status && (
-          <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
         )}
       </div>
 
