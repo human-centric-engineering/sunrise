@@ -272,12 +272,17 @@ export function ChatInterface({
                 parsed.type === 'capability_results' &&
                 Array.isArray(parsed.data.results)
               ) {
-                for (const r of parsed.data.results as Array<{
-                  capabilitySlug: string;
-                  result: unknown;
-                }>) {
-                  if (typeof r.capabilitySlug === 'string') {
-                    onCapabilityResult?.(r.capabilitySlug, r.result);
+                for (const r of parsed.data.results as unknown[]) {
+                  if (
+                    r != null &&
+                    typeof r === 'object' &&
+                    'capabilitySlug' in r &&
+                    typeof (r as Record<string, unknown>).capabilitySlug === 'string'
+                  ) {
+                    onCapabilityResult?.(
+                      (r as Record<string, unknown>).capabilitySlug as string,
+                      (r as Record<string, unknown>).result
+                    );
                   }
                 }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
