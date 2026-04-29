@@ -42,6 +42,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
+import { formatStatus } from '@/lib/utils/format-status';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
@@ -78,10 +79,6 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destru
   paused_for_approval: 'outline',
   pending: 'outline',
 };
-
-function formatStatus(status: string): string {
-  return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 // ─── Collapsible JSON card ──────────────────────────────────────────────────
 

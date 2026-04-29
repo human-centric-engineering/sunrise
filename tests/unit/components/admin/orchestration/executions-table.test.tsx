@@ -96,8 +96,8 @@ describe('ExecutionsTable', () => {
     it('renders status badges', () => {
       render(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
 
-      expect(screen.getByText('completed')).toBeInTheDocument();
-      expect(screen.getByText('failed')).toBeInTheDocument();
+      expect(screen.getByText('Completed')).toBeInTheDocument();
+      expect(screen.getByText('Failed')).toBeInTheDocument();
     });
 
     it('renders workflow name as links', () => {
@@ -214,7 +214,7 @@ describe('ExecutionsTable', () => {
       );
 
       // The select trigger should show the "Failed" label
-      expect(screen.getByText('Failed')).toBeInTheDocument();
+      expect(screen.getByRole('combobox')).toHaveTextContent('Failed');
     });
 
     it('updates URL when status filter changes', async () => {

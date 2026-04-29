@@ -81,7 +81,7 @@ describe('ExecutionDetailView', () => {
       expect(screen.getByText('Failed')).toBeInTheDocument();
     });
 
-    it('formats underscored status as title-case words', () => {
+    it('formats underscored status as sentence-case', () => {
       render(
         <ExecutionDetailView
           execution={makeExecution({ status: 'paused_for_approval' })}
@@ -89,7 +89,7 @@ describe('ExecutionDetailView', () => {
         />
       );
 
-      expect(screen.getByText('Paused For Approval')).toBeInTheDocument();
+      expect(screen.getByText('Paused for approval')).toBeInTheDocument();
     });
   });
 

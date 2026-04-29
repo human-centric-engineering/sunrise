@@ -36,7 +36,8 @@ Admin UI for reviewing, approving, and rejecting paused workflow executions that
 
 ## What admins cannot do from the UI (API-only)
 
-- Filter by workflow, date range, or user. The page always shows all pending approvals for the current user.
+- Filter by workflow, date range, or user. The page shows pending approvals for executions owned by the current admin. Delegated approvers cannot see executions they are authorised to approve in this list — they must use the notification link or direct URL.
+- View delegated approvals in the queue (the list endpoint scopes to execution ownership, not approver authorisation).
 - Bulk approve/reject multiple executions at once.
 - Resume a rejected execution (cancellation is final).
 
