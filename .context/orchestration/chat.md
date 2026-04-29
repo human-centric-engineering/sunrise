@@ -71,6 +71,7 @@ interface ChatRequest {
   contextType?: string;
   contextId?: string;
   entityContext?: Record<string, unknown>;
+  attachments?: { name: string; mimeType: string; data: string }[];
   requestId?: string;
   signal?: AbortSignal;
 }
@@ -370,7 +371,7 @@ The message builder supports token-aware truncation to prevent exceeding model c
 **How it works:**
 
 1. System prompt, user message, and history are assembled
-2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens`
+2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens - attachmentTokens` (where `attachmentTokens = attachments.length × ATTACHMENT_OVERHEAD_TOKENS`)
 3. `truncateToTokenBudget()` drops the oldest history messages until the remaining messages fit the budget
 4. At least one history message is always kept
 
@@ -413,7 +414,7 @@ Configurable limits prevent unbounded storage growth. Both are read from `AiOrch
 
 - `null` (default) means unlimited — no cap is enforced.
 - Conversation cap counts active conversations for the same user + agent pair.
-- Message cap compares `history.length` against the limit.
+- Message cap uses `prisma.aiMessage.count()` against the limit (not `history.length`, which is capped at 200).
 - Both throw `ChatError` so the client receives a typed `{ type: 'error', code, message }` SSE event.
 
 ## Error Handling & Resilience
@@ -424,7 +425,7 @@ See [Resilience](./resilience.md) for full details. Key points for the chat hand
 - **Mid-stream retry**: if a stream fails after starting, automatically retries with the next fallback provider (up to 2 retries). Emits `provider_retry` warning event.
 - **Circuit breaker**: `getBreaker(slug).recordSuccess()` / `.recordFailure()` called after each LLM turn.
 - **Budget warning**: at 80% usage, yields `{ type: 'warning', code: 'budget_warning' }` before continuing.
-- **Input guard**: `scanForInjection(message)` runs on every user message — log-only, never blocks.
+- **Input guard**: `scanForInjection(message)` runs on every user message. If the score exceeds the configured threshold, yields `{ type: 'error', code: 'input_blocked' }` and aborts the stream. Below-threshold matches are logged as warnings.
 - **Error sanitization**: the catch-all yields `{ type: 'error', code: 'internal_error', message: 'An unexpected error occurred' }` — raw provider/SDK errors are logged server-side only via `logger.error`.
 
 ## Related Documentation

@@ -587,6 +587,132 @@ describe('ChatInterface', () => {
     expect(screen.queryByText('Token limit approaching')).not.toBeInTheDocument();
   });
 
+  it('handles content_reset by clearing accumulated content', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Old content'),
+      'event: content_reset\ndata: {}\n\n',
+      contentFrame('New content'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('New content')).toBeInTheDocument();
+    });
+
+    // Old content should have been cleared by content_reset
+    expect(screen.queryByText('Old content')).not.toBeInTheDocument();
+  });
+
+  it('renders with typing animation enabled', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello world'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(
+      <ChatInterface
+        agentSlug="test-agent"
+        enableTypingAnimation
+        typingAnimationOptions={{ chunkSize: 100, intervalMs: 1 }}
+      />
+    );
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello world')).toBeInTheDocument();
+    });
+  });
+
+  it('clears conversation when no conversationId exists', async () => {
+    const onCleared = vi.fn();
+
+    render(
+      <ChatInterface agentSlug="test-agent" showClearButton onConversationCleared={onCleared} />
+    );
+
+    // No messages, no clear button should appear
+    expect(screen.queryByRole('button', { name: /clear conversation/i })).not.toBeInTheDocument();
+  });
+
+  it('submits on Enter key', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Reply'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hello{Enter}');
+
+    await waitFor(() => {
+      expect(screen.getByText('Reply')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error.action text when present', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Advance through reconnect attempts
+    await vi.advanceTimersByTimeAsync(8000);
+
+    await waitFor(() => {
+      expect(screen.getByText(/please try sending your message again/i)).toBeInTheDocument();
+    });
+
+    vi.useRealTimers();
+  });
+
+  it('handles stream ending without done/error event', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Partial response'),
+      // No done or error frame — stream just ends
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Partial response')).toBeInTheDocument();
+    });
+  });
+
   it('shows error when res.body is null despite res.ok', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, body: null }));

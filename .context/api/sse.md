@@ -24,6 +24,8 @@ interface SseResponseOptions {
   keepaliveIntervalMs?: number;
   /** External abort signal — closes the stream when fired. */
   signal?: AbortSignal;
+  /** Extra headers merged into the SSE response (e.g. CORS headers). */
+  headers?: Record<string, string>;
 }
 ```
 

@@ -458,15 +458,17 @@ data: <json>
 
 `ChatEvent` union (from `types/orchestration.ts:191-197`):
 
-| `type`              | `data` shape                                                          | Meaning                                                              |
-| ------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `start`             | `{ conversationId, messageId }`                                       | First event — conversation is ready and the assistant turn has begun |
-| `content`           | `{ delta: string }`                                                   | Incremental assistant text                                           |
-| `status`            | `{ message: string }`                                                 | Human-readable progress indicator                                    |
-| `capability_result` | `{ capabilitySlug: string, result: unknown }`                         | A tool call completed — mid-stream                                   |
-| `warning`           | `{ code, message }`                                                   | Non-terminal warning (e.g. budget at 80%) — stream continues         |
-| `done`              | `{ tokenUsage: { inputTokens, outputTokens, totalTokens }, costUsd }` | Terminal success frame                                               |
-| `error`             | `{ code, message }`                                                   | Terminal error frame                                                 |
+| `type`               | `data` shape                                                                             | Meaning                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `start`              | `{ conversationId, messageId }`                                                          | First event — conversation is ready and the assistant turn has begun |
+| `content`            | `{ delta: string }`                                                                      | Incremental assistant text                                           |
+| `status`             | `{ message: string }`                                                                    | Human-readable progress indicator                                    |
+| `capability_result`  | `{ capabilitySlug: string, result: unknown }`                                            | A single tool call completed — mid-stream                            |
+| `capability_results` | `{ results: { capabilitySlug: string, result: unknown }[] }`                             | Batch of parallel tool calls completed — mid-stream                  |
+| `warning`            | `{ code, message }`                                                                      | Non-terminal warning (e.g. budget at 80%) — stream continues         |
+| `content_reset`      | `{}`                                                                                     | Provider fallback — client must clear buffered content and restart   |
+| `done`               | `{ tokenUsage: { inputTokens, outputTokens, totalTokens }, costUsd, provider?, model? }` | Terminal success frame                                               |
+| `error`              | `{ code, message }`                                                                      | Terminal error frame                                                 |
 
 Plus periodic keepalive comment frames (`: keepalive\n\n`) every 15 000 ms — comments are ignored by `EventSource` and standard SSE clients.
 

@@ -108,16 +108,16 @@ Set via `PATCH /api/v1/admin/orchestration/settings` with `{ "inputGuardMode": "
 
 `getUserFacingError(code)` returns `{ title, message, action? }` for known error codes:
 
-| Code                      | Title                           |
-| ------------------------- | ------------------------------- |
-| `budget_exceeded`         | Monthly Budget Reached          |
-| `all_providers_exhausted` | Service Temporarily Unavailable |
-| `agent_not_found`         | Agent Not Found                 |
-| `conversation_not_found`  | Conversation Not Found          |
-| `tool_loop_cap`           | Processing Limit Reached        |
-| `internal_error`          | Something Went Wrong            |
-| `stream_error`            | Something Went Wrong            |
-| `rate_limited`            | Too Many Requests               |
+| Code                      | Title                    |
+| ------------------------- | ------------------------ |
+| `budget_exceeded`         | Monthly Budget Reached   |
+| `all_providers_exhausted` | No Available Provider    |
+| `agent_not_found`         | Agent Not Found          |
+| `conversation_not_found`  | Conversation Not Found   |
+| `tool_loop_cap`           | Processing Limit Reached |
+| `internal_error`          | Something Went Wrong     |
+| `stream_error`            | Something Went Wrong     |
+| `rate_limited`            | Too Many Requests        |
 
 Unknown codes fall back to `internal_error`. Static map — zero runtime cost.
 
