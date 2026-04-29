@@ -19,9 +19,9 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     action: 'Contact an admin to increase the limit or switch to a local model.',
   },
   all_providers_exhausted: {
-    title: 'Service Temporarily Unavailable',
-    message: 'All AI providers are experiencing issues.',
-    action: 'Wait a moment and try again, or switch to a different provider.',
+    title: 'No Available Provider',
+    message: 'None of the configured AI providers could handle the request.',
+    action: 'Check that providers are enabled with valid API keys in Admin → Providers.',
   },
   agent_not_found: {
     title: 'Agent Not Found',
