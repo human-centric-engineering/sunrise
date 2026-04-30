@@ -86,6 +86,7 @@ function makeModel(overrides: Partial<ModelRow> = {}): ModelRow {
     configuredActive: true,
     dimensions: null,
     schemaCompatible: null,
+    metadata: null,
     ...overrides,
   };
 }

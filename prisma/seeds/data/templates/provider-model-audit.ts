@@ -179,9 +179,9 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           rules:
             'Validate that all proposed changes use valid enum values:\n\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: none, basic, moderate, advanced, frontier\n- latency must be one of: ultra_fast, fast, moderate, slow, very_slow\n- costEfficiency must be one of: very_low, low, moderate, high, very_high\n- contextLength must be one of: small, medium, large, very_large, massive\n- toolUse must be one of: none, basic, moderate, advanced\n- quality (embedding) must be one of: basic, good, excellent, sota\n- confidence must be one of: high, medium, low\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field.',
           mode: 'llm',
-          failAction: 'retry',
+          failAction: 'block',
         },
-        nextSteps: [{ targetStepId: 'refine_findings' }],
+        nextSteps: [{ targetStepId: 'refine_findings', condition: 'pass' }],
       },
 
       // ─── Step 6: reflect (Pattern 4 — Reflection) ─────────────────
@@ -241,6 +241,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'tool_call',
         config: {
           capabilitySlug: 'apply_audit_changes',
+          argsFrom: 'review_changes',
         },
         nextSteps: [{ targetStepId: 'notify_complete' }],
       },
@@ -248,6 +249,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // ─── Step 10: send_notification ────────────────────────────────
       // Tests: Email/webhook notification output, bodyTemplate
       // interpolation with step references.
+      // NOTE: `to` is a placeholder — admins should edit this workflow
+      // after seeding to set the correct notification recipient.
       {
         id: 'notify_complete',
         name: 'Notify audit completion',

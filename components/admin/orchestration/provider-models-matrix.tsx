@@ -54,6 +54,12 @@ export interface ModelRow {
   dimensions?: number | null;
   schemaCompatible?: boolean | null;
   costPerMillionTokens?: number | null;
+  metadata?: {
+    lastAudit?: {
+      timestamp: string;
+    };
+    [key: string]: unknown;
+  } | null;
 }
 
 interface ProviderModelsMatrixProps {
@@ -272,7 +278,7 @@ export function ProviderModelsMatrix({
           </p>
           <Button variant="outline" onClick={() => setAuditOpen(true)}>
             <ClipboardCheck className="mr-2 h-4 w-4" />
-            Review Models
+            Audit Models
           </Button>
           <FieldHelp title="AI-Powered Model Audit">
             Triggers the Provider Model Audit workflow — a real orchestration workflow execution via{' '}

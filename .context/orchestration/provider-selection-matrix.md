@@ -171,7 +171,7 @@ The Provider Model Audit is an AI-powered workflow that evaluates model entries 
 
 ### Trigger
 
-"Review Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit, creates a workflow execution via `POST /workflows/:id/execute` and redirects to the execution detail page.
+"Audit Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit, creates a workflow execution via `POST /workflows/:id/execute` and redirects to the execution detail page.
 
 ### Files
 

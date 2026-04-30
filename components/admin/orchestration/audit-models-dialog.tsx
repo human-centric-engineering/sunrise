@@ -49,6 +49,16 @@ interface AuditModelsDialogProps {
 
 const AUDIT_WORKFLOW_SLUG = 'tpl-provider-model-audit';
 
+function formatAuditAge(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 export function AuditModelsDialog({
   open,
   onOpenChange,
@@ -163,8 +173,11 @@ export function AuditModelsDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="h-5 w-5" />
-            Review Models
-            <FieldHelp title="Framework Reference Implementation">
+            Audit Models
+            <FieldHelp
+              title="Framework Reference Implementation"
+              contentClassName="w-96 max-h-80 overflow-y-auto"
+            >
               This dialog triggers the Provider Model Audit workflow — a 10-step DAG that exercises
               10 of 15 orchestration step types. It tests prompt chaining, routing, parallelisation,
               reflection, tool use, guardrails, evaluation, human-in-the-loop approval, RAG
@@ -175,7 +188,8 @@ export function AuditModelsDialog({
           </DialogTitle>
           <DialogDescription>
             Select the models to audit. The AI will evaluate each model&apos;s classification and
-            propose changes for your review.
+            propose changes for your review. Models only need re-auditing every few months, or
+            sooner if you notice inaccuracies in tier or capability ratings.
           </DialogDescription>
         </DialogHeader>
 
@@ -224,6 +238,7 @@ export function AuditModelsDialog({
                 <Checkbox
                   checked={selected.has(model.id)}
                   onCheckedChange={() => toggleModel(model.id)}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
                   aria-label={`Select ${model.name} for audit`}
                 />
                 <div className="min-w-0 flex-1">
@@ -241,9 +256,16 @@ export function AuditModelsDialog({
                       </Badge>
                     )}
                   </div>
-                  <span className="text-muted-foreground text-xs">
-                    {model.providerSlug} / {model.modelId}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-xs">
+                      {model.providerSlug} / {model.modelId}
+                    </span>
+                    <span className="text-muted-foreground/50 text-[10px]">
+                      {model.metadata?.lastAudit?.timestamp
+                        ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
+                        : 'Never audited'}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}

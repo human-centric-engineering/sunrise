@@ -75,9 +75,9 @@ describe('ValidationSummaryPanel', () => {
       expect(screen.getByText(/1 issue found/i)).toBeInTheDocument();
     });
 
-    it('renders the error message text', () => {
+    it('renders a human-friendly explanation for known error codes', () => {
       render(<ValidationSummaryPanel errors={[CORE_ERROR]} onFocusNode={vi.fn()} />);
-      expect(screen.getByText(/no entry step defined/i)).toBeInTheDocument();
+      expect(screen.getByText(/no starting point/i)).toBeInTheDocument();
     });
 
     it('renders a human-readable code label for known codes', () => {
@@ -92,9 +92,9 @@ describe('ValidationSummaryPanel', () => {
 
       // Find the button for this error and click it
       const errorButtons = screen.getAllByRole('button');
-      // Find the one with the error message text
+      // Find the one with the explanation text
       const errorBtn = errorButtons.find((btn) =>
-        btn.textContent?.includes('LLM Call "My Step" needs a prompt template')
+        btn.textContent?.includes('missing a required setting')
       );
       expect(errorBtn).toBeDefined();
       await user.click(errorBtn!);
@@ -108,7 +108,7 @@ describe('ValidationSummaryPanel', () => {
       // The button for this error should be disabled
       const errorButtons = screen.getAllByRole('button');
       const disabledBtn = errorButtons.find(
-        (btn) => btn.hasAttribute('disabled') && btn.textContent?.includes('An orphan node')
+        (btn) => btn.hasAttribute('disabled') && btn.textContent?.includes('isn\u2019t connected')
       );
       expect(disabledBtn).toBeDefined();
     });
@@ -119,7 +119,9 @@ describe('ValidationSummaryPanel', () => {
       render(<ValidationSummaryPanel errors={[EXTRA_ERROR_NO_STEP]} onFocusNode={onFocusNode} />);
 
       const errorButtons = screen.getAllByRole('button');
-      const errorBtn = errorButtons.find((btn) => btn.textContent?.includes('An orphan node'));
+      const errorBtn = errorButtons.find((btn) =>
+        btn.textContent?.includes('isn\u2019t connected')
+      );
       // The button is disabled so clicking it shouldn't fire the handler
       if (errorBtn) {
         await user.click(errorBtn);
@@ -136,8 +138,8 @@ describe('ValidationSummaryPanel', () => {
         />
       );
 
-      expect(screen.getByText(/no entry step defined/i)).toBeInTheDocument();
-      expect(screen.getByText(/needs a prompt template/i)).toBeInTheDocument();
+      expect(screen.getByText(/no starting point/i)).toBeInTheDocument();
+      expect(screen.getByText(/missing a required setting/i)).toBeInTheDocument();
     });
   });
 });

@@ -147,7 +147,7 @@ Powered by `recommendModels()` in `lib/orchestration/llm/provider-selector.ts`.
 
 ## Model Audit Workflow
 
-The matrix toolbar includes a **Review Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness.
+The matrix toolbar includes an **Audit Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness.
 
 ### What it does
 
@@ -157,6 +157,10 @@ The matrix toolbar includes a **Review Models** button that triggers the Provide
 4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
 5. A `human_approval` step pauses execution and presents proposed changes for admin review
 6. On approval, the `apply_audit_changes` capability writes accepted changes to the database and invalidates the model cache
+
+### Audit frequency
+
+Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence is once every few months, or when you notice a classification inaccuracy (e.g. a model's tier, reasoning depth, or cost rating seems wrong). The audit dialog shows when each model was last audited to help you prioritise.
 
 ### Components
 
