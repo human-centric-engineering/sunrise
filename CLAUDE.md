@@ -141,24 +141,28 @@ import { FormError } from './form-error'; // ❌ no exception for siblings
 
 Use these for implementation tasks:
 
-| Skill                | Use For                                             |
-| -------------------- | --------------------------------------------------- |
-| `/api-builder`       | REST API endpoints                                  |
-| `/form-builder`      | Forms with Zod + react-hook-form                    |
-| `/component-builder` | Reusable React components                           |
-| `/page-builder`      | New pages with layouts/metadata                     |
-| `/testing`           | Quick test patterns reference                       |
-| `/test-plan`         | Analyze code and produce a test plan                |
-| `/test-write`        | Execute test plan with test-engineer agents         |
-| `/test-review`       | Confidence-scored test quality report (≥80 filter)  |
-| `/test-fix`          | Apply findings from a `/test-review` report         |
-| `/test-coverage`     | Find coverage gaps and untested files               |
-| `/test-triage`       | Ledger-driven triage for codebase-wide remediation  |
-| `/security-hardener` | Rate limiting, CORS, CSP                            |
-| `/email-designer`    | React Email templates                               |
-| `/docs-writer`       | Create/update .context/ docs                        |
-| `/docs-audit`        | Check documentation accuracy                        |
-| `/agent-architect`   | Agentic design patterns, orchestration architecture |
+| Skill                 | Use For                                                |
+| --------------------- | ------------------------------------------------------ |
+| `/api-builder`        | REST API endpoints                                     |
+| `/form-builder`       | Forms with Zod + react-hook-form                       |
+| `/component-builder`  | Reusable React components                              |
+| `/page-builder`       | New pages with layouts/metadata                        |
+| `/testing`            | Quick test patterns reference                          |
+| `/test-plan`          | Analyze code and produce a test plan                   |
+| `/test-write`         | Execute test plan with test-engineer agents            |
+| `/test-review`        | Confidence-scored test quality report (≥80 filter)     |
+| `/test-fix`           | Apply findings from a `/test-review` report            |
+| `/test-coverage`      | Find coverage gaps and untested files                  |
+| `/test-triage`        | Ledger-driven triage for codebase-wide remediation     |
+| `/security-hardener`  | Rate limiting, CORS, CSP                               |
+| `/email-designer`     | React Email templates                                  |
+| `/docs-writer`        | Create/update .context/ docs                           |
+| `/docs-audit`         | Check documentation accuracy                           |
+| `/agent-architect`    | Agentic design patterns, orchestration architecture    |
+| `/capability-builder` | Custom agent capabilities (Zod, registry, DB, binding) |
+| `/workflow-builder`   | Workflow DAGs with 15 step types                       |
+| `/knowledge-builder`  | Knowledge base setup (upload, embed, scope)            |
+| `/solution-builder`   | End-to-end orchestration solutions                     |
 
 ## Test Engineering
 
