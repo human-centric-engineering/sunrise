@@ -187,7 +187,10 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
 
     // Store audit metadata on the model for provenance tracking
     if (applied > 0) {
-      const existingMetadata = (model.metadata as Record<string, unknown>) ?? {};
+      const existingMetadata =
+        model.metadata && typeof model.metadata === 'object' && !Array.isArray(model.metadata)
+          ? (model.metadata as Record<string, unknown>)
+          : {};
       await prisma.aiProviderModel.update({
         where: { id: args.model_id },
         data: {
