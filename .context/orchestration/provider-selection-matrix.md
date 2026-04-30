@@ -146,6 +146,42 @@ npx vitest run tests/unit/lib/orchestration/llm/provider-selector
 npx vitest run tests/integration/api/v1/admin/orchestration/provider-models
 ```
 
+## Model Audit Workflow
+
+The Provider Model Audit is an AI-powered workflow that evaluates model entries for accuracy and proposes changes for admin review. It serves a dual purpose:
+
+1. **Genuinely useful** — catches stale ratings, deprecated models, and inaccurate classifications by having an LLM evaluate each entry against its knowledge of current model capabilities.
+
+2. **Framework reference implementation** — exercises 11 of 15 orchestration step types end-to-end, proving the engine, approval queue, capability dispatch, budget enforcement, and SSE streaming work together.
+
+### Step types exercised
+
+| Step Type           | Pattern         | What It Tests                                       |
+| ------------------- | --------------- | --------------------------------------------------- |
+| `llm_call`          | Prompt Chaining | Structured JSON output, template interpolation      |
+| `rag_retrieve`      | RAG             | Knowledge base search, similarity threshold         |
+| `route`             | Routing         | LLM classification branching (chat/embedding/mixed) |
+| `parallel`          | Parallelisation | Concurrent analysis branches                        |
+| `guard`             | Guardrails      | Enum value validation gate                          |
+| `reflect`           | Reflection      | Draft-critique-revise loop                          |
+| `evaluate`          | Evaluation      | Quality scoring against rubric                      |
+| `human_approval`    | HITL            | Execution pause, approval queue, resume flow        |
+| `tool_call`         | Tool Use        | `apply_audit_changes` capability dispatch           |
+| `send_notification` | —               | Email notification with template interpolation      |
+
+### Trigger
+
+"Review Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit, creates a workflow execution via `POST /workflows/:id/execute` and redirects to the execution detail page.
+
+### Files
+
+| File                                                             | Purpose                                  |
+| ---------------------------------------------------------------- | ---------------------------------------- |
+| `prisma/seeds/data/templates/provider-model-audit.ts`            | 10-step DAG template definition          |
+| `prisma/seeds/010-model-auditor.ts`                              | Agent seed with capability bindings      |
+| `lib/orchestration/capabilities/built-in/apply-audit-changes.ts` | Capability that applies approved changes |
+| `components/admin/orchestration/audit-models-dialog.tsx`         | Model selection + trigger dialog         |
+
 ## Related
 
 - [LLM providers (runtime)](./llm-providers.md) — provider abstraction, model registry, cost tracking
