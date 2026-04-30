@@ -1297,6 +1297,7 @@ export type ListProviderModelsQuery = z.infer<typeof listProviderModelsQuerySche
 export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
   isTemplate: queryBooleanSchema.optional(),
+  isSystem: queryBooleanSchema.optional(),
   slug: z.string().trim().max(100).optional(),
   q: z.string().trim().max(200).optional(),
 });

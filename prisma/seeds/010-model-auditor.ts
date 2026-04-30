@@ -1,3 +1,4 @@
+import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
 import type { SeedUnit } from '@/prisma/runner';
 
 const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
@@ -384,7 +385,31 @@ const unit: SeedUnit = {
       });
     }
 
-    logger.info('✅ Seeded provider-model-auditor agent with 5 capabilities');
+    // 7. Upsert the Provider Model Audit workflow as a system workflow
+    const tpl = PROVIDER_MODEL_AUDIT_TEMPLATE;
+    const patternsUsed = tpl.patterns.map((p) => p.number);
+    await prisma.aiWorkflow.upsert({
+      where: { slug: tpl.slug },
+      update: { isSystem: true, isTemplate: false },
+      create: {
+        slug: tpl.slug,
+        name: tpl.name,
+        description: tpl.shortDescription,
+        workflowDefinition: tpl.workflowDefinition as unknown as object,
+        patternsUsed,
+        isActive: true,
+        isTemplate: false,
+        isSystem: true,
+        metadata: {
+          flowSummary: tpl.flowSummary,
+          useCases: tpl.useCases,
+          patterns: tpl.patterns,
+        } as unknown as object,
+        createdBy,
+      },
+    });
+
+    logger.info('✅ Seeded provider-model-auditor agent with 5 capabilities + system workflow');
   },
 };
 

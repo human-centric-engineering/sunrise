@@ -65,6 +65,7 @@ function makeWorkflow(overrides: Partial<AiWorkflowListItem> = {}): AiWorkflowLi
     patternsUsed: [1, 2],
     isActive: true,
     isTemplate: false,
+    isSystem: false,
     metadata: null,
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01T00:00:00Z'),
@@ -131,7 +132,7 @@ describe('WorkflowsTable', () => {
       expect(screen.getByText('Name')).toBeInTheDocument();
       expect(screen.getByText('Slug')).toBeInTheDocument();
       expect(screen.getByText('Patterns')).toBeInTheDocument();
-      expect(screen.getByText('Template')).toBeInTheDocument();
+      expect(screen.getByText('Type')).toBeInTheDocument();
       expect(screen.getByText('Status')).toBeInTheDocument();
     });
 
