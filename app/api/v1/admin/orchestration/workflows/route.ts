@@ -31,7 +31,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
 
   const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, isTemplate, q } = validateQueryParams(
+  const { page, limit, isActive, isTemplate, slug, q } = validateQueryParams(
     searchParams,
     listWorkflowsQuerySchema
   );
@@ -40,6 +40,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const where: Prisma.AiWorkflowWhereInput = {};
   if (isActive !== undefined) where.isActive = isActive;
   if (isTemplate !== undefined) where.isTemplate = isTemplate;
+  if (slug) where.slug = slug;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },

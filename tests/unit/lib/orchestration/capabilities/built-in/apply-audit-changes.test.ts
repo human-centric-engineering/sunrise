@@ -45,10 +45,12 @@ vi.mock('@/lib/logging', () => ({
 
 const { prisma } = await import('@/lib/db/client');
 const { invalidateModelCache } = await import('@/lib/orchestration/llm/provider-selector');
-const { ApplyAuditChangesCapability } =
+const { ApplyAuditChangesCapability, AUDITABLE_FIELDS } =
   await import('@/lib/orchestration/capabilities/built-in/apply-audit-changes');
 const { CapabilityValidationError } =
   await import('@/lib/orchestration/capabilities/base-capability');
+
+type AuditableField = (typeof AUDITABLE_FIELDS)[number];
 
 // ---------------------------------------------------------------------------
 // Typed mock aliases
@@ -79,9 +81,17 @@ function makeModel(overrides: Record<string, unknown> = {}) {
 }
 
 /** A valid audit change that targets the `costEfficiency` field */
-function makeChange(overrides: Record<string, unknown> = {}) {
+function makeChange(
+  overrides: Partial<{
+    field: AuditableField;
+    currentValue: unknown;
+    proposedValue: unknown;
+    reason: string;
+    confidence: 'high' | 'medium' | 'low';
+  }> = {}
+) {
   return {
-    field: 'costEfficiency',
+    field: 'costEfficiency' as AuditableField,
     currentValue: 'medium',
     proposedValue: 'high',
     reason: 'Updated based on latest pricing data',
@@ -124,8 +134,8 @@ describe('ApplyAuditChangesCapability', () => {
         changes: [makeChange()],
       });
 
-      expect(result.model_id).toBe('model-abc');
-      expect(result.changes).toHaveLength(1);
+      expect('model_id' in result && result.model_id).toBe('model-abc');
+      expect('changes' in result && result.changes).toHaveLength(1);
     });
 
     it('accepts up to 50 changes', () => {
@@ -169,7 +179,7 @@ describe('ApplyAuditChangesCapability', () => {
       expect(() =>
         cap.validate({
           model_id: 'model-1',
-          changes: [makeChange({ confidence: 'very-high' })],
+          changes: [makeChange({ confidence: 'very-high' as 'high' })],
         })
       ).toThrow(CapabilityValidationError);
     });
@@ -179,14 +189,156 @@ describe('ApplyAuditChangesCapability', () => {
       expect(() =>
         cap.validate({
           model_id: 'model-1',
-          changes: [makeChange({ field: '' })],
+          changes: [makeChange({ field: '' as AuditableField })],
         })
       ).toThrow(CapabilityValidationError);
     });
   });
 
+  describe('validate() — field allowlist', () => {
+    it('rejects field names not in AUDITABLE_FIELDS (e.g. "id")', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() =>
+        cap.validate({
+          model_id: 'model-1',
+          changes: [makeChange({ field: 'id' as AuditableField })],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it('rejects identity fields like "createdBy"', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() =>
+        cap.validate({
+          model_id: 'model-1',
+          changes: [makeChange({ field: 'createdBy' as AuditableField })],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it('rejects lifecycle fields like "isDefault"', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() =>
+        cap.validate({
+          model_id: 'model-1',
+          changes: [makeChange({ field: 'isDefault' as AuditableField })],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it('rejects prototype pollution attempts ("__proto__")', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() =>
+        cap.validate({
+          model_id: 'model-1',
+          changes: [makeChange({ field: '__proto__' as AuditableField })],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it('accepts all fields in the AUDITABLE_FIELDS allowlist', () => {
+      const cap = new ApplyAuditChangesCapability();
+      for (const field of AUDITABLE_FIELDS) {
+        expect(() =>
+          cap.validate({
+            model_id: 'model-1',
+            changes: [makeChange({ field })],
+          })
+        ).not.toThrow();
+      }
+    });
+  });
+
+  describe('validate() — multi-model input', () => {
+    it('accepts multi-model format with models array', () => {
+      const cap = new ApplyAuditChangesCapability();
+      const result = cap.validate({
+        models: [
+          { model_id: 'model-1', changes: [makeChange()] },
+          { model_id: 'model-2', changes: [makeChange({ field: 'tierRole' })] },
+        ],
+      });
+      expect('models' in result && result.models).toHaveLength(2);
+    });
+
+    it('rejects multi-model input with empty models array', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() => cap.validate({ models: [] })).toThrow(CapabilityValidationError);
+    });
+
+    it('rejects multi-model input when a model has empty changes', () => {
+      const cap = new ApplyAuditChangesCapability();
+      expect(() =>
+        cap.validate({
+          models: [{ model_id: 'model-1', changes: [] }],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+  });
+
+  describe('execute() — multi-model', () => {
+    it('applies changes across multiple models', async () => {
+      mockFindUnique
+        .mockResolvedValueOnce(makeModel({ id: 'model-1', costEfficiency: 'medium' }))
+        .mockResolvedValueOnce(
+          makeModel({ id: 'model-2', tierRole: 'worker', name: 'GPT-4o-mini' })
+        );
+      mockUpdate.mockResolvedValue({});
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          models: [
+            {
+              model_id: 'model-1',
+              changes: [
+                makeChange({
+                  field: 'costEfficiency',
+                  currentValue: 'medium',
+                  proposedValue: 'high',
+                }),
+              ],
+            },
+            {
+              model_id: 'model-2',
+              changes: [
+                makeChange({
+                  field: 'tierRole',
+                  currentValue: 'worker',
+                  proposedValue: 'infrastructure',
+                }),
+              ],
+            },
+          ],
+        },
+        context
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.applied).toBe(2);
+    });
+
+    it('marks changes as invalid when a model in multi-model input is missing', async () => {
+      mockFindUnique.mockResolvedValueOnce(null);
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          models: [{ model_id: 'missing-model', changes: [makeChange()] }],
+        },
+        context
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.invalid).toBe(1);
+      expect(result.data?.applied).toBe(0);
+      expect(result.data?.changes[0].status).toBe('invalid');
+      expect(result.data?.changes[0].reason).toContain('missing-model');
+    });
+  });
+
   describe('execute() — model not found', () => {
-    it('returns not_found error when prisma.aiProviderModel.findUnique returns null', async () => {
+    it('marks all changes as invalid when model is not found', async () => {
       // Arrange
       mockFindUnique.mockResolvedValue(null);
       const cap = new ApplyAuditChangesCapability();
@@ -197,10 +349,12 @@ describe('ApplyAuditChangesCapability', () => {
         context
       );
 
-      // Assert
-      expect(result.success).toBe(false);
-      expect(result.error?.code).toBe('not_found');
-      expect(result.error?.message).toContain('missing-model');
+      // Assert: returns success with all changes invalid
+      expect(result.success).toBe(true);
+      expect(result.data?.invalid).toBe(1);
+      expect(result.data?.applied).toBe(0);
+      expect(result.data?.changes[0].status).toBe('invalid');
+      expect(result.data?.changes[0].reason).toContain('missing-model');
     });
 
     it('never calls prisma.aiProviderModel.update when model is not found', async () => {

@@ -23,19 +23,53 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 
+/**
+ * Fields that audits are allowed to modify. Intentionally narrower than
+ * `updateProviderModelSchema` — audits change classification/ratings,
+ * not identity (`id`, `slug`, `name`) or lifecycle (`isDefault`, `isActive`,
+ * `createdBy`, `metadata`) fields.
+ */
+export const AUDITABLE_FIELDS = [
+  'tierRole',
+  'reasoningDepth',
+  'latency',
+  'costEfficiency',
+  'contextLength',
+  'toolUse',
+  'bestRole',
+  'description',
+  'dimensions',
+  'schemaCompatible',
+  'quality',
+] as const;
+
 /** A single field change the LLM proposed and the admin accepted */
 const auditChangeSchema = z.object({
-  field: z.string().min(1).max(100),
+  field: z.enum(AUDITABLE_FIELDS),
   currentValue: z.unknown(),
   proposedValue: z.unknown(),
   reason: z.string().min(1).max(1000),
   confidence: z.enum(['high', 'medium', 'low']),
 });
 
-const schema = z.object({
+const singleModelSchema = z.object({
   model_id: z.string().min(1).max(100),
   changes: z.array(auditChangeSchema).min(1).max(50),
 });
+
+const multiModelSchema = z.object({
+  models: z
+    .array(
+      z.object({
+        model_id: z.string().min(1).max(100),
+        changes: z.array(auditChangeSchema).min(1).max(50),
+      })
+    )
+    .min(1)
+    .max(50),
+});
+
+const schema = z.union([singleModelSchema, multiModelSchema]);
 
 type Args = z.infer<typeof schema>;
 
@@ -62,28 +96,29 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'apply_audit_changes',
     description:
-      'Apply approved audit changes to a provider model entry. Each change updates a single field after validating it against the model update schema. Invalidates the model cache after all updates.',
+      'Apply approved audit changes to provider model entries. Accepts a single model (model_id + changes) or multiple models (models array). Each change updates one auditable field after validation. Invalidates the model cache after all updates.',
     parameters: {
       type: 'object',
       properties: {
         model_id: {
           type: 'string',
-          description: 'The ID of the provider model to update.',
+          description: 'The ID of the provider model to update (single-model mode).',
           minLength: 1,
           maxLength: 100,
         },
         changes: {
           type: 'array',
-          description: 'Array of approved field changes to apply.',
+          description: 'Array of approved field changes to apply (single-model mode).',
           items: {
             type: 'object',
             properties: {
               field: {
                 type: 'string',
-                description: 'The field name to update (e.g. "tierRole", "costEfficiency").',
+                enum: [...AUDITABLE_FIELDS],
+                description: 'The auditable field name to update.',
               },
               currentValue: {
-                description: 'The current value of the field (for verification).',
+                description: 'The current value of the field (for drift verification).',
               },
               proposedValue: {
                 description: 'The new value to set.',
@@ -103,20 +138,87 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
           minItems: 1,
           maxItems: 50,
         },
+        models: {
+          type: 'array',
+          description:
+            'Array of models to update (multi-model mode). Each entry has model_id and changes.',
+          items: {
+            type: 'object',
+            properties: {
+              model_id: { type: 'string' },
+              changes: { type: 'array', items: { type: 'object' } },
+            },
+            required: ['model_id', 'changes'],
+          },
+          minItems: 1,
+          maxItems: 50,
+        },
       },
-      required: ['model_id', 'changes'],
     },
   };
 
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // Normalise single-model and multi-model input into a uniform list
+    const entries = 'models' in args ? args.models : [args];
+
+    let totalApplied = 0;
+    let totalSkipped = 0;
+    let totalInvalid = 0;
+    const allChanges: AppliedChange[] = [];
+    let lastName = '';
+    let lastId = '';
+
+    for (const entry of entries) {
+      const { applied, skipped, invalid, changes, modelName, modelId } =
+        await this.applyModelChanges(entry.model_id, entry.changes, context);
+      totalApplied += applied;
+      totalSkipped += skipped;
+      totalInvalid += invalid;
+      allChanges.push(...changes);
+      lastName = modelName;
+      lastId = modelId;
+    }
+
+    return this.success(
+      {
+        modelId: entries.length === 1 ? lastId : `${entries.length} models`,
+        modelName: entries.length === 1 ? lastName : `${entries.length} models`,
+        applied: totalApplied,
+        skipped: totalSkipped,
+        invalid: totalInvalid,
+        changes: allChanges,
+      },
+      { skipFollowup: true }
+    );
+  }
+
+  private async applyModelChanges(
+    modelId: string,
+    changes: z.infer<typeof singleModelSchema>['changes'],
+    context: CapabilityContext
+  ): Promise<Data> {
     const model = await prisma.aiProviderModel.findUnique({
-      where: { id: args.model_id },
+      where: { id: modelId },
     });
 
     if (!model) {
-      return this.error(`Provider model ${args.model_id} not found`, 'not_found');
+      logger.warn('Audit target model not found, skipping', { modelId });
+      return {
+        modelId,
+        modelName: 'unknown',
+        applied: 0,
+        skipped: 0,
+        invalid: changes.length,
+        changes: changes.map((c) => ({
+          field: c.field,
+          previousValue: c.currentValue,
+          newValue: c.proposedValue,
+          status: 'invalid' as const,
+          reason: `Provider model ${modelId} not found`,
+        })),
+      };
     }
 
     const results: AppliedChange[] = [];
@@ -124,8 +226,8 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     let skipped = 0;
     let invalid = 0;
 
-    for (const change of args.changes) {
-      // Validate the proposed change against the update schema
+    for (const change of changes) {
+      // Validate the proposed value against the update schema
       const partial = { [change.field]: change.proposedValue };
       const parsed = updateProviderModelSchema.safeParse(partial);
 
@@ -141,6 +243,9 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
         continue;
       }
 
+      // Use the Zod-parsed value, not the raw proposedValue
+      const validatedValue = (parsed.data as Record<string, unknown>)[change.field];
+
       // Verify the current value matches what the audit saw
       const currentValue = (model as Record<string, unknown>)[change.field];
       if (JSON.stringify(currentValue) !== JSON.stringify(change.currentValue)) {
@@ -155,12 +260,12 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
         continue;
       }
 
-      // Apply the change
+      // Apply the change using the validated value
       try {
         await prisma.aiProviderModel.update({
-          where: { id: args.model_id },
+          where: { id: modelId },
           data: {
-            [change.field]: change.proposedValue,
+            [change.field]: validatedValue,
             // Opt out of future seed updates since admin approved a change
             isDefault: false,
           },
@@ -168,7 +273,7 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
         results.push({
           field: change.field,
           previousValue: change.currentValue,
-          newValue: change.proposedValue,
+          newValue: validatedValue,
           status: 'applied',
         });
         applied++;
@@ -192,7 +297,7 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
           ? (model.metadata as Record<string, unknown>)
           : {};
       await prisma.aiProviderModel.update({
-        where: { id: args.model_id },
+        where: { id: modelId },
         data: {
           metadata: {
             ...existingMetadata,
@@ -211,23 +316,20 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     }
 
     logger.info('Audit changes applied', {
-      modelId: args.model_id,
+      modelId,
       modelName: model.name,
       applied,
       skipped,
       invalid,
     });
 
-    return this.success(
-      {
-        modelId: args.model_id,
-        modelName: model.name,
-        applied,
-        skipped,
-        invalid,
-        changes: results,
-      },
-      { skipFollowup: true }
-    );
+    return {
+      modelId,
+      modelName: model.name,
+      applied,
+      skipped,
+      invalid,
+      changes: results,
+    };
   }
 }

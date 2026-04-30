@@ -1293,6 +1293,7 @@ export type ListProviderModelsQuery = z.infer<typeof listProviderModelsQuerySche
 export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
   isTemplate: queryBooleanSchema.optional(),
+  slug: z.string().trim().max(100).optional(),
   q: z.string().trim().max(200).optional(),
 });
 
@@ -1829,6 +1830,7 @@ export const llmCallConfigSchema = stepErrorConfigSchema.extend({
 export const toolCallConfigSchema = stepErrorConfigSchema.extend({
   capabilitySlug: z.string().optional(),
   args: z.record(z.string(), z.unknown()).optional(),
+  argsFrom: z.string().max(100).optional(),
 });
 
 export const routeConfigSchema = stepErrorConfigSchema.extend({

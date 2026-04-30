@@ -45,28 +45,41 @@ const APPLY_AUDIT_CHANGES_DEFINITION = {
   functionDefinition: {
     name: 'apply_audit_changes',
     description:
-      'Apply approved audit changes to a provider model entry. Each change updates a single field after validating it against the model update schema. Invalidates the model cache after all updates.',
+      'Apply approved audit changes to provider model entries. Accepts a single model (model_id + changes) or multiple models (models array). Each change updates one auditable field after validation. Invalidates the model cache after all updates.',
     parameters: {
       type: 'object',
       properties: {
         model_id: {
           type: 'string',
-          description: 'The ID of the provider model to update.',
+          description: 'The ID of the provider model to update (single-model mode).',
           minLength: 1,
           maxLength: 100,
         },
         changes: {
           type: 'array',
-          description: 'Array of approved field changes to apply.',
+          description: 'Array of approved field changes to apply (single-model mode).',
           items: {
             type: 'object',
             properties: {
               field: {
                 type: 'string',
-                description: 'The field name to update (e.g. "tierRole", "costEfficiency").',
+                enum: [
+                  'tierRole',
+                  'reasoningDepth',
+                  'latency',
+                  'costEfficiency',
+                  'contextLength',
+                  'toolUse',
+                  'bestRole',
+                  'description',
+                  'dimensions',
+                  'schemaCompatible',
+                  'quality',
+                ],
+                description: 'The auditable field name to update.',
               },
               currentValue: {
-                description: 'The current value of the field (for verification).',
+                description: 'The current value of the field (for drift verification).',
               },
               proposedValue: {
                 description: 'The new value to set.',
@@ -86,8 +99,22 @@ const APPLY_AUDIT_CHANGES_DEFINITION = {
           minItems: 1,
           maxItems: 50,
         },
+        models: {
+          type: 'array',
+          description:
+            'Array of models to update (multi-model mode). Each entry has model_id and changes.',
+          items: {
+            type: 'object',
+            properties: {
+              model_id: { type: 'string' },
+              changes: { type: 'array', items: { type: 'object' } },
+            },
+            required: ['model_id', 'changes'],
+          },
+          minItems: 1,
+          maxItems: 50,
+        },
       },
-      required: ['model_id', 'changes'],
     },
   },
 } as const;
