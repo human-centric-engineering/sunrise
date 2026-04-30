@@ -29,11 +29,12 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
   'search_knowledge_base',
   'get_pattern_detail',
   'estimate_workflow_cost',
+  'apply_audit_changes',
 ]);
 
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
-  it('exports nine built-in templates', () => {
-    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(9);
+  it('exports ten built-in templates', () => {
+    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(10);
   });
 
   it('has unique slugs across all templates', () => {

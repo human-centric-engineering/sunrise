@@ -18,6 +18,7 @@ import { CONVERSATIONAL_LEARNING_TEMPLATE } from '@/prisma/seeds/data/templates/
 import { CUSTOMER_SUPPORT_TEMPLATE } from '@/prisma/seeds/data/templates/customer-support';
 import { DATA_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/data-pipeline';
 import { OUTREACH_SAFETY_TEMPLATE } from '@/prisma/seeds/data/templates/outreach-safety';
+import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
 import { RESEARCH_AGENT_TEMPLATE } from '@/prisma/seeds/data/templates/research-agent';
 import { SAAS_BACKEND_TEMPLATE } from '@/prisma/seeds/data/templates/saas-backend';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
@@ -38,4 +39,5 @@ export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   OUTREACH_SAFETY_TEMPLATE,
   CODE_REVIEW_TEMPLATE,
   AUTONOMOUS_RESEARCH_TEMPLATE,
+  PROVIDER_MODEL_AUDIT_TEMPLATE,
 ];
