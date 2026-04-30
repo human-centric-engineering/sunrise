@@ -170,6 +170,91 @@ describe('AuditModelsDialog', () => {
     });
   });
 
+  // ── Audit age formatting ───────────────────────────────────────────────────
+
+  describe('audit age formatting', () => {
+    it('shows "Never audited" when metadata.lastAudit is null', () => {
+      render(<AuditModelsDialog {...DEFAULT_PROPS} models={[makeModel({ metadata: null })]} />);
+      expect(screen.getByText('Never audited')).toBeInTheDocument();
+    });
+
+    it('shows "Audited today" for a timestamp from today', () => {
+      const now = new Date().toISOString();
+      render(
+        <AuditModelsDialog
+          {...DEFAULT_PROPS}
+          models={[makeModel({ metadata: { lastAudit: { timestamp: now } } })]}
+        />
+      );
+      expect(screen.getByText('Audited today')).toBeInTheDocument();
+    });
+
+    it('shows "Audited yesterday" for a timestamp from 1 day ago', () => {
+      const yesterday = new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString();
+      render(
+        <AuditModelsDialog
+          {...DEFAULT_PROPS}
+          models={[makeModel({ metadata: { lastAudit: { timestamp: yesterday } } })]}
+        />
+      );
+      expect(screen.getByText('Audited yesterday')).toBeInTheDocument();
+    });
+
+    it('shows "Audited Xd ago" for timestamps within the last month', () => {
+      const fiveDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString();
+      render(
+        <AuditModelsDialog
+          {...DEFAULT_PROPS}
+          models={[makeModel({ metadata: { lastAudit: { timestamp: fiveDaysAgo } } })]}
+        />
+      );
+      expect(screen.getByText('Audited 5d ago')).toBeInTheDocument();
+    });
+
+    it('shows "Audited Xmo ago" for timestamps older than 30 days', () => {
+      const sixtyDaysAgo = new Date(Date.now() - 1000 * 60 * 60 * 24 * 60).toISOString();
+      render(
+        <AuditModelsDialog
+          {...DEFAULT_PROPS}
+          models={[makeModel({ metadata: { lastAudit: { timestamp: sixtyDaysAgo } } })]}
+        />
+      );
+      expect(screen.getByText('Audited 2mo ago')).toBeInTheDocument();
+    });
+  });
+
+  // ── Keyboard interaction ──────────────────────────────────────────────────
+
+  describe('keyboard interaction', () => {
+    it('toggles model selection when Enter is pressed on a row', async () => {
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} models={[MODEL_OPENAI]} />);
+
+      const checkbox = screen.getByRole('checkbox', { name: /select gpt-5 for audit/i });
+      const row = checkbox.closest('[role="button"]') as HTMLElement;
+      expect(checkbox).toBeChecked();
+
+      row.focus();
+      await user.keyboard('{Enter}');
+
+      expect(checkbox).not.toBeChecked();
+    });
+
+    it('toggles model selection when Space is pressed on a row', async () => {
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} models={[MODEL_OPENAI]} />);
+
+      const checkbox = screen.getByRole('checkbox', { name: /select gpt-5 for audit/i });
+      const row = checkbox.closest('[role="button"]') as HTMLElement;
+      expect(checkbox).toBeChecked();
+
+      row.focus();
+      await user.keyboard(' ');
+
+      expect(checkbox).not.toBeChecked();
+    });
+  });
+
   // ── Provider filter ────────────────────────────────────────────────────────
 
   describe('provider filter', () => {

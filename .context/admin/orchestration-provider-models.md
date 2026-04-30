@@ -156,7 +156,7 @@ The matrix toolbar includes an **Audit Models** button that triggers the Provide
 3. The browser redirects to the execution detail page where SSE streaming shows real-time progress
 4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
 5. A `human_approval` step pauses execution and presents proposed changes for admin review
-6. On approval, the `apply_audit_changes` capability writes accepted changes to the database and invalidates the model cache
+6. On approval, the `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds newly discovered models, and `deactivate_provider_models` soft-deletes deprecated ones — all invalidate the model cache
 
 ### Audit frequency
 
@@ -164,13 +164,15 @@ Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence
 
 ### Components
 
-| Component         | File                                                             |
-| ----------------- | ---------------------------------------------------------------- |
-| Trigger dialog    | `components/admin/orchestration/audit-models-dialog.tsx`         |
-| Button in matrix  | `components/admin/orchestration/provider-models-matrix.tsx`      |
-| Workflow template | `prisma/seeds/data/templates/provider-model-audit.ts`            |
-| Capability        | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts` |
-| Agent seed        | `prisma/seeds/010-model-auditor.ts`                              |
+| Component         | File                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| Trigger dialog    | `components/admin/orchestration/audit-models-dialog.tsx`                |
+| Button in matrix  | `components/admin/orchestration/provider-models-matrix.tsx`             |
+| Workflow template | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
+| Apply changes cap | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
+| Add models cap    | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
+| Deactivate cap    | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
+| Agent seed        | `prisma/seeds/010-model-auditor.ts`                                     |
 
 ### Framework reference implementation
 

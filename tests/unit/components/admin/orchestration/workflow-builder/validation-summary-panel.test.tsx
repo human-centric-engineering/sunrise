@@ -130,6 +130,32 @@ describe('ValidationSummaryPanel', () => {
       expect(onFocusNode).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
+    it('toggles detail visibility when the header button is clicked', async () => {
+      const user = userEvent.setup();
+      render(<ValidationSummaryPanel errors={[CORE_ERROR]} onFocusNode={vi.fn()} />);
+
+      // The panel header button toggles open/closed
+      const toggleBtn = screen.getByRole('button', { name: /1 issue found/i });
+      expect(toggleBtn).toHaveAttribute('aria-expanded', 'true');
+
+      await user.click(toggleBtn);
+
+      expect(toggleBtn).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('re-expands when the header button is clicked again', async () => {
+      const user = userEvent.setup();
+      render(<ValidationSummaryPanel errors={[CORE_ERROR]} onFocusNode={vi.fn()} />);
+
+      const toggleBtn = screen.getByRole('button', { name: /1 issue found/i });
+
+      // Collapse then expand
+      await user.click(toggleBtn);
+      await user.click(toggleBtn);
+
+      expect(toggleBtn).toHaveAttribute('aria-expanded', 'true');
+    });
+
     it('renders both WorkflowValidationError and ExtraCheckError entries', () => {
       render(
         <ValidationSummaryPanel
