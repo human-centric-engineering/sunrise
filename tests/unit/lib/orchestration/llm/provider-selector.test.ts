@@ -449,7 +449,7 @@ describe('recommendModels', () => {
   // -------------------------------------------------------------------------
 
   describe('embedding scoring — branch coverage', () => {
-    it('gives a base "Embedding model" reason when no quality/schema/freeTier attributes are set', async () => {
+    it('gives medium quality reason when quality is null (null defaults to medium)', async () => {
       // Arrange: embedding model with no schemaCompatible, no quality, no hasFreeTier, not local
       const minimalEmbed = makeModel({
         slug: 'bare-embed',
@@ -466,11 +466,10 @@ describe('recommendModels', () => {
       // Act
       const results = await recommendModels('embedding');
 
-      // Assert: falls through all optional score branches → reason is the fallback string
+      // Assert: null quality → treated as 'medium' (+10), costEfficiency medium (1*7=7) → total 17
       expect(results).toHaveLength(1);
-      expect(results[0].reason).toBe('Embedding model');
-      // Score should only include costEfficiency contribution (medium = 1 * 7 = 7)
-      expect(results[0].score).toBe(7);
+      expect(results[0].reason).toContain('medium quality');
+      expect(results[0].score).toBe(17);
     });
 
     it('gives bonus score and reason parts for hasFreeTier and local model', async () => {
@@ -490,12 +489,11 @@ describe('recommendModels', () => {
       // Act
       const results = await recommendModels('embedding');
 
-      // Assert: hasFreeTier (+10) and local (+5) are included in the score
+      // Assert: quality null → medium (+10), costEfficiency medium (1*7=7), hasFreeTier (+10), local (+5) → total 32
       expect(results).toHaveLength(1);
-      // Base score: costEfficiency medium = 1*7 = 7, hasFreeTier = +10, local = +5 → total 22
-      expect(results[0].score).toBe(22);
-      // reason parts include 'free tier' (hasFreeTier is true, quality is null so no quality push)
+      expect(results[0].score).toBe(32);
       expect(results[0].reason).toContain('free tier');
+      expect(results[0].reason).toContain('medium quality');
     });
 
     it('applies medium quality bonus and includes quality in reason parts', async () => {
@@ -524,9 +522,9 @@ describe('recommendModels', () => {
   });
 
   describe('scoring — edge-case branches', () => {
-    it('falls back to 0 when a secondary dimension value is not in the RATING_SCORE map', async () => {
-      // Arrange: a model whose secondary dimension (reasoningDepth for 'thinking' intent)
-      // has a value not present in the RATING_SCORE lookup table → the ?? 0 branch fires
+    it('filters out models with invalid enum values instead of scoring them', async () => {
+      // Arrange: a model whose reasoningDepth has an invalid value — runtime
+      // validation in loadModels now skips these rather than scoring incorrectly
       const unknownDepthModel = makeModel({
         slug: 'unknown-depth',
         tierRole: 'thinking',
@@ -537,9 +535,8 @@ describe('recommendModels', () => {
       // Act
       const results = await recommendModels('thinking');
 
-      // Assert: primaryScore 60 (tier match) + secondaryScore 0 (RATING_SCORE miss ?? 0) = 60
-      expect(results).toHaveLength(1);
-      expect(results[0].score).toBe(60);
+      // Assert: model is excluded from results
+      expect(results).toHaveLength(0);
     });
 
     it('uses raw tier string as label when tier is not in the known labels map', async () => {

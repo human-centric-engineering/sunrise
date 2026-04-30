@@ -1173,6 +1173,10 @@ export const createProviderModelSchema = z.object({
     .string()
     .min(1, 'Provider slug is required')
     .max(50, 'Provider slug must be less than 50 characters')
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Provider slug must be lowercase alphanumeric with hyphens'
+    )
     .trim(),
 
   modelId: z

@@ -19,10 +19,18 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import {
+  TIER_ROLES,
+  RATING_LEVELS,
+  CONTEXT_LENGTH_LEVELS,
+  LATENCY_LEVELS,
+  TOOL_USE_LEVELS,
+} from '@/types/orchestration';
 import type {
   TaskIntent,
   TierRole,
   RatingLevel,
+  ContextLengthLevel,
   LatencyLevel,
   ToolUseLevel,
 } from '@/types/orchestration';
@@ -44,7 +52,7 @@ interface CachedModel {
   reasoningDepth: RatingLevel;
   latency: LatencyLevel;
   costEfficiency: RatingLevel;
-  contextLength: string;
+  contextLength: ContextLengthLevel;
   toolUse: ToolUseLevel;
   bestRole: string;
   isActive: boolean;
@@ -109,28 +117,28 @@ const INTENT_TO_TIER: Record<TaskIntent, TierRole> = {
 };
 
 /** Numeric score for rating levels (higher = better). */
-const RATING_SCORE: Record<string, number> = {
-  very_high: 3,
-  very_fast: 3,
-  high: 2,
-  fast: 2,
-  strong: 2,
-  medium: 1,
-  moderate: 1,
-  none: 0,
-  n_a: 0,
-};
+const RATING_SCORE: Record<RatingLevel | ContextLengthLevel | LatencyLevel | ToolUseLevel, number> =
+  {
+    very_high: 3,
+    very_fast: 3,
+    high: 2,
+    fast: 2,
+    strong: 2,
+    medium: 1,
+    moderate: 1,
+    none: 0,
+    n_a: 0,
+  };
 
 /**
  * Which secondary dimension matters most for each non-embedding intent.
- * Embedding intent uses a separate scoring path (see `recommendModels`).
+ * Embedding and private intents use separate scoring paths (see `recommendModels`).
  */
-const INTENT_SECONDARY: Record<Exclude<TaskIntent, 'embedding'>, keyof CachedModel> = {
+const INTENT_SECONDARY: Record<Exclude<TaskIntent, 'embedding' | 'private'>, keyof CachedModel> = {
   thinking: 'reasoningDepth',
   doing: 'costEfficiency',
   fast_looping: 'latency',
   high_reliability: 'toolUse',
-  private: 'costEfficiency',
 };
 
 /**
@@ -173,27 +181,44 @@ export async function recommendModels(
       score = 0;
       if (model.schemaCompatible) score += 40;
       score += (RATING_SCORE[model.costEfficiency] ?? 0) * 7;
-      if (model.quality === 'high') score += 20;
-      else if (model.quality === 'medium') score += 10;
+      const effectiveQuality = model.quality ?? 'medium';
+      if (effectiveQuality === 'high') score += 20;
+      else if (effectiveQuality === 'medium') score += 10;
       if (model.hasFreeTier) score += 10;
       if (model.local) score += 5;
 
       const parts: string[] = [];
       if (model.schemaCompatible) parts.push('schema-compatible');
-      if (model.quality) parts.push(`${model.quality} quality`);
+      parts.push(`${effectiveQuality} quality`);
       if (model.hasFreeTier) parts.push('free tier');
-      reason = parts.join(', ') || 'Embedding model';
+      reason = parts.join(', ');
+    } else if (intent === 'private') {
+      // Privacy-specific scoring — local/sovereign models strongly preferred
+      const tierMatch = model.tierRole === preferredTier;
+      score = tierMatch ? 60 : 0;
+      if (model.local) score += 30;
+      score += (RATING_SCORE[model.costEfficiency] ?? 0) * 5;
+      // Add tertiary tiebreaker from context length
+      score += (RATING_SCORE[model.contextLength] ?? 0) * 2;
+
+      reason = tierMatch
+        ? `Local/Sovereign model${model.local ? ' (self-hosted)' : ''}`
+        : `Non-local tier (${tierLabel(model.tierRole)})${model.local ? ', self-hosted' : ''}`;
     } else {
       const secondaryKey = INTENT_SECONDARY[intent];
       const tierMatch = model.tierRole === preferredTier;
       const primaryScore = tierMatch ? 60 : 0;
-      const secondaryValue = String(model[secondaryKey]);
+      const secondaryValue = model[secondaryKey] as keyof typeof RATING_SCORE;
       const secondaryScore = (RATING_SCORE[secondaryValue] ?? 0) * 10;
-      score = primaryScore + secondaryScore;
+      // Tertiary tiebreaker from context length
+      const tertiaryScore = (RATING_SCORE[model.contextLength] ?? 0) * 2;
+      score = primaryScore + secondaryScore + tertiaryScore;
 
+      const secondaryLabel = formatRating(String(secondaryValue));
+      const keyLabel = formatKey(String(secondaryKey));
       reason = tierMatch
-        ? `${tierLabel(preferredTier)} model with ${formatRating(secondaryValue)} ${formatKey(String(secondaryKey))}`
-        : `Non-primary tier (${tierLabel(model.tierRole)}) with ${formatRating(secondaryValue)} ${formatKey(String(secondaryKey))}`;
+        ? `${tierLabel(preferredTier)} model with ${secondaryLabel} ${keyLabel}`
+        : `Non-primary tier (${tierLabel(model.tierRole)}) with ${secondaryLabel} ${keyLabel}`;
     }
 
     scored.push({
@@ -248,7 +273,32 @@ async function loadModels(): Promise<CachedModel[]> {
       },
     });
 
-    const models = rows as CachedModel[];
+    // Validate enum fields at runtime — skip rows with invalid values
+    // rather than silently producing incorrect scores.
+    const tierSet = new Set<string>(TIER_ROLES);
+    const ratingSet = new Set<string>(RATING_LEVELS);
+    const contextSet = new Set<string>(CONTEXT_LENGTH_LEVELS);
+    const latencySet = new Set<string>(LATENCY_LEVELS);
+    const toolUseSet = new Set<string>(TOOL_USE_LEVELS);
+
+    const models: CachedModel[] = [];
+    for (const row of rows) {
+      if (
+        !tierSet.has(row.tierRole) ||
+        !ratingSet.has(row.reasoningDepth) ||
+        !latencySet.has(row.latency) ||
+        !ratingSet.has(row.costEfficiency) ||
+        !contextSet.has(row.contextLength) ||
+        !toolUseSet.has(row.toolUse)
+      ) {
+        logger.warn('Skipping provider model with invalid enum value', {
+          slug: row.slug,
+          tierRole: row.tierRole,
+        });
+        continue;
+      }
+      models.push(row as CachedModel);
+    }
     modelCache = { models, fetchedAt: now };
     return models;
   } catch (err) {
