@@ -29,6 +29,7 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
@@ -42,6 +43,7 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
@@ -166,13 +168,20 @@ export class StreamingChatHandler {
       conversationId = conversation.id;
       const history = await this.loadHistory(conversation.id);
 
-      // Enforce message-per-conversation cap
+      // Enforce message-per-conversation cap using actual DB count
+      // (loadHistory returns at most 200 rows, so history.length can't
+      // detect conversations that exceed 200 messages).
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
-      if (maxMessages !== null && history.length >= maxMessages) {
-        throw new ChatError(
-          'conversation_length_cap_reached',
-          `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
-        );
+      if (maxMessages !== null) {
+        const messageCount = await prisma.aiMessage.count({
+          where: { conversationId: conversation.id },
+        });
+        if (messageCount >= maxMessages) {
+          throw new ChatError(
+            'conversation_length_cap_reached',
+            `This conversation has reached the maximum length (${maxMessages} messages). Please start a new conversation.`
+          );
+        }
       }
 
       // Persist the user message up front so a mid-stream crash still
@@ -436,39 +445,10 @@ export class StreamingChatHandler {
           }
         }
 
-        if (assistantText.length > 0) {
-          const assistantMsg = await this.persistMessage({
-            conversationId: conversation.id,
-            role: 'assistant',
-            content: assistantText,
-            ...(usage
-              ? {
-                  metadata: {
-                    tokenUsage: {
-                      inputTokens: usage.inputTokens,
-                      outputTokens: usage.outputTokens,
-                      totalTokens: usage.inputTokens + usage.outputTokens,
-                    },
-                  },
-                }
-              : {}),
-          });
-          // Queue async embedding for semantic search (non-blocking)
-          queueMessageEmbedding(assistantMsg.id, assistantText);
-          emitHookEvent('message.created', {
-            conversationId: conversation.id,
-            messageId: assistantMsg.id,
-            agentSlug: request.agentSlug,
-            agentId: agent.id,
-            userId: request.userId,
-            role: 'assistant',
-          });
-        }
-
         if (toolCalls.size === 0) {
-          // Output guard — scan assistant response BEFORE logging cost.
-          // If the guard blocks, we skip cost logging since the user
-          // never sees the response.
+          // Output guard — scan BEFORE persisting the message. If the
+          // guard blocks, the response must not be saved to the
+          // conversation (the user never sees it via SSE).
           if (assistantText.length > 0) {
             const outputScan = scanOutput(assistantText, agent.topicBoundaries ?? []);
             if (outputScan.flagged) {
@@ -508,7 +488,41 @@ export class StreamingChatHandler {
               }
             }
           }
+        }
 
+        // Persist assistant message AFTER output guard (blocked responses
+        // are never saved). Tool-call turns also persist here so the
+        // conversation history is complete for the next LLM iteration.
+        if (assistantText.length > 0) {
+          const assistantMsg = await this.persistMessage({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: assistantText,
+            ...(usage
+              ? {
+                  metadata: {
+                    tokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      totalTokens: usage.inputTokens + usage.outputTokens,
+                    },
+                  },
+                }
+              : {}),
+          });
+          // Queue async embedding for semantic search (non-blocking)
+          queueMessageEmbedding(assistantMsg.id, assistantText);
+          emitHookEvent('message.created', {
+            conversationId: conversation.id,
+            messageId: assistantMsg.id,
+            agentSlug: request.agentSlug,
+            agentId: agent.id,
+            userId: request.userId,
+            role: 'assistant',
+          });
+        }
+
+        if (toolCalls.size === 0) {
           if (usage) {
             void logCost({
               agentId: agent.id,
@@ -818,6 +832,20 @@ export class StreamingChatHandler {
         yield errorEvent(err.code, err.message);
         return;
       }
+      if (err instanceof ProviderError) {
+        log.warn('Provider error during chat', {
+          code: err.code,
+          message: err.message,
+          agentSlug: request.agentSlug,
+          conversationId,
+        });
+        // Use the registry's safe message — raw ProviderError messages
+        // contain internal details (env var names, provider slugs, base URLs)
+        // that must not reach the browser.
+        const safe = getUserFacingError(err.code);
+        yield errorEvent(err.code, safe.message);
+        return;
+      }
       if (resolvedProviderSlug) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
@@ -918,11 +946,17 @@ export class StreamingChatHandler {
   }
 
   private async loadHistory(conversationId: string): Promise<AiMessage[]> {
-    return prisma.aiMessage.findMany({
+    // Fetch the 200 most recent messages (desc) then reverse to
+    // chronological order. Previous `asc + take: 200` loaded the
+    // oldest 200 — wrong for conversations with >200 messages.
+    // Secondary sort on `id` ensures deterministic ordering for
+    // messages persisted in the same millisecond.
+    const messages = await prisma.aiMessage.findMany({
       where: { conversationId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 200,
     });
+    return messages.reverse();
   }
 
   private async persistMessage(params: PersistMessageParams): Promise<AiMessage> {

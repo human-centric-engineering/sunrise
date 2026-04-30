@@ -138,4 +138,26 @@ describe('buildContext', () => {
 
     expect(getPatternDetailMock).toHaveBeenCalledTimes(4);
   });
+
+  it('evicts oldest entry when cache exceeds 500 entries', async () => {
+    getPatternDetailMock.mockResolvedValue(patternFixture());
+
+    // Fill cache to capacity
+    for (let i = 0; i < 500; i++) {
+      await buildContext('pattern', String(i));
+    }
+
+    // Entry 0 should still be cached
+    await buildContext('pattern', '0');
+    // All 500 initial calls + 0 refetches = 500 total
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(500);
+
+    // Adding entry 500 should evict entry 0 (the oldest)
+    await buildContext('pattern', '500');
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(501);
+
+    // Entry 0 was evicted — refetch needed
+    await buildContext('pattern', '0');
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(502);
+  });
 });

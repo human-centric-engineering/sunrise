@@ -53,7 +53,7 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ChatRequest`          | type     | Input shape (see below)                                                     |
 | `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
 | `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
-| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `20`)                                  |
+| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `50`)                                  |
 | `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
 | `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
 | `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
@@ -71,6 +71,7 @@ interface ChatRequest {
   contextType?: string;
   contextId?: string;
   entityContext?: Record<string, unknown>;
+  attachments?: { name: string; mimeType: string; data: string }[];
   requestId?: string;
   signal?: AbortSignal;
 }
@@ -87,8 +88,10 @@ interface ChatRequest {
 All events are defined in `types/orchestration.ts`. Every turn produces this ordered sequence (zero or more `content` in place of `content*`):
 
 ```
-start → content* → [status → capability_result → (content* | done)]* → (done | error)
+start → [warning]? → content* → [content_reset → content*]? → [status → capability_result → (content* | done)]* → (done | error)
 ```
+
+`warning` and `content_reset` can appear at any point in the sequence; the diagram above shows their most common positions.
 
 Concretely:
 
@@ -99,6 +102,8 @@ Concretely:
 5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
 6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
 7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
+8. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `provider_retry` (falling back to next provider). Clients should display transiently and clear when the stream ends.
+9. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
 
 ## Tool Loop Semantics
 
@@ -154,7 +159,7 @@ Reasoning plus acting is a reflex loop.
 
 ## Rolling Conversation Summary
 
-When conversation history exceeds `MAX_HISTORY_MESSAGES` (20), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+When conversation history exceeds `MAX_HISTORY_MESSAGES` (50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
 
 **How it works:**
 
@@ -366,13 +371,13 @@ The message builder supports token-aware truncation to prevent exceeding model c
 **How it works:**
 
 1. System prompt, user message, and history are assembled
-2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens`
+2. If `contextWindowTokens` is set, the builder calculates a token budget: `contextWindowTokens - reserveTokens - systemTokens - userTokens - attachmentTokens` (where `attachmentTokens = attachments.length × ATTACHMENT_OVERHEAD_TOKENS`)
 3. `truncateToTokenBudget()` drops the oldest history messages until the remaining messages fit the budget
 4. At least one history message is always kept
 
 Token estimation uses a character-based heuristic (`1 token ≈ 3.5 chars` + 4 tokens overhead per message) from `lib/orchestration/chat/token-estimator.ts`. This is intentionally conservative — it slightly over-estimates, truncating earlier rather than exceeding the context window.
 
-When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 20` limit.
+When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 50` limit.
 
 **Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
 
@@ -409,7 +414,7 @@ Configurable limits prevent unbounded storage growth. Both are read from `AiOrch
 
 - `null` (default) means unlimited — no cap is enforced.
 - Conversation cap counts active conversations for the same user + agent pair.
-- Message cap compares `history.length` against the limit.
+- Message cap uses `prisma.aiMessage.count()` against the limit (not `history.length`, which is capped at 200).
 - Both throw `ChatError` so the client receives a typed `{ type: 'error', code, message }` SSE event.
 
 ## Error Handling & Resilience
@@ -420,7 +425,7 @@ See [Resilience](./resilience.md) for full details. Key points for the chat hand
 - **Mid-stream retry**: if a stream fails after starting, automatically retries with the next fallback provider (up to 2 retries). Emits `provider_retry` warning event.
 - **Circuit breaker**: `getBreaker(slug).recordSuccess()` / `.recordFailure()` called after each LLM turn.
 - **Budget warning**: at 80% usage, yields `{ type: 'warning', code: 'budget_warning' }` before continuing.
-- **Input guard**: `scanForInjection(message)` runs on every user message — log-only, never blocks.
+- **Input guard**: `scanForInjection(message)` runs on every user message. If the score exceeds the configured threshold, yields `{ type: 'error', code: 'input_blocked' }` and aborts the stream. Below-threshold matches are logged as warnings.
 - **Error sanitization**: the catch-all yields `{ type: 'error', code: 'internal_error', message: 'An unexpected error occurred' }` — raw provider/SDK errors are logged server-side only via `logger.error`.
 
 ## Related Documentation

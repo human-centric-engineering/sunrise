@@ -109,9 +109,12 @@ describe('AgentTestChat', () => {
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     // Assert: structured error shown (title from error registry)
-    await waitFor(() => {
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // Assert: raw secret never reaches DOM
     expect(document.body.textContent ?? '').not.toContain(SECRET);
@@ -127,17 +130,92 @@ describe('AgentTestChat', () => {
 
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
+    await waitFor(
+      () => {
+        expect(screen.getByText(/monthly budget reached/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
+  });
+
+  it('renders warning banner from warning event during streaming', async () => {
+    // Use a controlled stream so warning is visible before stream completes
+    const encoder = new TextEncoder();
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(warningFrame('budget_warning', 'Agent at 85% budget')));
+        controller.enqueue(encoder.encode(contentFrame('Hello')));
+        resolver.fn = () => {
+          controller.enqueue(
+            encoder.encode(
+              'event: done\ndata: {"tokenUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"costUsd":0.001}\n\n'
+            )
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
     await waitFor(() => {
-      expect(screen.getByText(/monthly budget reached/i)).toBeInTheDocument();
+      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+    });
+
+    // Clean up
+    resolver.fn?.();
+  });
+
+  it('clears warning banner after stream completes', async () => {
+    // Use a controlled stream so we can observe the warning mid-stream
+    const encoder = new TextEncoder();
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(warningFrame('budget_warning', 'Agent at 85% budget')));
+        controller.enqueue(encoder.encode(contentFrame('Hello')));
+        resolver.fn = () => {
+          controller.enqueue(
+            encoder.encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Warning appears during streaming
+    await waitFor(() => {
+      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
+    });
+
+    // Close the stream — finally block should clear the warning
+    resolver.fn?.();
+    await waitFor(() => {
+      expect(screen.queryByText(/agent at 85% budget/i)).not.toBeInTheDocument();
     });
   });
 
-  it('renders warning banner from warning event', async () => {
+  it('clears reply on content_reset event (provider fallback)', async () => {
     const user = userEvent.setup();
     const stream = makeSseStream([
-      warningFrame('budget_warning', 'Agent at 85% budget'),
-      contentFrame('Hello'),
-      'event: done\ndata: {"tokenUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"costUsd":0.001}\n\n',
+      contentFrame('Stale text from failed provider'),
+      'event: content_reset\ndata: {"reason":"provider_fallback"}\n\n',
+      contentFrame('Fresh response'),
+      'event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n',
     ]);
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
@@ -147,9 +225,11 @@ describe('AgentTestChat', () => {
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/agent at 85% budget/i)).toBeInTheDocument();
-      expect(screen.getByText('Hello')).toBeInTheDocument();
+      expect(screen.getByText('Fresh response')).toBeInTheDocument();
     });
+
+    // Stale text should have been cleared
+    expect(screen.queryByText(/Stale text from failed provider/i)).not.toBeInTheDocument();
   });
 
   it('calls AbortController.abort() on unmount during active stream', async () => {
@@ -222,7 +302,46 @@ describe('AgentTestChat', () => {
     });
   });
 
-  it('shows connection lost error immediately on network failure (no retry)', async () => {
+  it('shows inline status from status SSE event during streaming', async () => {
+    const resolver: { fn: (() => void) | null } = { fn: null };
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(contentFrame('Working...')));
+        controller.enqueue(
+          encoder.encode(
+            `event: status\ndata: ${JSON.stringify({ message: 'Executing search_documents' })}\n\n`
+          )
+        );
+        resolver.fn = () => {
+          controller.enqueue(
+            encoder.encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
+          );
+          controller.close();
+        };
+      },
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Status should appear inline during streaming
+    await waitFor(() => {
+      expect(screen.getByText('Executing search_documents')).toBeInTheDocument();
+    });
+
+    // Clean up
+    resolver.fn?.();
+    await waitFor(() => {
+      expect(screen.queryByText('Executing search_documents')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows connection lost error on network failure (no retry)', async () => {
     // Arrange — fetch rejects; chat POSTs are not idempotent so no retry
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
@@ -232,11 +351,14 @@ describe('AgentTestChat', () => {
     // Act
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    // Assert — error shown immediately without reconnect attempts
-    await waitFor(() => {
-      expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
-      expect(screen.getByText(/chat stream was interrupted/i)).toBeInTheDocument();
-    });
+    // Assert — error shown after brief thinking delay (no reconnect attempts)
+    await waitFor(
+      () => {
+        expect(screen.getByText(/connection lost/i)).toBeInTheDocument();
+        expect(screen.getByText(/chat stream was interrupted/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // Assert — fetch was only called once (no retries)
     expect(fetch).toHaveBeenCalledOnce();

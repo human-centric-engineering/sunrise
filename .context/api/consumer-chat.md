@@ -34,20 +34,24 @@ Start or continue a streaming chat conversation with a public agent.
   "message": "string (1–50000 chars, required)",
   "agentSlug": "string (required — must match a public, active agent)",
   "conversationId": "string (optional — CUID of existing conversation to continue)",
+  "inviteToken": "string (optional — required for invite_only agents)",
+  "attachments": "[{ name, mediaType, data }] (optional — max 10, base64, 10MB per item)",
 }
 ```
 
 **Response:** `text/event-stream` (SSE). Events follow the same shape as the admin chat stream:
 
-| Event type          | Payload                    | Description                      |
-| ------------------- | -------------------------- | -------------------------------- |
-| `start`             | `{ conversationId }`       | Conversation created/resumed     |
-| `content`           | `{ delta }`                | Text chunk from the agent        |
-| `tool_call`         | `{ capabilitySlug, args }` | Agent invoked a capability       |
-| `capability_result` | `{ slug, result }`         | Capability returned data         |
-| `end`               | `{ messageId, usage }`     | Turn complete                    |
-| `warning`           | `{ code, message }`        | Budget warning, input guard flag |
-| `error`             | `{ code, message }`        | Unrecoverable error              |
+| Event type           | Payload                                          | Description                                |
+| -------------------- | ------------------------------------------------ | ------------------------------------------ |
+| `start`              | `{ conversationId, messageId }`                  | Conversation created/resumed               |
+| `content`            | `{ delta }`                                      | Text chunk from the agent                  |
+| `status`             | `{ message }`                                    | Progress indication (e.g. tool running)    |
+| `capability_result`  | `{ capabilitySlug, result }`                     | Single capability returned data            |
+| `capability_results` | `{ results: [{ capabilitySlug, result }, ...] }` | Parallel capabilities returned data        |
+| `content_reset`      | `{ reason }`                                     | Provider fallback — clear accumulated text |
+| `done`               | `{ tokenUsage, costUsd, provider?, model? }`     | Turn complete                              |
+| `warning`            | `{ code, message }`                              | Budget warning, input guard flag           |
+| `error`              | `{ code, message }`                              | Unrecoverable error                        |
 
 **Errors:**
 

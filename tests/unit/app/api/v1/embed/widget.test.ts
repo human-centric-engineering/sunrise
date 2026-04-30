@@ -73,4 +73,78 @@ describe('GET /api/v1/embed/widget.js', () => {
 
     expect(response.status).toBe(200);
   });
+
+  // ─── SSE Parser & Event Handling ────────────────────────────────────────────
+
+  it('uses block-based SSE parsing (split on \\n\\n)', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Must split by \n\n (block separator), not just \n (line separator)
+    expect(body).toContain("buffer.split('\\n\\n')");
+    // Must join data lines before JSON.parse
+    expect(body).toContain("dataLines.join('\\n')");
+  });
+
+  it('extracts event type from event: header line', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Must read the event: line to determine type
+    expect(body).toContain("line.indexOf('event:') === 0");
+    expect(body).toContain('line.slice(6).trim()');
+  });
+
+  it('handles content_reset event for provider fallback', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    expect(body).toContain("evt.type === 'content_reset'");
+  });
+
+  it('handles done event for explicit stream completion', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    expect(body).toContain("evt.type === 'done'");
+  });
+
+  it('handles status event for progress indication', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    expect(body).toContain("evt.type === 'status'");
+  });
+
+  it('reads delta from evt.data.delta (not evt.delta)', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Must access data.delta from the parsed block, not raw evt.delta
+    expect(body).toContain('evt.data.delta');
+  });
+
+  it('supports AbortController for stream cancellation', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    expect(body).toContain('new AbortController()');
+    expect(body).toContain('signal: controller.signal');
+  });
+
+  it('new chat button resets sending state', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // The new-chat handler must reset sending state to avoid stuck UI
+    expect(body).toContain('sending = false');
+    expect(body).toContain('sendBtn.disabled = false');
+    // Must also abort active stream
+    expect(body).toContain('activeAbort.abort()');
+  });
+
+  it('shows error on mid-stream reader failure', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Reader catch must show user-facing text, not silently fail
+    expect(body).toContain('Connection lost.');
+  });
+
+  it('includes status element in widget HTML', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    expect(body).toContain('class="status"');
+  });
 });

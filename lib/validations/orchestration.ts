@@ -1365,6 +1365,23 @@ export const resumeExecutionQuerySchema = z.object({
 // Session 3.3 — Chat stream, Knowledge, Conversations
 // ============================================================================
 
+/** Attachment validation for multimodal chat messages. */
+export const chatAttachmentSchema = z.object({
+  name: z.string().min(1).max(255),
+  mediaType: z.enum([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'text/markdown',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ]),
+  data: z.string().min(1).max(10_000_000, 'Attachment exceeds ~7.5MB file size limit'), // base64-encoded; 10M chars ≈ 7.5MB binary
+});
+
 /**
  * Streaming chat request body (POST /admin/orchestration/chat/stream).
  *
@@ -1376,9 +1393,9 @@ export const resumeExecutionQuerySchema = z.object({
 export const chatStreamRequestSchema = z.object({
   message: z
     .string()
+    .trim()
     .min(1, 'Message is required')
-    .max(50000, 'Message must be less than 50000 characters')
-    .trim(),
+    .max(50000, 'Message must be less than 50000 characters'),
 
   agentSlug: slugSchema,
 
@@ -1389,6 +1406,9 @@ export const chatStreamRequestSchema = z.object({
   contextId: z.string().max(100).optional(),
 
   entityContext: z.record(z.string().max(100), z.unknown()).optional(),
+
+  /** File attachments (images, documents) — max 10 per message. */
+  attachments: z.array(chatAttachmentSchema).max(10).optional(),
 });
 
 /**
@@ -2137,29 +2157,12 @@ export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestratio
  * Consumer chat request schema (POST /api/v1/chat/stream).
  * Simpler than admin — no contextType/contextId/entityContext.
  */
-/** Attachment validation for multimodal chat messages. */
-export const chatAttachmentSchema = z.object({
-  name: z.string().min(1).max(255),
-  mediaType: z.enum([
-    'image/jpeg',
-    'image/png',
-    'image/gif',
-    'image/webp',
-    'application/pdf',
-    'text/plain',
-    'text/csv',
-    'text/markdown',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  ]),
-  data: z.string().min(1), // base64-encoded content
-});
-
 export const consumerChatRequestSchema = z.object({
   message: z
     .string()
+    .trim()
     .min(1, 'Message is required')
-    .max(50000, 'Message must be less than 50000 characters')
-    .trim(),
+    .max(50000, 'Message must be less than 50000 characters'),
 
   agentSlug: slugSchema,
 

@@ -17,7 +17,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findFirst: vi.fn() },
     aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn(), update: vi.fn() },
-    aiMessage: { findMany: vi.fn(), create: vi.fn() },
+    aiMessage: { findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
   },
@@ -253,6 +253,7 @@ beforeEach(() => {
   (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mockResolvedValue(makeConversation());
   (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -1962,8 +1963,12 @@ describe('rolling conversation summarization', () => {
     // Arrange: seed 52 messages (> 50 threshold); conversation has no prior summary.
     // Pass conversationId in the request so the existing conversation (with no summary)
     // is loaded via findFirst rather than creating a new one via create.
+    // Mock returns descending order (newest first) to match the real DB query;
+    // loadHistory reverses to chronological order internally.
     const history = makeHistoryMessages(HISTORY_SIZE);
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({ id: 'conv-summ', summary: null, summaryUpToMessageId: null })
     );
@@ -2020,9 +2025,12 @@ describe('rolling conversation summarization', () => {
     // first 2 dropped messages (droppedCount = 52 - 50 = 2 → lastDropped = history[1]).
     // Pass conversationId so the existing conversation with the cached summary is
     // loaded via findFirst rather than created fresh.
+    // Mock returns descending order (newest first) to match the real DB query.
     const history = makeHistoryMessages(HISTORY_SIZE);
     const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({
         id: 'conv-cached',
@@ -2230,16 +2238,12 @@ describe('withToolTimeout fires when dispatch hangs', () => {
 
 describe('conversation length cap', () => {
   it('yields conversation_length_cap_reached error when history meets the cap', async () => {
-    // Arrange: capSettings has maxMessagesPerConversation = 5; history returns 5 messages
+    // Arrange: capSettings has maxMessagesPerConversation = 5; DB count returns 5
     (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConversationsPerUser: null,
       maxMessagesPerConversation: 5,
     });
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
-      Array.from({ length: 5 }, (_, i) =>
-        makeMessage({ id: `m-${i}`, content: `msg ${i}`, role: i % 2 === 0 ? 'user' : 'assistant' })
-      )
-    );
+    (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockResolvedValue(5);
 
     // Act: use an existing conversationId so findFirst is called
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -2656,10 +2660,13 @@ describe('history summarization — existing summary reuse', () => {
       patterns: [],
     });
 
+    // Mock returns descending order (newest first) to match the real DB query.
     const history = makeHistoryMessages(HISTORY_SIZE);
     const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
 
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({
         id: 'conv-reuse',

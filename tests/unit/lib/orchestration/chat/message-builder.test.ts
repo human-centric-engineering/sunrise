@@ -390,6 +390,49 @@ describe('buildMessages', () => {
     expect(historyMsgs).toHaveLength(0);
   });
 
+  it('accounts for attachment token overhead in history budget', () => {
+    // Arrange: a budget that can fit history without attachments but not with
+    const history = [
+      { role: 'user', content: 'old message' },
+      { role: 'assistant', content: 'old reply' },
+    ];
+
+    // Without attachments — history fits
+    const withoutAttachments = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'hi',
+      contextWindowTokens: 200,
+      reserveTokens: 50,
+    });
+    const historyWithout = withoutAttachments.filter(
+      (m) => m.content === 'old message' || m.content === 'old reply'
+    );
+    expect(historyWithout.length).toBeGreaterThan(0);
+
+    // With 50 attachments — 50 × 1600 = 80 000 tokens of overhead blows the budget
+    const withAttachments = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'hi',
+      attachments: Array.from({ length: 50 }, (_, i) => ({
+        name: `img-${i}.png`,
+        mediaType: 'image/png' as const,
+        data: 'base64data',
+      })),
+      contextWindowTokens: 200,
+      reserveTokens: 50,
+    });
+    const historyWith = withAttachments.filter(
+      (m) =>
+        (typeof m.content === 'string' && m.content === 'old message') ||
+        (typeof m.content === 'string' && m.content === 'old reply')
+    );
+    expect(historyWith).toHaveLength(0);
+  });
+
   // ── attachment handling ────────────────────────────────────────────────────
 
   it('builds a multimodal user message with an image attachment', () => {

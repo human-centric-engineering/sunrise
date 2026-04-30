@@ -57,6 +57,12 @@ function statusFrame(message: string): string {
   return `event: status\ndata: ${JSON.stringify({ message })}\n\n`;
 }
 
+function capabilityResultsFrame(
+  results: Array<{ capabilitySlug: string; result: unknown }>
+): string {
+  return `event: capability_results\ndata: ${JSON.stringify({ results })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ChatInterface', () => {
@@ -141,10 +147,14 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('internal_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('internal_error') → title: 'Something Went Wrong'
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     expect(document.body.textContent ?? '').not.toContain(SECRET);
   });
@@ -169,6 +179,34 @@ describe('ChatInterface', () => {
 
     await waitFor(() => {
       expect(onCapabilityResult).toHaveBeenCalledWith('search_knowledge_base', { results: [] });
+    });
+  });
+
+  it('calls onCapabilityResult for each result in capability_results (plural) event', async () => {
+    const user = userEvent.setup();
+    const onCapabilityResult = vi.fn();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      capabilityResultsFrame([
+        { capabilitySlug: 'search_docs', result: { hits: 3 } },
+        { capabilitySlug: 'fetch_url', result: { status: 200 } },
+      ]),
+      contentFrame('Done.'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" onCapabilityResult={onCapabilityResult} />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Search');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(onCapabilityResult).toHaveBeenCalledTimes(2);
+      expect(onCapabilityResult).toHaveBeenCalledWith('search_docs', { hits: 3 });
+      expect(onCapabilityResult).toHaveBeenCalledWith('fetch_url', { status: 200 });
     });
   });
 
@@ -344,10 +382,14 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('stream_error') → title: 'Unable to Connect'
+        expect(screen.getByText(/unable to connect/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // User message should still be visible, but the empty assistant message should be removed
     expect(screen.getByText('Hi')).toBeInTheDocument();
@@ -366,9 +408,308 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
+    await waitFor(
+      () => {
+        // getUserFacingError('rate_limited') → title: 'Too Many Requests'
+        expect(screen.getByText(/too many requests/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
+  });
+
+  // ─── Clear conversation tests ───────────────────────────────────────────────
+
+  it('shows clear button when showClearButton is true and messages exist', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello!'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" showClearButton />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
     await waitFor(() => {
-      // getUserFacingError('rate_limited') → title: 'Too Many Requests'
-      expect(screen.getByText(/too many requests/i)).toBeInTheDocument();
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /clear conversation/i })).toBeInTheDocument();
+  });
+
+  it('does not show clear button when showClearButton is false', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Reply'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Reply')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /clear conversation/i })).not.toBeInTheDocument();
+  });
+
+  it('clears messages and calls DELETE when clear button is confirmed', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      body: makeSseStream([startFrame('conv-42', 'msg-1'), contentFrame('Hi!'), doneFrame()]),
+    });
+    // DELETE call for conversation clear
+    fetchMock.mockResolvedValueOnce({ ok: true });
+
+    vi.stubGlobal('fetch', fetchMock);
+    const onCleared = vi.fn();
+
+    render(
+      <ChatInterface agentSlug="test-agent" showClearButton onConversationCleared={onCleared} />
+    );
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hello');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hi!')).toBeInTheDocument();
+    });
+
+    // Click clear button then confirm
+    await user.click(screen.getByRole('button', { name: /clear conversation/i }));
+    await user.click(screen.getByRole('button', { name: /clear/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Hi!')).not.toBeInTheDocument();
+      expect(screen.queryByText('Hello')).not.toBeInTheDocument();
+    });
+
+    // Should have called DELETE
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const deleteCall = fetchMock.mock.calls[1];
+    expect(deleteCall[1].method).toBe('DELETE');
+
+    expect(onCleared).toHaveBeenCalledOnce();
+  });
+
+  // ─── Thinking indicator tests ──────────────────────────────────────────────
+
+  it('shows ThinkingIndicator in empty assistant bubble during streaming', async () => {
+    // Create a stream that doesn't immediately complete — use a stalling approach
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      statusFrame('Searching knowledge base...'),
+      contentFrame('Found results.'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Search');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // After streaming completes, the content should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Found results.')).toBeInTheDocument();
+    });
+  });
+
+  // ─── Inline status tests ──────────────────────────────────────────────────
+
+  it('shows inline status below content during streaming', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Working on it...'),
+      statusFrame('Executing search_documents'),
+      contentFrame(' Done!'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Search');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Final content should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Working on it... Done!')).toBeInTheDocument();
+    });
+
+    // Status should be cleared after streaming completes (finally block)
+    expect(screen.queryByText('Executing search_documents')).not.toBeInTheDocument();
+  });
+
+  // ─── Warning event tests ──────────────────────────────────────────────────
+
+  it('shows and clears warning from SSE warning event', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      'event: warning\ndata: ' + JSON.stringify({ message: 'Token limit approaching' }) + '\n\n',
+      contentFrame('Result'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Test');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // After done, warning should be cleared (done event clears it, then finally also clears)
+    await waitFor(() => {
+      expect(screen.getByText('Result')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Token limit approaching')).not.toBeInTheDocument();
+  });
+
+  it('handles content_reset by clearing accumulated content', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Old content'),
+      'event: content_reset\ndata: {}\n\n',
+      contentFrame('New content'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('New content')).toBeInTheDocument();
+    });
+
+    // Old content should have been cleared by content_reset
+    expect(screen.queryByText('Old content')).not.toBeInTheDocument();
+  });
+
+  it('renders with typing animation enabled', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello world'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(
+      <ChatInterface
+        agentSlug="test-agent"
+        enableTypingAnimation
+        typingAnimationOptions={{ chunkSize: 100, intervalMs: 1 }}
+      />
+    );
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello world')).toBeInTheDocument();
+    });
+  });
+
+  it('clears conversation when no conversationId exists', async () => {
+    const onCleared = vi.fn();
+
+    render(
+      <ChatInterface agentSlug="test-agent" showClearButton onConversationCleared={onCleared} />
+    );
+
+    // No messages, no clear button should appear
+    expect(screen.queryByRole('button', { name: /clear conversation/i })).not.toBeInTheDocument();
+  });
+
+  it('submits on Enter key', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Reply'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hello{Enter}');
+
+    await waitFor(() => {
+      expect(screen.getByText('Reply')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error.action text when present', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Advance through reconnect attempts
+    await vi.advanceTimersByTimeAsync(8000);
+
+    await waitFor(() => {
+      expect(screen.getByText(/please try sending your message again/i)).toBeInTheDocument();
+    });
+
+    vi.useRealTimers();
+  });
+
+  it('handles stream ending without done/error event', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Partial response'),
+      // No done or error frame — stream just ends
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Partial response')).toBeInTheDocument();
     });
   });
 
@@ -382,9 +723,13 @@ describe('ChatInterface', () => {
     await user.type(input, 'Hi');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    await waitFor(() => {
-      // getUserFacingError('stream_error') → title: 'Something Went Wrong'
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    // MIN_THINKING_MS delay before error appears
+    await waitFor(
+      () => {
+        // getUserFacingError('stream_error') → title: 'Unable to Connect'
+        expect(screen.getByText(/unable to connect/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
   });
 });

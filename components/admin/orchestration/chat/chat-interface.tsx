@@ -5,8 +5,10 @@
  *
  * Wraps the SSE chat infrastructure (`POST /chat/stream`) into a
  * multi-message chat UI with conversation tracking, starter prompts,
- * and event callbacks. Used by the Learning Hub advisor tab and
- * available for embedding in other admin panels.
+ * typing animation, thinking indicator, and event callbacks.
+ *
+ * Used by the Learning Hub advisor tab and available for embedding in
+ * other admin panels.
  *
  * Streaming contract:
  *   - Uses `fetch` + `ReadableStream.getReader()` (not EventSource)
@@ -17,22 +19,45 @@
  *   - Network failures trigger up to 3 reconnect attempts with exponential
  *     backoff (1 s, 2 s, 4 s). HTTP-level errors (429, 4xx, 5xx) are not
  *     retriable. Matches the pattern in `agent-test-chat.tsx`.
+ *
+ * @see lib/hooks/use-typing-animation.ts
+ * @see components/admin/orchestration/chat/thinking-indicator.tsx
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, Send } from 'lucide-react';
+import { AlertTriangle, Loader2, Send, Trash2 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
+import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
+import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /** Network-failure retry ceiling. HTTP errors are never retried. */
 const MAX_RECONNECT_ATTEMPTS = 3;
+
+/**
+ * Minimum time (ms) the thinking indicator stays visible before an error
+ * replaces it. Prevents jarring instant-error flashes on fast failures
+ * (e.g. 429, validation) and makes the chat feel more considered.
+ */
+const MIN_THINKING_MS = 1500;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -53,6 +78,14 @@ export interface ChatInterfaceProps {
   onCapabilityResult?: (slug: string, result: unknown) => void;
   /** Fires with the full assistant text when streaming completes. */
   onStreamComplete?: (fullText: string) => void;
+  /** Enable token-by-token typing animation. Default: false. */
+  enableTypingAnimation?: boolean;
+  /** Typing animation speed config (only used when enableTypingAnimation is true). */
+  typingAnimationOptions?: { chunkSize?: number; intervalMs?: number };
+  /** Show a clear/reset conversation button. Default: false. */
+  showClearButton?: boolean;
+  /** Fires after conversation is cleared. */
+  onConversationCleared?: () => void;
 }
 
 interface ChatMessage {
@@ -71,6 +104,10 @@ export function ChatInterface({
   embedded = false,
   onCapabilityResult,
   onStreamComplete,
+  enableTypingAnimation = false,
+  typingAnimationOptions,
+  showClearButton = false,
+  onConversationCleared,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -82,6 +119,24 @@ export function ChatInterface({
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  const typing = useTypingAnimation({
+    disabled: !enableTypingAnimation,
+    ...typingAnimationOptions,
+  });
+
+  // Update last assistant message when displayText changes (typing animation)
+  useEffect(() => {
+    if (!enableTypingAnimation) return;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last || last.role !== 'assistant') return prev;
+      if (last.content === typing.displayText) return prev;
+      const updated = [...prev];
+      updated[updated.length - 1] = { ...last, content: typing.displayText };
+      return updated;
+    });
+  }, [typing.displayText, enableTypingAnimation]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -104,6 +159,7 @@ export function ChatInterface({
       setWarning(null);
       setStatus(null);
       setInput('');
+      typing.reset();
 
       // Append user message and empty assistant message
       setMessages((prev) => [
@@ -116,6 +172,15 @@ export function ChatInterface({
       const controller = new AbortController();
       abortRef.current = controller;
       let fullText = '';
+      const streamStartedAt = Date.now();
+
+      /** Wait until MIN_THINKING_MS has elapsed since stream start. */
+      const ensureMinThinking = async (): Promise<void> => {
+        const elapsed = Date.now() - streamStartedAt;
+        if (elapsed < MIN_THINKING_MS) {
+          await new Promise((resolve) => setTimeout(resolve, MIN_THINKING_MS - elapsed));
+        }
+      };
 
       for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
         try {
@@ -134,7 +199,8 @@ export function ChatInterface({
           });
 
           if (!res.ok || !res.body) {
-            // HTTP-level errors are not retriable
+            // HTTP-level errors are not retriable — wait for thinking to feel natural
+            await ensureMinThinking();
             if (res.status === 429) {
               setError(getUserFacingError('rate_limited'));
             } else {
@@ -172,11 +238,26 @@ export function ChatInterface({
               } else if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
                 const delta = parsed.data.delta;
                 fullText += delta;
+                if (enableTypingAnimation) {
+                  typing.appendDelta(delta);
+                } else {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === 'assistant') {
+                      updated[updated.length - 1] = { ...last, content: last.content + delta };
+                    }
+                    return updated;
+                  });
+                }
+              } else if (parsed.type === 'content_reset') {
+                fullText = '';
+                typing.reset();
                 setMessages((prev) => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
                   if (last?.role === 'assistant') {
-                    updated[updated.length - 1] = { ...last, content: last.content + delta };
+                    updated[updated.length - 1] = { ...last, content: '' };
                   }
                   return updated;
                 });
@@ -187,15 +268,34 @@ export function ChatInterface({
                 if (typeof slug === 'string') {
                   onCapabilityResult?.(slug, parsed.data.result);
                 }
+              } else if (
+                parsed.type === 'capability_results' &&
+                Array.isArray(parsed.data.results)
+              ) {
+                for (const r of parsed.data.results as unknown[]) {
+                  if (
+                    r != null &&
+                    typeof r === 'object' &&
+                    'capabilitySlug' in r &&
+                    typeof (r as Record<string, unknown>).capabilitySlug === 'string'
+                  ) {
+                    onCapabilityResult?.(
+                      (r as Record<string, unknown>).capabilitySlug as string,
+                      (r as Record<string, unknown>).result
+                    );
+                  }
+                }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
                 setWarning(parsed.data.message);
               } else if (parsed.type === 'error') {
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
+                await ensureMinThinking();
                 setError(getUserFacingError(code));
                 return;
               } else if (parsed.type === 'done') {
                 setWarning(null);
+                typing.flush();
                 onStreamComplete?.(fullText);
                 return;
               }
@@ -203,6 +303,7 @@ export function ChatInterface({
           }
 
           // Stream ended without a done/error event — treat as complete
+          typing.flush();
           return;
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') return;
@@ -215,6 +316,7 @@ export function ChatInterface({
             continue;
           }
 
+          await ensureMinThinking();
           setError({
             title: 'Connection Lost',
             message: 'Could not reconnect to the chat stream.',
@@ -230,6 +332,8 @@ export function ChatInterface({
       contextType,
       contextId,
       streaming,
+      enableTypingAnimation,
+      typing,
       onCapabilityResult,
       onStreamComplete,
     ]
@@ -250,17 +354,67 @@ export function ChatInterface({
     [sendMessage]
   );
 
+  const handleClear = useCallback(async () => {
+    if (conversationId) {
+      try {
+        await fetch(API.ADMIN.ORCHESTRATION.conversationById(conversationId), {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+      } catch {
+        // Best-effort — clear local state regardless
+      }
+    }
+    setMessages([]);
+    setConversationId(null);
+    setError(null);
+    setStatus(null);
+    setWarning(null);
+    typing.reset();
+    onConversationCleared?.();
+  }, [conversationId, typing, onConversationCleared]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     void sendMessageWrapped(input);
   };
 
   const showStarters = messages.length === 0 && starterPrompts && starterPrompts.length > 0;
+  const isLastAssistantEmpty = (i: number, msg: ChatMessage) =>
+    streaming && msg.role === 'assistant' && !msg.content && i === messages.length - 1;
 
   const content = (
     <div className={cn('flex flex-col', embedded ? 'h-full' : 'h-[500px]', className)}>
       {/* Messages area */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-3">
+      <div className="relative flex-1 space-y-3 overflow-y-auto p-3">
+        {/* Clear button */}
+        {showClearButton && messages.length > 0 && !streaming && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute top-2 right-2 z-10 h-7 w-7"
+                aria-label="Clear conversation"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will remove all messages. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+
         {showStarters && (
           <div className="flex flex-col items-center justify-center gap-2 py-8">
             <p className="text-muted-foreground mb-2 text-sm">Try asking:</p>
@@ -285,22 +439,28 @@ export function ChatInterface({
             key={i}
             className={cn(
               'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
-              msg.role === 'user'
-                ? 'bg-primary text-primary-foreground ml-auto'
-                : 'bg-muted mr-auto'
+              msg.role === 'user' ? 'bg-muted text-foreground ml-auto' : 'mr-auto'
             )}
           >
-            {msg.content ||
-              (streaming && msg.role === 'assistant' && (
-                <Loader2 className="h-4 w-4 animate-spin" aria-label="Streaming" />
-              ))}
+            {isLastAssistantEmpty(i, msg) ? (
+              <ThinkingIndicator message={status} />
+            ) : (
+              <>
+                {msg.content}
+                {/* Inline status during streaming — shown below content */}
+                {streaming &&
+                  msg.role === 'assistant' &&
+                  msg.content &&
+                  i === messages.length - 1 &&
+                  status && (
+                    <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
+                  )}
+              </>
+            )}
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
-
-      {/* Status line */}
-      {status && <div className="text-muted-foreground px-3 py-1 text-xs">{status}</div>}
 
       {/* Warning (reconnecting) */}
       {warning && (

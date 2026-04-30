@@ -239,9 +239,12 @@ describe('SetupWizard', () => {
     await user.type(screen.getByLabelText(/your message/i), 'Hi');
     await user.click(screen.getByRole('button', { name: /^send$/i }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 }
+    );
 
     // Critical: the raw provider error must not appear anywhere in the DOM.
     expect(document.body.textContent ?? '').not.toContain(SECRET);

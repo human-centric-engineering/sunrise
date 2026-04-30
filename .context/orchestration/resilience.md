@@ -86,11 +86,13 @@ Pre-check via `checkBudget(agentId)` in `streaming-handler.ts`:
 
 ## Input Sanitisation
 
-`scanForInjection(message)` detects three pattern categories:
+`scanForInjection(message)` detects five pattern categories:
 
 - `system_override` — "ignore/disregard/forget previous instructions"
 - `role_confusion` — "you are now", "act as if you", "pretend you"
 - `delimiter_injection` — `###`, `---`, `***`, `<system>`, `</system>`, etc.
+- `output_manipulation` — "do not mention/reveal/disclose", "keep this secret"
+- `encoding_evasion` — base64, atob/btoa, hex escapes, unicode escapes, HTML entities
 
 **Configurable mode** via `OrchestrationSettings.inputGuardMode`:
 
@@ -106,16 +108,16 @@ Set via `PATCH /api/v1/admin/orchestration/settings` with `{ "inputGuardMode": "
 
 `getUserFacingError(code)` returns `{ title, message, action? }` for known error codes:
 
-| Code                      | Title                           |
-| ------------------------- | ------------------------------- |
-| `budget_exceeded`         | Monthly Budget Reached          |
-| `all_providers_exhausted` | Service Temporarily Unavailable |
-| `agent_not_found`         | Agent Not Found                 |
-| `conversation_not_found`  | Conversation Not Found          |
-| `tool_loop_cap`           | Processing Limit Reached        |
-| `internal_error`          | Something Went Wrong            |
-| `stream_error`            | Something Went Wrong            |
-| `rate_limited`            | Too Many Requests               |
+| Code                      | Title                    |
+| ------------------------- | ------------------------ |
+| `budget_exceeded`         | Monthly Budget Reached   |
+| `all_providers_exhausted` | No Available Provider    |
+| `agent_not_found`         | Agent Not Found          |
+| `conversation_not_found`  | Conversation Not Found   |
+| `tool_loop_cap`           | Processing Limit Reached |
+| `internal_error`          | Something Went Wrong     |
+| `stream_error`            | Something Went Wrong     |
+| `rate_limited`            | Too Many Requests        |
 
 Unknown codes fall back to `internal_error`. Static map — zero runtime cost.
 

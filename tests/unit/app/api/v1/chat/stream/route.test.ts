@@ -39,6 +39,7 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    $executeRaw: vi.fn(),
   },
 }));
 
@@ -598,7 +599,8 @@ describe('POST /api/v1/chat/stream', () => {
         maxUses: 10,
         useCount: 3,
       } as never);
-      vi.mocked(prisma.aiAgentInviteToken.update).mockResolvedValue({} as never);
+      // Atomic increment succeeds (1 row updated)
+      vi.mocked(prisma.$executeRaw).mockResolvedValue(1 as never);
       const request = createMockRequest({
         ...validPayload,
         agentSlug: 'private-bot',
@@ -608,13 +610,10 @@ describe('POST /api/v1/chat/stream', () => {
       // Act
       const response = await POST(request);
 
-      // Assert: stream started and use count incremented
+      // Assert: stream started and atomic increment called
       expect(response.status).toBe(200);
       expect(sseResponse).toHaveBeenCalledOnce();
-      expect(prisma.aiAgentInviteToken.update).toHaveBeenCalledWith({
-        where: { id: 'tok-3' },
-        data: { useCount: { increment: 1 } },
-      });
+      expect(prisma.$executeRaw).toHaveBeenCalledOnce();
     });
 
     it('should allow access with unlimited token (maxUses null)', async () => {
@@ -628,7 +627,8 @@ describe('POST /api/v1/chat/stream', () => {
         maxUses: null,
         useCount: 9999,
       } as never);
-      vi.mocked(prisma.aiAgentInviteToken.update).mockResolvedValue({} as never);
+      // Atomic increment succeeds (1 row updated — maxUses IS NULL matches)
+      vi.mocked(prisma.$executeRaw).mockResolvedValue(1 as never);
       const request = createMockRequest({
         ...validPayload,
         agentSlug: 'private-bot',

@@ -88,11 +88,18 @@ export const POST = withAuth(async (request, session) => {
       throw new ForbiddenError('Invite token has reached its usage limit');
     }
 
-    // Increment use count
-    await prisma.aiAgentInviteToken.update({
-      where: { id: token.id },
-      data: { useCount: { increment: 1 } },
-    });
+    // Atomic increment: only succeeds if use_count < max_uses (or max_uses
+    // is NULL, i.e. unlimited). Prevents TOCTOU race where concurrent
+    // requests both pass the check above and double-increment past the cap.
+    const incrementResult: number = await prisma.$executeRaw`
+      UPDATE ai_agent_invite_token
+      SET use_count = use_count + 1
+      WHERE id = ${token.id}
+        AND (max_uses IS NULL OR use_count < max_uses)
+    `;
+    if (incrementResult === 0) {
+      throw new ForbiddenError('Invite token has reached its usage limit');
+    }
   }
 
   log.info('Consumer chat stream started', {
@@ -106,6 +113,7 @@ export const POST = withAuth(async (request, session) => {
     agentSlug: body.agentSlug,
     userId: session.user.id,
     conversationId: body.conversationId,
+    attachments: body.attachments,
     requestId,
     signal: request.signal,
   });

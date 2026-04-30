@@ -198,11 +198,27 @@ describe('POST /api/v1/embed/chat/stream', () => {
     });
   });
 
+  describe('conversationId validation', () => {
+    it('returns 400 VALIDATION_ERROR for non-CUID conversationId', async () => {
+      const response = await POST(
+        makePostRequest(
+          { message: 'Hello', conversationId: 'not-a-cuid' },
+          { 'x-embed-token': VALID_TOKEN, origin: 'https://mysite.com' }
+        )
+      );
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
   describe('Successful stream', () => {
     it('calls streamChat with correct parameters', async () => {
+      const validCuid = 'clh1234567890abcdefghijklm';
       await POST(
         makePostRequest(
-          { message: 'Hello bot', conversationId: 'conv-1' },
+          { message: 'Hello bot', conversationId: validCuid },
           { 'x-embed-token': VALID_TOKEN, origin: 'https://mysite.com' }
         )
       );
@@ -212,7 +228,7 @@ describe('POST /api/v1/embed/chat/stream', () => {
           message: 'Hello bot',
           agentSlug: VALID_CONTEXT.agentSlug,
           userId: VALID_CONTEXT.userId,
-          conversationId: 'conv-1',
+          conversationId: validCuid,
         })
       );
     });

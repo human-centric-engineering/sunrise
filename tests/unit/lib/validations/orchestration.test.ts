@@ -15,6 +15,7 @@
  * - documentUploadSchema
  * - costQuerySchema
  * - providerConfigSchema
+ * - chatAttachmentSchema
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -70,6 +71,7 @@ import {
   workflowDefinitionRevertSchema,
   executionStatusSchema,
   executionTraceSchema,
+  chatAttachmentSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1527,6 +1529,14 @@ describe('chatStreamRequestSchema', () => {
     const result = chatStreamRequestSchema.safeParse({ message: 'hi' });
     expect(result.success).toBe(false);
   });
+
+  it('rejects whitespace-only messages after trim', () => {
+    const result = chatStreamRequestSchema.safeParse({
+      message: '     ',
+      agentSlug: 'test-agent',
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('listConversationsQuerySchema', () => {
@@ -1928,5 +1938,44 @@ describe('executionTraceSchema', () => {
       expect.stringContaining('Malformed execution trace'),
       expect.any(Object)
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// chatAttachmentSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('chatAttachmentSchema', () => {
+  const validAttachment = {
+    name: 'photo.jpg',
+    mediaType: 'image/jpeg' as const,
+    data: 'iVBORw0KGgoAAAANSUhEUg==',
+  };
+
+  it('accepts valid attachment', () => {
+    expect(() => chatAttachmentSchema.parse(validAttachment)).not.toThrow();
+  });
+
+  it('rejects attachment data exceeding 10MB', () => {
+    const oversized = { ...validAttachment, data: 'x'.repeat(10_000_001) };
+    const result = chatAttachmentSchema.safeParse(oversized);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts attachment data at exactly 10MB', () => {
+    const atLimit = { ...validAttachment, data: 'x'.repeat(10_000_000) };
+    expect(() => chatAttachmentSchema.parse(atLimit)).not.toThrow();
+  });
+
+  it('rejects empty data', () => {
+    const empty = { ...validAttachment, data: '' };
+    const result = chatAttachmentSchema.safeParse(empty);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unsupported media type', () => {
+    const bad = { ...validAttachment, mediaType: 'video/mp4' };
+    const result = chatAttachmentSchema.safeParse(bad);
+    expect(result.success).toBe(false);
   });
 });

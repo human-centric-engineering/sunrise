@@ -18,10 +18,11 @@ import { embedChatLimiter, createRateLimitResponse } from '@/lib/security/rate-l
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { logger } from '@/lib/logging';
+import { cuidSchema } from '@/lib/validations/common';
 
 const embedChatSchema = z.object({
   message: z.string().min(1).max(10_000),
-  conversationId: z.string().max(100).optional(),
+  conversationId: cuidSchema.optional(),
 });
 
 function corsHeaders(origin: string | null, allowedOrigins: string[]): Record<string, string> {

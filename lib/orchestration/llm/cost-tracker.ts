@@ -73,6 +73,20 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number
 ): ComputedCost {
+  if (
+    !Number.isFinite(inputTokens) ||
+    inputTokens < 0 ||
+    !Number.isFinite(outputTokens) ||
+    outputTokens < 0
+  ) {
+    logger.warn('Invalid token counts, treating as zero cost', {
+      modelId,
+      inputTokens,
+      outputTokens,
+    });
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
+  }
+
   const model = getModel(modelId);
   if (!model) {
     logger.warn('Cost calculation: unknown model, treating as zero cost', { model: modelId });

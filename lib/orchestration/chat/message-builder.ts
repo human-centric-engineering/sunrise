@@ -22,6 +22,14 @@ import {
   truncateToTokenBudget,
 } from '@/lib/orchestration/chat/token-estimator';
 
+/**
+ * Estimated token cost per attachment (image/document).
+ * LLM providers charge a fixed token amount per image regardless of
+ * base64 size (typically 1 000–1 600 tokens). We use the upper bound
+ * so history truncation stays conservative.
+ */
+const ATTACHMENT_OVERHEAD_TOKENS = 1600;
+
 export interface HistoryRow {
   role: string;
   content: string;
@@ -94,7 +102,9 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
     const reserveTokens = args.reserveTokens ?? 4096;
     const systemTokens = estimateMessagesTokens(messages);
     const userTokens = estimateMessagesTokens([{ role: 'user', content: args.newUserMessage }]);
-    const historyBudget = args.contextWindowTokens - reserveTokens - systemTokens - userTokens;
+    const attachmentTokens = (args.attachments?.length ?? 0) * ATTACHMENT_OVERHEAD_TOKENS;
+    const historyBudget =
+      args.contextWindowTokens - reserveTokens - systemTokens - userTokens - attachmentTokens;
 
     if (historyBudget > 0) {
       const historyMessages: LlmMessage[] = truncated.map((row) => ({

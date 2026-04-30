@@ -30,6 +30,11 @@ export function estimateTokens(text: string): number {
 
 /**
  * Estimate the total token count for an array of LLM messages.
+ *
+ * **Text-only**: extracts text via `getTextContent()` and silently
+ * discards non-text content parts (images, documents). For multimodal
+ * messages, callers should add `ATTACHMENT_OVERHEAD_TOKENS` per
+ * attachment separately (see `message-builder.ts`).
  */
 export function estimateMessagesTokens(messages: LlmMessage[]): number {
   let total = 0;

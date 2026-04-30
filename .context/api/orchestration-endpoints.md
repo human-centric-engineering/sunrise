@@ -458,15 +458,17 @@ data: <json>
 
 `ChatEvent` union (from `types/orchestration.ts:191-197`):
 
-| `type`              | `data` shape                                                          | Meaning                                                              |
-| ------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `start`             | `{ conversationId, messageId }`                                       | First event — conversation is ready and the assistant turn has begun |
-| `content`           | `{ delta: string }`                                                   | Incremental assistant text                                           |
-| `status`            | `{ message: string }`                                                 | Human-readable progress indicator                                    |
-| `capability_result` | `{ capabilitySlug: string, result: unknown }`                         | A tool call completed — mid-stream                                   |
-| `warning`           | `{ code, message }`                                                   | Non-terminal warning (e.g. budget at 80%) — stream continues         |
-| `done`              | `{ tokenUsage: { inputTokens, outputTokens, totalTokens }, costUsd }` | Terminal success frame                                               |
-| `error`             | `{ code, message }`                                                   | Terminal error frame                                                 |
+| `type`               | `data` shape                                                                             | Meaning                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `start`              | `{ conversationId, messageId }`                                                          | First event — conversation is ready and the assistant turn has begun |
+| `content`            | `{ delta: string }`                                                                      | Incremental assistant text                                           |
+| `status`             | `{ message: string }`                                                                    | Human-readable progress indicator                                    |
+| `capability_result`  | `{ capabilitySlug: string, result: unknown }`                                            | A single tool call completed — mid-stream                            |
+| `capability_results` | `{ results: { capabilitySlug: string, result: unknown }[] }`                             | Batch of parallel tool calls completed — mid-stream                  |
+| `warning`            | `{ code, message }`                                                                      | Non-terminal warning (e.g. budget at 80%) — stream continues         |
+| `content_reset`      | `{}`                                                                                     | Provider fallback — client must clear buffered content and restart   |
+| `done`               | `{ tokenUsage: { inputTokens, outputTokens, totalTokens }, costUsd, provider?, model? }` | Terminal success frame                                               |
+| `error`              | `{ code, message }`                                                                      | Terminal error frame                                                 |
 
 Plus periodic keepalive comment frames (`: keepalive\n\n`) every 15 000 ms — comments are ignored by `EventSource` and standard SSE clients.
 
@@ -881,6 +883,41 @@ Aggregated metrics for the observability dashboard. Returns in a single batched 
 - `topCapabilities` — top 10 capabilities by invocation count: `[{ slug, count }]`
 
 Supports `ETag` / `If-None-Match` for conditional GET (returns 304 when unchanged).
+
+---
+
+## Embed Endpoints
+
+Public (non-admin) routes for the embeddable chat widget. Base path: `/api/v1/embed`.
+
+### GET `/embed/widget.js`
+
+Serves a self-contained JavaScript snippet that renders a Shadow DOM chat bubble. Configured via data attributes (`data-token`, `data-position`, `data-theme`). No authentication required — the token is validated when the user sends a message.
+
+**Response:** `application/javascript`, `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *`.
+
+**Key file:** `app/api/v1/embed/widget.js/route.ts`
+
+### POST `/embed/chat/stream`
+
+SSE streaming chat for the embed widget. Authenticates via `X-Embed-Token` header (not session). CORS headers are set dynamically from the token's `allowedOrigins`.
+
+**Request headers:** `X-Embed-Token: <token>` (required), `Content-Type: application/json`.
+
+**Request body:**
+
+```jsonc
+{
+  "message": "string (1–10000 chars, required)",
+  "conversationId": "string (optional — continue existing conversation)",
+}
+```
+
+**Response:** `text/event-stream` (SSE) — same event types as admin chat stream (see `ChatEvent` in `types/orchestration.ts`).
+
+**Rate limiting:** `embedChatLimiter` per IP.
+
+**Key files:** `app/api/v1/embed/chat/stream/route.ts`, `lib/embed/auth.ts`
 
 ---
 
