@@ -1,5 +1,5 @@
 ---
-name: solution-builder
+name: orchestration-solution-builder
 version: 1.0.0
 description: |
   End-to-end orchestration solution builder for Sunrise. Takes a business

@@ -1,5 +1,5 @@
 ---
-name: workflow-builder
+name: orchestration-workflow-builder
 version: 1.0.0
 description: |
   Expert workflow builder for Sunrise orchestration. Composes workflow DAGs

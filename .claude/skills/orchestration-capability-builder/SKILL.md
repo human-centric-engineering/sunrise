@@ -1,5 +1,5 @@
 ---
-name: capability-builder
+name: orchestration-capability-builder
 version: 1.0.0
 description: |
   Expert capability builder for Sunrise orchestration. Creates custom agent

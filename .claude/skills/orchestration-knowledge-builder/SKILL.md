@@ -1,5 +1,5 @@
 ---
-name: knowledge-builder
+name: orchestration-knowledge-builder
 version: 1.0.0
 description: |
   Expert knowledge base builder for Sunrise orchestration. Sets up document

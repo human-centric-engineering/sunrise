@@ -1,5 +1,5 @@
 ---
-name: agent-architect
+name: orchestration-agent-architect
 description: 'Use this skill whenever you need to design, evaluate, debug, or improve an AI agent system. Covers: selecting the right agentic design patterns for a problem, composing multiple patterns into production architectures, diagnosing agent failures (hallucination, loops, cost overruns, latency), evaluating trade-offs (cost vs quality, autonomy vs control, latency vs accuracy), estimating token costs, and applying context engineering principles. Trigger this skill when the user mentions agents, orchestration, agentic workflows, LLM pipelines, multi-agent systems, prompt chaining, RAG architecture, tool use, guardrails, human-in-the-loop, or any AI-first application design. Also trigger when debugging agent behaviour, optimising agent costs, or choosing between agentic frameworks. This skill is stack-agnostic — it provides architectural judgement, not implementation syntax.'
 ---
 
