@@ -178,7 +178,7 @@ export function AuditModelsDialog({
               title="Framework Reference Implementation"
               contentClassName="w-96 max-h-80 overflow-y-auto"
             >
-              This dialog triggers the Provider Model Audit workflow — a 10-step DAG that exercises
+              This dialog triggers the Provider Model Audit workflow — a 13-step DAG that exercises
               10 of 15 orchestration step types. It tests prompt chaining, routing, parallelisation,
               reflection, tool use, guardrails, evaluation, human-in-the-loop approval, RAG
               retrieval, and notifications. Selected model IDs become the workflow&apos;s{' '}
