@@ -185,6 +185,20 @@ The knowledge base requires an **embedding provider** — a model that converts 
 
 The static registry is at `lib/orchestration/llm/embedding-models.ts` and served via `GET /api/v1/admin/orchestration/embedding-models`.
 
+## AI-Assisted Development
+
+Five Claude Code skills accelerate orchestration work. Each skill loads domain context and guides you through implementation step-by-step.
+
+| Skill                               | Purpose                                                          |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `/orchestration-agent-architect`    | Design agentic solutions using the 21 design patterns            |
+| `/orchestration-solution-builder`   | End-to-end build from business problem to working solution       |
+| `/orchestration-capability-builder` | Create custom capabilities with Zod schemas and registry binding |
+| `/orchestration-workflow-builder`   | Compose multi-step workflow DAGs with 15 step types              |
+| `/orchestration-knowledge-builder`  | Set up document ingestion, embeddings, and vector search         |
+
+These are invoked in Claude Code via the slash command (e.g. type `/orchestration-capability-builder`). Each skill reads the relevant `.context/` guides listed above, so they stay current with the documented patterns.
+
 ## Related Documentation
 
 | Topic                      | Path                                                                                      |
