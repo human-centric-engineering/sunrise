@@ -148,26 +148,26 @@ npx vitest run tests/integration/api/v1/admin/orchestration/provider-models
 
 ## Model Audit Workflow
 
-The Provider Model Audit is an AI-powered workflow that evaluates model entries for accuracy and proposes changes for admin review. It serves a dual purpose:
+The Provider Model Audit is an AI-powered workflow that evaluates model entries for accuracy, proposes changes for admin review, and discovers new models released by providers. It serves a dual purpose:
 
-1. **Genuinely useful** — catches stale ratings, deprecated models, and inaccurate classifications by having an LLM evaluate each entry against its knowledge of current model capabilities.
+1. **Genuinely useful** — catches stale ratings, deprecated models, and inaccurate classifications by having an LLM evaluate each entry against its knowledge of current model capabilities. Also identifies new models from providers that are not yet in the registry and proposes them for addition (with human approval).
 
 2. **Framework reference implementation** — exercises 10 of 15 orchestration step types end-to-end, proving the engine, approval queue, capability dispatch, budget enforcement, and SSE streaming work together.
 
 ### Step types exercised
 
-| Step Type           | Pattern         | What It Tests                                       |
-| ------------------- | --------------- | --------------------------------------------------- |
-| `llm_call`          | Prompt Chaining | Structured JSON output, template interpolation      |
-| `rag_retrieve`      | RAG             | Knowledge base search, similarity threshold         |
-| `route`             | Routing         | LLM classification branching (chat/embedding/mixed) |
-| `parallel`          | Parallelisation | Concurrent analysis branches                        |
-| `guard`             | Guardrails      | Enum value validation gate                          |
-| `reflect`           | Reflection      | Draft-critique-revise loop                          |
-| `evaluate`          | Evaluation      | Quality scoring against rubric                      |
-| `human_approval`    | HITL            | Execution pause, approval queue, resume flow        |
-| `tool_call`         | Tool Use        | `apply_audit_changes` capability dispatch           |
-| `send_notification` | —               | Email notification with template interpolation      |
+| Step Type           | Pattern         | What It Tests                                                     |
+| ------------------- | --------------- | ----------------------------------------------------------------- |
+| `llm_call`          | Prompt Chaining | Structured JSON output, template interpolation                    |
+| `rag_retrieve`      | RAG             | Knowledge base search, similarity threshold                       |
+| `route`             | Routing         | LLM classification branching (chat/embedding/mixed)               |
+| `parallel`          | Parallelisation | Concurrent analysis + discovery branches                          |
+| `guard`             | Guardrails      | Enum value validation gate                                        |
+| `reflect`           | Reflection      | Draft-critique-revise loop                                        |
+| `evaluate`          | Evaluation      | Quality scoring against rubric                                    |
+| `human_approval`    | HITL            | Execution pause, approval queue, resume flow                      |
+| `tool_call`         | Tool Use        | `apply_audit_changes` + `add_provider_models` capability dispatch |
+| `send_notification` | —               | Email notification with template interpolation                    |
 
 ### Trigger
 
@@ -177,9 +177,10 @@ The Provider Model Audit is an AI-powered workflow that evaluates model entries 
 
 | File                                                             | Purpose                                  |
 | ---------------------------------------------------------------- | ---------------------------------------- |
-| `prisma/seeds/data/templates/provider-model-audit.ts`            | 10-step DAG template definition          |
+| `prisma/seeds/data/templates/provider-model-audit.ts`            | 12-step DAG template definition          |
 | `prisma/seeds/010-model-auditor.ts`                              | Agent seed with capability bindings      |
 | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts` | Capability that applies approved changes |
+| `lib/orchestration/capabilities/built-in/add-provider-models.ts` | Capability that adds approved new models |
 | `components/admin/orchestration/audit-models-dialog.tsx`         | Model selection + trigger dialog         |
 
 ## Related

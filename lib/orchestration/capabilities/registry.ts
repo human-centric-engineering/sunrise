@@ -30,6 +30,7 @@ import {
 } from '@/lib/orchestration/capabilities/built-in/user-memory';
 import { EscalateToHumanCapability } from '@/lib/orchestration/capabilities/built-in/escalate-to-human';
 import { ApplyAuditChangesCapability } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
@@ -47,6 +48,7 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new WriteUserMemoryCapability());
   capabilityDispatcher.register(new EscalateToHumanCapability());
   capabilityDispatcher.register(new ApplyAuditChangesCapability());
+  capabilityDispatcher.register(new AddProviderModelsCapability());
   registered = true;
 }
 

@@ -8,7 +8,8 @@
  * This template serves a dual purpose:
  *
  * 1. **Genuinely useful** — AI-powered evaluation of provider model
- *    entries for accuracy and freshness. Proposes changes for admin
+ *    entries for accuracy and freshness, plus discovery of new models
+ *    released by providers. Proposes changes and additions for admin
  *    review via human-in-the-loop approval.
  *
  * 2. **Framework reference implementation** — exercises 10 of the 15
@@ -19,11 +20,11 @@
  *
  * Flow: load models from input → retrieve prior audit context from
  * knowledge base → route by model capability type (chat vs embedding
- * vs dual) → fan out parallel LLM analysis per model → validate
- * proposed changes against enum schemas → refine findings via
- * reflection loop → score confidence against rubric → pause for
- * human approval → apply accepted changes via capability → notify
- * admin of results.
+ * vs dual) → fan out parallel LLM analysis per model + new model
+ * discovery → validate proposed changes against enum schemas → refine
+ * findings via reflection loop → score confidence against rubric →
+ * pause for human approval → apply accepted changes via capability →
+ * add approved new models → notify admin of results.
  *
  * Step types NOT exercised (by design — not relevant to this use case):
  * chain (layout marker), plan (runtime DAG generation), agent_call
@@ -36,7 +37,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
   name: 'Provider Model Audit',
   shortDescription:
-    'AI-powered evaluation of provider model entries for accuracy and freshness. Exercises 11 step types as a framework reference implementation.',
+    'AI-powered evaluation of provider model entries for accuracy and freshness, plus new model discovery. Exercises 10 step types as a framework reference implementation.',
   patterns: [
     { number: 1, name: 'Prompt Chaining' },
     { number: 2, name: 'Routing' },
@@ -49,22 +50,22 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
     { number: 19, name: 'Evaluation' },
   ],
   flowSummary:
-    'Load selected model entries → retrieve prior audit context from the knowledge base → route by capability type (chat/embedding/dual) so analysis prompts are tailored → fan out parallel LLM analysis per model → validate proposed enum values against the schema → refine findings through a draft-critique-revise loop → score confidence against a quality rubric → pause for admin approval with a diff-style review → apply accepted changes via the apply_audit_changes capability → send a notification summarising results.',
+    'Load selected model entries → retrieve prior audit context from the knowledge base → route by capability type (chat/embedding/dual) so analysis prompts are tailored → fan out parallel LLM analysis per model + new model discovery → validate proposed enum values against the schema → refine findings through a draft-critique-revise loop → score confidence against a quality rubric → pause for admin approval with a diff-style review → apply accepted changes via the apply_audit_changes capability → add approved new models via the add_provider_models capability → send a notification summarising results.',
   useCases: [
     {
       title: 'Quarterly provider registry review',
       scenario:
-        'Run a full audit of all model entries to catch stale ratings, deprecated models, and missing new releases. The workflow evaluates each model against current provider data and proposes updates for admin review.',
+        'Run a full audit of all model entries to catch stale ratings, deprecated models, and missing new releases. The workflow evaluates each model against current provider data, proposes updates, and identifies new models to add.',
     },
     {
       title: 'Post-launch model assessment',
       scenario:
-        'After a provider launches new models, audit the affected entries to ensure tier classification, cost efficiency ratings, and capability flags are accurate for the new releases.',
+        'After a provider launches new models, audit the affected entries to ensure tier classification, cost efficiency ratings, and capability flags are accurate. The workflow also discovers and proposes the new releases for addition to the registry.',
     },
     {
       title: 'Framework integration validation',
       scenario:
-        'Exercise 11 step types end-to-end to verify the orchestration engine, approval queue, capability dispatch, and budget enforcement all work together. Use as a smoke test after engine upgrades.',
+        'Exercise 10 step types end-to-end to verify the orchestration engine, approval queue, capability dispatch, and budget enforcement all work together. Use as a smoke test after engine upgrades.',
     },
   ],
   workflowDefinition: {
@@ -132,18 +133,23 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // ─── Step 4: parallel (Pattern 3 — Parallelisation) ───────────
       // Tests: Concurrent branch execution, fan-out across models,
       // independent error handling per branch, result merging.
-      // All route branches converge here. Two parallel analysis branches
-      // (chat-focused and embedding-focused) run concurrently.
+      // All route branches converge here. Three parallel branches run
+      // concurrently: chat analysis, embedding analysis, and new model
+      // discovery.
       {
         id: 'audit_models',
-        name: 'Analyse models in parallel',
+        name: 'Analyse models and discover new ones in parallel',
         type: 'parallel',
         config: {
-          branches: ['analyse_chat', 'analyse_embedding'],
+          branches: ['analyse_chat', 'analyse_embedding', 'discover_new_models'],
           stragglerStrategy: 'wait-all',
           timeoutMs: 120000,
         },
-        nextSteps: [{ targetStepId: 'analyse_chat' }, { targetStepId: 'analyse_embedding' }],
+        nextSteps: [
+          { targetStepId: 'analyse_chat' },
+          { targetStepId: 'analyse_embedding' },
+          { targetStepId: 'discover_new_models' },
+        ],
       },
       {
         id: 'analyse_chat',
@@ -151,7 +157,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each chat/completion model, evaluate:\n1. **Tier role** — Is the classification correct? (thinking, worker, infrastructure, control_plane, local_sovereign)\n2. **Reasoning depth** — Accurate? (none, basic, moderate, advanced, frontier)\n3. **Latency** — Correct categorisation? (ultra_fast, fast, moderate, slow, very_slow)\n4. **Cost efficiency** — Still accurate? (very_low, low, moderate, high, very_high)\n5. **Context length** — Current? (small, medium, large, very_large, massive)\n6. **Tool use** — Correct? (none, basic, moderate, advanced)\n7. **Best role** — Still the right summary?\n8. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
+            'You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each chat/completion model, evaluate:\n1. **Tier role** — Is the classification correct? (thinking, worker, infrastructure, control_plane, local_sovereign)\n2. **Reasoning depth** — Accurate? (very_high, high, medium, none)\n3. **Latency** — Correct categorisation? (very_fast, fast, medium)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Tool use** — Correct? (strong, moderate, none)\n7. **Best role** — Still the right summary?\n8. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
           temperature: 0.2,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
@@ -162,13 +168,29 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each embedding model, evaluate:\n1. **Tier role** — Should be "embedding"\n2. **Dimensions** — Correct vector dimensions for this model?\n3. **Quality** — Accurate? (basic, good, excellent, sota)\n4. **Cost efficiency** — Still accurate? (very_low, low, moderate, high, very_high)\n5. **Context length** — Current? (small, medium, large, very_large, massive)\n6. **Best role** — Still the right summary?\n7. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
+            'You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each embedding model, evaluate:\n1. **Tier role** — Should be "embedding"\n2. **Dimensions** — Correct vector dimensions for this model?\n3. **Quality** — Accurate? (high, medium, budget)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Best role** — Still the right summary?\n7. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
           temperature: 0.2,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
       },
 
-      // ─── Step 5: guard (Pattern 18 — Guardrails) ──────────────────
+      // ─── Step 5b: llm_call (New Model Discovery) ─────────────────
+      // Runs in parallel with analyse_chat and analyse_embedding.
+      // Asks the LLM to identify recently released models from the
+      // providers in scope that are NOT yet in the matrix.
+      {
+        id: 'discover_new_models',
+        name: 'Identify new models from providers',
+        type: 'llm_call',
+        config: {
+          prompt:
+            'You are an AI model landscape expert. Given the list of providers and their currently registered models, identify any recently released models that are NOT in the registry.\n\nCurrent model registry:\n{{load_models.output}}\n\nPrior audit context:\n{{retrieve_context.output}}\n\nFor each provider represented in the data, check if they have released new models that are missing from the registry. For each new model found, propose a complete entry with:\n- "name": Human-readable name (e.g. "Claude Opus 4")\n- "slug": Lowercase with hyphens only (e.g. "anthropic-claude-opus-4")\n- "providerSlug": Must match an existing provider slug from the registry\n- "modelId": The API model identifier (e.g. "claude-opus-4-20250514")\n- "description": Brief description of the model\'s purpose and strengths\n- "capabilities": ["chat"] or ["embedding"] or ["chat", "embedding"]\n- "tierRole": one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- "reasoningDepth": one of: very_high, high, medium, none\n- "latency": one of: very_fast, fast, medium\n- "costEfficiency": one of: very_high, high, medium, none\n- "contextLength": one of: very_high, high, medium, n_a\n- "toolUse": one of: strong, moderate, none\n- "bestRole": One-line summary of optimal use case\n- For embedding models also include: "dimensions" (integer), "quality" (high | medium | budget), "schemaCompatible" (boolean)\n\nRespond with a JSON object:\n{\n  "newModels": [...array of proposed models...],\n  "reasoning": "Summary of what was found and why these models should be added"\n}\n\nIf no new models are found, respond with { "newModels": [], "reasoning": "All known models are already registered" }.\n\nIMPORTANT: Only propose models you are confident exist. Do not fabricate model names or IDs.\nRespond with ONLY the JSON object, no markdown fencing.',
+          temperature: 0.2,
+        },
+        nextSteps: [{ targetStepId: 'validate_proposals' }],
+      },
+
+      // ─── Step 6: guard (Pattern 18 — Guardrails) ──────────────────
       // Tests: Safety/quality validation gate, LLM-mode rule checking,
       // failAction configuration.
       {
@@ -177,14 +199,14 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'guard',
         config: {
           rules:
-            'Validate that all proposed changes use valid enum values:\n\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: none, basic, moderate, advanced, frontier\n- latency must be one of: ultra_fast, fast, moderate, slow, very_slow\n- costEfficiency must be one of: very_low, low, moderate, high, very_high\n- contextLength must be one of: small, medium, large, very_large, massive\n- toolUse must be one of: none, basic, moderate, advanced\n- quality (embedding) must be one of: basic, good, excellent, sota\n- confidence must be one of: high, medium, low\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field.',
+            'Validate that all proposed changes and new model entries use valid enum values:\n\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).',
           mode: 'llm',
           failAction: 'block',
         },
         nextSteps: [{ targetStepId: 'refine_findings', condition: 'pass' }],
       },
 
-      // ─── Step 6: reflect (Pattern 4 — Reflection) ─────────────────
+      // ─── Step 7: reflect (Pattern 4 — Reflection) ─────────────────
       // Tests: Draft → critique → revise loop, maxIterations config,
       // iterative quality improvement.
       {
@@ -193,13 +215,13 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'reflect',
         config: {
           critiquePrompt:
-            'Review the proposed model audit changes critically:\n\n1. Are any proposed changes based on outdated information about the model?\n2. Do the confidence levels accurately reflect certainty? High confidence should only be used for clear, verifiable facts.\n3. Are the reasons specific enough to help an admin understand why the change is proposed?\n4. Are there any contradictions between proposed changes for the same model?\n5. Should any "medium" confidence changes be downgraded to "low" if the evidence is circumstantial?\n\nProvide specific, actionable feedback for each issue found.',
+            'Review the proposed model audit changes and new model proposals critically:\n\n1. Are any proposed changes based on outdated information about the model?\n2. Do the confidence levels accurately reflect certainty? High confidence should only be used for clear, verifiable facts.\n3. Are the reasons specific enough to help an admin understand why the change is proposed?\n4. Are there any contradictions between proposed changes for the same model?\n5. Should any "medium" confidence changes be downgraded to "low" if the evidence is circumstantial?\n6. For new model proposals: are the slugs, model IDs, and capability classifications plausible? Are there any duplicates of existing models under a different name?\n\nProvide specific, actionable feedback for each issue found.',
           maxIterations: 2,
         },
         nextSteps: [{ targetStepId: 'score_audit' }],
       },
 
-      // ─── Step 7: evaluate (Pattern 19 — Evaluation) ───────────────
+      // ─── Step 8: evaluate (Pattern 19 — Evaluation) ───────────────
       // Tests: Quality scoring against rubric, scale configuration,
       // threshold-based gating.
       {
@@ -208,7 +230,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'evaluate',
         config: {
           rubric:
-            'Score the audit findings on a 1-10 scale:\n\n- **Accuracy** (1-10): Are the proposed changes factually correct based on current model capabilities?\n- **Completeness** (1-10): Were all relevant fields evaluated? Were any obvious issues missed?\n- **Specificity** (1-10): Are the reasons for changes specific and actionable, not vague?\n- **Confidence calibration** (1-10): Do the confidence levels match the strength of evidence?\n- **Consistency** (1-10): Are similar models treated consistently (e.g., same-family models should have consistent tier roles)?',
+            'Score the audit findings on a 1-10 scale:\n\n- **Accuracy** (1-10): Are the proposed changes factually correct based on current model capabilities?\n- **Completeness** (1-10): Were all relevant fields evaluated? Were any obvious issues missed? Were new models identified where appropriate?\n- **Specificity** (1-10): Are the reasons for changes specific and actionable, not vague?\n- **Confidence calibration** (1-10): Do the confidence levels match the strength of evidence?\n- **Consistency** (1-10): Are similar models treated consistently (e.g., same-family models should have consistent tier roles)?',
           scaleMin: 1,
           scaleMax: 10,
           threshold: 6,
@@ -216,22 +238,22 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         nextSteps: [{ targetStepId: 'review_changes' }],
       },
 
-      // ─── Step 8: human_approval (Pattern 13 — HITL) ───────────────
+      // ─── Step 9: human_approval (Pattern 13 — HITL) ───────────────
       // Tests: Execution pause via PausedForApproval exception, approval
       // queue, resume flow, approvalPayload forwarding.
       {
         id: 'review_changes',
-        name: 'Admin reviews proposed changes',
+        name: 'Admin reviews proposed changes and new models',
         type: 'human_approval',
         config: {
           prompt:
-            'Review the proposed provider model changes below. The audit has analysed your model entries and suggests the following updates.\n\nFor each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\nAudit quality score: {{score_audit.output}}\n\nProposed changes:\n{{refine_findings.output}}',
+            'Review the proposed provider model changes and new model additions below.\n\n## Proposed Changes to Existing Models\n\nThe audit has analysed your model entries and suggests the following updates. For each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\n{{refine_findings.output}}\n\n## Proposed New Models\n\nThe audit has identified the following new models from your providers that are not yet in the registry. For each new model you can:\n- **Accept** — the model will be added to the registry\n- **Reject** — the model will not be added\n- **Modify** — adjust the proposed values before accepting\n\n{{discover_new_models.output}}\n\nAudit quality score: {{score_audit.output}}',
           timeoutMinutes: 1440,
         },
         nextSteps: [{ targetStepId: 'apply_changes' }],
       },
 
-      // ─── Step 9: tool_call (Pattern 5 — Tool Use) ─────────────────
+      // ─── Step 10: tool_call (Pattern 5 — Tool Use) ────────────────
       // Tests: Capability dispatch pipeline (Zod validation → binding
       // check → rate limit → execute → cost log), the
       // apply_audit_changes capability specifically.
@@ -243,10 +265,25 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           capabilitySlug: 'apply_audit_changes',
           argsFrom: 'review_changes',
         },
+        nextSteps: [{ targetStepId: 'add_new_models' }],
+      },
+
+      // ─── Step 11: tool_call (Add New Models) ──────────────────────
+      // Applies the second capability — creating approved new model
+      // entries. Runs sequentially after apply_changes so both
+      // capabilities share the same approval payload.
+      {
+        id: 'add_new_models',
+        name: 'Add approved new models',
+        type: 'tool_call',
+        config: {
+          capabilitySlug: 'add_provider_models',
+          argsFrom: 'review_changes',
+        },
         nextSteps: [{ targetStepId: 'notify_complete' }],
       },
 
-      // ─── Step 10: send_notification ────────────────────────────────
+      // ─── Step 12: send_notification ───────────────────────────────
       // Tests: Email/webhook notification output, bodyTemplate
       // interpolation with step references.
       // NOTE: `to` is a placeholder — admins should edit this workflow
@@ -260,7 +297,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           to: 'admin@example.com',
           subject: 'Provider Model Audit Complete',
           bodyTemplate:
-            'The provider model audit has completed.\n\nScope: {{load_models.output}}\nChanges applied: {{apply_changes.output}}\nQuality score: {{score_audit.output}}\n\nReview the full execution trace in the admin dashboard.',
+            'The provider model audit has completed.\n\nScope: {{load_models.output}}\nChanges applied: {{apply_changes.output}}\nNew models added: {{add_new_models.output}}\nQuality score: {{score_audit.output}}\n\nReview the full execution trace in the admin dashboard.',
         },
         nextSteps: [],
       },

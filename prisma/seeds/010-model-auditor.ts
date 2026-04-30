@@ -119,10 +119,93 @@ const APPLY_AUDIT_CHANGES_DEFINITION = {
   },
 } as const;
 
+const ADD_PROVIDER_MODELS_DEFINITION = {
+  slug: 'add_provider_models',
+  name: 'Add Provider Models',
+  description:
+    'Add new provider model entries to the registry from approved audit proposals. Validates each model, skips duplicates, and invalidates the model cache.',
+  category: 'internal',
+  executionType: 'internal',
+  executionHandler: 'AddProviderModelsCapability',
+  functionDefinition: {
+    name: 'add_provider_models',
+    description:
+      'Add new provider model entries to the registry. Each model is validated against the create schema. Duplicate slugs are skipped. Invalidates the model cache after all creates.',
+    parameters: {
+      type: 'object',
+      properties: {
+        newModels: {
+          type: 'array',
+          description: 'Array of new model entries to create.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Human-readable model name.' },
+              slug: {
+                type: 'string',
+                description: 'URL-safe slug (lowercase alphanumeric with hyphens).',
+              },
+              providerSlug: { type: 'string', description: 'Provider identifier.' },
+              modelId: { type: 'string', description: 'API model identifier.' },
+              description: { type: 'string', description: 'Brief model description.' },
+              capabilities: {
+                type: 'array',
+                items: { type: 'string', enum: ['chat', 'embedding'] },
+              },
+              tierRole: {
+                type: 'string',
+                enum: [
+                  'thinking',
+                  'worker',
+                  'infrastructure',
+                  'control_plane',
+                  'local_sovereign',
+                  'embedding',
+                ],
+              },
+              reasoningDepth: {
+                type: 'string',
+                enum: ['very_high', 'high', 'medium', 'none'],
+              },
+              latency: { type: 'string', enum: ['very_fast', 'fast', 'medium'] },
+              costEfficiency: {
+                type: 'string',
+                enum: ['very_high', 'high', 'medium', 'none'],
+              },
+              contextLength: {
+                type: 'string',
+                enum: ['very_high', 'high', 'medium', 'n_a'],
+              },
+              toolUse: { type: 'string', enum: ['strong', 'moderate', 'none'] },
+              bestRole: { type: 'string', description: 'Optimal use case summary.' },
+              dimensions: { type: 'number' },
+              schemaCompatible: { type: 'boolean' },
+              quality: { type: 'string', enum: ['high', 'medium', 'budget'] },
+            },
+            required: [
+              'name',
+              'slug',
+              'providerSlug',
+              'modelId',
+              'description',
+              'capabilities',
+              'tierRole',
+              'bestRole',
+            ],
+          },
+          minItems: 1,
+          maxItems: 20,
+        },
+      },
+      required: ['newModels'],
+    },
+  },
+} as const;
+
 /**
  * Seed the "provider-model-auditor" agent with the apply_audit_changes
- * capability. Also binds the existing search_knowledge_base and
- * estimate_workflow_cost capabilities.
+ * and add_provider_models capabilities. Also binds the existing
+ * search_knowledge_base and estimate_workflow_cost capabilities.
  *
  * Idempotent — safe to run on every deploy. The `update` branch only
  * sets `isSystem: true` so re-seeding never overwrites admin edits.
@@ -180,23 +263,43 @@ const unit: SeedUnit = {
       },
     });
 
-    // 3. Bind apply_audit_changes to the agent
-    await prisma.aiAgentCapability.upsert({
-      where: {
-        agentId_capabilityId: {
-          agentId: agent.id,
-          capabilityId: auditCap.id,
-        },
-      },
-      update: {},
+    // 3. Upsert the add_provider_models capability
+    const addDef = ADD_PROVIDER_MODELS_DEFINITION;
+    const addCap = await prisma.aiCapability.upsert({
+      where: { slug: addDef.slug },
+      update: { isSystem: true },
       create: {
-        agentId: agent.id,
-        capabilityId: auditCap.id,
-        isEnabled: true,
+        name: addDef.name,
+        slug: addDef.slug,
+        description: addDef.description,
+        category: addDef.category,
+        functionDefinition: addDef.functionDefinition as unknown as object,
+        executionType: addDef.executionType,
+        executionHandler: addDef.executionHandler,
+        isActive: true,
+        isSystem: true,
       },
     });
 
-    // 4. Bind existing built-in capabilities (search_knowledge_base, estimate_workflow_cost)
+    // 4. Bind both audit capabilities to the agent
+    for (const cap of [auditCap, addCap]) {
+      await prisma.aiAgentCapability.upsert({
+        where: {
+          agentId_capabilityId: {
+            agentId: agent.id,
+            capabilityId: cap.id,
+          },
+        },
+        update: {},
+        create: {
+          agentId: agent.id,
+          capabilityId: cap.id,
+          isEnabled: true,
+        },
+      });
+    }
+
+    // 5. Bind existing built-in capabilities (search_knowledge_base, estimate_workflow_cost)
     const builtInSlugs = ['search_knowledge_base', 'estimate_workflow_cost'];
     for (const slug of builtInSlugs) {
       const cap = await prisma.aiCapability.findUnique({ where: { slug } });
@@ -220,7 +323,7 @@ const unit: SeedUnit = {
       });
     }
 
-    logger.info('✅ Seeded provider-model-auditor agent with 3 capabilities');
+    logger.info('✅ Seeded provider-model-auditor agent with 4 capabilities');
   },
 };
 
