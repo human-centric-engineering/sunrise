@@ -152,7 +152,7 @@ The Provider Model Audit is an AI-powered workflow that evaluates model entries 
 
 1. **Genuinely useful** — catches stale ratings, deprecated models, and inaccurate classifications by having an LLM evaluate each entry against its knowledge of current model capabilities.
 
-2. **Framework reference implementation** — exercises 11 of 15 orchestration step types end-to-end, proving the engine, approval queue, capability dispatch, budget enforcement, and SSE streaming work together.
+2. **Framework reference implementation** — exercises 10 of 15 orchestration step types end-to-end, proving the engine, approval queue, capability dispatch, budget enforcement, and SSE streaming work together.
 
 ### Step types exercised
 

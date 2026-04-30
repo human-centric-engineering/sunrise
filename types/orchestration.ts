@@ -89,28 +89,8 @@ export const CostOperation = {
   TOOL_CALL: 'tool_call',
   EMBEDDING: 'embedding',
   EVALUATION: 'evaluation',
-  AUDIT: 'audit',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
-
-/** A single field change proposed by the model audit workflow */
-export interface ModelAuditChange {
-  field: string;
-  currentValue: unknown;
-  proposedValue: unknown;
-  reason: string;
-  confidence: 'high' | 'medium' | 'low';
-}
-
-/** Result of auditing a single provider model entry */
-export interface ModelAuditResult {
-  modelId: string;
-  modelName: string;
-  providerSlug: string;
-  proposedChanges: ModelAuditChange[];
-  overallConfidence: 'high' | 'medium' | 'low';
-  reasoning: string;
-}
 
 /** Knowledge document processing states */
 export const DocumentStatus = {

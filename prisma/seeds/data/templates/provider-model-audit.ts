@@ -11,7 +11,7 @@
  *    entries for accuracy and freshness. Proposes changes for admin
  *    review via human-in-the-loop approval.
  *
- * 2. **Framework reference implementation** — exercises 11 of the 15
+ * 2. **Framework reference implementation** — exercises 10 of the 15
  *    step types end-to-end, proving that the orchestration engine,
  *    approval queue, capability dispatch, budget enforcement, and
  *    SSE streaming all work together. FieldHelp annotations in the
@@ -105,6 +105,10 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // ─── Step 3: route (Pattern 2 — Routing) ──────────────────────
       // Tests: LLM-driven classification branching, conditional edges,
       // template interpolation ({{load_models.output}}).
+      // Note: All three routes converge on the same parallel step by
+      // design. The classification output flows downstream via
+      // {{classify_models.output}}, letting each analysis prompt tailor
+      // its evaluation criteria to the model type.
       {
         id: 'classify_models',
         name: 'Route by model capability type',

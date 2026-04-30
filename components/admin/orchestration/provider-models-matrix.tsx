@@ -278,7 +278,7 @@ export function ProviderModelsMatrix({
             Triggers the Provider Model Audit workflow — a real orchestration workflow execution via{' '}
             <code>POST /workflows/:id/execute</code>. The audit evaluates your model entries for
             accuracy, proposes changes, and pauses for your approval before applying them. This also
-            serves as a framework reference implementation, exercising 11 of 15 step types
+            serves as a framework reference implementation, exercising 10 of 15 step types
             end-to-end.
           </FieldHelp>
           <Button asChild>

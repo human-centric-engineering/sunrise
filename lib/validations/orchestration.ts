@@ -964,7 +964,7 @@ export const documentUploadSchema = z.object({
 // ============================================================================
 
 /** Cost operation enum */
-const costOperationSchema = z.enum(['chat', 'tool_call', 'embedding', 'evaluation', 'audit']);
+const costOperationSchema = z.enum(['chat', 'tool_call', 'embedding', 'evaluation']);
 
 /**
  * Cost query schema (GET /api/v1/admin/orchestration/costs)

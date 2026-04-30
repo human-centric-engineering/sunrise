@@ -145,6 +145,33 @@ Response:
 
 Powered by `recommendModels()` in `lib/orchestration/llm/provider-selector.ts`.
 
+## Model Audit Workflow
+
+The matrix toolbar includes a **Review Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness.
+
+### What it does
+
+1. Admin selects models to audit via a checkbox dialog (filter by provider, select all/deselect all)
+2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`
+3. The browser redirects to the execution detail page where SSE streaming shows real-time progress
+4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
+5. A `human_approval` step pauses execution and presents proposed changes for admin review
+6. On approval, the `apply_audit_changes` capability writes accepted changes to the database and invalidates the model cache
+
+### Components
+
+| Component         | File                                                             |
+| ----------------- | ---------------------------------------------------------------- |
+| Trigger dialog    | `components/admin/orchestration/audit-models-dialog.tsx`         |
+| Button in matrix  | `components/admin/orchestration/provider-models-matrix.tsx`      |
+| Workflow template | `prisma/seeds/data/templates/provider-model-audit.ts`            |
+| Capability        | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts` |
+| Agent seed        | `prisma/seeds/010-model-auditor.ts`                              |
+
+### Framework reference implementation
+
+This feature also serves as a reference implementation for the orchestration framework, exercising 10 of the 15 step types end-to-end: `llm_call`, `rag_retrieve`, `route`, `parallel`, `guard`, `reflect`, `evaluate`, `human_approval`, `tool_call`, and `send_notification`. FieldHelp annotations in the dialog explain which framework capability each element tests. See [Provider Selection Matrix — Model Audit Workflow](../orchestration/provider-selection-matrix.md#model-audit-workflow) for the full step-type breakdown.
+
 ## Related
 
 - [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — data model, 6-tier classification, `recommendModels()` library API
