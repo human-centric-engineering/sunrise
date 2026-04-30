@@ -159,6 +159,14 @@ export interface ConditionalEdge {
   targetStepId: string;
   /** Optional condition expression; if omitted, edge is unconditional */
   condition?: string;
+  /**
+   * Maximum number of times this edge may loop back to an already-visited
+   * step. Only meaningful on back-edges (edges that point to an ancestor
+   * in the DAG). Requires a `condition` so the loop only triggers on
+   * specific outcomes. The DAG validator permits cycles on edges that
+   * carry this property; the engine tracks iteration count at runtime.
+   */
+  maxRetries?: number;
 }
 
 /** A single step in a workflow DAG */
@@ -217,6 +225,14 @@ export type ExecutionEvent =
       durationMs: number;
     }
   | { type: 'step_failed'; stepId: string; error: string; willRetry: boolean }
+  | {
+      type: 'step_retry';
+      fromStepId: string;
+      targetStepId: string;
+      attempt: number;
+      maxRetries: number;
+      reason: string;
+    }
   | { type: 'approval_required'; stepId: string; payload: unknown }
   | { type: 'budget_warning'; usedUsd: number; limitUsd: number }
   | {

@@ -42,6 +42,16 @@ export function approvalRequired(stepId: string, payload: unknown): ExecutionEve
   return { type: 'approval_required', stepId, payload };
 }
 
+export function stepRetry(
+  fromStepId: string,
+  targetStepId: string,
+  attempt: number,
+  maxRetries: number,
+  reason: string
+): ExecutionEvent {
+  return { type: 'step_retry', fromStepId, targetStepId, attempt, maxRetries, reason };
+}
+
 export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent {
   return { type: 'budget_warning', usedUsd, limitUsd };
 }

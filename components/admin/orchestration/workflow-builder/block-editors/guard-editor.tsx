@@ -24,6 +24,8 @@ export interface GuardConfig extends Record<string, unknown> {
   failAction: 'block' | 'flag';
   modelOverride?: string;
   temperature?: number;
+  /** When > 0, the fail edge becomes a bounded retry back-edge. */
+  maxRetries?: number;
 }
 
 export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
@@ -89,6 +91,37 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
           </SelectContent>
         </Select>
       </div>
+
+      {(config.failAction ?? 'block') === 'block' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="guard-max-retries" className="flex items-center text-xs">
+            Retry on failure{' '}
+            <FieldHelp title="Bounded retry">
+              When the guard fails, send execution back to an earlier step for another attempt. The
+              fail edge must be wired to the retry target on the canvas. Set to <code>0</code> to
+              disable (guard blocks on failure). Max <code>10</code>.
+            </FieldHelp>
+          </Label>
+          <Input
+            id="guard-max-retries"
+            type="number"
+            min={0}
+            max={10}
+            step={1}
+            value={config.maxRetries ?? 0}
+            onChange={(e) =>
+              onChange({ maxRetries: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })
+            }
+          />
+          {(config.maxRetries ?? 0) > 0 && (
+            <p className="text-muted-foreground text-[11px]">
+              Wire the guard&apos;s <strong>Fail</strong> output to the step you want to retry. The
+              edge will allow up to {config.maxRetries} retry attempt
+              {(config.maxRetries ?? 0) > 1 ? 's' : ''}.
+            </p>
+          )}
+        </div>
+      )}
 
       {(config.mode ?? 'llm') === 'llm' && (
         <>

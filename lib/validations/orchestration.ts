@@ -703,6 +703,7 @@ export const importAgentsSchema = z.object({
 const conditionalEdgeSchema = z.object({
   targetStepId: z.string().min(1, 'Target step ID is required'),
   condition: z.string().max(1000).optional(),
+  maxRetries: z.number().int().min(1).max(10).optional(),
 });
 
 /** Single workflow step */

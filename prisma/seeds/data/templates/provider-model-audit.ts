@@ -193,18 +193,22 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
 
       // ─── Step 6: guard (Pattern 18 — Guardrails) ──────────────────
       // Tests: Safety/quality validation gate, LLM-mode rule checking,
-      // failAction configuration.
+      // failAction configuration, bounded retry on failure.
       {
         id: 'validate_proposals',
         name: 'Validate proposed values against schemas',
         type: 'guard',
         config: {
           rules:
-            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason',
+            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if __retryContext}}Previous validation attempt failed: {{__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}',
           mode: 'llm',
           failAction: 'block',
+          maxRetries: 2,
         },
-        nextSteps: [{ targetStepId: 'refine_findings', condition: 'pass' }],
+        nextSteps: [
+          { targetStepId: 'refine_findings', condition: 'pass' },
+          { targetStepId: 'audit_models', condition: 'fail', maxRetries: 2 },
+        ],
       },
 
       // ─── Step 7: reflect (Pattern 4 — Reflection) ─────────────────
