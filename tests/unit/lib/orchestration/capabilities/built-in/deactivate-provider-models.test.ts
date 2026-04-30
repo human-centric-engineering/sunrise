@@ -198,6 +198,62 @@ describe('DeactivateProviderModelsCapability', () => {
     });
   });
 
+  describe('execute() — metadata merge', () => {
+    it('merges deactivatedByAudit into existing object metadata', async () => {
+      mockFindUnique.mockResolvedValue({
+        id: 'model-1',
+        name: 'GPT-4',
+        isActive: true,
+        metadata: { lastAudit: '2026-01-01', customField: 42 },
+      });
+      const cap = new DeactivateProviderModelsCapability();
+      await cap.execute({ deactivateModels: [makeEntry()] }, context);
+
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            metadata: expect.objectContaining({
+              lastAudit: '2026-01-01',
+              customField: 42,
+              deactivatedByAudit: expect.objectContaining({ agentId: 'a1' }),
+            }),
+          }),
+        })
+      );
+    });
+
+    it('discards array-shaped metadata and starts fresh', async () => {
+      mockFindUnique.mockResolvedValue({
+        id: 'model-1',
+        name: 'GPT-4',
+        isActive: true,
+        metadata: ['invalid', 'array'],
+      });
+      const cap = new DeactivateProviderModelsCapability();
+      await cap.execute({ deactivateModels: [makeEntry()] }, context);
+
+      const writtenMetadata = mockUpdate.mock.calls[0][0].data.metadata;
+      expect(writtenMetadata).not.toHaveProperty('0');
+      expect(writtenMetadata).toHaveProperty('deactivatedByAudit');
+    });
+
+    it('discards non-object metadata (string) and starts fresh', async () => {
+      mockFindUnique.mockResolvedValue({
+        id: 'model-1',
+        name: 'GPT-4',
+        isActive: true,
+        metadata: 'some-string',
+      });
+      const cap = new DeactivateProviderModelsCapability();
+      await cap.execute({ deactivateModels: [makeEntry()] }, context);
+
+      const writtenMetadata = mockUpdate.mock.calls[0][0].data.metadata;
+      expect(writtenMetadata).toEqual({
+        deactivatedByAudit: expect.objectContaining({ agentId: 'a1' }),
+      });
+    });
+  });
+
   describe('execute() — already inactive', () => {
     it('skips models that are already inactive', async () => {
       mockFindUnique.mockResolvedValue({ id: 'model-1', name: 'GPT-4', isActive: false });

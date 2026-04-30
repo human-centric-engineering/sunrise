@@ -67,9 +67,11 @@ const recs = await recommendModels(intent, { limit?: number; includeInactive?: b
 // Returns ModelRecommendation[] sorted by score desc, then slug asc (deterministic tiebreaker)
 ```
 
-Scoring for chat intents: primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
+Scoring for chat intents (`thinking`, `doing`, `fast_looping`, `high_reliability`): primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points), tertiary tiebreaker from `contextLength` (up to 6 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
 
-Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts).
+Scoring for private intent: primary factor is `tierRole` match (60 points), strong `local` preference (30pts for `local: true`), `costEfficiency` secondary (up to 5pts per level), `contextLength` tertiary (2pts per level).
+
+Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts). Models with `quality: null` are treated as `'medium'`.
 
 ## Model Dimensions
 
