@@ -9,7 +9,7 @@
 
 import Link from 'next/link';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ArrowUpDown, Plus } from 'lucide-react';
+import { ArrowUpDown, ClipboardCheck, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -28,6 +28,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { FieldHelp } from '@/components/ui/field-help';
+import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
 
 export interface ModelRow {
@@ -177,6 +179,7 @@ export function ProviderModelsMatrix({
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [capabilityFilter, setCapabilityFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('providerSlug');
+  const [auditOpen, setAuditOpen] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
 
   const providers = useMemo(
@@ -267,6 +270,17 @@ export function ProviderModelsMatrix({
           <p className="text-muted-foreground text-sm">
             {filtered.length} model{filtered.length !== 1 ? 's' : ''}
           </p>
+          <Button variant="outline" onClick={() => setAuditOpen(true)}>
+            <ClipboardCheck className="mr-2 h-4 w-4" />
+            Review Models
+          </Button>
+          <FieldHelp title="AI-Powered Model Audit">
+            Triggers the Provider Model Audit workflow — a real orchestration workflow execution via{' '}
+            <code>POST /workflows/:id/execute</code>. The audit evaluates your model entries for
+            accuracy, proposes changes, and pauses for your approval before applying them. This also
+            serves as a framework reference implementation, exercising 11 of 15 step types
+            end-to-end.
+          </FieldHelp>
           <Button asChild>
             <Link href="/admin/orchestration/provider-models/new">
               <Plus className="mr-2 h-4 w-4" />
@@ -413,6 +427,9 @@ export function ProviderModelsMatrix({
           </TableBody>
         </Table>
       </div>
+
+      {/* Audit dialog */}
+      <AuditModelsDialog open={auditOpen} onOpenChange={setAuditOpen} models={initialModels} />
 
       {/* Decision heuristic */}
       <div className="rounded-md border">
