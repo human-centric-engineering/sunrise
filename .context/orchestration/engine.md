@@ -92,20 +92,44 @@ The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented 
 
 **Parallel skip events.** When a parallel branch fails and the step's error strategy is `skip`, the engine emits a `step_failed` SSE event (with `willRetry: false`) so SSE clients learn about the failure immediately — without this, the client wouldn't see the failure until trace reconciliation. The `skipError` field on `StepResult` carries the sanitised error message for the event payload.
 
+## Bounded retry loops
+
+Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enforced). When a step (typically a `guard`) emits a conditional edge whose target has already been visited, the engine treats it as a **bounded retry back-edge** instead of skipping the already-visited target:
+
+1. **Retry tracking** — `retryCount: Map<string, number>` keyed by `"sourceId→targetId"`. Each back-edge traversal increments the counter.
+2. **Under limit** — the target and all its downstream steps are removed from `visited` and `pending` (cascade-clear via BFS over the adjacency list). The target is re-queued and re-executes with fresh context.
+3. **At limit** — the back-edge is skipped silently. The engine continues to the next edge or stops if none remain.
+4. **Failure context** — before re-queuing, the engine stores `ctx.variables.__retryContext`:
+   ```typescript
+   {
+     fromStep: 'guard_step_id',
+     attempt: 2,           // 1-indexed
+     maxRetries: 3,
+     failureReason: '...'  // guard's failure output
+   }
+   ```
+   The retry target can reference `{{__retryContext.failureReason}}` in its prompt template to learn what went wrong.
+5. **Observability** — a `step_retry` event is emitted for each retry, distinct from `step_started`, so the execution trace shows retry attempts clearly.
+
+**Safety:** each retry iteration counts against `MAX_STEPS_PER_RUN = 1000`. Combined with the per-edge `maxRetries` cap of 10, runaway loops are doubly bounded.
+
+**Cascade-clear:** when a retry target is re-queued, all steps reachable from that target are also cleared from `visited`. This ensures downstream steps re-execute with the retry target's fresh output rather than stale results from the previous attempt.
+
 ## `ExecutionEvent` (SSE payloads)
 
 Defined in `types/orchestration.ts`. Discriminated union — every client switches on `event.type`:
 
-| `type`               | Key fields                                                |
-| -------------------- | --------------------------------------------------------- |
-| `workflow_started`   | `executionId`, `workflowId`                               |
-| `step_started`       | `stepId`, `stepType`, `label`                             |
-| `step_completed`     | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs` |
-| `step_failed`        | `stepId`, `error`, `willRetry`                            |
-| `approval_required`  | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)  |
-| `budget_warning`     | `usedUsd`, `limitUsd`                                     |
-| `workflow_completed` | `output`, `totalTokensUsed`, `totalCostUsd`               |
-| `workflow_failed`    | `error`, `failedStepId?`                                  |
+| `type`               | Key fields                                                      |
+| -------------------- | --------------------------------------------------------------- |
+| `workflow_started`   | `executionId`, `workflowId`                                     |
+| `step_started`       | `stepId`, `stepType`, `label`                                   |
+| `step_completed`     | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs`       |
+| `step_retry`         | `fromStepId`, `targetStepId`, `attempt`, `maxRetries`, `reason` |
+| `step_failed`        | `stepId`, `error`, `willRetry`                                  |
+| `approval_required`  | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)        |
+| `budget_warning`     | `usedUsd`, `limitUsd`                                           |
+| `workflow_completed` | `output`, `totalTokensUsed`, `totalCostUsd`                     |
+| `workflow_failed`    | `error`, `failedStepId?`                                        |
 
 The parallel `ExecutionTraceEntry` (also in `types/orchestration.ts`) is what the engine persists to `AiWorkflowExecution.executionTrace` — one per completed step, with `stepId`, `stepType`, `label`, `status`, `output`, `tokensUsed`, `costUsd`, `startedAt`, `completedAt`, and `durationMs`.
 

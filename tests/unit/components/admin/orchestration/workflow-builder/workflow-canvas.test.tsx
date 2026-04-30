@@ -230,6 +230,31 @@ describe('WorkflowCanvas', () => {
     });
   });
 
+  describe('empty canvas overlay', () => {
+    it('shows the empty canvas message when nodes array is empty', () => {
+      render(<WorkflowCanvas {...DEFAULT_PROPS} nodes={[]} />);
+      expect(screen.getByText(/empty canvas/i)).toBeInTheDocument();
+    });
+
+    it('shows a hint to drag a block from the palette when canvas is empty', () => {
+      render(<WorkflowCanvas {...DEFAULT_PROPS} nodes={[]} />);
+      expect(screen.getByText(/drag a block from the palette/i)).toBeInTheDocument();
+    });
+
+    it('hides the empty canvas message when at least one node is present', () => {
+      const nodes = [
+        {
+          id: 'node-1',
+          type: 'pattern' as const,
+          position: { x: 0, y: 0 },
+          data: { label: 'Step A', type: 'llm_call', config: {} },
+        },
+      ];
+      render(<WorkflowCanvas {...DEFAULT_PROPS} nodes={nodes} />);
+      expect(screen.queryByText(/empty canvas/i)).not.toBeInTheDocument();
+    });
+  });
+
   describe('ReactFlow callback wiring', () => {
     it('onNodeClick calls onNodeClick prop with node id', () => {
       const onNodeClick = vi.fn();

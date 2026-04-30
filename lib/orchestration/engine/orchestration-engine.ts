@@ -177,9 +177,13 @@ export class OrchestrationEngine {
 
     // Build in-degree map for convergence detection. A step is "ready"
     // only when ALL its predecessors have been visited.
+    // Bounded retry back-edges (maxRetries > 0 + condition) are excluded —
+    // they don't represent data dependencies and would cause deadlocks
+    // after cascade-clear removes the back-edge source from visited.
     const inDegree = new Map<string, Set<string>>();
     for (const step of workflow.definition.steps) {
       for (const edge of step.nextSteps) {
+        if (edge.maxRetries && edge.maxRetries > 0 && edge.condition) continue;
         if (!inDegree.has(edge.targetStepId)) {
           inDegree.set(edge.targetStepId, new Set());
         }
