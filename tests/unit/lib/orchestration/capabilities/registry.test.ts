@@ -42,13 +42,14 @@ describe('registerBuiltInCapabilities', () => {
     expect(capabilityDispatcher.has('read_user_memory')).toBe(true);
     expect(capabilityDispatcher.has('write_user_memory')).toBe(true);
     expect(capabilityDispatcher.has('escalate_to_human')).toBe(true);
+    expect(capabilityDispatcher.has('apply_audit_changes')).toBe(true);
   });
 
   it('is idempotent (second call is a no-op)', () => {
     const spy = vi.spyOn(capabilityDispatcher, 'register');
     registerBuiltInCapabilities();
     registerBuiltInCapabilities();
-    expect(spy).toHaveBeenCalledTimes(6); // only from the first call
+    expect(spy).toHaveBeenCalledTimes(7); // only from the first call
     spy.mockRestore();
   });
 });
