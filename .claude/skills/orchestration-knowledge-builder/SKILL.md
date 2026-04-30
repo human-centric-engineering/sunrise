@@ -3,9 +3,11 @@ name: orchestration-knowledge-builder
 version: 1.0.0
 description: |
   Expert knowledge base builder for Sunrise orchestration. Sets up document
-  ingestion, chunking, embeddings, and vector search for RAG-enabled agents.
-  Handles the full lifecycle: upload, chunk, embed, scope to agents.
-  Use when setting up knowledge bases or configuring RAG.
+  ingestion, chunking, embeddings, and vector search so agents can answer
+  questions grounded in real data instead of hallucinating. Handles the full
+  lifecycle: upload documents (MD, PDF, EPUB, DOCX), chunk, generate embeddings,
+  and scope knowledge to specific agents. Use when agents need to search
+  company docs, product information, FAQs, or any document corpus.
 
 triggers:
   - 'set up knowledge base'
@@ -15,6 +17,12 @@ triggers:
   - 'knowledge base'
   - 'document ingestion'
   - 'rag setup'
+  - 'agent needs to search documents'
+  - 'ground agent in real data'
+  - 'agent should know about our docs'
+  - 'feed documents to agent'
+  - 'agent keeps hallucinating facts'
+  - 'connect agent to our documentation'
 
 contexts:
   - 'lib/orchestration/knowledge/document-manager.ts'
@@ -252,6 +260,44 @@ import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 await seedChunks('prisma/seeds/data/chunks/chunks.json');
 ```
 
+## Testing
+
+Write tests under `tests/unit/lib/orchestration/knowledge/`. Follow existing patterns in that directory.
+
+### What to test
+
+1. **Chunking** — verify `chunkMarkdownDocument()` splits at section boundaries and preserves metadata
+2. **Search** — verify `searchKnowledge()` returns results filtered by category and chunk type
+3. **Document lifecycle** — verify status transitions: pending → processing → ready (and failed paths)
+4. **URL fetch** — verify SSRF protection rejects private IPs and internal URLs
+
+### Test template
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { chunkMarkdownDocument } from '@/lib/orchestration/knowledge/chunker';
+
+describe('Document Chunking', () => {
+  it('preserves section boundaries', () => {
+    const content = '# Section 1\nContent 1\n# Section 2\nContent 2';
+    const chunks = chunkMarkdownDocument(content, 'test.md');
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('extracts metadata comments', () => {
+    const content = '<!-- metadata: category=faq, keywords=billing,refund -->\n# FAQ\nContent';
+    const chunks = chunkMarkdownDocument(content, 'faq.md');
+    expect(chunks[0].metadata?.category).toBe('faq');
+  });
+});
+```
+
+### Running tests
+
+```bash
+npm run test -- tests/unit/lib/orchestration/knowledge/
+```
+
 ## Verification Checklist
 
 - [ ] Embedding provider created and API key configured
@@ -262,3 +308,6 @@ await seedChunks('prisma/seeds/data/chunks/chunks.json');
 - [ ] `search_knowledge_base` capability bound to agent
 - [ ] Test search returns relevant results
 - [ ] PDF documents went through preview → confirm flow
+- [ ] Tests written and passing under `tests/unit/lib/orchestration/knowledge/`
+- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] Run `/pre-pr` before merging the feature branch

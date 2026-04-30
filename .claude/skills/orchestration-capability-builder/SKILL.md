@@ -3,10 +3,12 @@ name: orchestration-capability-builder
 version: 1.0.0
 description: |
   Expert capability builder for Sunrise orchestration. Creates custom agent
-  capabilities with Zod validation, OpenAI-compatible function definitions,
-  execution handlers, registry wiring, and database setup. Handles the full
-  4-step pipeline: TypeScript class, registry, DB row, agent binding.
-  Use when creating new capabilities or tools for agents.
+  capabilities (tools) that let agents call APIs, look up data, process refunds,
+  send notifications, or perform any external action. Handles Zod validation,
+  OpenAI-compatible function definitions, execution handlers, registry wiring,
+  and database setup via the 4-step pipeline: TypeScript class, registry, DB row,
+  agent binding. Use when an agent needs a new tool, needs to call an external
+  service, or needs to perform actions beyond conversation.
 
 triggers:
   - 'create capability'
@@ -14,6 +16,13 @@ triggers:
   - 'add tool for agent'
   - 'custom capability'
   - 'new capability'
+  - 'my agent needs to look up'
+  - 'agent should be able to call'
+  - 'give my agent access to'
+  - 'agent tool that calls'
+  - 'connect agent to API'
+  - 'agent needs to fetch data'
+  - 'add a tool to my agent'
 
 contexts:
   - 'lib/orchestration/capabilities/base-capability.ts'
@@ -237,6 +246,57 @@ These 6 capabilities ship as `isSystem: true` — bind them to agents, never rec
 | `write_user_memory`      | Session memory updates           |
 | `escalate_to_human`      | Human-in-the-loop escalation     |
 
+## Testing
+
+Write tests under `tests/unit/lib/orchestration/capabilities/`. Follow existing patterns in that directory.
+
+### What to test
+
+1. **Validation** — verify the Zod schema rejects bad input and accepts good input
+2. **Execute** — verify success and error paths with mocked dependencies
+3. **Slug consistency** — assert `capability.slug === capability.functionDefinition.name`
+
+### Test template
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { MyCapability } from '@/lib/orchestration/capabilities/built-in/my-capability';
+
+describe('MyCapability', () => {
+  const capability = new MyCapability();
+  const context = { userId: 'test-user', agentId: 'test-agent' };
+
+  it('slug matches functionDefinition.name', () => {
+    expect(capability.slug).toBe(capability.functionDefinition.name);
+  });
+
+  it('validates valid input', () => {
+    expect(() => capability.validate({ field: 'value' })).not.toThrow();
+  });
+
+  it('rejects invalid input', () => {
+    expect(() => capability.validate({})).toThrow();
+  });
+
+  it('executes successfully', async () => {
+    const result = await capability.execute({ field: 'value' }, context);
+    expect(result.success).toBe(true);
+  });
+});
+```
+
+### What to mock
+
+- Database calls (Prisma) — mock the specific query, not the entire client
+- External API calls — mock `fetch` or the HTTP client
+- Never mock `BaseCapability` methods (`validate`, `success`, `error`) — test through them
+
+### Running tests
+
+```bash
+npm run test -- tests/unit/lib/orchestration/capabilities/my-capability.test.ts
+```
+
 ## Verification Checklist
 
 - [ ] `slug` matches across class, `functionDefinition.name`, and DB row
@@ -246,4 +306,6 @@ These 6 capabilities ship as `isSystem: true` — bind them to agents, never rec
 - [ ] Agent binding created with `isEnabled: true`
 - [ ] No `next/*` imports in the capability file
 - [ ] `this.success()` / `this.error()` used (never hand-built result objects)
-- [ ] Tests written under `tests/unit/lib/orchestration/capabilities/`
+- [ ] Tests written and passing under `tests/unit/lib/orchestration/capabilities/`
+- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] Run `/pre-pr` before merging the feature branch

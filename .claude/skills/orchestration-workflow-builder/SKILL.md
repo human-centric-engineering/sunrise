@@ -2,10 +2,12 @@
 name: orchestration-workflow-builder
 version: 1.0.0
 description: |
-  Expert workflow builder for Sunrise orchestration. Composes workflow DAGs
-  using 15 step types, template interpolation, error strategies, and budget
-  enforcement. Handles validation, built-in templates, and the visual builder.
-  Use when creating new workflows or modifying existing ones.
+  Expert workflow builder for Sunrise orchestration. Composes multi-step agent
+  pipelines as workflow DAGs — routing requests to different agents, chaining
+  LLM calls, adding human approval gates, running parallel branches, and
+  integrating RAG retrieval. Uses 15 step types, template interpolation, error
+  strategies, and budget enforcement. Use when building multi-step agent
+  pipelines, adding approval flows, or connecting multiple agents in a sequence.
 
 triggers:
   - 'create workflow'
@@ -14,6 +16,13 @@ triggers:
   - 'new workflow'
   - 'workflow steps'
   - 'workflow dag'
+  - 'multi-step agent pipeline'
+  - 'agent needs approval before'
+  - 'route requests to different agents'
+  - 'chain agent steps together'
+  - 'build me a support pipeline'
+  - 'parallel agent processing'
+  - 'add human approval to workflow'
 
 contexts:
   - 'lib/orchestration/workflows/validator.ts'
@@ -239,6 +248,60 @@ Returns `AsyncIterable<ExecutionEvent>`:
 4. **Configure error handling** — set per-step strategies for critical vs optional steps
 5. **Validate and test** — run `validateWorkflow()`, then dry-run with test input
 
+## Testing
+
+Write tests under `tests/unit/lib/orchestration/workflows/`. Follow existing patterns in that directory.
+
+### What to test
+
+1. **Workflow validation** — verify `validateWorkflow()` accepts valid DAGs and rejects invalid ones (missing entry, cycles, orphan steps, missing required config)
+2. **Semantic validation** — verify `semanticValidateWorkflow()` catches invalid model/capability/agent references
+3. **Step executors** — test individual step executor logic under `tests/unit/lib/orchestration/engine/executors/`
+4. **Template interpolation** — verify `{{input}}`, `{{previous.output}}`, `{{stepId.output}}` resolve correctly
+
+### Test template
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
+
+describe('My Workflow Definition', () => {
+  const validWorkflow = {
+    entryStepId: 'step-1',
+    errorStrategy: 'fail' as const,
+    steps: [
+      {
+        id: 'step-1',
+        name: 'Classify',
+        type: 'route' as const,
+        config: { classificationPrompt: '...', routes: [...] },
+        nextSteps: [{ targetStepId: 'step-2' }],
+      },
+      // ... more steps
+    ],
+  };
+
+  it('validates a correct workflow', () => {
+    const result = validateWorkflow(validWorkflow);
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects a workflow with cycles', () => {
+    const cyclic = { ...validWorkflow, steps: [/* steps that form a cycle */] };
+    const result = validateWorkflow(cyclic);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: 'CYCLE_DETECTED' }));
+  });
+});
+```
+
+### Running tests
+
+```bash
+npm run test -- tests/unit/lib/orchestration/workflows/
+npm run test -- tests/unit/lib/orchestration/engine/executors/
+```
+
 ## Verification Checklist
 
 - [ ] `entryStepId` references an existing step
@@ -251,3 +314,6 @@ Returns `AsyncIterable<ExecutionEvent>`:
 - [ ] `parallel` branches are arrays of step IDs
 - [ ] Budget limit set for production workflows
 - [ ] Error strategies chosen per-step for critical paths
+- [ ] Tests written and passing under `tests/unit/lib/orchestration/workflows/`
+- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] Run `/pre-pr` before merging the feature branch

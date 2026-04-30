@@ -3,10 +3,13 @@ name: orchestration-solution-builder
 version: 1.0.0
 description: |
   End-to-end orchestration solution builder for Sunrise. Takes a business
-  problem (or architecture from agent-architect) and produces everything
-  needed: providers, agents, capabilities, knowledge base, and workflows.
-  The meta-skill that orchestrates the full implementation pipeline.
-  Use when building complete agentic solutions from scratch.
+  problem — "build me a customer support chatbot", "I need an AI assistant
+  that can look up orders and process refunds", "create a content review
+  pipeline" — and produces everything needed: providers, agents, capabilities,
+  knowledge base, and workflows. Handles the full implementation pipeline
+  from problem description to running system. Use when building complete
+  agentic solutions, implementing an architecture from agent-architect, or
+  setting up a new agent system from scratch.
 
 triggers:
   - 'build orchestration solution'
@@ -16,6 +19,12 @@ triggers:
   - 'implement orchestration'
   - 'implement this design'
   - 'end to end agent'
+  - 'build me a chatbot'
+  - 'I need an AI assistant that'
+  - 'build a complete agent'
+  - 'set up the whole agent system'
+  - 'implement the agent architecture'
+  - 'build this from scratch'
 
 contexts:
   - '.context/admin/orchestration.md'
@@ -145,14 +154,16 @@ POST /api/v1/admin/orchestration/agents
 
 ### Step 3: Create custom capabilities
 
-For each external action, API call, or data lookup, create one capability. Follow the 4-step pipeline from the capability-builder skill:
+For each external action, API call, or data lookup, create one capability. The 4-step pipeline:
 
-1. **TypeScript class** — `lib/orchestration/capabilities/built-in/<slug>.ts`
-2. **Registry entry** — add to `registerBuiltInCapabilities()` in `registry.ts`
-3. **DB row** — `POST /capabilities` with matching slug
-4. **Agent binding** — `POST /agents/{id}/capabilities`
+1. **TypeScript class** — create `lib/orchestration/capabilities/built-in/<slug>.ts` extending `BaseCapability<TArgs, TData>`. Define a Zod schema for input validation and an OpenAI-compatible `functionDefinition`. The `slug` must match `functionDefinition.name` exactly.
+2. **Registry entry** — import and register in `registerBuiltInCapabilities()` in `lib/orchestration/capabilities/registry.ts`
+3. **DB row** — `POST /api/v1/admin/orchestration/capabilities` with `executionType: "internal"`, `executionHandler` set to the class name, and matching `slug`
+4. **Agent binding** — `POST /api/v1/admin/orchestration/agents/{agentId}/capabilities` with `capabilityId` and `isEnabled: true`
 
-For API/webhook capabilities, skip steps 1-2 (no code needed).
+For `api`/`webhook` execution types, skip steps 1-2 — no TypeScript class needed, the dispatcher makes HTTP calls directly. Set `executionHandler` to the target URL.
+
+Use `/orchestration-capability-builder` for detailed templates and gotchas when building complex capabilities.
 
 ### Step 4: Bind built-in capabilities
 
@@ -178,20 +189,23 @@ Common bindings:
 
 ### Step 5: Set up knowledge base (if using RAG)
 
-1. Upload documents with categories
-2. Generate embeddings: `POST /knowledge/embed`
-3. Set agent `knowledgeCategories` to scope access
-4. Bind `search_knowledge_base` to the agent (Step 4)
+1. **Create embedding provider** — Voyage AI recommended (`providerType: "voyage"`, `apiKeyEnvVar: "VOYAGE_API_KEY"`). Do NOT use Anthropic for embeddings.
+2. **Upload documents** — `POST /api/v1/admin/orchestration/knowledge/documents` (multipart/form-data with `file` and optional `category`). PDFs use a two-step flow: `previewDocument()` → admin review → `confirmPreview()`.
+3. **Generate embeddings** — `POST /api/v1/admin/orchestration/knowledge/embed` (embeddings are NOT auto-generated on upload). Check status: `GET /api/v1/admin/orchestration/knowledge/embedding-status`.
+4. **Scope to agents** — `PATCH /api/v1/admin/orchestration/agents/{id}` with `knowledgeCategories: ["category1", "category2"]`. Empty array = agent sees all categories.
+5. **Bind capability** — bind the built-in `search_knowledge_base` capability to the agent (Step 4 process).
 
-See the knowledge-builder skill for full details.
+Use `/orchestration-knowledge-builder` for detailed chunking configuration, search tuning, and gotchas.
 
 ### Step 6: Compose the workflow (if needed)
 
 Simple solutions (single agent chat) don't need a workflow. For multi-step processing:
 
-1. Start from the closest built-in template (9 available)
-2. Customise steps, prompts, and error strategies
-3. Validate with `validateWorkflow()` and `semanticValidateWorkflow()`
+1. **Select a template** — 9 built-in templates in `prisma/seeds/data/templates/` (customer-support, content-pipeline, research-agent, etc.). Start from the closest one.
+2. **Define the DAG** — `WorkflowDefinition` has `entryStepId`, `errorStrategy`, and `steps[]`. Each step has `id`, `name`, `type` (15 types available), `config`, and `nextSteps[]` (edges). Key step types: `llm_call`, `route`, `human_approval`, `tool_call`, `rag_retrieve`, `parallel`, `reflect`, `agent_call`.
+3. **Configure error handling** — per-step `errorStrategy`: `retry` (transient failures), `fallback` (alternative path), `skip` (non-critical), `fail` (critical). Set `budgetLimitUsd` for cost caps (80% warning, 100% stop).
+4. **Validate** — `validateWorkflow()` checks DAG structure (cycles, orphans, required config). `semanticValidateWorkflow()` checks DB references (model, capability, agent slugs exist).
+5. **Create** via API:
 
 ```
 POST /api/v1/admin/orchestration/workflows
@@ -205,7 +219,9 @@ POST /api/v1/admin/orchestration/workflows
 }
 ```
 
-See the workflow-builder skill for full details.
+Template variables in prompts: `{{input}}` (workflow input), `{{previous.output}}` (last step), `{{stepId.output}}` (specific step).
+
+Use `/orchestration-workflow-builder` for step config schemas, template examples, and gotchas.
 
 ### Step 7: Test
 
@@ -284,6 +300,33 @@ For each of these, consider whether a capability is needed:
 
 Each "yes" = one capability. Use built-in capabilities where they fit before creating custom ones.
 
+## Testing
+
+Every solution should have tests covering its custom components. Follow patterns in `tests/unit/lib/orchestration/`.
+
+### What to test per component
+
+| Component    | Test location                                    | What to test                                                  |
+| ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
+| Capabilities | `tests/unit/lib/orchestration/capabilities/`     | Zod validation, execute success/error, slug consistency       |
+| Workflows    | `tests/unit/lib/orchestration/workflows/`        | DAG validation, semantic validation, step config completeness |
+| Knowledge    | `tests/unit/lib/orchestration/knowledge/`        | Chunking output, search filtering, document lifecycle         |
+| Engine       | `tests/unit/lib/orchestration/engine/executors/` | Step executor logic, template interpolation, error strategies |
+
+### Running tests
+
+```bash
+# All orchestration tests
+npm run test -- tests/unit/lib/orchestration/
+
+# Specific subsystem
+npm run test -- tests/unit/lib/orchestration/capabilities/
+npm run test -- tests/unit/lib/orchestration/workflows/
+
+# Full validation
+npm run validate
+```
+
 ## Verification Checklist
 
 - [ ] Provider configured and API key set
@@ -296,3 +339,6 @@ Each "yes" = one capability. Use built-in capabilities where they fit before cre
 - [ ] Tested via agent chat and workflow execution
 - [ ] Rate limits set on all capabilities
 - [ ] Approval gates on sensitive operations
+- [ ] Tests written and passing for all custom capabilities and workflows
+- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] Run `/pre-pr` before merging the feature branch

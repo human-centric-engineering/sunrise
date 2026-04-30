@@ -1,6 +1,44 @@
 ---
 name: orchestration-agent-architect
-description: 'Use this skill whenever you need to design, evaluate, debug, or improve an AI agent system. Covers: selecting the right agentic design patterns for a problem, composing multiple patterns into production architectures, diagnosing agent failures (hallucination, loops, cost overruns, latency), evaluating trade-offs (cost vs quality, autonomy vs control, latency vs accuracy), estimating token costs, and applying context engineering principles. Trigger this skill when the user mentions agents, orchestration, agentic workflows, LLM pipelines, multi-agent systems, prompt chaining, RAG architecture, tool use, guardrails, human-in-the-loop, or any AI-first application design. Also trigger when debugging agent behaviour, optimising agent costs, or choosing between agentic frameworks. This skill is stack-agnostic — it provides architectural judgement, not implementation syntax.'
+version: 1.0.0
+description: |
+  Architect for Sunrise's agent orchestration system. Designs agentic solutions
+  by selecting from 21 design patterns, composing multi-pattern architectures,
+  and mapping designs to Sunrise's orchestration primitives (agents, capabilities,
+  workflows, knowledge bases). Use when a developer wants to design, plan, or
+  debug an AI agent system — whether they say "build me a chatbot", "I need an
+  agent that can look up orders", "design an AI pipeline", or "why is my agent
+  hallucinating". This skill handles the DESIGN phase; the orchestration-solution-builder
+  skill handles IMPLEMENTATION.
+
+triggers:
+  - 'design an agent'
+  - 'I need an agent'
+  - 'build me a chatbot'
+  - 'agentic solution'
+  - 'agent architecture'
+  - 'which patterns should I use'
+  - 'why is my agent'
+  - 'debug agent'
+  - 'agent keeps hallucinating'
+  - 'optimize agent costs'
+
+contexts:
+  - '.context/admin/orchestration.md'
+  - '.context/admin/orchestration-solution-builder.md'
+  - '.context/orchestration/engine.md'
+  - 'lib/orchestration/engine/step-registry.ts'
+  - 'types/orchestration.ts'
+
+mcp_integrations:
+  context7:
+    libraries:
+      - zod: '/colinhacks/zod'
+
+parameters:
+  pattern_count: 21
+  sunrise_step_types: 15
+  sunrise_templates: 9
 ---
 
 # Agent Architect
@@ -165,23 +203,40 @@ Warn against these common mistakes:
 
 ---
 
+## Mapping Patterns to Sunrise Primitives
+
+Every pattern maps to concrete Sunrise orchestration primitives:
+
+| Pattern                | Sunrise primitive                                                  |
+| ---------------------- | ------------------------------------------------------------------ |
+| Routing (2)            | `route` step type in workflow                                      |
+| Tool Use (5)           | Custom capabilities + `tool_call` step                             |
+| Planning (6)           | `plan` step type or `orchestrator` step                            |
+| Multi-Agent (7)        | Multiple `AiAgent` records + `agent_call` step                     |
+| Memory (8)             | `read_user_memory` / `write_user_memory` built-in caps             |
+| Human-in-the-Loop (13) | `human_approval` step type + approval queue                        |
+| RAG (14)               | Knowledge base + `search_knowledge_base` cap + `rag_retrieve` step |
+| Guardrails (18)        | `guard` step type (LLM or regex mode)                              |
+| Evaluation (19)        | `evaluate` step type with rubric scoring                           |
+| Parallelisation (3)    | `parallel` step type with branches                                 |
+| Reflection (4)         | `reflect` step type with critique loop                             |
+| Prompt Chaining (1)    | Sequential `llm_call` steps or `chain` step                        |
+
 ## Building Solutions
 
-When a developer describes a business problem and wants you to build an
-agentic solution, follow this flow:
+When a developer describes a business problem and wants you to build an agentic solution:
 
 1. **Understand the problem** — what inputs, outputs, actions, and decisions are involved?
-2. **Select patterns** — use the Pattern Selection Guide above to identify which patterns apply
+2. **Select patterns** — use the Pattern Selection Guide above
 3. **Check composition recipes** — does a recipe already cover this use case?
-4. **Identify the agents** — how many distinct roles are needed? Each role = one agent.
-5. **Identify the capabilities** — what tools/actions does each agent need? Each tool = one capability.
-6. **Compose the workflow** — wire the steps into a DAG using the step types available in the workflow builder
-7. **Implement** — read `references/sunrise-implementation.md` for file paths, class names, API calls, and code examples for creating agents, capabilities, workflows, and step types in the Sunrise orchestration layer
-8. **Test** — use the embedded chat (agent test tab) and workflow executor
+4. **Map to Sunrise** — use the table above to identify which agents, capabilities, workflows, and knowledge base setup are needed
+5. **Determine complexity** — simple (single agent, no workflow), moderate (1-2 agents + workflow), or complex (multi-agent + approval gates + KB)
+6. **Implement** — use `/orchestration-solution-builder` for end-to-end implementation, or the individual builder skills for specific subsystems:
+   - `/orchestration-capability-builder` — custom agent tools
+   - `/orchestration-workflow-builder` — workflow DAGs
+   - `/orchestration-knowledge-builder` — RAG knowledge bases
 
-When the developer says or implies "build it" — load `references/sunrise-implementation.md`
-for the implementation details. It contains complete code examples for
-creating capabilities, composing workflows, and adding new step types.
+When the developer says or implies "build it", invoke the `orchestration-solution-builder` skill which handles the full implementation pipeline.
 
 ---
 
@@ -189,10 +244,10 @@ creating capabilities, composing workflows, and adding new step types.
 
 Load these files when you need more depth:
 
-| When you need...                                                     | Read                                   |
-| -------------------------------------------------------------------- | -------------------------------------- |
-| Detail on Patterns 1–10                                              | `references/patterns-1-to-10.md`       |
-| Detail on Patterns 11–21                                             | `references/patterns-11-to-21.md`      |
-| Context engineering, token costs, pricing                            | `references/context-and-costs.md`      |
-| Emerging patterns, agent security, tracing                           | `references/emerging-concepts.md`      |
-| Implementation: creating agents, capabilities, workflows, step types | `references/sunrise-implementation.md` |
+| When you need...                                  | Read                                   |
+| ------------------------------------------------- | -------------------------------------- |
+| Detail on Patterns 1–10                           | `references/patterns-1-to-10.md`       |
+| Detail on Patterns 11–21                          | `references/patterns-11-to-21.md`      |
+| Context engineering, token costs, pricing         | `references/context-and-costs.md`      |
+| Emerging patterns, agent security, tracing        | `references/emerging-concepts.md`      |
+| Sunrise code examples for agents, caps, workflows | `references/sunrise-implementation.md` |
