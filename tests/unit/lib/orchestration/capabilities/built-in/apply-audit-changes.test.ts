@@ -428,7 +428,7 @@ describe('ApplyAuditChangesCapability', () => {
       });
     });
 
-    it('calls prisma.aiProviderModel.update with the correct field and sets isDefault=false', async () => {
+    it('calls prisma.aiProviderModel.update with the correct field, then sets isDefault=false in metadata write', async () => {
       // Arrange
       mockFindUnique.mockResolvedValue(makeModel({ costEfficiency: 'medium' }));
       const cap = new ApplyAuditChangesCapability();
@@ -444,12 +444,20 @@ describe('ApplyAuditChangesCapability', () => {
         context
       );
 
-      // Assert: first update call is the field change
+      // Assert: first update is the field change (no isDefault)
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'model-1' },
           data: expect.objectContaining({
             costEfficiency: 'high',
+          }),
+        })
+      );
+      // Assert: second update is metadata + isDefault batched together
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'model-1' },
+          data: expect.objectContaining({
             isDefault: false,
           }),
         })

@@ -77,10 +77,8 @@ export function invalidateModelCache(): void {
   modelCache = null;
 }
 
-/** Reset cache — for tests only. */
-export function __resetModelCacheForTests(): void {
-  modelCache = null;
-}
+/** @see invalidateModelCache — alias kept for test ergonomics. */
+export const __resetModelCacheForTests = invalidateModelCache;
 
 // ---------------------------------------------------------------------------
 // Core heuristic

@@ -20,12 +20,18 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
 import { recommendModels } from '@/lib/orchestration/llm/provider-selector';
 import { TASK_INTENTS, type TaskIntent } from '@/types/orchestration';
 
 const intentSchema = z.enum(TASK_INTENTS as unknown as [string, ...string[]]);
 
 export const GET = withAdminAuth(async (request, _session) => {
+  const clientIP = getClientIP(request);
+  const rateLimit = apiLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
   const rawIntent = searchParams.get('intent');

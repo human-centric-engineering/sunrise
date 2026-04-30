@@ -291,8 +291,6 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
           where: { id: modelId },
           data: {
             [change.field]: validatedValue,
-            // Opt out of future seed updates since admin approved a change
-            isDefault: false,
           },
         });
         results.push({
@@ -324,6 +322,8 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       await prisma.aiProviderModel.update({
         where: { id: modelId },
         data: {
+          // Opt out of future seed updates since admin approved changes
+          isDefault: false,
           metadata: {
             ...existingMetadata,
             lastAudit: {
