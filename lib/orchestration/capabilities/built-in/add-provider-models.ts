@@ -56,7 +56,7 @@ const newModelSchema = z.object({
 });
 
 const schema = z.object({
-  newModels: z.array(newModelSchema).min(1).max(20),
+  newModels: z.array(newModelSchema).max(20).default([]),
 });
 
 type Args = z.infer<typeof schema>;
@@ -161,6 +161,14 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // Empty array — nothing to add (e.g. approval payload had no new models)
+    if (args.newModels.length === 0) {
+      return this.success(
+        { created: 0, skipped: 0, invalid: 0, models: [] },
+        { skipFollowup: true }
+      );
+    }
+
     const results: CreatedModel[] = [];
     let created = 0;
     let skipped = 0;

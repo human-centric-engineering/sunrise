@@ -31,7 +31,7 @@ const deactivateEntrySchema = z.object({
 });
 
 const schema = z.object({
-  deactivateModels: z.array(deactivateEntrySchema).min(1).max(50),
+  deactivateModels: z.array(deactivateEntrySchema).max(50).default([]),
 });
 
 type Args = z.infer<typeof schema>;
@@ -89,6 +89,14 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // Empty array — nothing to deactivate (e.g. approval payload had no deactivations)
+    if (args.deactivateModels.length === 0) {
+      return this.success(
+        { deactivated: 0, skipped: 0, invalid: 0, models: [] },
+        { skipFollowup: true }
+      );
+    }
+
     const results: DeactivatedModel[] = [];
     let deactivated = 0;
     let skipped = 0;
@@ -97,7 +105,7 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
     for (const entry of args.deactivateModels) {
       const model = await prisma.aiProviderModel.findUnique({
         where: { id: entry.modelId },
-        select: { id: true, name: true, isActive: true },
+        select: { id: true, name: true, isActive: true, metadata: true },
       });
 
       if (!model) {
@@ -128,11 +136,16 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
       }
 
       try {
+        const existingMetadata =
+          model.metadata && typeof model.metadata === 'object' && !Array.isArray(model.metadata)
+            ? (model.metadata as Record<string, unknown>)
+            : {};
         await prisma.aiProviderModel.update({
           where: { id: entry.modelId },
           data: {
             isActive: false,
             metadata: {
+              ...existingMetadata,
               deactivatedByAudit: {
                 timestamp: new Date().toISOString(),
                 agentId: context.agentId,

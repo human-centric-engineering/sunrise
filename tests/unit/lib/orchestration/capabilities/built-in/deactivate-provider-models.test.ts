@@ -104,9 +104,10 @@ describe('DeactivateProviderModelsCapability', () => {
       expect(result.deactivateModels).toHaveLength(1);
     });
 
-    it('rejects empty deactivateModels array', () => {
+    it('accepts empty deactivateModels array (no-op when approval has no deactivations)', () => {
       const cap = new DeactivateProviderModelsCapability();
-      expect(() => cap.validate({ deactivateModels: [] })).toThrow(CapabilityValidationError);
+      const result = cap.validate({ deactivateModels: [] });
+      expect(result.deactivateModels).toEqual([]);
     });
 
     it('rejects when deactivateModels exceeds 50 items', () => {

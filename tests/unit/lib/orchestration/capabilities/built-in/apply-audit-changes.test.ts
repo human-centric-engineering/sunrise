@@ -274,6 +274,12 @@ describe('ApplyAuditChangesCapability', () => {
         })
       ).toThrow(CapabilityValidationError);
     });
+
+    it('accepts approval payload with no models key (no-op for shared payload)', () => {
+      const cap = new ApplyAuditChangesCapability();
+      const result = cap.validate({ newModels: [], deactivateModels: [] });
+      expect('models' in result && result.models).toEqual([]);
+    });
   });
 
   describe('execute() — multi-model', () => {

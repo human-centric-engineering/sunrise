@@ -155,9 +155,10 @@ describe('AddProviderModelsCapability', () => {
       expect(() => cap.validate({ newModels })).not.toThrow();
     });
 
-    it('rejects empty newModels array', () => {
+    it('accepts empty newModels array (no-op when approval has no new models)', () => {
       const cap = new AddProviderModelsCapability();
-      expect(() => cap.validate({ newModels: [] })).toThrow(CapabilityValidationError);
+      const result = cap.validate({ newModels: [] });
+      expect(result.newModels).toEqual([]);
     });
 
     it('rejects when newModels exceeds 20 items', () => {

@@ -69,7 +69,24 @@ const multiModelSchema = z.object({
     .max(50),
 });
 
-const schema = z.union([singleModelSchema, multiModelSchema]);
+/**
+ * The approval payload contains all three categories (models, newModels,
+ * deactivateModels). When this capability receives the full payload and
+ * neither `model_id`/`changes` nor `models` is present, there are no
+ * changes to apply — we normalise to an empty multi-model input.
+ */
+const schema = z.union([
+  singleModelSchema,
+  multiModelSchema,
+  z
+    .object({})
+    .passthrough()
+    .refine(
+      (v) => !('model_id' in v) && !('models' in v) && !('changes' in v),
+      'Expected model_id + changes, or models array'
+    )
+    .transform(() => ({ models: [] as z.infer<typeof multiModelSchema>['models'] })),
+]);
 
 type Args = z.infer<typeof schema>;
 
@@ -162,6 +179,14 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
     // Normalise single-model and multi-model input into a uniform list
     const entries = 'models' in args ? args.models : [args];
+
+    // Empty models array — nothing to apply (e.g. approval payload had no changes)
+    if (entries.length === 0) {
+      return this.success(
+        { modelId: 'none', modelName: 'none', applied: 0, skipped: 0, invalid: 0, changes: [] },
+        { skipFollowup: true }
+      );
+    }
 
     let totalApplied = 0;
     let totalSkipped = 0;
