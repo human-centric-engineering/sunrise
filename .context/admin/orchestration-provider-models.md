@@ -22,7 +22,7 @@ The **new** and **[id]** sub-routes are still standalone server shells — bread
 
 - **Provider** — Radix `<Select>` seeded with distinct `providerSlug` values from the result set, plus "All providers".
 - **Tier** — all 6 `TIER_ROLE_META` entries (Thinking, Worker, Infrastructure, Control Plane, Local/Sovereign, Embedding).
-- **Capability** — `All` · `Chat` · `Embedding` · `Both`.
+- **Capability** — `All types` · `Chat` · `Embedding`.
 
 ### Columns
 
@@ -37,7 +37,7 @@ The **new** and **[id]** sub-routes are still standalone server shells — bread
 
 ### Sort
 
-Header clicks toggle `sortBy` (one of: `providerSlug`, `name`, `tierRole`, `reasoningDepth`, `latency`, `costEfficiency`, `contextLength`, `toolUse`) and `sortOrder` (`asc` / `desc`). Sort is client-side over the current result set.
+Header clicks toggle `sortKey` (one of: `providerSlug`, `name`, `tierRole`, `reasoningDepth`, `latency`, `costEfficiency`, `contextLength`, `toolUse`) and `sortAsc` (boolean). Sort is client-side over the current result set.
 
 ### Decision heuristic table
 
@@ -52,7 +52,7 @@ Rendered inline beneath the matrix. Six rows mapping task intent → recommended
 | `private`          | Local / Sovereign |
 | `embedding`        | Embedding         |
 
-Powered by `GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>`, which returns `{ intent, recommendations, heuristic }` — `recommendations` is a scored list of live models in the matching tier.
+Hardcoded in the component — maps each intent to a tier, task characteristics, and rationale. The `recommend` endpoint exists as a separate API but is not used by the rendered table.
 
 ### "Add model" button
 
@@ -112,7 +112,7 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 - The submit handler assembles `capabilities[]` from the two checkboxes and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `capEmbedding` is off. In edit mode, unchecking `capEmbedding` explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
-- Every non-trivial field has a `<FieldHelp>` popover per the contextual-help rule.
+- Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
 
 ## Recommend endpoint
 

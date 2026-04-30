@@ -220,6 +220,11 @@ export function AuditModelsDialog({
 
         {/* Model list */}
         <div className="max-h-[300px] overflow-y-auto rounded-md border">
+          {filtered.length === 0 && (
+            <p className="text-muted-foreground p-4 text-center text-sm">
+              No models match the selected provider filter.
+            </p>
+          )}
           <div className="divide-y">
             {filtered.map((model) => (
               <div

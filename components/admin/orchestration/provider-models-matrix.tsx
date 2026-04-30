@@ -132,12 +132,22 @@ function capabilityBadge(capabilities: string[]) {
       </Badge>
     );
   }
+  if (hasChat) {
+    return (
+      <Badge
+        variant="outline"
+        className="bg-sky-100 text-xs text-sky-800 dark:bg-sky-900 dark:text-sky-200"
+      >
+        Chat
+      </Badge>
+    );
+  }
   return (
     <Badge
       variant="outline"
-      className="bg-sky-100 text-xs text-sky-800 dark:bg-sky-900 dark:text-sky-200"
+      className="bg-red-100 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
     >
-      Chat
+      None
     </Badge>
   );
 }
