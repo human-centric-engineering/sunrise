@@ -202,10 +202,53 @@ const ADD_PROVIDER_MODELS_DEFINITION = {
   },
 } as const;
 
+const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
+  slug: 'deactivate_provider_models',
+  name: 'Deactivate Provider Models',
+  description:
+    'Soft-delete provider model entries that have been deprecated or discontinued. Sets isActive=false after admin approval.',
+  category: 'internal',
+  executionType: 'internal',
+  executionHandler: 'DeactivateProviderModelsCapability',
+  functionDefinition: {
+    name: 'deactivate_provider_models',
+    description:
+      'Deactivate (soft-delete) provider model entries that have been deprecated or discontinued. Sets isActive=false. Already-inactive models are skipped.',
+    parameters: {
+      type: 'object',
+      properties: {
+        deactivateModels: {
+          type: 'array',
+          description: 'Array of models to deactivate.',
+          items: {
+            type: 'object',
+            properties: {
+              modelId: {
+                type: 'string',
+                description: 'The ID of the provider model to deactivate.',
+              },
+              reason: {
+                type: 'string',
+                description:
+                  'Why this model should be deactivated (e.g. "Model deprecated by provider on 2026-03-01").',
+              },
+            },
+            required: ['modelId', 'reason'],
+          },
+          minItems: 1,
+          maxItems: 50,
+        },
+      },
+      required: ['deactivateModels'],
+    },
+  },
+} as const;
+
 /**
- * Seed the "provider-model-auditor" agent with the apply_audit_changes
- * and add_provider_models capabilities. Also binds the existing
- * search_knowledge_base and estimate_workflow_cost capabilities.
+ * Seed the "provider-model-auditor" agent with the apply_audit_changes,
+ * add_provider_models, and deactivate_provider_models capabilities.
+ * Also binds the existing search_knowledge_base and
+ * estimate_workflow_cost capabilities.
  *
  * Idempotent — safe to run on every deploy. The `update` branch only
  * sets `isSystem: true` so re-seeding never overwrites admin edits.
@@ -281,8 +324,26 @@ const unit: SeedUnit = {
       },
     });
 
-    // 4. Bind both audit capabilities to the agent
-    for (const cap of [auditCap, addCap]) {
+    // 4. Upsert the deactivate_provider_models capability
+    const deactDef = DEACTIVATE_PROVIDER_MODELS_DEFINITION;
+    const deactCap = await prisma.aiCapability.upsert({
+      where: { slug: deactDef.slug },
+      update: { isSystem: true },
+      create: {
+        name: deactDef.name,
+        slug: deactDef.slug,
+        description: deactDef.description,
+        category: deactDef.category,
+        functionDefinition: deactDef.functionDefinition as unknown as object,
+        executionType: deactDef.executionType,
+        executionHandler: deactDef.executionHandler,
+        isActive: true,
+        isSystem: true,
+      },
+    });
+
+    // 5. Bind all audit capabilities to the agent
+    for (const cap of [auditCap, addCap, deactCap]) {
       await prisma.aiAgentCapability.upsert({
         where: {
           agentId_capabilityId: {
@@ -299,7 +360,7 @@ const unit: SeedUnit = {
       });
     }
 
-    // 5. Bind existing built-in capabilities (search_knowledge_base, estimate_workflow_cost)
+    // 6. Bind existing built-in capabilities (search_knowledge_base, estimate_workflow_cost)
     const builtInSlugs = ['search_knowledge_base', 'estimate_workflow_cost'];
     for (const slug of builtInSlugs) {
       const cap = await prisma.aiCapability.findUnique({ where: { slug } });
@@ -323,7 +384,7 @@ const unit: SeedUnit = {
       });
     }
 
-    logger.info('✅ Seeded provider-model-auditor agent with 4 capabilities');
+    logger.info('✅ Seeded provider-model-auditor agent with 5 capabilities');
   },
 };
 

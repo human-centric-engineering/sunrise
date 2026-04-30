@@ -31,6 +31,7 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
   'estimate_workflow_cost',
   'apply_audit_changes',
   'add_provider_models',
+  'deactivate_provider_models',
 ]);
 
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {

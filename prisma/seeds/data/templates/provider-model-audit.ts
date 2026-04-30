@@ -12,7 +12,7 @@
  *    released by providers. Proposes changes and additions for admin
  *    review via human-in-the-loop approval.
  *
- * 2. **Framework reference implementation** — exercises 10 of the 15
+ * 2. **Framework reference implementation** — exercises 10 of 15
  *    step types end-to-end, proving that the orchestration engine,
  *    approval queue, capability dispatch, budget enforcement, and
  *    SSE streaming all work together. FieldHelp annotations in the
@@ -24,7 +24,8 @@
  * discovery → validate proposed changes against enum schemas → refine
  * findings via reflection loop → score confidence against rubric →
  * pause for human approval → apply accepted changes via capability →
- * add approved new models → notify admin of results.
+ * add approved new models → deactivate deprecated models → notify
+ * admin of results.
  *
  * Step types NOT exercised (by design — not relevant to this use case):
  * chain (layout marker), plan (runtime DAG generation), agent_call
@@ -37,7 +38,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
   name: 'Provider Model Audit',
   shortDescription:
-    'AI-powered evaluation of provider model entries for accuracy and freshness, plus new model discovery. Exercises 10 step types as a framework reference implementation.',
+    'AI-powered evaluation of provider model entries for accuracy and freshness, plus new model discovery and deprecation detection. Exercises 10 step types as a framework reference implementation.',
   patterns: [
     { number: 1, name: 'Prompt Chaining' },
     { number: 2, name: 'Routing' },
@@ -50,7 +51,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
     { number: 19, name: 'Evaluation' },
   ],
   flowSummary:
-    'Load selected model entries → retrieve prior audit context from the knowledge base → route by capability type (chat/embedding/dual) so analysis prompts are tailored → fan out parallel LLM analysis per model + new model discovery → validate proposed enum values against the schema → refine findings through a draft-critique-revise loop → score confidence against a quality rubric → pause for admin approval with a diff-style review → apply accepted changes via the apply_audit_changes capability → add approved new models via the add_provider_models capability → send a notification summarising results.',
+    'Load selected model entries → retrieve prior audit context from the knowledge base → route by capability type (chat/embedding/dual) so analysis prompts are tailored → fan out parallel LLM analysis per model + new model discovery → validate proposed enum values against the schema → refine findings through a draft-critique-revise loop → score confidence against a quality rubric → pause for admin approval with a diff-style review → apply accepted changes via the apply_audit_changes capability → add approved new models via the add_provider_models capability → deactivate deprecated models via the deactivate_provider_models capability → send a notification summarising results.',
   useCases: [
     {
       title: 'Quarterly provider registry review',
@@ -157,7 +158,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each chat/completion model, evaluate:\n1. **Tier role** — Is the classification correct? (thinking, worker, infrastructure, control_plane, local_sovereign)\n2. **Reasoning depth** — Accurate? (very_high, high, medium, none)\n3. **Latency** — Correct categorisation? (very_fast, fast, medium)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Tool use** — Correct? (strong, moderate, none)\n7. **Best role** — Still the right summary?\n8. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
+            'You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each chat/completion model, evaluate:\n1. **Tier role** — Is the classification correct? (thinking, worker, infrastructure, control_plane, local_sovereign)\n2. **Reasoning depth** — Accurate? (very_high, high, medium, none)\n3. **Latency** — Correct categorisation? (very_fast, fast, medium)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Tool use** — Correct? (strong, moderate, none)\n7. **Best role** — Still the right summary?\n8. **Description** — Accurate and current?\n9. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?\n\nRespond with a JSON object containing two arrays:\n\n1. "auditResults" — models needing field changes:\n[\n  {\n    "modelId": "<id>",\n    "modelName": "<name>",\n    "providerSlug": "<provider>",\n    "proposedChanges": [\n      { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n    ],\n    "overallConfidence": "high" | "medium" | "low",\n    "reasoning": "<overall assessment>"\n  }\n]\n\n2. "deactivateModels" — models that should be removed from the active registry:\n[\n  { "modelId": "<id>", "reason": "Model deprecated by <provider> on <date> — replaced by <successor>" }\n]\n\nOnly include models that need changes or deactivation. If no deactivations are needed, use an empty array.\nRespond with ONLY the JSON object, no markdown fencing.',
           temperature: 0.2,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
@@ -168,7 +169,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each embedding model, evaluate:\n1. **Tier role** — Should be "embedding"\n2. **Dimensions** — Correct vector dimensions for this model?\n3. **Quality** — Accurate? (high, medium, budget)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Best role** — Still the right summary?\n7. **Description** — Accurate and current?\n\nRespond with a JSON array of audit results. Each result:\n{\n  "modelId": "<id>",\n  "modelName": "<name>",\n  "providerSlug": "<provider>",\n  "proposedChanges": [\n    { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n  ],\n  "overallConfidence": "high" | "medium" | "low",\n  "reasoning": "<overall assessment>"\n}\n\nOnly include models that need changes. Respond with ONLY the JSON array.',
+            'You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.\n\nModel data:\n{{load_models.output}}\n\nRouting context (capability type):\n{{classify_models.output}}\n\nPrior audit context (if available):\n{{retrieve_context.output}}\n\nFor each embedding model, evaluate:\n1. **Tier role** — Should be "embedding"\n2. **Dimensions** — Correct vector dimensions for this model?\n3. **Quality** — Accurate? (high, medium, budget)\n4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)\n5. **Context length** — Current? (very_high, high, medium, n_a)\n6. **Best role** — Still the right summary?\n7. **Description** — Accurate and current?\n8. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?\n\nRespond with a JSON object containing two arrays:\n\n1. "auditResults" — models needing field changes:\n[\n  {\n    "modelId": "<id>",\n    "modelName": "<name>",\n    "providerSlug": "<provider>",\n    "proposedChanges": [\n      { "field": "<field_name>", "currentValue": "<current>", "proposedValue": "<proposed>", "reason": "<why>", "confidence": "high" | "medium" | "low" }\n    ],\n    "overallConfidence": "high" | "medium" | "low",\n    "reasoning": "<overall assessment>"\n  }\n]\n\n2. "deactivateModels" — models that should be removed from the active registry:\n[\n  { "modelId": "<id>", "reason": "Model deprecated by <provider> on <date> — replaced by <successor>" }\n]\n\nOnly include models that need changes or deactivation. If no deactivations are needed, use an empty array.\nRespond with ONLY the JSON object, no markdown fencing.',
           temperature: 0.2,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
@@ -199,7 +200,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'guard',
         config: {
           rules:
-            'Validate that all proposed changes and new model entries use valid enum values:\n\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).',
+            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason',
           mode: 'llm',
           failAction: 'block',
         },
@@ -247,7 +248,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'human_approval',
         config: {
           prompt:
-            'Review the proposed provider model changes and new model additions below.\n\n## Proposed Changes to Existing Models\n\nThe audit has analysed your model entries and suggests the following updates. For each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\n{{refine_findings.output}}\n\n## Proposed New Models\n\nThe audit has identified the following new models from your providers that are not yet in the registry. For each new model you can:\n- **Accept** — the model will be added to the registry\n- **Reject** — the model will not be added\n- **Modify** — adjust the proposed values before accepting\n\n{{discover_new_models.output}}\n\nAudit quality score: {{score_audit.output}}',
+            'Review the proposed provider model changes, new model additions, and deactivation proposals below.\n\n## Proposed Changes to Existing Models\n\nThe audit has analysed your model entries and suggests the following updates. For each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\n{{refine_findings.output}}\n\n## Proposed New Models\n\nThe audit has identified the following new models from your providers that are not yet in the registry. For each new model you can:\n- **Accept** — the model will be added to the registry\n- **Reject** — the model will not be added\n- **Modify** — adjust the proposed values before accepting\n\n{{discover_new_models.output}}\n\n## Proposed Deactivations\n\nThe audit has identified models that appear to be deprecated or discontinued by their providers. Deactivation sets isActive=false (soft delete) — the model can be reactivated later if needed. For each deactivation you can:\n- **Accept** — the model will be deactivated\n- **Reject** — the model will remain active\n\nDeactivation proposals from chat model analysis:\n{{analyse_chat.output}}\n\nDeactivation proposals from embedding model analysis:\n{{analyse_embedding.output}}\n\nAudit quality score: {{score_audit.output}}',
           timeoutMinutes: 1440,
         },
         nextSteps: [{ targetStepId: 'apply_changes' }],
@@ -280,10 +281,25 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           capabilitySlug: 'add_provider_models',
           argsFrom: 'review_changes',
         },
+        nextSteps: [{ targetStepId: 'deactivate_models' }],
+      },
+
+      // ─── Step 12: tool_call (Deactivate Deprecated Models) ───────
+      // Applies the third capability — soft-deleting models that the
+      // audit identified as deprecated or discontinued. Uses the same
+      // approval payload as the other tool_call steps.
+      {
+        id: 'deactivate_models',
+        name: 'Deactivate deprecated models',
+        type: 'tool_call',
+        config: {
+          capabilitySlug: 'deactivate_provider_models',
+          argsFrom: 'review_changes',
+        },
         nextSteps: [{ targetStepId: 'notify_complete' }],
       },
 
-      // ─── Step 12: send_notification ───────────────────────────────
+      // ─── Step 13: send_notification ───────────────────────────────
       // Tests: Email/webhook notification output, bodyTemplate
       // interpolation with step references.
       // NOTE: `to` is a placeholder — admins should edit this workflow
@@ -297,7 +313,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           to: 'admin@example.com',
           subject: 'Provider Model Audit Complete',
           bodyTemplate:
-            'The provider model audit has completed.\n\nScope: {{load_models.output}}\nChanges applied: {{apply_changes.output}}\nNew models added: {{add_new_models.output}}\nQuality score: {{score_audit.output}}\n\nReview the full execution trace in the admin dashboard.',
+            'The provider model audit has completed.\n\nScope: {{load_models.output}}\nChanges applied: {{apply_changes.output}}\nNew models added: {{add_new_models.output}}\nModels deactivated: {{deactivate_models.output}}\nQuality score: {{score_audit.output}}\n\nReview the full execution trace in the admin dashboard.',
         },
         nextSteps: [],
       },
