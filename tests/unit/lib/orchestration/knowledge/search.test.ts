@@ -360,7 +360,7 @@ describe('listPatterns', () => {
         {
           patternNumber: 1,
           content: 'A step-by-step reasoning pattern.',
-          metadata: { complexity: 'beginner' },
+          metadata: {},
         },
       ] as never) // overviews
       .mockResolvedValueOnce([] as never); // no tldrs
@@ -372,7 +372,6 @@ describe('listPatterns', () => {
       patternNumber: 1,
       patternName: 'Chain of Thought',
       category: 'Reasoning',
-      complexity: 'beginner',
       description: 'A step-by-step reasoning pattern.',
       chunkCount: 5,
     });
@@ -411,7 +410,6 @@ describe('listPatterns', () => {
     const result = await listPatterns();
 
     expect(result[0].description).toBeNull();
-    expect(result[0].complexity).toBeNull();
   });
 
   it('should return full first paragraph from TL;DR content (no truncation)', async () => {
@@ -444,45 +442,6 @@ describe('listPatterns', () => {
     expect(result[0].description).toHaveLength(300);
   });
 
-  it('should return null complexity when metadata is not an object', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
-    ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
-      { patternNumber: 1, content: 'desc', metadata: 'not-an-object' },
-    ] as never);
-
-    const result = await listPatterns();
-
-    expect(result[0].complexity).toBeNull();
-  });
-
-  it('should return null complexity when metadata is an array', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
-    ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
-      { patternNumber: 1, content: 'desc', metadata: ['beginner'] },
-    ] as never);
-
-    const result = await listPatterns();
-
-    expect(result[0].complexity).toBeNull();
-  });
-
-  it('should return null complexity when metadata.complexity is not a string', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: null, _count: { id: 1 } },
-    ] as never);
-    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
-      { patternNumber: 1, content: 'desc', metadata: { complexity: 42 } },
-    ] as never);
-
-    const result = await listPatterns();
-
-    expect(result[0].complexity).toBeNull();
-  });
-
   it('should batch-fetch overviews and tldrs for multiple groups', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
@@ -493,12 +452,12 @@ describe('listPatterns', () => {
         {
           patternNumber: 1,
           content: 'Chain of Thought desc',
-          metadata: { complexity: 'beginner' },
+          metadata: {},
         },
         {
           patternNumber: 2,
           content: 'ReAct desc',
-          metadata: { complexity: 'intermediate' },
+          metadata: {},
         },
       ] as never) // overviews
       .mockResolvedValueOnce([] as never); // no tldrs
@@ -507,9 +466,7 @@ describe('listPatterns', () => {
 
     expect(result).toHaveLength(2);
     expect(result[0].patternNumber).toBe(1);
-    expect(result[0].complexity).toBe('beginner');
     expect(result[1].patternNumber).toBe(2);
-    expect(result[1].complexity).toBe('intermediate');
     // Two batched queries (overviews + tldrs) instead of N+1
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledTimes(2);
   });

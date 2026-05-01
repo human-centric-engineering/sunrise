@@ -66,7 +66,7 @@ Multiple choice, scenario-based, trade-off analysis, true/false with explanation
 
 ### Card grid layout
 
-`grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3`. Each card shows pattern name, description snippet, complexity badge, and section count. Complexity badge variants: beginner=default, intermediate=secondary, advanced=destructive.
+`grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3`. Each card shows pattern name, description snippet, pattern number badge, and section count.
 
 ## Pattern Detail
 

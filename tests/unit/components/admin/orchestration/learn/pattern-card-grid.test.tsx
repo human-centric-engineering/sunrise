@@ -27,7 +27,6 @@ const MOCK_PATTERNS: PatternSummary[] = [
     patternNumber: 1,
     patternName: 'Chain of Thought',
     category: 'Reasoning',
-    complexity: 'beginner',
     description: 'Step-by-step reasoning for complex tasks.',
     chunkCount: 5,
   },
@@ -35,7 +34,6 @@ const MOCK_PATTERNS: PatternSummary[] = [
     patternNumber: 2,
     patternName: 'Tree of Thoughts',
     category: 'Reasoning',
-    complexity: 'advanced',
     description: 'Explores multiple reasoning paths.',
     chunkCount: 8,
   },
@@ -43,7 +41,6 @@ const MOCK_PATTERNS: PatternSummary[] = [
     patternNumber: 3,
     patternName: 'ReAct',
     category: 'Action',
-    complexity: null,
     description: null,
     chunkCount: 1,
   },
@@ -89,56 +86,6 @@ describe('PatternCardGrid', () => {
     expect(links[0]).toHaveAttribute('href', '/admin/orchestration/learn/patterns/1');
     expect(links[1]).toHaveAttribute('href', '/admin/orchestration/learn/patterns/2');
     expect(links[2]).toHaveAttribute('href', '/admin/orchestration/learn/patterns/3');
-  });
-
-  it('renders complexity badges when present', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    expect(screen.getByText('beginner')).toBeInTheDocument();
-    expect(screen.getByText('advanced')).toBeInTheDocument();
-  });
-
-  it('does not render complexity badge when null', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    // Pattern 3 (ReAct) has complexity: null — should show number but no complexity
-    const links = screen.getAllByRole('link');
-    const reactCard = links[2];
-    expect(reactCard).toHaveTextContent('3');
-    expect(reactCard).not.toHaveTextContent('beginner');
-    expect(reactCard).not.toHaveTextContent('advanced');
-    expect(reactCard).not.toHaveTextContent('intermediate');
-  });
-
-  it('maps advanced complexity to destructive badge variant', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    const advancedBadge = screen.getByText('advanced');
-    expect(advancedBadge.className).toContain('bg-destructive');
-  });
-
-  it('maps beginner complexity to default badge variant', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    const beginnerBadge = screen.getByText('beginner');
-    expect(beginnerBadge.className).toContain('bg-primary');
-  });
-
-  it('maps intermediate complexity to secondary badge variant', () => {
-    const patterns: PatternSummary[] = [
-      {
-        patternNumber: 10,
-        patternName: 'Intermediate Pattern',
-        category: 'Test',
-        complexity: 'intermediate',
-        description: 'Test desc.',
-        chunkCount: 3,
-      },
-    ];
-    render(<PatternCardGrid patterns={patterns} />);
-
-    const intermediateBadge = screen.getByText('intermediate');
-    expect(intermediateBadge.className).toContain('bg-secondary');
   });
 
   it('renders chunk count as section count', () => {
