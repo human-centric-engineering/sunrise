@@ -49,7 +49,7 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 - `agentSlug` — slug of the agent to invoke (required, semantic-validated)
 - `message` — message to send to the agent (supports templates)
 - `maxToolIterations` — max tool call rounds before forcing a response
-- `mode` — optional: `"chat"` (default) or `"complete"`
+- `mode` — optional: `"single-turn"` (default) or `"multi-turn"`
 
 ## Decision Steps
 

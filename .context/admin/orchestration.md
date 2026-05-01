@@ -111,25 +111,35 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 
 ## API Reference
 
-65 route files under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
+120 route files under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
 
-| Area          | Endpoints           | Purpose                                                                               |
-| ------------- | ------------------- | ------------------------------------------------------------------------------------- |
-| Agents        | 13 routes           | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
-| Capabilities  | 5 routes            | CRUD, agents-using count, execution stats                                             |
-| Providers     | 7 routes            | CRUD, test connection, test model, health, models                                     |
-| Workflows     | 8 routes            | CRUD, validate, dry-run, execute, definition history/revert                           |
-| Executions    | 5 routes            | List, read, approve, cancel, retry-step                                               |
-| Chat          | 1 route             | Streaming chat turn (SSE)                                                             |
-| Knowledge     | 10 routes           | Documents, search, seed, embed, graph, retry, patterns                                |
-| Conversations | 4 routes            | List, read, delete, bulk clear                                                        |
-| Costs         | 3 routes            | Breakdown, summary, alerts                                                            |
-| Settings      | 1 route             | Global orchestration settings                                                         |
-| Webhooks      | 2 routes            | CRUD for webhook subscriptions                                                        |
-| Evaluations   | 4 routes            | CRUD, logs, AI completion                                                             |
-| Experiments   | 3 files, 6 handlers | A/B testing — list, create, get, update, delete, run                                  |
-| Observability | 1 route             | Dashboard stats                                                                       |
-| Quiz          | 1 route             | Quiz scores                                                                           |
+| Area             | Endpoints | Purpose                                                                               |
+| ---------------- | --------- | ------------------------------------------------------------------------------------- |
+| Agents           | 20 routes | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
+| Knowledge        | 16 routes | Documents, search, seed, embed, graph, retry, patterns                                |
+| Workflows        | 12 routes | CRUD, validate, dry-run, execute, definition history/revert                           |
+| MCP              | 11 routes | MCP server management, tools, resources, keys                                         |
+| Providers        | 6 routes  | CRUD, test connection, test model, health                                             |
+| Executions       | 6 routes  | List, read, approve, cancel, retry-step                                               |
+| Conversations    | 6 routes  | List, read, delete, bulk clear, export                                                |
+| Webhooks         | 5 routes  | CRUD for webhook subscriptions                                                        |
+| Hooks            | 5 routes  | Event hook management                                                                 |
+| Analytics        | 5 routes  | Usage metrics, popular topics, engagement, gaps                                       |
+| Capabilities     | 4 routes  | CRUD, agents-using count, execution stats                                             |
+| Evaluations      | 4 routes  | CRUD, logs, AI completion                                                             |
+| Provider Models  | 3 routes  | Model registry CRUD                                                                   |
+| Experiments      | 3 routes  | A/B testing — list, create, get, update, delete, run                                  |
+| Costs            | 3 routes  | Breakdown, summary, alerts                                                            |
+| Backup           | 2 routes  | Export/import orchestration config                                                    |
+| Settings         | 1 route   | Global orchestration settings                                                         |
+| Schedules        | 1 route   | Cron schedule management                                                              |
+| Quiz             | 1 route   | Quiz scores                                                                           |
+| Observability    | 1 route   | Dashboard stats                                                                       |
+| Models           | 1 route   | Model listing                                                                         |
+| Maintenance      | 1 route   | System maintenance tasks                                                              |
+| Embedding Models | 1 route   | Embedding model registry                                                              |
+| Chat             | 1 route   | Streaming chat turn (SSE)                                                             |
+| Audit Log        | 1 route   | Config change audit trail                                                             |
 
 Full reference: [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md)
 
