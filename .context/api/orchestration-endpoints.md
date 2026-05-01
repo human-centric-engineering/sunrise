@@ -101,22 +101,22 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/analytics/content-gaps`                 | GET                | Frequently asked topics with poor coverage              | 6       |
 | `/analytics/feedback`                     | GET                | Thumbs up/down aggregation and trend                    | 6       |
 | `/agents/:id/invite-tokens`               | GET, POST          | List / create invite tokens for invite_only agents      | 5.1     |
-| `/agents/:id/invite-tokens/:tid`          | DELETE             | Revoke an invite token                                  | 5.1     |
+| `/agents/:id/invite-tokens/:tokenId`      | DELETE             | Revoke an invite token                                  | 5.1     |
 | `/agents/:id/versions`                    | GET                | Version history (paginated snapshots)                   | 5.1     |
 | `/agents/:id/versions/:versionId`         | GET                | Get version detail (full snapshot)                      | 5.1     |
 | `/agents/:id/versions/:versionId/restore` | POST               | Restore agent from a version snapshot                   | 5.1     |
 | `/agents/:id/embed-tokens`                | GET, POST          | List / create embed tokens for widget auth              | 5.1     |
-| `/agents/:id/embed-tokens/:tid`           | PATCH, DELETE      | Update / delete an embed token                          | 5.1     |
+| `/agents/:id/embed-tokens/:tokenId`       | PATCH, DELETE      | Update / delete an embed token                          | 5.1     |
 | `/workflows/templates`                    | GET                | List workflow templates (builtin + custom)              | 5.1     |
 | `/workflows/:id/save-as-template`         | POST               | Save a workflow as a reusable template                  | 5.1     |
 | `/workflows/:id/schedules`                | GET, POST          | List / create cron schedules for a workflow             | 5.1     |
-| `/workflows/:id/schedules/:sid`           | GET, PATCH, DELETE | Read / update / delete a workflow schedule              | 5.1     |
+| `/workflows/:id/schedules/:scheduleId`    | GET, PATCH, DELETE | Read / update / delete a workflow schedule              | 5.1     |
 
 **Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`.
 
 | `/executions` | GET | List workflow executions (paginated) | 5.1 |
 | `/conversations/export` | POST | Export conversations as JSON | 5.1 |
-| `/conversations/:id/messages/:mid` | GET | Read a single message | 5.1 |
+| `/conversations/:id/messages` | GET | List messages for a conversation | 5.1 |
 | `/conversations/search` | GET | Full-text search across conversations | 5.1 |
 | `/knowledge/patterns` | GET | List all design patterns | 3.3 |
 | `/knowledge/documents/:id/confirm` | POST | Confirm a PDF preview and proceed with chunking | 5.1 |
@@ -136,7 +136,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/mcp/sessions/:id` | GET | Read a single MCP session | 6 |
 | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
-109 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (120 total). For architecture detail see `.context/orchestration/admin-api.md`.
+120 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (131 total). For architecture detail see `.context/orchestration/admin-api.md`.
 
 ### Public Approval Endpoints (Token-Authenticated)
 

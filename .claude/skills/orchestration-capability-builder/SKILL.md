@@ -235,16 +235,19 @@ Effective rate limit: `customRateLimit ?? rateLimit`.
 
 ## Built-in Capabilities (do not recreate)
 
-These 6 capabilities ship as `isSystem: true` — bind them to agents, never recreate:
+These 9 capabilities ship as `isSystem: true` — bind them to agents, never recreate:
 
-| Slug                     | Purpose                          |
-| ------------------------ | -------------------------------- |
-| `search_knowledge_base`  | Semantic search over documents   |
-| `get_pattern_detail`     | Full pattern content by number   |
-| `estimate_workflow_cost` | Planning-grade USD cost estimate |
-| `read_user_memory`       | Session memory access            |
-| `write_user_memory`      | Session memory updates           |
-| `escalate_to_human`      | Human-in-the-loop escalation     |
+| Slug                         | Purpose                                  |
+| ---------------------------- | ---------------------------------------- |
+| `search_knowledge_base`      | Semantic search over documents           |
+| `get_pattern_detail`         | Full pattern content by number           |
+| `estimate_workflow_cost`     | Planning-grade USD cost estimate         |
+| `read_user_memory`           | Session memory access                    |
+| `write_user_memory`          | Session memory updates                   |
+| `escalate_to_human`          | Human-in-the-loop escalation             |
+| `apply_audit_changes`        | Apply approved model audit field changes |
+| `add_provider_models`        | Register new models from audit proposals |
+| `deactivate_provider_models` | Soft-delete deprecated provider models   |
 
 ## Testing
 

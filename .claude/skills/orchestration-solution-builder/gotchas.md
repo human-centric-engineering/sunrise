@@ -14,7 +14,7 @@ Creating things out of order causes validation failures or silent misconfigurati
 
 ## Built-in Capabilities Are isSystem: true
 
-The 6 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`) already exist in the database. **Do not create new capability rows with the same slugs.** Just bind the existing ones to your agents.
+The 9 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) already exist in the database. **Do not create new capability rows with the same slugs.** Just bind the existing ones to your agents.
 
 ## Knowledge Base Embedding Is a Separate Step
 
