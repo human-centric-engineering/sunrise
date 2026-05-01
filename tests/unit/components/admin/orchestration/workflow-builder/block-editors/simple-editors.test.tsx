@@ -1,14 +1,15 @@
 /**
- * Unit Tests: Simple block editors (Reflect, RagRetrieve, HumanApproval, Plan)
+ * Unit Tests: Simple block editors (Reflect, Plan)
  *
  * Test Coverage:
  * - Each editor renders with default config
  * - Each editor fires onChange with the right partial on change
  * - FieldHelp popover is present in each editor
  *
+ * Note: RagRetrieveEditor has a dedicated test file (rag-retrieve-editor.test.tsx).
+ * HumanApprovalEditor has a dedicated test file (human-approval-editor.test.tsx).
+ *
  * @see components/admin/orchestration/workflow-builder/block-editors/reflect-editor.tsx
- * @see components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor.tsx
- * @see components/admin/orchestration/workflow-builder/block-editors/human-approval-editor.tsx
  * @see components/admin/orchestration/workflow-builder/block-editors/plan-editor.tsx
  */
 
@@ -18,12 +19,6 @@ import userEvent from '@testing-library/user-event';
 
 import { ReflectEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/reflect-editor';
 import type { ReflectConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/reflect-editor';
-
-import { RagRetrieveEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor';
-import type { RagRetrieveConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor';
-
-import { HumanApprovalEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/human-approval-editor';
-import type { HumanApprovalConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/human-approval-editor';
 
 import { PlanEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/plan-editor';
 import type { PlanConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/plan-editor';
@@ -109,10 +104,8 @@ describe('ReflectEditor', () => {
     // Act — type a single character so the controlled component emits one onChange call
     await user.type(document.getElementById('reflect-model-override')!, 'x');
 
-    // Assert — onChange was called with the modelOverride key populated
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ modelOverride: expect.anything() })
-    );
+    // Assert — onChange was called with the exact typed character as modelOverride
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'x' }));
   });
 
   it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {
@@ -172,114 +165,6 @@ describe('ReflectEditor', () => {
     >;
     expect(lastArg).toHaveProperty('temperature');
     expect(typeof lastArg.temperature).toBe('number');
-  });
-});
-
-// ─── RagRetrieveEditor ────────────────────────────────────────────────────────
-
-describe('RagRetrieveEditor', () => {
-  const emptyConfig: RagRetrieveConfig = { query: '' };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('renders without crashing', () => {
-    render(<RagRetrieveEditor config={emptyConfig} onChange={vi.fn()} />);
-    expect(document.getElementById('rag-query')).toBeInTheDocument();
-  });
-
-  it('shows the default topK value of 5', () => {
-    render(<RagRetrieveEditor config={emptyConfig} onChange={vi.fn()} />);
-    const input = document.getElementById('rag-top-k') as HTMLInputElement;
-    expect(Number(input?.value)).toBe(5);
-  });
-
-  it('shows the default similarityThreshold value of 0.7', () => {
-    render(<RagRetrieveEditor config={emptyConfig} onChange={vi.fn()} />);
-    const input = document.getElementById('rag-threshold') as HTMLInputElement;
-    expect(Number(input?.value)).toBe(0.7);
-  });
-
-  it('calls onChange with { query } when typing in the query field', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<RagRetrieveEditor config={emptyConfig} onChange={onChange} />);
-
-    await user.type(document.getElementById('rag-query')!, 'A');
-
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastArg).toHaveProperty('query');
-  });
-
-  it('calls onChange with { topK: number } when result count changes', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<RagRetrieveEditor config={emptyConfig} onChange={onChange} />);
-
-    const input = document.getElementById('rag-top-k')!;
-    await user.clear(input);
-    await user.type(input, '10');
-
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastArg).toHaveProperty('topK');
-    expect(typeof lastArg.topK).toBe('number');
-  });
-
-  it('renders at least one FieldHelp info button', () => {
-    render(<RagRetrieveEditor config={emptyConfig} onChange={vi.fn()} />);
-    const infoButtons = screen.getAllByRole('button', { name: /more information/i });
-    expect(infoButtons.length).toBeGreaterThanOrEqual(1);
-  });
-});
-
-// ─── HumanApprovalEditor ──────────────────────────────────────────────────────
-
-describe('HumanApprovalEditor', () => {
-  const emptyConfig: HumanApprovalConfig = { prompt: '' };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('renders without crashing', () => {
-    render(<HumanApprovalEditor config={emptyConfig} onChange={vi.fn()} />);
-    expect(document.getElementById('approval-prompt')).toBeInTheDocument();
-  });
-
-  it('shows the default timeoutMinutes value of 60', () => {
-    render(<HumanApprovalEditor config={emptyConfig} onChange={vi.fn()} />);
-    const input = document.getElementById('approval-timeout') as HTMLInputElement;
-    expect(Number(input?.value)).toBe(60);
-  });
-
-  it('shows a provided prompt value', () => {
-    const config: HumanApprovalConfig = { prompt: 'Please review' };
-    render(<HumanApprovalEditor config={config} onChange={vi.fn()} />);
-    const ta = document.getElementById('approval-prompt') as HTMLTextAreaElement;
-    expect(ta?.value).toBe('Please review');
-  });
-
-  it('calls onChange with { prompt } when typing in the approval message', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<HumanApprovalEditor config={emptyConfig} onChange={onChange} />);
-
-    await user.type(document.getElementById('approval-prompt')!, 'A');
-
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastArg).toHaveProperty('prompt');
-  });
-
-  it('shows the default notification channel as In-app', () => {
-    render(<HumanApprovalEditor config={emptyConfig} onChange={vi.fn()} />);
-    expect(screen.getByText('In-app')).toBeInTheDocument();
-  });
-
-  it('renders at least one FieldHelp info button', () => {
-    render(<HumanApprovalEditor config={emptyConfig} onChange={vi.fn()} />);
-    const infoButtons = screen.getAllByRole('button', { name: /more information/i });
-    expect(infoButtons.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -364,10 +249,8 @@ describe('PlanEditor', () => {
     // Act — type a single character; controlled component emits one onChange call
     await user.type(document.getElementById('plan-model-override')!, 'x');
 
-    // Assert — onChange was called with a modelOverride key
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ modelOverride: expect.anything() })
-    );
+    // Assert — onChange was called with the exact typed character as modelOverride
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'x' }));
   });
 
   it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {

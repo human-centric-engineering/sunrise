@@ -200,4 +200,15 @@ describe('HumanApprovalEditor', () => {
     // Assert
     expect(onChange).toHaveBeenCalledWith({ notificationChannel: 'slack' });
   });
+
+  // ── FieldHelp ──────────────────────────────────────────────────────────────
+
+  it('renders at least one FieldHelp info button', () => {
+    // Arrange + Act
+    render(<HumanApprovalEditor config={emptyConfig} onChange={vi.fn()} />);
+
+    // Assert: at least one accessible FieldHelp popover trigger is present
+    const infoButtons = screen.getAllByRole('button', { name: /more information/i });
+    expect(infoButtons.length).toBeGreaterThanOrEqual(1);
+  });
 });
