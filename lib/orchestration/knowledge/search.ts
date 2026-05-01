@@ -1,9 +1,15 @@
 /**
  * Knowledge Base Search Service
  *
- * Hybrid search combining vector similarity (pgvector cosine distance)
- * with optional keyword matching (PostgreSQL full-text search) and
- * metadata filtering.
+ * Two ranking modes, selected by `searchConfig.hybridEnabled`:
+ *
+ *  - **Vector-only (default).** Cosine distance via pgvector with an
+ *    additive keyword boost for chunks matching `plainto_tsquery`.
+ *  - **Hybrid (BM25-flavoured + vector).** Blends cosine similarity with
+ *    `ts_rank_cd` over the generated `searchVector` tsvector column.
+ *    Use this when exact-term recall matters (legal, financial,
+ *    regulatory, medical terminology). Ranking is
+ *    `vectorWeight × vector_score + bm25Weight × keyword_score`.
  */
 
 import { prisma } from '@/lib/db/client';
@@ -21,16 +27,21 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_KEYWORD_BOOST: number = -0.02;
 const DEFAULT_KEYWORD_BOOST_STRONG: number = -0.05;
 const DEFAULT_VECTOR_WEIGHT: number = 1.0;
+const DEFAULT_BM25_WEIGHT: number = 1.0;
+
+interface ResolvedSearchWeights {
+  keywordBoost: number;
+  keywordBoostStrong: number;
+  vectorWeight: number;
+  hybridEnabled: boolean;
+  bm25Weight: number;
+}
 
 /**
  * Resolve search weights from the settings singleton, falling back to
  * built-in defaults when no admin override is stored.
  */
-async function resolveSearchWeights(): Promise<{
-  keywordBoost: number;
-  keywordBoostStrong: number;
-  vectorWeight: number;
-}> {
+async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
   let config: SearchConfig | null = null;
   try {
     const settings = await getOrchestrationSettings();
@@ -39,21 +50,18 @@ async function resolveSearchWeights(): Promise<{
     // Settings DB unavailable — use defaults silently
   }
 
-  if (!config) {
-    return {
-      keywordBoost: DEFAULT_KEYWORD_BOOST,
-      keywordBoostStrong: DEFAULT_KEYWORD_BOOST_STRONG,
-      vectorWeight: DEFAULT_VECTOR_WEIGHT,
-    };
-  }
-
-  // Derive the strong (keyword-match) boost proportionally:
-  // default ratio is -0.05 / -0.02 = 2.5×
+  // Per-field fallback so a partial override (e.g. `{ hybridEnabled: true }`
+  // alone) inherits defaults for everything the admin didn't explicitly set.
+  // The strong (keyword-match) boost is derived proportionally from the soft
+  // boost — default ratio is -0.05 / -0.02 = 2.5×.
   const ratio = DEFAULT_KEYWORD_BOOST_STRONG / DEFAULT_KEYWORD_BOOST;
+  const keywordBoost = config?.keywordBoostWeight ?? DEFAULT_KEYWORD_BOOST;
   return {
-    keywordBoost: config.keywordBoostWeight,
-    keywordBoostStrong: config.keywordBoostWeight * ratio,
-    vectorWeight: config.vectorWeight,
+    keywordBoost,
+    keywordBoostStrong: keywordBoost * ratio,
+    vectorWeight: config?.vectorWeight ?? DEFAULT_VECTOR_WEIGHT,
+    hybridEnabled: config?.hybridEnabled === true,
+    bm25Weight: config?.bm25Weight ?? DEFAULT_BM25_WEIGHT,
   };
 }
 
@@ -141,10 +149,32 @@ export async function searchKnowledge(
 
   const whereClause = conditions.join(' AND ');
 
-  // Hybrid search: vector similarity + keyword boost
-  // The keyword boost adds a configurable score bonus for full-text matches.
-  // Weights are resolved from AiOrchestrationSettings (admin-tunable) with
-  // built-in defaults when no override is stored.
+  if (weights.hybridEnabled) {
+    return runHybridSearch({ query, weights, params, paramIdx, whereClause });
+  }
+  return runVectorOnlySearch({ query, weights, params, paramIdx, whereClause });
+}
+
+interface SearchBranchInput {
+  query: string;
+  weights: ResolvedSearchWeights;
+  params: unknown[];
+  paramIdx: number;
+  whereClause: string;
+}
+
+/**
+ * Vector-only search path (default). Byte-for-byte the legacy behaviour:
+ * cosine distance ranking with an additive keyword boost for chunks whose
+ * keywords or content match `plainto_tsquery(query)`.
+ */
+async function runVectorOnlySearch({
+  query,
+  weights,
+  params,
+  paramIdx,
+  whereClause,
+}: SearchBranchInput): Promise<KnowledgeSearchResult[]> {
   const queryParamIdx = paramIdx;
   const boostStrongParamIdx = paramIdx + 1;
   const boostParamIdx = paramIdx + 2;
@@ -211,35 +241,130 @@ export async function searchKnowledge(
     query,
     resultCount: results.length,
     topDistance: results[0]?.distance,
+    mode: 'vector_only',
   });
 
-  return results.map((row) => {
-    const chunk: AiKnowledgeChunk = {
-      id: row.id,
-      chunkKey: row.chunkKey,
-      documentId: row.documentId,
-      content: row.content,
-      chunkType: row.chunkType,
-      patternNumber: row.patternNumber,
-      patternName: row.patternName,
-      category: row.category,
-      section: row.section,
-      keywords: row.keywords,
-      estimatedTokens: row.estimatedTokens,
-      embeddingModel: row.embeddingModel,
-      embeddingProvider: row.embeddingProvider,
-      embeddedAt: row.embeddedAt,
-      metadata: row.metadata,
-    };
-    return {
-      chunk,
-      similarity: Math.min(
-        1,
-        (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost)
-      ),
-      documentName: row.documentName,
-    };
+  return results.map((row) => ({
+    chunk: pickChunk(row),
+    similarity: Math.min(
+      1,
+      (1 - row.distance) * weights.vectorWeight + Math.abs(row.keyword_boost)
+    ),
+    documentName: row.documentName,
+  }));
+}
+
+/**
+ * Hybrid search path. Blends cosine similarity with a BM25-flavoured score
+ * (`ts_rank_cd` over the generated `searchVector` column, normalisation 32
+ * which bounds output to [0, 1)). Final ranking uses
+ * `vectorWeight × vector_score + bm25Weight × keyword_score`. The legacy
+ * additive `keywordBoostWeight` is intentionally ignored in this mode —
+ * `bm25Weight` controls keyword influence instead.
+ *
+ * The cosine-distance threshold continues to gate candidates so the
+ * semantic recall floor is preserved across both modes.
+ */
+async function runHybridSearch({
+  query,
+  weights,
+  params,
+  paramIdx,
+  whereClause,
+}: SearchBranchInput): Promise<KnowledgeSearchResult[]> {
+  const queryParamIdx = paramIdx;
+  const vectorWeightParamIdx = paramIdx + 1;
+  const bm25WeightParamIdx = paramIdx + 2;
+
+  const sql = `
+    WITH scored AS (
+      SELECT
+        c.id,
+        c."chunkKey",
+        c."documentId",
+        c.content,
+        c."chunkType",
+        c."patternNumber",
+        c."patternName",
+        c.category,
+        c.section,
+        c.keywords,
+        c."estimatedTokens",
+        c.metadata,
+        c."embeddingModel",
+        c."embeddingProvider",
+        c."embeddedAt",
+        d.name AS "documentName",
+        (c.embedding <=> $1::vector) AS distance,
+        GREATEST(0.0, 1.0 - (c.embedding <=> $1::vector)) AS vector_score,
+        COALESCE(
+          ts_rank_cd(c."searchVector", plainto_tsquery('english', $${queryParamIdx}), 32),
+          0.0
+        ) AS keyword_score
+      FROM ai_knowledge_chunk c
+      JOIN ai_knowledge_document d ON d.id = c."documentId"
+      WHERE ${whereClause}
+        AND (c.embedding <=> $1::vector) < $2
+    )
+    SELECT
+      *,
+      ($${vectorWeightParamIdx}::float * vector_score
+        + $${bm25WeightParamIdx}::float * keyword_score) AS final_score
+    FROM scored
+    ORDER BY final_score DESC
+    LIMIT $3
+  `;
+
+  params.push(query, weights.vectorWeight, weights.bm25Weight);
+
+  const results = await prisma.$queryRawUnsafe<
+    Array<
+      AiKnowledgeChunk & {
+        documentName: string;
+        distance: number;
+        vector_score: number;
+        keyword_score: number;
+        final_score: number;
+      }
+    >
+  >(sql, ...params);
+
+  logger.info('Knowledge search results', {
+    query,
+    resultCount: results.length,
+    topFinalScore: results[0]?.final_score,
+    mode: 'hybrid',
   });
+
+  return results.map((row) => ({
+    chunk: pickChunk(row),
+    similarity: Math.min(1, Math.max(0, row.final_score)),
+    documentName: row.documentName,
+    vectorScore: row.vector_score,
+    keywordScore: row.keyword_score,
+    finalScore: row.final_score,
+  }));
+}
+
+/** Project a raw row into the public `AiKnowledgeChunk` shape. */
+function pickChunk(row: AiKnowledgeChunk): AiKnowledgeChunk {
+  return {
+    id: row.id,
+    chunkKey: row.chunkKey,
+    documentId: row.documentId,
+    content: row.content,
+    chunkType: row.chunkType,
+    patternNumber: row.patternNumber,
+    patternName: row.patternName,
+    category: row.category,
+    section: row.section,
+    keywords: row.keywords,
+    estimatedTokens: row.estimatedTokens,
+    embeddingModel: row.embeddingModel,
+    embeddingProvider: row.embeddingProvider,
+    embeddedAt: row.embeddedAt,
+    metadata: row.metadata,
+  };
 }
 
 /**

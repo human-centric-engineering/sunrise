@@ -190,7 +190,7 @@ describe('SettingsForm', () => {
               auditLogRetentionDays: 365,
               defaultApprovalTimeoutMs: 60000,
               approvalDefaultAction: 'deny',
-              searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2 },
+              searchConfig: { keywordBoostWeight: -0.05, vectorWeight: 1.2, hybridEnabled: false },
             }),
           })
         );
@@ -296,6 +296,180 @@ describe('SettingsForm', () => {
       await waitFor(() => {
         expect(screen.getByText(/could not save settings/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Hybrid search controls ──────────────────────────────────────────────
+
+  describe('Hybrid search', () => {
+    it('renders the hybrid toggle unchecked when settings have no hybridEnabled', () => {
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      expect(toggle).not.toBeChecked();
+    });
+
+    it('renders the hybrid toggle checked when settings have hybridEnabled: true', () => {
+      const HYBRID_SETTINGS: OrchestrationSettings = {
+        ...FULL_SETTINGS,
+        searchConfig: {
+          keywordBoostWeight: -0.02,
+          vectorWeight: 1.0,
+          hybridEnabled: true,
+          bm25Weight: 0.7,
+        },
+      };
+      render(<SettingsForm initialSettings={HYBRID_SETTINGS} />);
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      expect(toggle).toBeChecked();
+      expect(document.getElementById('bm25Weight')).toHaveValue(0.7);
+    });
+
+    it('disables the BM25 weight input when hybrid is off', () => {
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const bm25 = document.getElementById('bm25Weight') as HTMLInputElement;
+      expect(bm25).toBeDisabled();
+    });
+
+    it('enables BM25 weight input after toggling hybrid on', async () => {
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      const bm25 = document.getElementById('bm25Weight') as HTMLInputElement;
+      expect(bm25).toBeDisabled();
+
+      await user.click(toggle);
+
+      expect(toggle).toBeChecked();
+      expect(bm25).toBeEnabled();
+    });
+
+    it('disables the legacy keyword boost input when hybrid is on', () => {
+      const HYBRID_SETTINGS: OrchestrationSettings = {
+        ...FULL_SETTINGS,
+        searchConfig: {
+          keywordBoostWeight: -0.02,
+          vectorWeight: 1.0,
+          hybridEnabled: true,
+        },
+      };
+      render(<SettingsForm initialSettings={HYBRID_SETTINGS} />);
+      const keyword = document.getElementById('keywordBoostWeight') as HTMLInputElement;
+      expect(keyword).toBeDisabled();
+      expect(screen.getByText(/Inactive — hybrid mode is on/i)).toBeInTheDocument();
+    });
+
+    it('submits hybridEnabled: true and bm25Weight when toggle is on', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      await user.click(toggle);
+
+      const bm25 = document.getElementById('bm25Weight') as HTMLInputElement;
+      await user.clear(bm25);
+      await user.type(bm25, '0.5');
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              searchConfig: expect.objectContaining({
+                hybridEnabled: true,
+                bm25Weight: 0.5,
+              }),
+            }),
+          })
+        );
+      });
+    });
+
+    it('defaults bm25Weight to 1.0 in payload when hybrid is enabled with empty input', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      await user.click(toggle);
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              searchConfig: expect.objectContaining({
+                hybridEnabled: true,
+                bm25Weight: 1.0,
+              }),
+            }),
+          })
+        );
+      });
+    });
+
+    it('persists hybridEnabled even when the legacy weights are blank (regression)', async () => {
+      // Regression for a bug where toggling hybrid on without filling the
+      // vector-only weights silently dropped searchConfig to null.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={EMPTY_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      await user.click(toggle);
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+      const lastCall = vi.mocked(apiClient.patch).mock.calls[0];
+      const body = (lastCall[1] as { body: { searchConfig: unknown } }).body;
+      expect(body.searchConfig).not.toBeNull();
+      expect(body.searchConfig).toEqual({ hybridEnabled: true, bm25Weight: 1.0 });
+    });
+
+    it('shows validation error when bm25Weight is above 2.0', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      await user.click(toggle);
+
+      const bm25 = document.getElementById('bm25Weight') as HTMLInputElement;
+      await user.clear(bm25);
+      await user.type(bm25, '5');
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      // The submit must not have called the API (validation should block it)
+      await waitFor(() => {
+        const bm25Now = document.getElementById('bm25Weight') as HTMLInputElement;
+        expect(bm25Now.value).toBe('5');
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
     });
   });
 

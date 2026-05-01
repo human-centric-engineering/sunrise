@@ -484,12 +484,32 @@ export interface AgentCostSummary {
 export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
-/** Tunable weights for hybrid knowledge-base search. */
+/**
+ * Tunable weights for knowledge-base search. All fields are optional —
+ * `resolveSearchWeights` in `lib/orchestration/knowledge/search.ts` falls
+ * back to built-in defaults for any field that is absent. This lets the
+ * admin form persist partial overrides (e.g. just `hybridEnabled: true`).
+ */
 export interface SearchConfig {
-  /** Cosine-distance reduction for keyword-matching chunks (non-positive, e.g. -0.02). */
-  keywordBoostWeight: number;
-  /** Multiplier applied to the vector similarity score (e.g. 1.0). */
-  vectorWeight: number;
+  /**
+   * Vector-only mode: cosine-distance reduction for keyword-matching chunks
+   * (non-positive, e.g. -0.02). Ignored when `hybridEnabled` is true.
+   */
+  keywordBoostWeight?: number;
+  /** Multiplier applied to the vector similarity score (e.g. 1.0). Used in both modes. */
+  vectorWeight?: number;
+  /**
+   * When true, switch to hybrid (BM25-flavoured + vector) ranking using
+   * `vectorWeight × vector_score + bm25Weight × ts_rank_cd(searchVector, …)`.
+   * When false/undefined, behaviour is byte-for-byte the legacy vector-only path.
+   */
+  hybridEnabled?: boolean;
+  /**
+   * Multiplier on the keyword (BM25-flavoured) score when hybrid is enabled.
+   * Range 0.1–2.0; defaults to 1.0 when `hybridEnabled` is true and no value set.
+   * Ignored when `hybridEnabled` is false/undefined.
+   */
+  bm25Weight?: number;
 }
 
 /** Action taken when an approval gate times out. */
@@ -574,8 +594,19 @@ export type ProviderConfigWithCreator = AiProviderConfig & {
 /** Knowledge search result */
 export interface KnowledgeSearchResult {
   chunk: AiKnowledgeChunk;
+  /**
+   * Combined ranking score, normalised to [0, 1] (higher = more relevant).
+   * In vector-only mode, derived from cosine similarity + keyword boost.
+   * In hybrid mode, the blended `vectorWeight × vector_score + bm25Weight × keyword_score`.
+   */
   similarity: number;
   documentName?: string;
+  /** Hybrid mode only: the (1 - cosine_distance) component before weighting. */
+  vectorScore?: number;
+  /** Hybrid mode only: the ts_rank_cd BM25-flavoured score before weighting. */
+  keywordScore?: number;
+  /** Hybrid mode only: the blended score `vectorWeight × vectorScore + bm25Weight × keywordScore`. */
+  finalScore?: number;
 }
 
 /** Knowledge graph node */

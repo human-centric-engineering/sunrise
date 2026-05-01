@@ -33,10 +33,15 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
-// Import SUT and embedder mock after mocks are registered
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(),
+}));
+
+// Import SUT and mock modules after mocks are registered
 const { searchKnowledge, getPatternDetail, listPatterns } =
   await import('@/lib/orchestration/knowledge/search');
 const { embedText } = await import('@/lib/orchestration/knowledge/embedder');
+const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 
 // --- Helpers ---
 
@@ -230,6 +235,169 @@ describe('searchKnowledge', () => {
     await searchKnowledge('my search query');
 
     expect(embedText).toHaveBeenCalledWith('my search query', 'query');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Hybrid mode (BM25-flavoured + vector blend)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('searchKnowledge — hybrid mode', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(embedText).mockResolvedValue(new Array(1536).fill(0));
+  });
+
+  /**
+   * Helper to make `getOrchestrationSettings` return a stored searchConfig
+   * with the hybrid flags we want for the test.
+   */
+  function mockHybridSettings(opts: { hybridEnabled: boolean; bm25Weight?: number }) {
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      searchConfig: {
+        keywordBoostWeight: -0.02,
+        vectorWeight: 1.0,
+        hybridEnabled: opts.hybridEnabled,
+        bm25Weight: opts.bm25Weight,
+      },
+    } as never);
+  }
+
+  it('uses the hybrid SQL branch when hybridEnabled is true', async () => {
+    mockHybridSettings({ hybridEnabled: true, bm25Weight: 1.0 });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('section 21 notice');
+
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledOnce();
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    expect(sql).toContain('ts_rank_cd');
+    expect(sql).toContain('"searchVector"');
+    expect(sql).toContain('ORDER BY final_score DESC');
+    // The legacy keyword_boost CASE expression must NOT appear in hybrid mode
+    expect(sql).not.toContain('AS keyword_boost');
+  });
+
+  it('keeps using the legacy SQL when hybridEnabled is false (regression guard)', async () => {
+    mockHybridSettings({ hybridEnabled: false });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('test query');
+
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    expect(sql).toContain('AS keyword_boost');
+    expect(sql).not.toContain('ts_rank_cd');
+    expect(sql).not.toContain('"searchVector"');
+  });
+
+  it('keeps using the legacy SQL when no settings are stored (default behaviour preserved)', async () => {
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({ searchConfig: null } as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('test query');
+
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    expect(sql).toContain('AS keyword_boost');
+    expect(sql).not.toContain('ts_rank_cd');
+  });
+
+  it('passes vectorWeight and bm25Weight as floats in the param list', async () => {
+    mockHybridSettings({ hybridEnabled: true, bm25Weight: 0.7 });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('section 21');
+
+    const params = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0].slice(1);
+    // Param order: $1 embedding, $2 threshold, $3 limit, $4 query, $5 vectorWeight, $6 bm25Weight
+    expect(params[3]).toBe('section 21');
+    expect(params[4]).toBe(1.0);
+    expect(params[5]).toBe(0.7);
+  });
+
+  it('defaults bm25Weight to 1.0 when hybrid is enabled without an explicit weight', async () => {
+    mockHybridSettings({ hybridEnabled: true });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('test');
+
+    const params = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0].slice(1);
+    expect(params[5]).toBe(1.0);
+  });
+
+  it('propagates vectorScore, keywordScore, and finalScore on each result', async () => {
+    mockHybridSettings({ hybridEnabled: true, bm25Weight: 1.0 });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+      {
+        ...makeChunk(),
+        documentName: 'Tenancy Handbook',
+        distance: 0.2,
+        vector_score: 0.8,
+        keyword_score: 0.4,
+        final_score: 1.2,
+      },
+    ] as never);
+
+    const results = await searchKnowledge('section 21');
+
+    expect(results).toHaveLength(1);
+    expect(results[0].vectorScore).toBe(0.8);
+    expect(results[0].keywordScore).toBe(0.4);
+    expect(results[0].finalScore).toBe(1.2);
+    // similarity is clamped to [0, 1]
+    expect(results[0].similarity).toBe(1);
+  });
+
+  it('does not populate hybrid-only fields in vector-only mode (back-compat)', async () => {
+    mockHybridSettings({ hybridEnabled: false });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+      makeRawRow({ distance: 0.2, keyword_boost: -0.05, documentName: 'doc' }),
+    ] as never);
+
+    const results = await searchKnowledge('test');
+
+    expect(results[0].similarity).toBeCloseTo(0.85);
+    expect(results[0].vectorScore).toBeUndefined();
+    expect(results[0].keywordScore).toBeUndefined();
+    expect(results[0].finalScore).toBeUndefined();
+  });
+
+  it('resolves hybrid mode from a partial searchConfig (only hybridEnabled persisted)', async () => {
+    // Regression: admin enables hybrid via the form without filling legacy
+    // weights. The settings row persists `{ hybridEnabled: true }` only;
+    // resolveSearchWeights must fall back to defaults for the missing fields.
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      searchConfig: { hybridEnabled: true },
+    } as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('section 21');
+
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    const params = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0].slice(1);
+    expect(sql).toContain('ts_rank_cd');
+    expect(sql).toContain('"searchVector"');
+    // vectorWeight defaulted to 1.0, bm25Weight defaulted to 1.0
+    expect(params[4]).toBe(1.0);
+    expect(params[5]).toBe(1.0);
+  });
+
+  it('clamps similarity to [0, 1] for low/negative final scores', async () => {
+    mockHybridSettings({ hybridEnabled: true, bm25Weight: 1.0 });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([
+      {
+        ...makeChunk(),
+        documentName: 'doc',
+        distance: 0.95,
+        vector_score: 0.05,
+        keyword_score: 0,
+        final_score: 0.05,
+      },
+    ] as never);
+
+    const results = await searchKnowledge('weak match');
+
+    expect(results[0].similarity).toBeCloseTo(0.05);
+    expect(results[0].finalScore).toBeCloseTo(0.05);
   });
 });
 

@@ -40,6 +40,10 @@ const searchResultSchema = z.object({
   chunk: knowledgeChunkSchema,
   similarity: z.number(),
   documentName: z.string().optional(),
+  // Populated only when hybrid (BM25 + vector) search is enabled in admin settings.
+  vectorScore: z.number().optional(),
+  keywordScore: z.number().optional(),
+  finalScore: z.number().optional(),
 });
 
 type KnowledgeSearchResult = z.infer<typeof searchResultSchema>;
@@ -54,6 +58,46 @@ function similarityClasses(score: number): string {
   if (score >= 0.8) return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
   if (score >= 0.6) return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
   return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+}
+
+/**
+ * Three-segment score chip used when the search response includes the hybrid
+ * (BM25-flavoured + vector) score breakdown. Each segment shows percentage of
+ * its component score, colour-coded with the same tier as the single-similarity
+ * badge.
+ */
+function HybridScoreBadges({
+  vectorScore,
+  keywordScore,
+  finalScore,
+}: {
+  vectorScore: number;
+  keywordScore: number;
+  finalScore: number;
+}): React.ReactElement {
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1" title="vector / keyword / final">
+      <Badge className={similarityClasses(finalScore)}>{finalScore.toFixed(2)}</Badge>
+      <div className="text-muted-foreground flex gap-1 text-[10px] tabular-nums">
+        <span>v {vectorScore.toFixed(2)}</span>
+        <span>•</span>
+        <span>k {keywordScore.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** True when the result row carries the hybrid-mode score breakdown. */
+function isHybrid(r: KnowledgeSearchResult): r is KnowledgeSearchResult & {
+  vectorScore: number;
+  keywordScore: number;
+  finalScore: number;
+} {
+  return (
+    typeof r.vectorScore === 'number' &&
+    typeof r.keywordScore === 'number' &&
+    typeof r.finalScore === 'number'
+  );
 }
 
 /** Check if content looks like it contains markdown */
@@ -195,9 +239,17 @@ export function ExploreTab({ scope }: ExploreTabProps) {
               className="hover:bg-muted/50 w-full rounded-lg border p-4 text-left transition-colors"
             >
               <div className="flex items-start gap-3">
-                <Badge className={`shrink-0 ${similarityClasses(result.similarity)}`}>
-                  {Math.round(result.similarity * 100)}%
-                </Badge>
+                {isHybrid(result) ? (
+                  <HybridScoreBadges
+                    vectorScore={result.vectorScore}
+                    keywordScore={result.keywordScore}
+                    finalScore={result.finalScore}
+                  />
+                ) : (
+                  <Badge className={`shrink-0 ${similarityClasses(result.similarity)}`}>
+                    {Math.round(result.similarity * 100)}%
+                  </Badge>
+                )}
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex items-center gap-2">
                     {result.documentName && (
@@ -237,11 +289,16 @@ export function ExploreTab({ scope }: ExploreTabProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               Chunk Detail
-              {selected && (
-                <Badge className={similarityClasses(selected.similarity)}>
-                  {Math.round(selected.similarity * 100)}% similarity
-                </Badge>
-              )}
+              {selected &&
+                (isHybrid(selected) ? (
+                  <Badge className={similarityClasses(selected.finalScore)}>
+                    {selected.finalScore.toFixed(2)} blended
+                  </Badge>
+                ) : (
+                  <Badge className={similarityClasses(selected.similarity)}>
+                    {Math.round(selected.similarity * 100)}% similarity
+                  </Badge>
+                ))}
             </DialogTitle>
           </DialogHeader>
 
@@ -306,8 +363,21 @@ export function ExploreTab({ scope }: ExploreTabProps) {
                       <span>{selected.chunk.estimatedTokens}</span>
                     </>
                   )}
-                  <span className="text-muted-foreground">Similarity Score</span>
-                  <span>{selected.similarity.toFixed(4)}</span>
+                  {isHybrid(selected) ? (
+                    <>
+                      <span className="text-muted-foreground">Vector Score</span>
+                      <span className="tabular-nums">{selected.vectorScore.toFixed(4)}</span>
+                      <span className="text-muted-foreground">Keyword Score (BM25)</span>
+                      <span className="tabular-nums">{selected.keywordScore.toFixed(4)}</span>
+                      <span className="text-muted-foreground">Final Score</span>
+                      <span className="tabular-nums">{selected.finalScore.toFixed(4)}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">Similarity Score</span>
+                      <span>{selected.similarity.toFixed(4)}</span>
+                    </>
+                  )}
                   {selected.chunk.metadata !== null &&
                   typeof selected.chunk.metadata === 'object' &&
                   !Array.isArray(selected.chunk.metadata)

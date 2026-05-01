@@ -63,12 +63,16 @@ Escalation emails are managed via an inline tag-style list (add/remove) outside 
 
 #### Knowledge search
 
-| Field                | Type   | Description                                                           |
-| -------------------- | ------ | --------------------------------------------------------------------- |
-| Keyword boost weight | Number | Non-positive, reduces cosine distance for keyword matches (-0.2 to 0) |
-| Vector weight        | Number | Multiplier for vector similarity (0.1 to 2.0)                         |
+The card renders an intro paragraph explaining the two ranking modes, then four controls:
 
-Both fields must be provided together or left blank together — partial save sets `searchConfig` to `null`.
+| Field                                | Type     | Description                                                                                                                                                   |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enable hybrid search (BM25 + vector) | Checkbox | Opt-in toggle. Off = legacy vector-only ranking. On = blended `vectorWeight × vector_score + bm25Weight × ts_rank_cd(searchVector, …)`. Default off.          |
+| BM25 weight                          | Number   | Multiplier on the keyword score in hybrid mode. Range 0.1–2.0, default 1.0. Disabled (and ignored) when hybrid is off.                                        |
+| Vector weight                        | Number   | Multiplier on the vector similarity score. Active in **both** modes. Range 0.1–2.0, default 1.0.                                                              |
+| Keyword boost weight                 | Number   | **Vector-only mode only.** Non-positive offset that nudges keyword-matched chunks ahead in the legacy ranking (-0.2 to 0). Visually dimmed when hybrid is on. |
+
+Mode interaction: when hybrid is on, `keywordBoostWeight` is ignored and `bm25Weight` controls keyword influence; when hybrid is off, `bm25Weight` is ignored. Every field is optional and persisted independently — `resolveSearchWeights` in `lib/orchestration/knowledge/search.ts` falls back to built-in defaults for any missing field, so an admin can save just `{ hybridEnabled: true }` and let the rest default. The form sends `searchConfig: null` only when nothing is overridden. See [Knowledge Base — Search](../orchestration/knowledge.md#search) for the ranking formula and the underlying `searchVector` GENERATED column.
 
 All fields use `<FieldHelp>` popovers for contextual help.
 

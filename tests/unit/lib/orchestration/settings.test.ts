@@ -175,8 +175,17 @@ describe('parseSearchConfig', () => {
     expect(parseSearchConfig('not-an-object')).toBeNull();
   });
 
-  it('returns null when required fields are missing', () => {
-    expect(parseSearchConfig({ keywordBoostWeight: -0.02 })).toBeNull();
+  it('accepts a partial config (every field is optional, resolveSearchWeights fills defaults)', () => {
+    expect(parseSearchConfig({ keywordBoostWeight: -0.02 })).toEqual({
+      keywordBoostWeight: -0.02,
+    });
+  });
+
+  it('accepts a hybrid-only config without legacy weights', () => {
+    expect(parseSearchConfig({ hybridEnabled: true, bm25Weight: 1.0 })).toEqual({
+      hybridEnabled: true,
+      bm25Weight: 1.0,
+    });
   });
 });
 

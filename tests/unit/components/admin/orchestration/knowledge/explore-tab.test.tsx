@@ -341,4 +341,128 @@ describe('ExploreTab', () => {
       { timeout: 2000 }
     );
   });
+
+  // ── Hybrid score breakdown ─────────────────────────────────────────────────
+
+  /**
+   * Build a result that carries the hybrid (BM25-flavoured + vector) score
+   * fields. The API includes these only when admin settings have hybrid mode on.
+   */
+  function makeHybridResult(opts: {
+    id: string;
+    vectorScore: number;
+    keywordScore: number;
+    finalScore: number;
+  }) {
+    return {
+      ...makeResult({ id: opts.id, similarity: opts.finalScore }),
+      vectorScore: opts.vectorScore,
+      keywordScore: opts.keywordScore,
+      finalScore: opts.finalScore,
+    };
+  }
+
+  it('renders three-segment score breakdown when hybrid fields are present', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            results: [
+              makeHybridResult({
+                id: 'chunk-A',
+                vectorScore: 0.78,
+                keywordScore: 0.42,
+                finalScore: 1.2,
+              }),
+            ],
+          },
+        }),
+    });
+
+    render(<ExploreTab />);
+    fireEvent.change(screen.getByPlaceholderText('Search the knowledge base...'), {
+      target: { value: 'section 21' },
+    });
+
+    await waitFor(
+      () => {
+        // final-score badge dominates; component-score sub-line shows the breakdown
+        expect(screen.getByText('1.20')).toBeInTheDocument();
+        expect(screen.getByText('v 0.78')).toBeInTheDocument();
+        expect(screen.getByText('k 0.42')).toBeInTheDocument();
+      },
+      { timeout: 2000 }
+    );
+    // Single similarity badge is NOT rendered for the same row in hybrid mode
+    expect(screen.queryByText('120%')).not.toBeInTheDocument();
+  });
+
+  it('falls back to single similarity badge when hybrid fields are absent', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(SEARCH_RESPONSE),
+    });
+
+    render(<ExploreTab />);
+    fireEvent.change(screen.getByPlaceholderText('Search the knowledge base...'), {
+      target: { value: 'fan-out patterns' },
+    });
+
+    await waitFor(
+      () => {
+        // Legacy single percentage badges
+        expect(screen.getByText('92%')).toBeInTheDocument();
+        expect(screen.getByText('65%')).toBeInTheDocument();
+      },
+      { timeout: 2000 }
+    );
+    // Hybrid sub-line is NOT rendered for these results
+    expect(screen.queryByText(/^v \d/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^k \d/)).not.toBeInTheDocument();
+  });
+
+  it('shows hybrid score rows in the chunk detail dialog when hybrid fields are present', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            results: [
+              makeHybridResult({
+                id: 'chunk-A',
+                vectorScore: 0.78,
+                keywordScore: 0.42,
+                finalScore: 1.2,
+              }),
+            ],
+          },
+        }),
+    });
+
+    const user = userEvent.setup();
+    render(<ExploreTab />);
+    fireEvent.change(screen.getByPlaceholderText('Search the knowledge base...'), {
+      target: { value: 'section 21' },
+    });
+
+    await waitFor(() => expect(screen.getByText('1.20')).toBeInTheDocument(), { timeout: 2000 });
+
+    // Open the dialog
+    const resultButton = screen.getByText(/fan-out patterns/i).closest('button');
+    if (resultButton) {
+      await user.click(resultButton);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByText('Vector Score')).toBeInTheDocument();
+      expect(screen.getByText('Keyword Score (BM25)')).toBeInTheDocument();
+      expect(screen.getByText('Final Score')).toBeInTheDocument();
+      expect(screen.getByText('0.7800')).toBeInTheDocument();
+      expect(screen.getByText('0.4200')).toBeInTheDocument();
+      expect(screen.getByText('1.2000')).toBeInTheDocument();
+    });
+  });
 });

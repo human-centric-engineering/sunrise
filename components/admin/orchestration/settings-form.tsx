@@ -45,7 +45,12 @@ export interface OrchestrationSettings {
   globalMonthlyBudgetUsd: number | null;
   defaultApprovalTimeoutMs: number | null;
   approvalDefaultAction: string | null;
-  searchConfig: { keywordBoostWeight: number; vectorWeight: number } | null;
+  searchConfig: {
+    keywordBoostWeight?: number;
+    vectorWeight?: number;
+    hybridEnabled?: boolean;
+    bm25Weight?: number;
+  } | null;
   webhookRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
@@ -88,6 +93,8 @@ const settingsFormSchema = z.object({
   // Search
   keywordBoostWeight: nullableNumber.pipe(z.number().min(-0.2).max(0).nullable()),
   vectorWeight: nullableNumber.pipe(z.number().min(0.1).max(2.0).nullable()),
+  hybridEnabled: z.boolean(),
+  bm25Weight: nullableNumber.pipe(z.number().min(0.1).max(2.0).nullable()),
   // Escalation
   escalationEnabled: z.boolean(),
   escalationPriorityFilter: z.enum(ESCALATION_PRIORITY_FILTERS),
@@ -162,6 +169,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
       keywordBoostWeight: toStr(initialSettings.searchConfig?.keywordBoostWeight),
       vectorWeight: toStr(initialSettings.searchConfig?.vectorWeight),
+      hybridEnabled: initialSettings.searchConfig?.hybridEnabled === true,
+      bm25Weight: toStr(initialSettings.searchConfig?.bm25Weight),
       escalationEnabled: !!initialSettings.escalationConfig,
       escalationPriorityFilter: initialSettings.escalationConfig?.notifyOnPriority ?? 'all',
       escalationWebhookUrl: initialSettings.escalationConfig?.webhookUrl ?? '',
@@ -181,11 +190,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     defaultValues: defaults,
   });
 
-  const watchedKeyword = watch('keywordBoostWeight');
-  const watchedVector = watch('vectorWeight');
-  const searchPartialFill =
-    (watchedKeyword !== '' && watchedVector === '') ||
-    (watchedKeyword === '' && watchedVector !== '');
+  const watchedHybrid = watch('hybridEnabled');
 
   React.useEffect(() => {
     reset(defaults);
@@ -200,10 +205,30 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
     setError(null);
     try {
-      const searchConfig =
-        values.keywordBoostWeight !== null && values.vectorWeight !== null
-          ? { keywordBoostWeight: values.keywordBoostWeight, vectorWeight: values.vectorWeight }
-          : null;
+      // Send searchConfig if the admin has set anything non-default — including
+      // just toggling hybrid on with no explicit weights. The Zod schema makes
+      // every field optional and the search-engine resolver falls back to
+      // built-in defaults per missing field.
+      const hasAnyOverride =
+        values.hybridEnabled ||
+        values.bm25Weight !== null ||
+        values.keywordBoostWeight !== null ||
+        values.vectorWeight !== null;
+      const searchConfig = hasAnyOverride
+        ? {
+            ...(values.keywordBoostWeight !== null
+              ? { keywordBoostWeight: values.keywordBoostWeight }
+              : {}),
+            ...(values.vectorWeight !== null ? { vectorWeight: values.vectorWeight } : {}),
+            hybridEnabled: values.hybridEnabled,
+            // When hybrid is on, default bm25Weight to 1.0 if the admin left it blank
+            ...(values.hybridEnabled
+              ? { bm25Weight: values.bm25Weight ?? 1.0 }
+              : values.bm25Weight !== null
+                ? { bm25Weight: values.bm25Weight }
+                : {}),
+          }
+        : null;
 
       const escalationConfig =
         values.escalationEnabled && escalationEmails.length > 0
@@ -666,60 +691,130 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
         <CardHeader>
           <CardTitle className="text-base">Knowledge search</CardTitle>
           <p className="text-muted-foreground text-xs">
-            Hybrid search weight tuning for the knowledge base.
+            The knowledge base supports two ranking modes. <strong>Vector-only</strong> (default)
+            ranks chunks by semantic similarity — great for paraphrased questions, weak on exact
+            terminology. <strong>Hybrid</strong> blends a keyword (BM25-flavoured) score with vector
+            similarity, surfacing exact-term matches like &ldquo;Section 21 notice&rdquo; or
+            &ldquo;ELM Countryside Stewardship&rdquo; that vector alone often misses. Switch modes
+            below; only the relevant weights apply.
           </p>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="keywordBoostWeight" className="flex items-center gap-1">
-              Keyword boost weight
-              <FieldHelp title="Keyword match penalty">
-                A non-positive number that reduces cosine distance for keyword matches. More
-                negative = stronger keyword influence. Range: -0.2 to 0. Leave blank for the
-                built-in default.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="keywordBoostWeight"
-              type="number"
-              step="0.01"
-              min={-0.2}
-              max={0}
-              placeholder="Default"
-              {...register('keywordBoostWeight')}
+        <CardContent className="space-y-4">
+          {/* Hybrid toggle */}
+          <div className="flex items-center gap-2">
+            <Controller
+              name="hybridEnabled"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Enable hybrid search (BM25 + vector)
+                  <FieldHelp title="Enable hybrid search (BM25 + vector)">
+                    When on, results are ranked by{' '}
+                    <code>vectorWeight × vector_score + bm25Weight × keyword_score</code>, where{' '}
+                    <code>keyword_score</code> is PostgreSQL&apos;s <code>ts_rank_cd</code> (a
+                    BM25-flavoured ranker) over an indexed tsvector of each chunk&apos;s content +
+                    keywords. Use this for domain-specific terminology (legal, financial,
+                    regulatory, medical). When off, the legacy vector-only ranking with the small
+                    additive keyword boost is used. Default: off — turn on after seeding your
+                    knowledge base if exact-term recall matters.
+                  </FieldHelp>
+                </label>
+              )}
             />
-            {errors.keywordBoostWeight && (
-              <p className="text-xs text-red-600">{errors.keywordBoostWeight.message}</p>
-            )}
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="vectorWeight" className="flex items-center gap-1">
-              Vector weight
-              <FieldHelp title="Vector similarity weight">
-                Multiplier for vector similarity scores. Higher = more weight on semantic similarity
-                vs keyword matching. Range: 0.1 to 2.0. Leave blank for the built-in default.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="vectorWeight"
-              type="number"
-              step="0.1"
-              min={0.1}
-              max={2.0}
-              placeholder="Default"
-              {...register('vectorWeight')}
-            />
-            {errors.vectorWeight && (
-              <p className="text-xs text-red-600">{errors.vectorWeight.message}</p>
-            )}
+          {/* Weight inputs grid */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="vectorWeight" className="flex items-center gap-1">
+                Vector weight
+                <FieldHelp title="Vector similarity weight">
+                  Multiplier on the vector similarity score. <strong>In vector-only mode</strong>,
+                  scales the cosine-similarity term. <strong>In hybrid mode</strong>, the weight on
+                  the vector half of the blend formula. Range: 0.1 to 2.0. Default 1.0. Lower this
+                  in hybrid mode if you want keyword matches to dominate.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="vectorWeight"
+                type="number"
+                step="0.1"
+                min={0.1}
+                max={2.0}
+                placeholder="Default"
+                {...register('vectorWeight')}
+              />
+              {errors.vectorWeight && (
+                <p className="text-xs text-red-600">{errors.vectorWeight.message}</p>
+              )}
+            </div>
+
+            <div className={`space-y-1.5 ${watchedHybrid ? '' : 'opacity-60'}`}>
+              <Label htmlFor="bm25Weight" className="flex items-center gap-1">
+                BM25 weight
+                <FieldHelp title="BM25 weight (hybrid mode only)">
+                  Multiplier on the keyword score in the hybrid blend formula. Higher = more weight
+                  on exact-term matches; lower = more weight on semantic similarity. Range: 0.1 to
+                  2.0. Start at <strong>1.0</strong> (equal weighting with vectorWeight); increase
+                  toward 1.5–2.0 if exact terminology is being missed; decrease toward 0.3–0.5 if
+                  keyword matches are crowding out semantically better answers. Ignored when hybrid
+                  is off.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="bm25Weight"
+                type="number"
+                step="0.1"
+                min={0.1}
+                max={2.0}
+                placeholder="Default (1.0)"
+                disabled={!watchedHybrid}
+                {...register('bm25Weight')}
+              />
+              {errors.bm25Weight && (
+                <p className="text-xs text-red-600">{errors.bm25Weight.message}</p>
+              )}
+              {!watchedHybrid && (
+                <p className="text-muted-foreground text-xs">Active only when hybrid is enabled.</p>
+              )}
+            </div>
+
+            <div className={`space-y-1.5 sm:col-span-2 ${watchedHybrid ? 'opacity-60' : ''}`}>
+              <Label htmlFor="keywordBoostWeight" className="flex items-center gap-1">
+                Keyword boost weight
+                <FieldHelp title="Keyword boost weight (vector-only mode)">
+                  Used <strong>only when hybrid mode is off</strong>. A small non-positive offset
+                  that nudges keyword-matched chunks ahead in the vector-only ranking — a flat
+                  tiebreaker, not a real BM25 score. More negative = stronger nudge. Range: -0.2 to
+                  0. Ignored when hybrid is on (use BM25 weight there instead).
+                </FieldHelp>
+              </Label>
+              <Input
+                id="keywordBoostWeight"
+                type="number"
+                step="0.01"
+                min={-0.2}
+                max={0}
+                placeholder="Default"
+                disabled={watchedHybrid}
+                {...register('keywordBoostWeight')}
+              />
+              {errors.keywordBoostWeight && (
+                <p className="text-xs text-red-600">{errors.keywordBoostWeight.message}</p>
+              )}
+              {watchedHybrid && (
+                <p className="text-muted-foreground text-xs">
+                  Inactive — hybrid mode is on; BM25 weight controls keyword influence.
+                </p>
+              )}
+            </div>
           </div>
-          {searchPartialFill && (
-            <p className="text-xs text-amber-600 sm:col-span-2">
-              Both weights must be set together. If only one is provided, search config will reset
-              to built-in defaults on save.
-            </p>
-          )}
         </CardContent>
       </Card>
 

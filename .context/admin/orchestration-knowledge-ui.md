@@ -111,6 +111,8 @@ Each section shows:
 
 Debounced search input (400ms, min 3 chars). Results show similarity scores with color coding (green ≥80%, amber ≥60%, red <60%), chunk type badges, content preview, and a detail modal with full metadata.
 
+When hybrid search is enabled (Settings → Knowledge search → Enable hybrid search), each result instead shows a three-segment score: a final-score badge plus a `v <vector_score> • k <keyword_score>` sub-line. The detail modal surfaces all three components individually (Vector / Keyword (BM25) / Final). When hybrid is off, the legacy single-percentage badge is rendered. The fall-back is purely additive — the API includes the hybrid fields only when the search engine produced them, so the tab needs no toggle of its own.
+
 ### Visualize tab
 
 Interactive ECharts force-directed graph. Two view modes (Structure / Embedded), stats cards, node filtering, fullscreen toggle.

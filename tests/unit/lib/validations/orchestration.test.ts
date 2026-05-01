@@ -72,6 +72,7 @@ import {
   executionStatusSchema,
   executionTraceSchema,
   chatAttachmentSchema,
+  searchConfigSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1977,5 +1978,103 @@ describe('chatAttachmentSchema', () => {
     const bad = { ...validAttachment, mediaType: 'video/mp4' };
     const result = chatAttachmentSchema.safeParse(bad);
     expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// searchConfigSchema (knowledge-search weight configuration)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('searchConfigSchema', () => {
+  it('accepts the legacy two-field shape (back-compat with rows persisted before hybrid)', () => {
+    const legacy = { keywordBoostWeight: -0.02, vectorWeight: 1.0 };
+    const result = searchConfigSchema.safeParse(legacy);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.keywordBoostWeight).toBe(-0.02);
+      expect(result.data.vectorWeight).toBe(1.0);
+      expect(result.data.hybridEnabled).toBeUndefined();
+      expect(result.data.bm25Weight).toBeUndefined();
+    }
+  });
+
+  it('accepts the new shape with hybridEnabled and bm25Weight', () => {
+    const hybrid = {
+      keywordBoostWeight: -0.02,
+      vectorWeight: 1.0,
+      hybridEnabled: true,
+      bm25Weight: 0.5,
+    };
+    const result = searchConfigSchema.safeParse(hybrid);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.hybridEnabled).toBe(true);
+      expect(result.data.bm25Weight).toBe(0.5);
+    }
+  });
+
+  it('accepts hybridEnabled without bm25Weight (form may default at submit time)', () => {
+    const partial = {
+      keywordBoostWeight: -0.02,
+      vectorWeight: 1.0,
+      hybridEnabled: true,
+    };
+    expect(() => searchConfigSchema.parse(partial)).not.toThrow();
+  });
+
+  it('rejects bm25Weight above 2.0', () => {
+    const oversized = {
+      keywordBoostWeight: -0.02,
+      vectorWeight: 1.0,
+      hybridEnabled: true,
+      bm25Weight: 5,
+    };
+    const result = searchConfigSchema.safeParse(oversized);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects bm25Weight below 0.1', () => {
+    const undersized = {
+      keywordBoostWeight: -0.02,
+      vectorWeight: 1.0,
+      hybridEnabled: true,
+      bm25Weight: 0.01,
+    };
+    const result = searchConfigSchema.safeParse(undersized);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects vectorWeight outside the 0.1–2.0 band (existing rule preserved)', () => {
+    const bad = { keywordBoostWeight: -0.02, vectorWeight: 5 };
+    const result = searchConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects positive keywordBoostWeight (existing rule preserved)', () => {
+    const bad = { keywordBoostWeight: 0.5, vectorWeight: 1.0 };
+    const result = searchConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a hybrid-only override without legacy weights (the form must be able to send this)', () => {
+    const hybridOnly = { hybridEnabled: true, bm25Weight: 1.0 };
+    const result = searchConfigSchema.safeParse(hybridOnly);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.keywordBoostWeight).toBeUndefined();
+      expect(result.data.vectorWeight).toBeUndefined();
+      expect(result.data.hybridEnabled).toBe(true);
+      expect(result.data.bm25Weight).toBe(1.0);
+    }
+  });
+
+  it('accepts a single-field override (vectorWeight only)', () => {
+    const result = searchConfigSchema.safeParse({ vectorWeight: 1.5 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an empty object (treated as all-defaults)', () => {
+    const result = searchConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
   });
 });

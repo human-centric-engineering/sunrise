@@ -1658,16 +1658,32 @@ export const completeEvaluationBodySchema = z.object({}).passthrough();
  */
 export const storedDefaultModelsSchema = z.record(z.string(), z.string()).catch({});
 
-/** Zod schema for hybrid search weight configuration. */
+/**
+ * Zod schema for knowledge-search weight configuration.
+ *
+ * All four fields are optional so admins can persist a partial override —
+ * for example `{ hybridEnabled: true, bm25Weight: 1.0 }` without setting
+ * the legacy vector-only weights. `resolveSearchWeights` in
+ * `lib/orchestration/knowledge/search.ts` falls back to built-in defaults
+ * for any field that is absent.
+ */
 export const searchConfigSchema = z.object({
   keywordBoostWeight: z
     .number()
     .min(-0.2, 'Keyword boost must be at least -0.2')
-    .max(0, 'Keyword boost must be non-positive (it reduces cosine distance for matches)'),
+    .max(0, 'Keyword boost must be non-positive (it reduces cosine distance for matches)')
+    .optional(),
   vectorWeight: z
     .number()
     .min(0.1, 'Vector weight must be at least 0.1')
-    .max(2.0, 'Vector weight must be at most 2.0'),
+    .max(2.0, 'Vector weight must be at most 2.0')
+    .optional(),
+  hybridEnabled: z.boolean().optional(),
+  bm25Weight: z
+    .number()
+    .min(0.1, 'BM25 weight must be at least 0.1')
+    .max(2.0, 'BM25 weight must be at most 2.0')
+    .optional(),
 });
 
 /** Escalation notification routing configuration. */

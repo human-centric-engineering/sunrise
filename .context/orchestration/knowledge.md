@@ -151,9 +151,51 @@ The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping uses `AiA
 
 ## Search
 
-`searchKnowledge(query, filters?, limit?, threshold?)` runs a hybrid cosine-similarity + keyword-boost search via pgvector. Filters support `chunkType`, `patternNumber`, `category`, `categories` (array), `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
+`searchKnowledge(query, filters?, limit?, threshold?)` ranks knowledge-base chunks via pgvector cosine distance, with two modes selected by `searchConfig.hybridEnabled` on the orchestration settings singleton. Filters support `chunkType`, `patternNumber`, `category`, `categories` (array), `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
 
 Results are ranked chunks with their parent document metadata — the admin search route (`POST /knowledge/search`) surfaces this directly. POST (not GET) because the filter payload can contain arbitrary text and we don't want query bodies in URL logs.
+
+### Vector-only mode (default)
+
+Cosine distance via pgvector's `<=>` operator with a small additive **keyword boost** for chunks whose `keywords` (-0.05) or `content` (-0.02) match `plainto_tsquery(query)`. The boost magnitude is admin-tunable via `searchConfig.keywordBoostWeight`. Result rows include a single `similarity` score.
+
+### Hybrid mode (BM25-flavoured + vector)
+
+Opt-in via `searchConfig.hybridEnabled = true` on `AiOrchestrationSettings`. Designed for domain-specific terminology where exact-term recall matters — legal ("Section 21 notice"), regulatory ("ELM Countryside Stewardship"), financial ("affordability stress test at 3% above SVR"), medical, trade. Vector embeddings systematically miss these; BM25-style lexical scoring catches them.
+
+Ranking formula:
+
+```
+vector_score   = max(0, 1 - cosine_distance)
+keyword_score  = ts_rank_cd(searchVector, plainto_tsquery('english', q), 32)
+final_score    = vectorWeight × vector_score + bm25Weight × keyword_score
+```
+
+Results are ordered by `final_score DESC`. The cosine-distance threshold continues to gate candidates so the semantic recall floor is preserved across both modes.
+
+`ts_rank_cd` is PostgreSQL's cover-density ranker — a **BM25 proxy**, not true BM25. True BM25 in pure SQL needs corpus-level avgdl + per-term IDF computed at query time, which is fragile, slow, and pulls in extension territory (`pg_search`, `paradedb`) that would be infrastructure churn we don't need at current corpus sizes. Normalisation mode `32` (`rank/(rank+1)`) bounds output to `[0, 1)` so the blend formula is well-scaled.
+
+When hybrid is enabled, result rows include three additional fields — `vectorScore`, `keywordScore`, `finalScore` — which the Explore tab renders as a three-segment score breakdown. The legacy `keywordBoostWeight` is intentionally **ignored** in hybrid mode; tune `bm25Weight` instead.
+
+#### Storage: the `searchVector` column
+
+The hybrid path queries an indexed tsvector column on `ai_knowledge_chunk`:
+
+```sql
+ALTER TABLE ai_knowledge_chunk
+  ADD COLUMN "searchVector" tsvector
+  GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(content, '') || ' ' || coalesce(keywords, ''))
+  ) STORED;
+CREATE INDEX idx_ai_knowledge_chunk_search_vector
+  ON ai_knowledge_chunk USING GIN ("searchVector");
+```
+
+Postgres auto-populates the column on `INSERT`/`UPDATE` — application code (chunker, embedder, document-manager) is **not** changed. The column is declared as `Unsupported("tsvector")` in the Prisma schema since Prisma can't model `GENERATED` columns; the migration owns the SQL.
+
+### Smoke testing
+
+`scripts/smoke/knowledge-hybrid-search.ts` (`npm run smoke:hybrid-search`) seeds three scoped chunks, runs both SQL branches against real Postgres, and asserts `ts_rank_cd` returns a non-zero score for an exact-term query. Use this when touching `search.ts` or the `searchVector` migration.
 
 `getPatternDetail(patternNumber)` is a specialized lookup that returns all chunks tagged with a given pattern number in source order — used by the admin `GET /knowledge/patterns/:number` route and by the `buildContext` path in the streaming chat handler. Returns 404 (via `NotFoundError` in the route) when no chunks exist.
 
