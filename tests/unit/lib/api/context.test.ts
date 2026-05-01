@@ -82,11 +82,13 @@ describe('getRouteLogger', () => {
     vi.mocked(logger.withContext).mockReturnValue(mockLog as any);
 
     // Act
-    await getRouteLogger(request);
+    const result = await getRouteLogger(request);
 
     // Assert — the request object is threaded through to both dependencies
     expect(vi.mocked(getFullContext)).toHaveBeenCalledWith(request);
     expect(vi.mocked(getEndpointPath)).toHaveBeenCalledWith(request);
+    // Assert — the merged logger from logger.withContext is returned
+    expect(result).toBe(mockLog);
   });
 
   it('should merge full context with the endpoint path and pass combined object to logger.withContext', async () => {

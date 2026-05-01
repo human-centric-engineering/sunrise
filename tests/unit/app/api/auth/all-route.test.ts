@@ -22,17 +22,11 @@ import { NextRequest } from 'next/server';
 // vi.mock factories are hoisted to the top of the file by Vitest's transform,
 // so any variables they reference must also be hoisted via vi.hoisted().
 
-const { mockBetterAuthGET, mockBetterAuthPOST, mockLog } = vi.hoisted(() => {
-  const mockBetterAuthGET = vi.fn();
-  const mockBetterAuthPOST = vi.fn();
-  const mockLog = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    withContext: vi.fn(),
+const { mockBetterAuthGET, mockBetterAuthPOST } = vi.hoisted(() => {
+  return {
+    mockBetterAuthGET: vi.fn(),
+    mockBetterAuthPOST: vi.fn(),
   };
-  return { mockBetterAuthGET, mockBetterAuthPOST, mockLog };
 });
 
 // --- Module mocks (hoisted before any imports) ---
@@ -63,6 +57,9 @@ vi.mock('@/lib/auth/config', () => ({
 
 import { GET, POST } from '@/app/api/auth/[...all]/route';
 import { getRouteLogger } from '@/lib/api/context';
+import { createMockLogger } from '@/tests/types/mocks';
+
+const mockLog = createMockLogger();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,7 +89,7 @@ function makeAuthResponse(status: number, body: unknown = {}): Response {
 describe('GET /api/auth/[...all]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getRouteLogger).mockResolvedValue(mockLog as any);
+    vi.mocked(getRouteLogger).mockResolvedValue(mockLog);
   });
 
   it('dispatches to the better-auth GET handler and returns its response', async () => {
@@ -168,7 +165,7 @@ describe('GET /api/auth/[...all]', () => {
 describe('POST /api/auth/[...all]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getRouteLogger).mockResolvedValue(mockLog as any);
+    vi.mocked(getRouteLogger).mockResolvedValue(mockLog);
   });
 
   it('dispatches to the better-auth POST handler and returns its response', async () => {

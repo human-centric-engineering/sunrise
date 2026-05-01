@@ -280,8 +280,12 @@ describe('server path (typeof window === undefined)', () => {
         /* expected */
       });
 
-      // Assert — error output was triggered
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      // Assert — the error banner is emitted, then the field-error JSON
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('❌ Invalid environment variables')
+      );
+      const allCallArgs = consoleErrorSpy.mock.calls.flat().join(' ');
+      expect(allCallArgs).toContain('DATABASE_URL');
     });
 
     it('should call console.log in development mode when validation succeeds', async () => {
