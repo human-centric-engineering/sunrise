@@ -567,6 +567,8 @@ model AiKnowledgeChunk {
   documentId      String
   content         String                       @db.Text
   embedding       Unsupported("vector(1536)")?
+  // GENERATED ALWAYS AS (to_tsvector('english', content || keywords)) STORED — managed by migration, populated by Postgres.
+  searchVector    Unsupported("tsvector")?
   chunkType       String // "pattern_section", "pattern_overview", "glossary", etc.
   patternNumber   Int?
   patternName     String?
