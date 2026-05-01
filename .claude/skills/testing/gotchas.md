@@ -581,6 +581,70 @@ vi.mock('@/lib/auth/config', () => ({ auth: {} }));
 
 ---
 
+### 20. `userEvent.type` Interprets `{` and `}` as Keyboard Descriptors
+
+**Problem**: `userEvent.type(input, '{"key": "value"}')` doesn't type the literal JSON — `{` and `}` are reserved keyboard-descriptor delimiters in `@testing-library/user-event` (`{Enter}`, `{Backspace}`, `{Shift>}foo{/Shift}`, etc.). The library either throws "unknown key" for the descriptor it tries to parse or types something unexpected. Tests that exercise JSON / array / object input fields (filter configs, query params, structured payloads) will fail in confusing ways even though the field accepts the input fine in the real browser.
+
+**Solution**: For inputs that take literal `{` / `}` characters, use `fireEvent.change` instead of `userEvent.type`. `fireEvent.change` is a direct DOM event dispatch and treats the value as an opaque string — no descriptor parsing.
+
+```typescript
+import { fireEvent } from '@testing-library/react';
+
+it('parses filter JSON and forwards via onChange', async () => {
+  // Arrange
+  render(<RagRetrieveEditor config={config} onChange={mockOnChange} />);
+  const filterInput = screen.getByTestId('rag-filter');
+
+  // Act — fireEvent.change for JSON; userEvent.type would mangle the braces
+  fireEvent.change(filterInput, { target: { value: '{"category":"docs"}' } });
+
+  // Assert
+  expect(mockOnChange).toHaveBeenLastCalledWith(
+    expect.objectContaining({ filter: { category: 'docs' } })
+  );
+});
+```
+
+**When to keep using `userEvent.type`**: anything that's natural typing — text fields, numeric inputs, search boxes, prompts. The `{`/`}` issue is narrow: JSON strings, regex literals containing braces, code snippets. Document the swap with a one-line comment so the next reader doesn't "simplify" it back to `userEvent.type`.
+
+**Escape syntax exists** (`'{{'` for a literal `{`), but it makes the test value visibly different from the assertion and from any debug log that prints the typed string. `fireEvent.change` is cleaner.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing Sprint 2 Batch 2.1 (2026-05-01) on `components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor.tsx`. Plan asked for filter-branch coverage (try/catch around `JSON.parse`); attempts to use `userEvent.type` to enter JSON failed because of the descriptor parsing. Applies to any test for a UI field that accepts JSON or other structured strings.
+
+---
+
+### 21. Admin Layout Holds the Auth Guard, Not Each Page
+
+**Problem**: Pages under `app/admin/` typically do NOT call `withAuth()` / `withAdminAuth()` themselves — auth is enforced once at the route-group layout (`app/admin/layout.tsx` and similar). Same for `app/(protected)/`. Plans driven by `/test-coverage` will repeatedly suggest "auth guard redirects unauthenticated users" as an Add scenario for these pages because the page's coverage report doesn't show a guard branch. Writing that test against the page directly will fail (or pass trivially against a stubbed wrapper that doesn't exist) because the page has no guard logic to exercise.
+
+**Solution**: Before writing an "auth guard redirects" test for any page under `app/admin/` or `app/(protected)/`, **read the page's source and confirm the guard is in the page itself**. Most aren't.
+
+- If the page has no guard: drop the auth-redirect Add scenario from the plan and note the deviation. Coverage of the auth path lives in the layout's tests, not the page's.
+- If the page has its own guard (some override the group layout): write the auth-redirect test as planned.
+- For "page renders without crashing", just mock the data dependencies (Prisma, `serverFetch`, etc.) and the layout's session is irrelevant — you're rendering the page in isolation, not the route tree.
+
+```typescript
+// ❌ WRONG — page has no guard; this test will be a no-op
+it('redirects unauthenticated users', async () => {
+  vi.mocked(auth.api.getSession).mockResolvedValue(null);
+  await AgentDetailPage({ params: { id: '123' } });
+  expect(redirect).toHaveBeenCalledWith('/login');
+});
+
+// ✅ CORRECT — assert what the page actually does on missing data
+it('calls notFound() when serverFetch returns 404', async () => {
+  vi.mocked(serverFetch).mockResolvedValue(new Response(null, { status: 404 }));
+  await AgentDetailPage({ params: { id: 'missing' } });
+  expect(notFound).toHaveBeenCalled();
+});
+```
+
+**Signal for `/test-plan`**: when emitting a unit-test plan for a page under `app/admin/**` or `app/(protected)/**`, do not auto-add "auth guard redirect" scenarios unless the source actually imports a guard. The pattern is the layout's responsibility.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing Sprint 2 Batch 2.2 (2026-05-01) on `app/admin/orchestration/agents/[id]/page.tsx`. Plan listed "auth guard redirects unauthenticated users" as the first Add scenario; source had no `withAuth()` / `withAdminAuth()` call — auth lives in the admin layout. Three `notFound()` paths covered the equivalent territory for the page.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:

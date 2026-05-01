@@ -267,4 +267,46 @@ describe('GuardEditor', () => {
     render(<GuardEditor config={config} onChange={vi.fn()} />);
     expect(screen.queryByText(/retry attempt/i)).not.toBeInTheDocument();
   });
+
+  // ── LLM-specific onChange handlers ────────────────────────────────────────
+
+  it('calls onChange with { modelOverride: string } when user types in the model override field (llm mode)', async () => {
+    // Arrange — mode must be "llm" for the field to be visible
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block' };
+    render(<GuardEditor config={config} onChange={onChange} />);
+
+    // Act — type a single character so the controlled input fires exactly one onChange
+    await user.type(document.getElementById('guard-model-override')!, 'x');
+
+    // Assert — onChange was called with the modelOverride key
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('modelOverride');
+    expect(lastArg.modelOverride).toBe('x');
+  });
+
+  it('calls onChange with { temperature: number } when the temperature input changes (llm mode)', async () => {
+    // Arrange — mode must be "llm" for the temperature field to render
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block' };
+    render(<GuardEditor config={config} onChange={onChange} />);
+
+    // Act
+    const input = document.getElementById('guard-temperature')!;
+    await user.clear(input);
+    await user.type(input, '0.5');
+
+    // Assert — the temperature value passed to onChange is a number, not a string
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('temperature');
+    expect(typeof lastArg.temperature).toBe('number');
+  });
 });
