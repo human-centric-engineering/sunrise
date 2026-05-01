@@ -2,7 +2,7 @@
 
 ## What This Is
 
-The Agent Orchestration Layer in the Sunrise admin dashboard lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. It is fully built across 7 phases with 41 API routes, 9 service modules, and 6800+ tests.
+The Agent Orchestration Layer in the Sunrise admin dashboard lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. It is fully built across 7 phases with 120 API routes, 16 service modules, and 7000+ tests.
 
 **Main documentation:** [`.context/admin/orchestration.md`](../../.context/admin/orchestration.md)
 
@@ -30,27 +30,36 @@ The separation is:
 
 ## Module Layout
 
-| Module        | Path                              | Phase | Purpose                                                 |
-| ------------- | --------------------------------- | ----- | ------------------------------------------------------- |
-| Knowledge     | `lib/orchestration/knowledge/`    | 1     | Document ingestion, chunking, embeddings, vector search |
-| LLM Providers | `lib/orchestration/llm/`          | 2a    | Provider abstraction, model registry, cost tracking     |
-| Capabilities  | `lib/orchestration/capabilities/` | 2b    | Tool dispatcher, built-in capabilities, rate limiting   |
-| Chat          | `lib/orchestration/chat/`         | 3     | Streaming chat handler, context builder, input guard    |
-| Workflows     | `lib/orchestration/workflows/`    | 4     | DAG validator, step types, templates                    |
-| Engine        | `lib/orchestration/engine/`       | 5     | Runtime executor, 9 step executors, event stream        |
-| Evaluations   | `lib/orchestration/evaluations/`  | 6     | Evaluation session completion handler                   |
-| Seed          | `prisma/seeds/data/`              | 1     | Dev seed data for providers / agents                    |
+| Module        | Path                               | Purpose                                                 |
+| ------------- | ---------------------------------- | ------------------------------------------------------- |
+| Knowledge     | `lib/orchestration/knowledge/`     | Document ingestion, chunking, embeddings, vector search |
+| LLM Providers | `lib/orchestration/llm/`           | Provider abstraction, model registry, cost tracking     |
+| Capabilities  | `lib/orchestration/capabilities/`  | Tool dispatcher, built-in capabilities, rate limiting   |
+| Chat          | `lib/orchestration/chat/`          | Streaming chat handler, context builder, input guard    |
+| Workflows     | `lib/orchestration/workflows/`     | DAG validator, step types, templates                    |
+| Engine        | `lib/orchestration/engine/`        | Runtime executor, 15 step executors, event stream       |
+| Evaluations   | `lib/orchestration/evaluations/`   | Evaluation session completion handler                   |
+| Analytics     | `lib/orchestration/analytics/`     | Usage metrics, popular topics, engagement, gap analysis |
+| Audit         | `lib/orchestration/audit/`         | Immutable config change log                             |
+| Backup        | `lib/orchestration/backup/`        | Export/import orchestration config                      |
+| Hooks         | `lib/orchestration/hooks/`         | In-process event dispatch, outbound webhook triggers    |
+| MCP           | `lib/orchestration/mcp/`           | Model Context Protocol server, tools, resources         |
+| Notifications | `lib/orchestration/notifications/` | Email and webhook notification delivery                 |
+| Scheduling    | `lib/orchestration/scheduling/`    | Cron schedules, webhook triggers, scheduler tick        |
+| Utils         | `lib/orchestration/utils/`         | Shared utility functions                                |
+| Webhooks      | `lib/orchestration/webhooks/`      | Webhook subscription management and dispatch            |
+| Seed          | `prisma/seeds/data/`               | Dev seed data for providers / agents                    |
 
 ## Key File Paths
 
-| Area        | Key Files                                                                                        |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| Types       | `types/orchestration.ts` — all orchestration types, events, step types                           |
-| Validation  | `lib/validations/orchestration.ts` — all Zod schemas                                             |
-| SSE helper  | `lib/api/sse.ts` — `sseResponse()` used by chat + execute routes                                 |
-| API routes  | `app/api/v1/admin/orchestration/` — 41 route files                                               |
-| Admin pages | `app/admin/orchestration/` — dashboard, agents, capabilities, providers, workflows, costs, learn |
-| Tests       | `tests/unit/lib/orchestration/`, `tests/integration/api/v1/admin/orchestration/`                 |
+| Area        | Key Files                                                                                                                                                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Types       | `types/orchestration.ts` — all orchestration types, events, step types                                                                                                                                                                                    |
+| Validation  | `lib/validations/orchestration.ts` — all Zod schemas                                                                                                                                                                                                      |
+| SSE helper  | `lib/api/sse.ts` — `sseResponse()` used by chat + execute routes                                                                                                                                                                                          |
+| API routes  | `app/api/v1/admin/orchestration/` — 120 route files across 25 areas                                                                                                                                                                                       |
+| Admin pages | `app/admin/orchestration/` — 43 pages: dashboard, agents, capabilities, providers, workflows, executions, costs, learn, knowledge, conversations, evaluations, experiments, observability, approvals, audit-log, analytics, mcp, hooks, schedules, backup |
+| Tests       | `tests/unit/lib/orchestration/`, `tests/integration/api/v1/admin/orchestration/`                                                                                                                                                                          |
 
 ## API-First Rule
 

@@ -178,10 +178,10 @@ export async function executeExternalCall(
   const startedAt = Date.now();
 
   // ── Validate URL ──────────────────────────────────────────────────────
-  const rawUrl = config.url;
-  if (typeof rawUrl !== 'string' || rawUrl.trim().length === 0) {
+  if (typeof config.url !== 'string' || config.url.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_url', 'external_call step is missing a URL');
   }
+  const rawUrl = interpolatePrompt(config.url, ctx);
 
   if (!isHostAllowed(rawUrl)) {
     throw new ExecutorError(

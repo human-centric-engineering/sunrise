@@ -563,7 +563,7 @@ function WorkflowBuilderInner({
         </div>
       )}
 
-      {workflow?.isTemplate && (
+      {workflow?.isTemplate ? (
         <TemplateBanner
           name={workflow.name}
           description={workflow.description}
@@ -579,7 +579,11 @@ function WorkflowBuilderInner({
               | undefined) ?? null
           }
         />
-      )}
+      ) : workflow?.description ? (
+        <div className="text-muted-foreground border-b px-4 py-2 text-sm">
+          {workflow.description}
+        </div>
+      ) : null}
 
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />
