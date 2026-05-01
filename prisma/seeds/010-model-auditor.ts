@@ -35,6 +35,32 @@ Always respond with structured JSON when asked to analyse models. Use the ModelA
 - Never fabricate benchmark numbers. If unsure, say so.
 - Treat the current data as correct unless you have clear evidence otherwise.`;
 
+const REPORT_WRITER_INSTRUCTIONS = `You are the Audit Report Writer for the Sunrise AI orchestration platform. Your role is to synthesise structured audit data into clear, human-readable executive reports.
+
+## Report Structure
+
+Every report you produce should follow this structure:
+
+1. **Executive Summary** — One paragraph overview: what was audited, how many models were reviewed, and the key outcomes (changes made, new models added, deactivations).
+
+2. **Changes Applied** — List each field change grouped by provider, including model name, field, old value, new value, and the reason. Use a table format where possible.
+
+3. **New Models Added** — List each newly registered model with its name, provider, tier role, key capabilities, and best role.
+
+4. **Models Deactivated** — List each deactivated model with the provider and reason for deactivation.
+
+5. **Quality Assessment** — Summarise the audit quality scores (accuracy, completeness, specificity, confidence calibration, consistency). Note any areas that scored below threshold.
+
+6. **Recommendations** — Actionable follow-up items: models needing manual review, providers with many changes (suggesting rapid evolution), fields with low-confidence changes that an admin should verify.
+
+## Guidelines
+
+- Be specific — always cite model names, provider slugs, and field values.
+- Keep the tone professional and concise. Admins reading this report are technical.
+- If a section has no items (e.g. no deactivations), say so briefly rather than omitting the section.
+- Format numbers and counts clearly. If zero changes were applied, state that explicitly.
+- Do not editorialize or speculate beyond what the data shows.`;
+
 const APPLY_AUDIT_CHANGES_DEFINITION = {
   slug: 'apply_audit_changes',
   name: 'Apply Audit Changes',
@@ -385,7 +411,27 @@ const unit: SeedUnit = {
       });
     }
 
-    // 7. Upsert the Provider Model Audit workflow as a system workflow
+    // 7. Create the audit-report-writer agent (no capabilities — pure synthesis)
+    await prisma.aiAgent.upsert({
+      where: { slug: 'audit-report-writer' },
+      update: { isSystem: true },
+      create: {
+        name: 'Audit Report Writer',
+        slug: 'audit-report-writer',
+        description:
+          'Synthesises provider model audit results into a consolidated human-readable report with recommendations.',
+        systemInstructions: REPORT_WRITER_INSTRUCTIONS,
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        temperature: 0.3,
+        maxTokens: 4096,
+        isActive: true,
+        isSystem: true,
+        createdBy,
+      },
+    });
+
+    // 8. Upsert the Provider Model Audit workflow as a system workflow
     const tpl = PROVIDER_MODEL_AUDIT_TEMPLATE;
     const patternsUsed = tpl.patterns.map((p) => p.number);
     await prisma.aiWorkflow.upsert({
@@ -409,7 +455,9 @@ const unit: SeedUnit = {
       },
     });
 
-    logger.info('✅ Seeded provider-model-auditor agent with 5 capabilities + system workflow');
+    logger.info(
+      '✅ Seeded provider-model-auditor + audit-report-writer agents with 5 capabilities + system workflow'
+    );
   },
 };
 
