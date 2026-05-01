@@ -589,8 +589,19 @@ export type ProviderConfigWithCreator = AiProviderConfig & {
 /** Knowledge search result */
 export interface KnowledgeSearchResult {
   chunk: AiKnowledgeChunk;
+  /**
+   * Combined ranking score, normalised to [0, 1] (higher = more relevant).
+   * In vector-only mode, derived from cosine similarity + keyword boost.
+   * In hybrid mode, the blended `vectorWeight × vector_score + bm25Weight × keyword_score`.
+   */
   similarity: number;
   documentName?: string;
+  /** Hybrid mode only: the (1 - cosine_distance) component before weighting. */
+  vectorScore?: number;
+  /** Hybrid mode only: the ts_rank_cd BM25-flavoured score before weighting. */
+  keywordScore?: number;
+  /** Hybrid mode only: the blended score `vectorWeight × vectorScore + bm25Weight × keywordScore`. */
+  finalScore?: number;
 }
 
 /** Knowledge graph node */
