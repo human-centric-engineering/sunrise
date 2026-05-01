@@ -28,6 +28,18 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+// Silence hook and webhook dispatchers — they call prisma.aiEventHook.findMany
+// and prisma.aiWebhookSubscription.findMany which are not in the DB mock. The
+// engine calls these fire-and-forget so silencing them does not change the
+// observable behaviour under test.
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';

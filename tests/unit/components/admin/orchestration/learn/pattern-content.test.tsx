@@ -89,4 +89,54 @@ describe('PatternContent', () => {
     expect(preElements).toHaveLength(1);
     expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
   });
+
+  it('renders multiple separate code blocks in one document', () => {
+    // Both a mermaid and a typescript block in the same content
+    const content = [
+      '```mermaid',
+      'graph TD; A-->B',
+      '```',
+      '',
+      'Some prose in between.',
+      '',
+      '```typescript',
+      'const x = 42;',
+      '```',
+    ].join('\n');
+
+    const { container } = render(<PatternContent content={content} />);
+
+    // Mermaid diagram rendered
+    const diagram = screen.getByTestId('mermaid-diagram');
+    expect(diagram).toBeInTheDocument();
+    expect(diagram).toHaveTextContent('graph TD; A-->B');
+
+    // TypeScript block rendered as a normal code element
+    expect(screen.getByText('const x = 42;')).toBeInTheDocument();
+
+    // Only one <pre> — for the typescript block; mermaid has no pre wrapper
+    expect(container.querySelectorAll('pre')).toHaveLength(1);
+  });
+
+  it('renders an empty mermaid diagram when content is an empty code block', () => {
+    // Edge: mermaid block with no body text
+    const content = '```mermaid\n\n```';
+
+    render(<PatternContent content={content} />);
+
+    const diagram = screen.getByTestId('mermaid-diagram');
+    expect(diagram).toBeInTheDocument();
+    // Trimmed to empty string
+    expect(diagram.textContent?.trim()).toBe('');
+  });
+
+  it('renders plain prose paragraphs without any code elements', () => {
+    const content = 'Just some **bold** text and _italic_ text.';
+
+    const { container } = render(<PatternContent content={content} />);
+
+    expect(screen.getByText('bold')).toBeInTheDocument();
+    expect(container.querySelectorAll('code')).toHaveLength(0);
+    expect(screen.queryByTestId('mermaid-diagram')).not.toBeInTheDocument();
+  });
 });

@@ -212,8 +212,11 @@ describe('WorkflowBuilder', () => {
     vi.clearAllMocks();
     lastNodesStateArg = [];
     setNodesArrayCalls = [];
-    // Default: apiClient.get returns empty capabilities
-    vi.mocked(apiClient.get).mockResolvedValue([]);
+    // Default: apiClient.get returns a never-resolving promise so the
+    // capabilities/agents useEffect state updates don't fire outside act().
+    // Tests that need the fetch to resolve should override this mock.
+    // This eliminates act() warnings in synchronous render tests.
+    vi.mocked(apiClient.get).mockReturnValue(new Promise(() => {}));
     // Stub global fetch for ExecutionPanel SSE streams — return an empty
     // readable stream so the component mounts without network errors.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -727,16 +730,17 @@ describe('WorkflowBuilder', () => {
     });
 
     it('skips the capabilities fetch when initialCapabilities is non-empty', () => {
-      // Arrange: prefetch provided — fallback effect should bail out immediately
+      // Arrange: prefetch provided — capabilities effect bails out early.
+      // agents fetch may still fire but we keep it pending to avoid act() warnings.
       const caps: CapabilityOption[] = [
         { id: 'cap-1', slug: 'search', name: 'Search', description: '' },
       ];
-      vi.mocked(apiClient.get).mockResolvedValue([]);
+      // Keep default pending mock — no need to override here.
 
       // Act
       render(<WorkflowBuilder mode="create" initialCapabilities={caps} />);
 
-      // Assert: no capabilities GET call — agents fetch may still fire
+      // Assert: no capabilities GET call — agents fetch pending, not resolved
       const capsCalls = vi
         .mocked(apiClient.get)
         .mock.calls.filter(([url]) => url.includes('capabilities'));
@@ -809,7 +813,8 @@ describe('WorkflowBuilder', () => {
       // Arrange: WorkflowDefinitionHistoryPanel renders a "revert" button in edit mode.
       // We trigger onReverted by finding and clicking the revert button.
       const user = userEvent.setup();
-      // Make the GET return a fresh workflow with a single step
+      // Make the GET return a fresh workflow for the revert call, but keep
+      // capabilities/agents calls pending to avoid act() warnings.
       const freshDef: WorkflowDefinition = {
         entryStepId: 's1',
         errorStrategy: 'fail',
@@ -818,7 +823,10 @@ describe('WorkflowBuilder', () => {
       const freshWorkflow = makeWorkflow({
         workflowDefinition: freshDef as unknown as AiWorkflow['workflowDefinition'],
       });
-      vi.mocked(apiClient.get).mockResolvedValue(freshWorkflow);
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
+        return Promise.resolve(freshWorkflow);
+      });
 
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-revert-1' })} />);
 
@@ -839,11 +847,13 @@ describe('WorkflowBuilder', () => {
     });
 
     it('logs an error when the history revert fetch rejects', async () => {
-      // Arrange: GET rejects for the workflow URL (but resolves for capabilities)
+      // Arrange: GET hangs for capabilities/agents (to avoid act() warnings),
+      // and rejects for the workflow revert URL.
       const user = userEvent.setup();
       const { logger } = await import('@/lib/logging');
       vi.mocked(apiClient.get).mockImplementation((url: string) => {
-        if (url.includes('capabilities')) return Promise.resolve([]);
+        // capabilities and agents fetches: keep pending to avoid act() warnings
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
         return Promise.reject(new Error('Revert failed'));
       });
 
@@ -1031,6 +1041,138 @@ describe('WorkflowBuilder', () => {
     it('does not render the history panel in create mode', () => {
       render(<WorkflowBuilder mode="create" />);
       expect(screen.queryByRole('button', { name: /definition history/i })).not.toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Sprint 3.2 batch: additional branch coverage
+  // ---------------------------------------------------------------------------
+
+  describe('workflow.description: non-template description bar', () => {
+    it('renders the description bar when workflow has description and isTemplate=false', () => {
+      // Exercises the ternary branch at line ~582: workflow.description renders a
+      // description bar when workflow is not a template.
+      render(
+        <WorkflowBuilder
+          mode="edit"
+          workflow={makeWorkflow({ isTemplate: false, description: 'My workflow does X' })}
+        />
+      );
+      // The description bar renders the text inline (no TemplateBanner)
+      expect(screen.getByText('My workflow does X')).toBeInTheDocument();
+    });
+
+    it('renders neither description bar nor TemplateBanner when workflow has no description', () => {
+      // Exercises the null branch: isTemplate=false AND description='' → nothing rendered
+      render(
+        <WorkflowBuilder
+          mode="edit"
+          workflow={makeWorkflow({ isTemplate: false, description: '' })}
+        />
+      );
+      // The description bar is not present — workflow description is empty
+      const bannerEl = document.querySelector('.border-blue-200');
+      expect(bannerEl).toBeNull();
+    });
+  });
+
+  describe('initialAgents: prefetch bypass branch', () => {
+    it('skips agents API fetch when initialAgents is non-empty', () => {
+      // Arrange: initialAgents provided — agents useEffect early-returns,
+      // so apiClient.get must NOT be called for the agents endpoint.
+      const agents = [{ slug: 'agent-1', name: 'Agent One', description: null }];
+      // Keep default pending mock — agents fetch should never fire.
+
+      // Act
+      render(<WorkflowBuilder mode="create" initialAgents={agents} />);
+
+      // Assert: no agents GET call
+      const agentCalls = vi
+        .mocked(apiClient.get)
+        .mock.calls.filter(([url]) => url.includes('agents'));
+      expect(agentCalls).toHaveLength(0);
+    });
+  });
+
+  describe('handleSaveAsTemplate: user cancels confirm dialog', () => {
+    it('does not call apiClient.post when the user dismisses the confirm dialog', async () => {
+      // Arrange: confirm returns false — exercises the early-return branch
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => false)
+      );
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-cancelled' })} />);
+
+      // Act: click "Save as template" button — user cancels
+      const templateBtn = screen.getByRole('button', { name: /save as template/i });
+      await user.click(templateBtn);
+
+      // Assert: no API call made (confirm returned false → early return)
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleSaveAsTemplate: APIClientError branch', () => {
+    it('shows the APIClientError message when save-as-template API rejects with APIClientError', async () => {
+      // Exercises the catch-block branch: err instanceof APIClientError → use err.message
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Template name already in use', 'CONFLICT', 409)
+      );
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-tpl-apierr' })} />);
+
+      const templateBtn = screen.getByRole('button', { name: /save as template/i });
+      await user.click(templateBtn);
+
+      // Assert: the specific APIClientError message is shown (not the generic fallback)
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('alert').textContent).toContain('Template name already in use');
+    });
+  });
+
+  describe('create mode: CliAuthoringHint section', () => {
+    it('renders the CliAuthoringHint section only in create mode', () => {
+      // Exercises the `mode === "create"` conditional render branch at line ~560
+      render(<WorkflowBuilder mode="create" />);
+      // CliAuthoringHint renders inside a border-b section in create mode
+      // The hint text is inside the section
+      const hintSection = document.querySelector('.border-b.px-4.py-3');
+      expect(hintSection).not.toBeNull();
+    });
+
+    it('does not render the CliAuthoringHint section in edit mode', () => {
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
+      // In edit mode there is no dedicated authoring hint px-4 py-3 section
+      // (the description/history panels use py-2 not py-3)
+      const hintSections = Array.from(document.querySelectorAll('.border-b.px-4')).filter((el) =>
+        el.classList.contains('py-3')
+      );
+      expect(hintSections).toHaveLength(0);
+    });
+  });
+
+  describe('performSave: Error instance branch', () => {
+    it('shows err.message for standard Error (not APIClientError) rejections', async () => {
+      // Exercises the middle branch of the catch ternary:
+      //   err instanceof APIClientError → false; err instanceof Error → true
+      const user = userEvent.setup();
+      vi.mocked(apiClient.patch).mockRejectedValue(new Error('Disk quota exceeded'));
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-err-instance' })} />);
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument();
+      });
+      // The Error's message is used directly (not the generic "Failed to save workflow")
+      expect(screen.getByRole('alert').textContent).toContain('Disk quota exceeded');
     });
   });
 });

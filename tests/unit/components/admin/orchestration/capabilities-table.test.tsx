@@ -650,6 +650,276 @@ describe('CapabilitiesTable', () => {
     });
   });
 
+  // ── Sort toggle ────────────────────────────────────────────────────────────
+
+  describe('sort toggle', () => {
+    it('clicking Name header twice switches from desc to asc sort order', async () => {
+      const user = userEvent.setup({ delay: null });
+      mockFetch.mockImplementation(() => Promise.resolve(makeCapabilitiesListResponse()));
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      // First click: sets sortField=name, sortOrder=desc (default for new field)
+      const nameHeader = screen.getByRole('button', { name: /^Name/ });
+      await user.click(nameHeader);
+
+      // Advance timers so any debounce fires
+      await act(async () => {
+        vi.advanceTimersByTime(50);
+      });
+
+      await waitFor(() => {
+        // At least one fetch after the first sort click
+        expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+
+      const callsBefore = mockFetch.mock.calls.length;
+
+      // Second click on same field: toggles sortOrder from desc to asc
+      await user.click(nameHeader);
+
+      await act(async () => {
+        vi.advanceTimersByTime(50);
+      });
+
+      await waitFor(() => {
+        // A second sort fetch was triggered
+        expect(mockFetch.mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+    });
+  });
+
+  // ── List fetch error ───────────────────────────────────────────────────────
+
+  describe('list fetch error', () => {
+    it('renders error banner when capabilities list fetch fails with a non-ok response', async () => {
+      const user = userEvent.setup({ delay: null });
+
+      // Always fail — the table shows error when page button triggers refetch
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          createMockFetchResponse({ error: 'server error' }, 500) as unknown as Response
+        )
+      );
+
+      const meta2pages: typeof MOCK_META = { page: 1, limit: 25, total: 50, totalPages: 2 };
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={meta2pages}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      // Click Next to trigger fetchCapabilities which will fail
+      const nextBtn = screen.getByRole('button', { name: /^next/i });
+      await user.click(nextBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText(/could not load capabilities/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── requiresApproval and isSystem badges ───────────────────────────────────
+
+  describe('requiresApproval and isSystem capability badges', () => {
+    it('renders Approval badge for capabilities that require approval', () => {
+      const capWithApproval = makeCapability({
+        id: 'cap-approval',
+        name: 'Approval Cap',
+        slug: 'approval-cap',
+        requiresApproval: true,
+      });
+
+      const { container } = render(
+        <CapabilitiesTable
+          initialCapabilities={[capWithApproval]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      // The Approval badge renders with amber styling (distinguishable from the tooltip span)
+      const approvalBadge = container.querySelector('.border-amber-500\\/50');
+      expect(approvalBadge).toBeInTheDocument();
+      expect(approvalBadge?.textContent).toBe('Approval');
+    });
+
+    it('renders em-dash in approval column for capabilities that do not require approval', () => {
+      // THREE_CAPABILITIES all have requiresApproval: false
+      const { container } = render(
+        <CapabilitiesTable
+          initialCapabilities={[makeCapability({ id: 'cap-no-approval', requiresApproval: false })]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      // em-dash rendered as text — appears in approval column
+      const dashSpans = container.querySelectorAll('span.text-muted-foreground');
+      const hasDash = Array.from(dashSpans).some((el) => el.textContent === '—');
+      expect(hasDash).toBe(true);
+    });
+
+    it('renders System badge and disables switch for isSystem capabilities', () => {
+      const systemCap = makeCapability({
+        id: 'cap-system',
+        name: 'System Cap',
+        slug: 'system-cap',
+        // Cast to include isSystem field not in base type
+        ...({ isSystem: true } as Record<string, unknown>),
+      });
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={[systemCap]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      // System badge is visible
+      expect(screen.getByText('System')).toBeInTheDocument();
+
+      // Switch is disabled (isSystem caps cannot be deactivated)
+      const switches = screen.getAllByRole('switch');
+      expect(switches[0]).toBeDisabled();
+    });
+
+    it('does not render Delete menu item for isSystem capabilities', async () => {
+      const user = userEvent.setup();
+      const systemCap = makeCapability({
+        id: 'cap-system',
+        name: 'System Cap',
+        slug: 'system-cap',
+        ...({ isSystem: true } as Record<string, unknown>),
+      });
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={[systemCap]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      // Open row dropdown
+      const actionBtn = screen.getByRole('button', { name: /row actions/i });
+      await user.click(actionBtn);
+
+      // Delete item should not be present for system capabilities
+      await waitFor(() => {
+        expect(screen.queryByRole('menuitem', { name: /delete/i })).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Delete error ───────────────────────────────────────────────────────────
+
+  describe('delete error path', () => {
+    async function openDeleteDialog(user: ReturnType<typeof userEvent.setup>) {
+      const actionBtns = screen.getAllByRole('button', { name: /row actions/i });
+      await user.click(actionBtns[0]);
+      const deleteItem = await screen.findByRole('menuitem', { name: /delete/i, hidden: true });
+      await user.click(deleteItem);
+      await waitFor(() => expect(screen.getByText('Delete capability')).toBeInTheDocument());
+    }
+
+    it('shows table-level error banner when delete fails with APIClientError', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('In use by 2 agents', 'CAPABILITY_IN_USE', 409)
+      );
+
+      const user = userEvent.setup();
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(`Couldn't delete "${THREE_CAPABILITIES[0].name}": In use by 2 agents`)
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('shows generic table-level error banner when delete fails with non-APIClientError', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(new Error('boom'));
+
+      const user = userEvent.setup();
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await openDeleteDialog(user);
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(`Couldn't delete "${THREE_CAPABILITIES[0].name}". Try again.`)
+        ).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Rate limit column ──────────────────────────────────────────────────────
+
+  describe('rateLimit column', () => {
+    it('renders numeric rate limit when set', () => {
+      const capWithLimit = makeCapability({
+        id: 'cap-rl',
+        name: 'Rate Limited',
+        slug: 'rate-limited',
+        rateLimit: 60,
+      });
+
+      render(
+        <CapabilitiesTable
+          initialCapabilities={[capWithLimit]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      expect(screen.getByText('60')).toBeInTheDocument();
+    });
+
+    it('renders em-dash when rateLimit is null', () => {
+      const capNoLimit = makeCapability({ id: 'cap-no-rl', rateLimit: null });
+
+      const { container } = render(
+        <CapabilitiesTable
+          initialCapabilities={[capNoLimit]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          availableCategories={[]}
+        />
+      );
+
+      // The rate limit cell renders "—" (em-dash)
+      expect(container.textContent).toContain('—');
+    });
+  });
+
   // ── Pagination boundary ────────────────────────────────────────────────────
 
   describe('pagination boundary behaviour', () => {

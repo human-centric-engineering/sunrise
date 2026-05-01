@@ -4,7 +4,7 @@
  * @see components/admin/orchestration/knowledge/knowledge-view.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -102,6 +102,10 @@ describe('KnowledgeView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders document table with names', () => {
@@ -523,6 +527,120 @@ describe('KnowledgeView', () => {
 
       await waitFor(() => {
         expect(screen.queryByText(/\/\d+ embedded/)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  // ─── Scope filter ───────────────────────────────────────────────────────────
+
+  describe('scope filter', () => {
+    // MOCK_DOCUMENTS: doc-1 is scope='system', doc-2 is scope='app'
+
+    it('defaults to "All" scope showing all documents', () => {
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      // Both documents visible under "All" scope
+      expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
+      expect(screen.getByText('Pending Doc')).toBeInTheDocument();
+    });
+
+    it('switching scope to System shows only system-scoped documents', async () => {
+      const user = userEvent.setup();
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      // Act: click the System scope button
+      await user.click(screen.getByRole('button', { name: 'System' }));
+
+      // Assert: only doc-1 (scope='system') is visible; doc-2 (scope='app') is hidden
+      await waitFor(() => {
+        expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
+        expect(screen.queryByText('Pending Doc')).not.toBeInTheDocument();
+      });
+    });
+
+    it('switching scope to App shows only app-scoped documents', async () => {
+      const user = userEvent.setup();
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      // Act: click the App scope button
+      await user.click(screen.getByRole('button', { name: 'App' }));
+
+      // Assert: only doc-2 (scope='app') is visible; doc-1 (scope='system') is hidden
+      await waitFor(() => {
+        expect(screen.getByText('Pending Doc')).toBeInTheDocument();
+        expect(screen.queryByText('Agentic Patterns')).not.toBeInTheDocument();
+      });
+    });
+
+    it('switching back to All scope shows all documents again', async () => {
+      const user = userEvent.setup();
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      // First filter by system
+      await user.click(screen.getByRole('button', { name: 'System' }));
+      await waitFor(() => {
+        expect(screen.queryByText('Pending Doc')).not.toBeInTheDocument();
+      });
+
+      // Then switch back to All
+      await user.click(screen.getByRole('button', { name: 'All' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
+        expect(screen.getByText('Pending Doc')).toBeInTheDocument();
+      });
+    });
+
+    it('System scope with no matching documents passes empty list to ManageTab', async () => {
+      const user = userEvent.setup();
+      // All documents are scope='app' — none match 'system'
+      const appOnlyDocs = MOCK_DOCUMENTS.map((d) => ({ ...d, scope: 'app' }));
+      render(<KnowledgeView documents={appOnlyDocs} />);
+
+      // Switch to System scope
+      await user.click(screen.getByRole('button', { name: 'System' }));
+
+      // ManageTab renders the empty-documents state
+      await waitFor(() => {
+        expect(screen.getByText(/no documents yet/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ─── Tab navigation ─────────────────────────────────────────────────────────
+
+  describe('tab navigation', () => {
+    it('renders all four tab triggers', () => {
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      expect(screen.getByRole('tab', { name: /manage/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /explore/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /visualize/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /errors/i })).toBeInTheDocument();
+    });
+
+    it('Manage tab is selected by default', () => {
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      const manageTab = screen.getByRole('tab', { name: /manage/i });
+      expect(manageTab).toHaveAttribute('data-state', 'active');
+    });
+
+    it('all four tabs are interactive (rendered as clickable tab buttons)', () => {
+      // Verifies the tab panel structure is correct — each tab is a
+      // button with role="tab" that can be interacted with.
+      // The URL-synced tab hook relies on router.replace to update state,
+      // which does not propagate through the mocked router in unit tests.
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      const tabs = screen.getAllByRole('tab');
+      // Exactly 4 tabs: Manage, Explore, Visualize, Errors
+      expect(tabs).toHaveLength(4);
+
+      // Each tab is a button (not disabled)
+      tabs.forEach((tab) => {
+        expect(tab.tagName).toBe('BUTTON');
+        expect(tab).not.toBeDisabled();
       });
     });
   });

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
+import { logger } from '@/lib/logging';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -191,5 +192,77 @@ describe('useLocalStorage', () => {
 
     expect(result.current[0]).toBe('initial');
     expect(window.localStorage.getItem('k.remove')).toBeNull();
+  });
+
+  // ─── SSR fallback ─────────────────────────────────────────────────
+  // The isBrowser() guard in useLocalStorage returns false when `typeof window`
+  // is `'undefined'`. In a Vitest/happy-dom environment `window` is always present,
+  // so we test the SSR path by stubbing window.localStorage to simulate an
+  // unavailable storage API (equivalent observable contract: no storage write).
+
+  it('returns initial value when localStorage is unavailable (SSR-equivalent)', () => {
+    // Arrange — remove localStorage from window to simulate a restricted/SSR context
+    const originalLocalStorage = window.localStorage;
+    Object.defineProperty(window, 'localStorage', {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+
+    let value: string | undefined;
+    try {
+      // Act — render the hook; readFromStorage should fall back to 'ssr-initial'
+      // because accessing window.localStorage throws or is undefined
+      const { result } = renderHook(() => useLocalStorage<string>('k.ssr', 'ssr-initial'));
+      value = result.current[0];
+    } finally {
+      // Restore before afterEach cleanup runs
+      Object.defineProperty(window, 'localStorage', {
+        value: originalLocalStorage,
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    // Assert — hook returned the initial value, not a stored value
+    expect(value).toBe('ssr-initial');
+  });
+
+  // ─── Logger assertions for error paths ────────────────────────────
+
+  it('logs a warning when stored value is malformed JSON', () => {
+    // Arrange — poison the storage before the hook mounts so readFromStorage
+    // hits the JSON.parse error path during the useState lazy initializer.
+    window.localStorage.setItem('k.malformed-log', '{not-json');
+
+    // Act
+    renderHook(() => useLocalStorage('k.malformed-log', 'fallback-val'));
+
+    // Assert — hook recovered gracefully AND the logger warned about the failure
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('failed to parse stored value'),
+      expect.objectContaining({ key: 'k.malformed-log' })
+    );
+  });
+
+  it('logs a warning when localStorage.setItem throws (e.g. quota exceeded)', () => {
+    // Arrange
+    const setSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    const { result } = renderHook(() => useLocalStorage<string>('k.quota-log', 'initial'));
+
+    // Act — trigger the setValue path that calls setItem
+    act(() => {
+      result.current[1]('new-value');
+    });
+
+    // Assert — logger.warn was called describing the write failure
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('failed to write value'),
+      expect.objectContaining({ key: 'k.quota-log' })
+    );
+
+    setSpy.mockRestore();
   });
 });
