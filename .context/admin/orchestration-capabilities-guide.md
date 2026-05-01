@@ -4,13 +4,13 @@ Capabilities are tools an agent can call during conversation — function defini
 
 ## Quick Reference
 
-| Concept           | Detail                                                                                                                                    |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Base class        | `BaseCapability<TArgs, TData>` in `lib/orchestration/capabilities/base-capability.ts`                                                     |
-| Registration      | `capabilityDispatcher.register(instance)` in `lib/orchestration/capabilities/registry.ts`                                                 |
-| Built-in count    | 6 (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`) |
-| Dispatch pipeline | 9 steps: load registry, handler lookup, registry lookup, agent binding, rate limit, approval gate, validate args, execute, log cost       |
-| Result shape      | `CapabilityResult<T>` — `{ success, data?, error?, skipFollowup? }`                                                                       |
+| Concept           | Detail                                                                                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base class        | `BaseCapability<TArgs, TData>` in `lib/orchestration/capabilities/base-capability.ts`                                                                                                                                 |
+| Registration      | `capabilityDispatcher.register(instance)` in `lib/orchestration/capabilities/registry.ts`                                                                                                                             |
+| Built-in count    | 9 (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) |
+| Dispatch pipeline | 9 steps: load registry, handler lookup, registry lookup, agent binding, rate limit, approval gate, validate args, execute, log cost                                                                                   |
+| Result shape      | `CapabilityResult<T>` — `{ success, data?, error?, skipFollowup? }`                                                                                                                                                   |
 
 ## Step-by-Step: Create a Custom Capability
 
@@ -197,7 +197,7 @@ interface CapabilityResult<T = unknown> {
 
 ## Built-in Capabilities
 
-Three capabilities ship out of the box. All are in `lib/orchestration/capabilities/built-in/`.
+Nine capabilities ship out of the box. All are in `lib/orchestration/capabilities/built-in/`. The first six are general-purpose; the last three support the Provider Model Audit workflow.
 
 ### `search_knowledge_base`
 
@@ -231,6 +231,57 @@ Planning-grade USD cost estimate for a multi-step workflow. Uses hard-coded per-
 | `model_tier`      | `"budget"` \| `"mid"` \| `"frontier"` | Yes      | Price tier for model selection                      |
 
 Returns `{ model, tier, totalSteps, assumptions, cost: { inputCostUsd, outputCostUsd, totalCostUsd } }` with `skipFollowup: true` — the cost estimate IS the final answer.
+
+### `read_user_memory`
+
+Reads a user's stored memory entries for the current agent context. Delegates to the memory service.
+
+| Parameter | Type   | Required | Description               |
+| --------- | ------ | -------- | ------------------------- |
+| `key`     | string | No       | Optional key to filter by |
+
+### `write_user_memory`
+
+Writes or updates a memory entry for the current user and agent context.
+
+| Parameter | Type   | Required | Description           |
+| --------- | ------ | -------- | --------------------- |
+| `key`     | string | Yes      | Memory key            |
+| `value`   | string | Yes      | Memory value to store |
+
+### `escalate_to_human`
+
+Flags a conversation for human review when the agent cannot resolve a query. Logs the escalation reason and pauses automated responses.
+
+| Parameter | Type   | Required | Description              |
+| --------- | ------ | -------- | ------------------------ |
+| `reason`  | string | Yes      | Why escalation is needed |
+
+### `apply_audit_changes`
+
+Applies approved field changes to provider model entries. Validates each change against the update schema and invalidates the model cache. Used by the Provider Model Audit workflow.
+
+| Parameter  | Type   | Required | Description                                                           |
+| ---------- | ------ | -------- | --------------------------------------------------------------------- |
+| `model_id` | string | No       | Model ID (single-model mode)                                          |
+| `changes`  | array  | No       | Array of `{ field, currentValue, proposedValue, reason, confidence }` |
+| `models`   | array  | No       | Array of `{ model_id, changes }` (multi-model mode)                   |
+
+### `add_provider_models`
+
+Adds new provider model entries to the registry. Validates against the create schema, skips duplicates, and invalidates the model cache.
+
+| Parameter   | Type  | Required | Description                                                                                     |
+| ----------- | ----- | -------- | ----------------------------------------------------------------------------------------------- |
+| `newModels` | array | Yes      | Array of model entries with name, slug, providerSlug, modelId, capabilities, tierRole, bestRole |
+
+### `deactivate_provider_models`
+
+Soft-deletes provider model entries (sets `isActive=false`). Already-inactive models are skipped.
+
+| Parameter          | Type  | Required | Description                            |
+| ------------------ | ----- | -------- | -------------------------------------- |
+| `deactivateModels` | array | Yes      | Array of `{ modelId, reason }` entries |
 
 ## Dispatch Pipeline
 

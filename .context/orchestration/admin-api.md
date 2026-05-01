@@ -27,9 +27,9 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/agents/export`                          | POST               | Export selected agents as a versioned bundle              |
 | `/api/v1/admin/orchestration/agents/import`                          | POST               | Import an agent bundle (skip / overwrite)                 |
 | `/api/v1/admin/orchestration/agents/:id/invite-tokens`               | GET, POST          | List / create invite tokens for invite_only agents        |
-| `/api/v1/admin/orchestration/agents/:id/invite-tokens/:tid`          | DELETE             | Revoke an invite token                                    |
+| `/api/v1/admin/orchestration/agents/:id/invite-tokens/:tokenId`      | DELETE             | Revoke an invite token                                    |
 | `/api/v1/admin/orchestration/agents/:id/embed-tokens`                | GET, POST          | List / create embed tokens for widget auth                |
-| `/api/v1/admin/orchestration/agents/:id/embed-tokens/:tid`           | PATCH, DELETE      | Update / delete an embed token                            |
+| `/api/v1/admin/orchestration/agents/:id/embed-tokens/:tokenId`       | PATCH, DELETE      | Update / delete an embed token                            |
 | `/api/v1/admin/orchestration/capabilities`                           | GET, POST          | List / create capabilities                                |
 | `/api/v1/admin/orchestration/capabilities/:id`                       | GET, PATCH, DELETE | Read / update / soft-delete a capability                  |
 | `/api/v1/admin/orchestration/capabilities/:id/agents`                | GET                | Reverse-lookup — agents attaching this capability         |

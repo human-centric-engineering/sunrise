@@ -41,7 +41,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | Export                         | Kind      | Purpose                                                                                  |
 | ------------------------------ | --------- | ---------------------------------------------------------------------------------------- |
 | `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`      |
-| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the six built-in handlers                                           |
+| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the nine built-in handlers                                          |
 | `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list) |
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                              |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                      |
@@ -51,7 +51,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                           |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                          |
 
-Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`) are **not** re-exported — callers go through the dispatcher.
+Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`, `EscalateToHumanCapability`, `ApplyAuditChangesCapability`, `AddProviderModelsCapability`, `DeactivateProviderModelsCapability`) are **not** re-exported — callers go through the dispatcher.
 
 ## The `BaseCapability` Contract
 
