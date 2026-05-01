@@ -46,7 +46,7 @@ This means: a capability can work when dispatched manually but be invisible to a
 
 ## Built-in Capabilities Are isSystem: true
 
-The 6 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`) are seeded with `isSystem: true` and **cannot be deleted** via the API. To give an agent access, bind the existing capability — don't create a new one with the same slug.
+The 9 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) are seeded with `isSystem: true` and **cannot be deleted** via the API. To give an agent access, bind the existing capability — don't create a new one with the same slug.
 
 ## No next/\* Imports
 

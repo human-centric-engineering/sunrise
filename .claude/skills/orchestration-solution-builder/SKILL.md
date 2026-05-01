@@ -167,7 +167,7 @@ Use `/orchestration-capability-builder` for detailed templates and gotchas when 
 
 ### Step 4: Bind built-in capabilities
 
-The 6 built-in capabilities exist as `isSystem: true` rows. Don't recreate — just bind:
+The 9 built-in capabilities exist as `isSystem: true` rows. Don't recreate — just bind:
 
 ```
 # Find the capability ID

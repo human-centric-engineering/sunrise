@@ -67,7 +67,7 @@ All live under `components/admin/orchestration/`. Server components unless flagg
 - `dashboard-activity-feed.tsx` — unified timeline merging conversations, executions, and errors; error items show red icon + "error" badge; sorted newest-first.
 - `budget-alerts-banner.tsx` — returns `null` when no alerts so layout stays stable.
 - `top-capabilities-panel.tsx` — ranked bar chart of most-used capabilities.
-- `cost-trend-chart.tsx` — 7-day stacked area chart by tier (client component).
+- `costs/cost-trend-chart.tsx` — 7-day stacked area chart by tier (client component).
 - `setup-wizard-launcher.tsx` — client island; renders `Setup Guide` button and lazy-mounts the wizard.
 
 ### Removed from dashboard (still exist as components)
