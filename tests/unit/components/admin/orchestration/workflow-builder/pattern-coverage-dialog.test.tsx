@@ -3,7 +3,6 @@
  *
  * Test Coverage:
  * - Renders dialog title when open=true
- * - All 3 tier headings (Foundation, Intermediate, Advanced) are visible
  * - All 21 patterns render (verified by #N markers)
  * - No "Gap" badges are present (all patterns covered or engine-level)
  * - Emerald footer callout confirms all 21 patterns are covered
@@ -45,23 +44,11 @@ describe('PatternCoverageDialog', () => {
     expect(screen.queryByText('Pattern Coverage')).not.toBeInTheDocument();
   });
 
-  // ─── Tier Headings ───────────────────────────────────────────────────────────
-
-  it('renders all 3 tier headings', () => {
-    render(<PatternCoverageDialog {...defaultProps} />);
-
-    expect(screen.getByText('Foundation')).toBeInTheDocument();
-    expect(screen.getByText('Intermediate')).toBeInTheDocument();
-    expect(screen.getByText('Advanced')).toBeInTheDocument();
-  });
-
   // ─── All 21 Patterns ─────────────────────────────────────────────────────────
 
   it('renders all 21 pattern number markers (#1 – #21)', () => {
     render(<PatternCoverageDialog {...defaultProps} />);
 
-    // The component renders patterns 1–21 (not all consecutive — uses numbers from
-    // PATTERN_MAPPINGS: 1,2,5,14,18,3,4,6,7,8,13,9,10,11,12,15,16,17,19,20,21)
     const expectedNumbers = [
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
     ];

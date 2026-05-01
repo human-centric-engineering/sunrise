@@ -622,7 +622,6 @@ export interface PatternSummary {
   patternNumber: number;
   patternName: string;
   category: string | null;
-  complexity: string | null;
   description: string | null;
   chunkCount: number;
 }

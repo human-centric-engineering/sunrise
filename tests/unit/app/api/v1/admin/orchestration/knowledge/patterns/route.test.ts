@@ -80,7 +80,6 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
         patternNumber: 1,
         patternName: 'Chain',
         category: 'Reasoning',
-        complexity: 'beginner',
         description: 'Step-by-step.',
         chunkCount: 5,
       },

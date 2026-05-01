@@ -89,27 +89,6 @@ describe('listPatterns', () => {
     expect(result[0].patternName).toBe('Pattern 99');
   });
 
-  it('extracts complexity from overview chunk metadata', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 5 } },
-    ] as never);
-
-    // First findMany call = overview chunks, second = TL;DR chunks
-    vi.mocked(prisma.aiKnowledgeChunk.findMany)
-      .mockResolvedValueOnce([
-        {
-          patternNumber: 1,
-          content: '# Chain\n\nOverview text.',
-          metadata: { complexity: 'advanced' },
-        },
-      ] as never)
-      .mockResolvedValueOnce([] as never);
-
-    const result = await listPatterns();
-
-    expect(result[0].complexity).toBe('advanced');
-  });
-
   it('prefers TL;DR description over overview', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
       { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 5 } },

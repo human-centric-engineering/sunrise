@@ -53,7 +53,6 @@ const MOCK_PATTERNS: PatternSummary[] = [
     patternNumber: 1,
     patternName: 'Chain of Thought',
     category: 'Reasoning',
-    complexity: 'beginner',
     description: 'Step-by-step reasoning.',
     chunkCount: 5,
   },

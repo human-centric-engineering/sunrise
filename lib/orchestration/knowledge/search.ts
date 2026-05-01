@@ -333,13 +333,6 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     const overviewChunk = overviewByPattern.get(patternNumber) ?? null;
     const tldrChunk = tldrByPattern.get(patternNumber) ?? null;
 
-    const rawMeta: unknown = overviewChunk?.metadata ?? null;
-    const metadata =
-      rawMeta !== null && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
-        ? (rawMeta as Record<string, unknown>)
-        : null;
-    const complexity = typeof metadata?.complexity === 'string' ? metadata.complexity : null;
-
     const description =
       firstParagraph(tldrChunk?.content) ?? firstParagraph(overviewChunk?.content) ?? null;
 
@@ -347,7 +340,6 @@ export async function listPatterns(): Promise<PatternSummary[]> {
       patternNumber,
       patternName: patternName ?? `Pattern ${patternNumber}`,
       category,
-      complexity,
       description,
       chunkCount,
     });

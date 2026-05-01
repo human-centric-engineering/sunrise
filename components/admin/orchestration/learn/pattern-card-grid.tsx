@@ -33,25 +33,9 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between gap-2">
                 <CardTitle className="text-base leading-tight">{p.patternName}</CardTitle>
-                <div className="flex shrink-0 items-center gap-1">
-                  {p.complexity && (
-                    <Badge
-                      variant={
-                        p.complexity === 'advanced'
-                          ? 'destructive'
-                          : p.complexity === 'intermediate'
-                            ? 'secondary'
-                            : 'default'
-                      }
-                      className="text-[10px]"
-                    >
-                      {p.complexity}
-                    </Badge>
-                  )}
-                  <Badge variant="outline" className="font-mono text-[10px]">
-                    {p.patternNumber}
-                  </Badge>
-                </div>
+                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
+                  {p.patternNumber}
+                </Badge>
               </div>
               {p.category && <span className="text-muted-foreground text-xs">{p.category}</span>}
             </CardHeader>

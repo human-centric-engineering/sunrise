@@ -2,7 +2,7 @@
 
 /**
  * PatternCoverageDialog — explains how all 21 agentic design patterns
- * map to the 9 workflow builder step types, highlighting gaps where
+ * map to the 12 workflow builder step types, highlighting gaps where
  * dedicated step types could be added in the future.
  */
 
@@ -17,23 +17,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-type Tier = 'Foundation' | 'Intermediate' | 'Advanced';
-
 interface PatternMapping {
   number: number;
   name: string;
-  tier: Tier;
   coveredBy: string[];
   coverageNote: string;
   isGap: boolean;
 }
 
 const PATTERN_MAPPINGS: readonly PatternMapping[] = [
-  // Foundation
   {
     number: 1,
     name: 'Prompt Chaining',
-    tier: 'Foundation',
     coveredBy: ['LLM Call', 'Chain'],
     coverageNote: 'Direct match — Chain is sequential LLM calls with validation gates.',
     isGap: false,
@@ -41,40 +36,13 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 2,
     name: 'Routing',
-    tier: 'Foundation',
     coveredBy: ['Route'],
     coverageNote: 'Direct match — classify input and branch to different paths.',
     isGap: false,
   },
   {
-    number: 5,
-    name: 'Tool Use',
-    tier: 'Foundation',
-    coveredBy: ['Tool Call'],
-    coverageNote: 'Direct match — execute any registered capability.',
-    isGap: false,
-  },
-  {
-    number: 14,
-    name: 'Knowledge Retrieval (RAG)',
-    tier: 'Foundation',
-    coveredBy: ['RAG Retrieve'],
-    coverageNote: 'Direct match — search the knowledge base for relevant context.',
-    isGap: false,
-  },
-  {
-    number: 18,
-    name: 'Guardrails & Safety',
-    tier: 'Foundation',
-    coveredBy: ['Guard'],
-    coverageNote: 'Direct match — validate input or output against safety rules.',
-    isGap: false,
-  },
-  // Intermediate
-  {
     number: 3,
     name: 'Parallelisation',
-    tier: 'Intermediate',
     coveredBy: ['Parallel'],
     coverageNote: 'Direct match — fan out to concurrent branches and join results.',
     isGap: false,
@@ -82,15 +50,20 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 4,
     name: 'Reflection',
-    tier: 'Intermediate',
     coveredBy: ['Reflect'],
     coverageNote: 'Direct match — draft, critique, and revise loop.',
     isGap: false,
   },
   {
+    number: 5,
+    name: 'Tool Use',
+    coveredBy: ['Tool Call'],
+    coverageNote: 'Direct match — execute any registered capability.',
+    isGap: false,
+  },
+  {
     number: 6,
     name: 'Planning',
-    tier: 'Intermediate',
     coveredBy: ['Plan'],
     coverageNote: 'Direct match — agent generates its own sub-plan before executing.',
     isGap: false,
@@ -98,7 +71,6 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 7,
     name: 'Multi-Agent Collaboration',
-    tier: 'Intermediate',
     coveredBy: ['LLM Call', 'Plan'],
     coverageNote: 'Compose by wiring multiple LLM Call and Plan nodes together.',
     isGap: false,
@@ -106,24 +78,13 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 8,
     name: 'Memory Management',
-    tier: 'Intermediate',
     coveredBy: [],
     coverageNote: 'Engine-level concern — context is managed outside the workflow DAG.',
     isGap: false,
   },
   {
-    number: 13,
-    name: 'Human-in-the-Loop',
-    tier: 'Intermediate',
-    coveredBy: ['Human Approval'],
-    coverageNote: 'Direct match — pause the workflow and wait for human review.',
-    isGap: false,
-  },
-  // Advanced
-  {
     number: 9,
     name: 'Learning & Adaptation',
-    tier: 'Advanced',
     coveredBy: [],
     coverageNote: 'Engine-level — feedback loops that span across workflow runs.',
     isGap: false,
@@ -131,7 +92,6 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 10,
     name: 'State Management (MCP)',
-    tier: 'Advanced',
     coveredBy: ['Tool Call'],
     coverageNote: 'MCP tools are invoked via Tool Call steps.',
     isGap: false,
@@ -139,7 +99,6 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 11,
     name: 'Goal Setting & Monitoring',
-    tier: 'Advanced',
     coveredBy: ['Plan', 'Route'],
     coverageNote: 'Approximate with Plan + Route for objective checks.',
     isGap: false,
@@ -147,15 +106,27 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 12,
     name: 'Exception Handling & Recovery',
-    tier: 'Advanced',
     coveredBy: [],
     coverageNote: 'Handled by the workflow errorStrategy property, not a discrete step.',
     isGap: false,
   },
   {
+    number: 13,
+    name: 'Human-in-the-Loop',
+    coveredBy: ['Human Approval'],
+    coverageNote: 'Direct match — pause the workflow and wait for human review.',
+    isGap: false,
+  },
+  {
+    number: 14,
+    name: 'Knowledge Retrieval (RAG)',
+    coveredBy: ['RAG Retrieve'],
+    coverageNote: 'Direct match — search the knowledge base for relevant context.',
+    isGap: false,
+  },
+  {
     number: 15,
     name: 'Inter-Agent Communication (A2A)',
-    tier: 'Advanced',
     coveredBy: ['External Call'],
     coverageNote: 'Direct match — call external HTTP endpoints or agents.',
     isGap: false,
@@ -163,7 +134,6 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 16,
     name: 'Resource-Aware Optimisation',
-    tier: 'Advanced',
     coveredBy: ['Route'],
     coverageNote: 'Approximate with Route to switch model tiers by cost.',
     isGap: false,
@@ -171,15 +141,20 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 17,
     name: 'Reasoning Techniques',
-    tier: 'Advanced',
     coveredBy: ['LLM Call', 'Reflect'],
     coverageNote: 'Configure via prompt engineering inside LLM Call or Reflect.',
     isGap: false,
   },
   {
+    number: 18,
+    name: 'Guardrails & Safety',
+    coveredBy: ['Guard'],
+    coverageNote: 'Direct match — validate input or output against safety rules.',
+    isGap: false,
+  },
+  {
     number: 19,
     name: 'Evaluation & Monitoring',
-    tier: 'Advanced',
     coveredBy: ['Evaluate'],
     coverageNote: 'Direct match — score output quality against a rubric.',
     isGap: false,
@@ -187,7 +162,6 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 20,
     name: 'Prioritisation',
-    tier: 'Advanced',
     coveredBy: [],
     coverageNote: 'Meta-pattern managed at the orchestration layer, not per-step.',
     isGap: false,
@@ -195,20 +169,11 @@ const PATTERN_MAPPINGS: readonly PatternMapping[] = [
   {
     number: 21,
     name: 'Exploration & Discovery',
-    tier: 'Advanced',
     coveredBy: ['Plan'],
     coverageNote: "Approximate with Plan's dynamic sub-step generation.",
     isGap: false,
   },
 ];
-
-const TIERS: readonly Tier[] = ['Foundation', 'Intermediate', 'Advanced'];
-
-const TIER_DESCRIPTIONS: Record<Tier, string> = {
-  Foundation: 'Core patterns for any agent system',
-  Intermediate: 'Quality, speed, planning, and oversight',
-  Advanced: 'Production hardening and autonomy',
-};
 
 export interface PatternCoverageDialogProps {
   open: boolean;
@@ -226,53 +191,38 @@ export function PatternCoverageDialog({ open, onOpenChange }: PatternCoverageDia
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 py-2">
-          {TIERS.map((tier) => {
-            const patterns = PATTERN_MAPPINGS.filter((p) => p.tier === tier);
-            return (
-              <section key={tier}>
-                <div className="mb-2">
-                  <h3 className="text-sm font-semibold">{tier}</h3>
-                  <p className="text-muted-foreground text-xs">{TIER_DESCRIPTIONS[tier]}</p>
+        <div className="space-y-2 py-2">
+          {PATTERN_MAPPINGS.map((pattern) => (
+            <div key={pattern.number} className="rounded-md border px-3 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground font-mono text-xs">#{pattern.number}</span>
+                  <span className="text-sm font-medium">{pattern.name}</span>
                 </div>
-                <div className="space-y-2">
-                  {patterns.map((pattern) => (
-                    <div key={pattern.number} className="rounded-md border px-3 py-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground font-mono text-xs">
-                            #{pattern.number}
-                          </span>
-                          <span className="text-sm font-medium">{pattern.name}</span>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-1">
-                          {pattern.isGap ? (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400"
-                            >
-                              Gap
-                            </Badge>
-                          ) : pattern.coveredBy.length > 0 ? (
-                            pattern.coveredBy.map((step) => (
-                              <Badge key={step} variant="secondary" className="text-xs">
-                                {step}
-                              </Badge>
-                            ))
-                          ) : (
-                            <Badge variant="outline" className="text-muted-foreground text-xs">
-                              Engine
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-muted-foreground mt-1 text-xs">{pattern.coverageNote}</p>
-                    </div>
-                  ))}
+                <div className="flex shrink-0 flex-wrap gap-1">
+                  {pattern.isGap ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400"
+                    >
+                      Gap
+                    </Badge>
+                  ) : pattern.coveredBy.length > 0 ? (
+                    pattern.coveredBy.map((step) => (
+                      <Badge key={step} variant="secondary" className="text-xs">
+                        {step}
+                      </Badge>
+                    ))
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground text-xs">
+                      Engine
+                    </Badge>
+                  )}
                 </div>
-              </section>
-            );
-          })}
+              </div>
+              <p className="text-muted-foreground mt-1 text-xs">{pattern.coverageNote}</p>
+            </div>
+          ))}
 
           <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-800 dark:bg-emerald-950/40">
             <p className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
