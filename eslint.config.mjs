@@ -18,6 +18,10 @@ export default tseslint.config(
       '.swc/**',
       'public/**',
       'next-env.d.ts',
+      // Agent scratch checkouts — each worktree carries its own tsconfig.json,
+      // and `tseslint.configs.recommendedTypeChecked` with `projectService: true`
+      // would load every one, exhausting the ESLint heap.
+      '.claude/worktrees/**',
     ],
   },
 

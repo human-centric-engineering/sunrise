@@ -34,6 +34,8 @@ coverage/
 
 # Claude Code — ephemeral command output (test-review findings, etc.)
 .claude/tmp/
+# Claude Code — agent worktrees (parallel agent scratch checkouts)
+.claude/worktrees/
 
 # TypeScript
 *.tsbuildinfo

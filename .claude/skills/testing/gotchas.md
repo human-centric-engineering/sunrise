@@ -523,6 +523,64 @@ Set function-coverage targets for Flow-based components accordingly. The typical
 
 ---
 
+### 18. Global Setup Mocks Block Tests of the Real Module
+
+**Problem**: `tests/setup.ts` globally mocks several internal modules so that unrelated tests don't have to wire up their dependencies. `@/lib/api/context` is one such module — every test in the suite gets a stub `getRouteLogger` automatically. When you write a dedicated test for one of these globally-mocked modules, the global mock wins: assertions on the real module's behaviour silently exercise the stub instead. Tests appear to pass (or fail mysteriously) because every spy registers zero calls regardless of what the test arranges.
+
+**Solution**: explicitly `vi.unmock(...)` the module under test at the top of the test file, BEFORE the dependency mocks and module imports. This bypasses the global mock so the real implementation runs.
+
+```typescript
+// tests/unit/lib/api/context.test.ts
+import { vi } from 'vitest';
+
+// Bypass the global mock from tests/setup.ts so we exercise the real module.
+vi.unmock('@/lib/api/context');
+
+vi.mock('@/lib/logging', () => ({ ... }));
+vi.mock('@/lib/logging/context', () => ({ ... }));
+
+// Now the import resolves to the real implementation.
+const { getRouteLogger } = await import('@/lib/api/context');
+```
+
+**How to spot it**: if your spies all register zero calls and the return value never matches what the real module would produce, check whether `tests/setup.ts` mocks the module under test. `grep -n "vi.mock" tests/setup.ts` is the fast check.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing `/test-write plan sprint 1` (2026-05-01) on `lib/api/context.ts`. Without `vi.unmock`, every assertion ran against the setup.ts stub (`getRouteLogger` pre-baked to return a fake logger), so the real `getFullContext` / `logger.withContext` orchestration was never exercised. Same risk applies to any module mocked in `tests/setup.ts`.
+
+---
+
+### 19. better-auth Catch-All Routes Need `vi.hoisted()` and a Config Mock
+
+**Problem**: `app/api/auth/[...all]/route.ts` (and any route using `toNextJsHandler(auth)`) calls `toNextJsHandler` at module scope — the handler bindings are evaluated when the route file is imported. A naïve `vi.mock('better-auth/next-js', () => ({ toNextJsHandler: () => ({ GET, POST }) }))` factory cannot reference closure variables (e.g. `mockBetterAuthGET = vi.fn()`) because those variables aren't initialized when the factory runs. Compounding this, importing the route also pulls in `@/lib/auth/config`, which calls `betterAuth({...})` at module scope — instantiating the Prisma adapter and validating the email client. In a unit test this triggers real side effects (DB connection attempts, env-var validation failures) that have nothing to do with the route's contract.
+
+**Solution**: two parts.
+
+1. Use `vi.hoisted()` so the mock fns exist before module factories run:
+
+```typescript
+const { mockBetterAuthGET, mockBetterAuthPOST, mockLog } = vi.hoisted(() => ({
+  mockBetterAuthGET: vi.fn(),
+  mockBetterAuthPOST: vi.fn(),
+  mockLog: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('better-auth/next-js', () => ({
+  toNextJsHandler: () => ({ GET: mockBetterAuthGET, POST: mockBetterAuthPOST }),
+}));
+```
+
+2. Mock `@/lib/auth/config` to short-circuit the `betterAuth({...})` call:
+
+```typescript
+vi.mock('@/lib/auth/config', () => ({ auth: {} }));
+```
+
+`vi.mock` calls are hoisted by Vitest's plugin, but their _factories_ run in module-load order; only `vi.hoisted()` guarantees referenced values exist at factory-execution time. Without the config mock, the route file's transitive import chain still reaches `betterAuth(...)`.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing `/test-write plan sprint 1` (2026-05-01) on `app/api/auth/[...all]/route.ts`. Same pattern applies to any catch-all auth route, and to any module that calls a third-party initializer at top level.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:

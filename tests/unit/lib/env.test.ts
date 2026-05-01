@@ -190,6 +190,37 @@ describe('server path (typeof window === undefined)', () => {
     await expect(importEnv()).rejects.toThrow('.context/environment');
   });
 
+  it('should log the failing field name to console.error when a required var is missing', async () => {
+    // Arrange — omit DATABASE_URL so Zod reports it in fieldErrors
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { DATABASE_URL: _removed, ...envWithoutDb } = validServerEnv;
+    setEnv(envWithoutDb);
+
+    // Act
+    await importEnv().catch(() => {
+      /* expected throw */
+    });
+
+    // Assert — console.error should have been called with a message containing the field name.
+    // The module calls: console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2))
+    // which includes the failing field key (DATABASE_URL) in its output.
+    const allCallArgs = consoleErrorSpy.mock.calls.flat().join(' ');
+    expect(allCallArgs).toContain('DATABASE_URL');
+  });
+
+  it('should throw when NODE_ENV is set to a value not in the allowed enum', async () => {
+    // Arrange — 'staging' is not in z.enum(['development', 'production', 'test'])
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setEnv({ ...validServerEnv, NODE_ENV: 'staging' });
+
+    // Act & Assert — Zod enum validation rejects the invalid value
+    await expect(importEnv()).rejects.toThrow('.context/environment');
+
+    // Assert — console.error was called and reported NODE_ENV in the field errors
+    const allCallArgs = consoleErrorSpy.mock.calls.flat().join(' ');
+    expect(allCallArgs).toContain('NODE_ENV');
+  });
+
   describe('REQUIRE_EMAIL_VERIFICATION transforms', () => {
     it("should coerce string 'true' to boolean true", async () => {
       // Arrange
@@ -249,8 +280,12 @@ describe('server path (typeof window === undefined)', () => {
         /* expected */
       });
 
-      // Assert — error output was triggered
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      // Assert — the error banner is emitted, then the field-error JSON
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('❌ Invalid environment variables')
+      );
+      const allCallArgs = consoleErrorSpy.mock.calls.flat().join(' ');
+      expect(allCallArgs).toContain('DATABASE_URL');
     });
 
     it('should call console.log in development mode when validation succeeds', async () => {
