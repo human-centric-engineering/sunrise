@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { RagRetrieveEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/rag-retrieve-editor';
@@ -150,5 +150,38 @@ describe('RagRetrieveEditor', () => {
     const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
     expect(lastArg).toHaveProperty('filters');
     expect(lastArg.filters).toBeUndefined();
+  });
+
+  it('calls onChange with the parsed filter object when valid JSON is entered', () => {
+    // Arrange — use fireEvent.change to set the full JSON value in one shot, avoiding
+    // the userEvent brace-as-key-descriptor conflict. The component's onChange handler
+    // parses the value and calls onChange only when JSON is valid AND Zod validates it.
+    const onChange = vi.fn();
+    render(<RagRetrieveEditor config={emptyConfig} onChange={onChange} />);
+
+    const textarea = document.getElementById('rag-filters')!;
+
+    // Act — set a complete, valid JSON object in one change event
+    fireEvent.change(textarea, { target: { value: '{"source":"docs"}' } });
+
+    // Assert — onChange was called with the parsed filter object (not the raw string)
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const lastArg = onChange.mock.calls[0][0] as RagRetrieveConfig;
+    expect(lastArg.filters).toEqual({ source: 'docs' });
+  });
+
+  it('does not call onChange when the JSON in the filters field is invalid', () => {
+    // Arrange — use fireEvent.change to set malformed JSON. The catch branch in the
+    // component's filters onChange swallows the parse error and does not call onChange.
+    const onChange = vi.fn();
+    render(<RagRetrieveEditor config={emptyConfig} onChange={onChange} />);
+
+    const textarea = document.getElementById('rag-filters')!;
+
+    // Act — set malformed JSON (opening brace only, never closed)
+    fireEvent.change(textarea, { target: { value: '{"source"' } });
+
+    // Assert — invalid JSON hits the catch branch; outer onChange is NOT called
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

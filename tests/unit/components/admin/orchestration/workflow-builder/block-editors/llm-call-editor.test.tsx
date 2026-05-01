@@ -105,4 +105,133 @@ describe('LlmCallEditor', () => {
     const infoButtons = screen.getAllByRole('button', { name: /more information/i });
     expect(infoButtons.length).toBeGreaterThanOrEqual(1);
   });
+
+  // ── Max tokens field ───────────────────────────────────────────────────────
+
+  it('renders the max tokens input', () => {
+    render(<LlmCallEditor config={defaultConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('llm-max-tokens')).toBeInTheDocument();
+  });
+
+  it('shows empty max tokens field when maxTokens is not set', () => {
+    render(<LlmCallEditor config={defaultConfig} onChange={vi.fn()} />);
+    const input = document.getElementById('llm-max-tokens') as HTMLInputElement;
+    expect(input.value).toBe('');
+  });
+
+  it('shows a provided maxTokens value', () => {
+    const config: LlmCallConfig = {
+      prompt: '',
+      modelOverride: '',
+      temperature: 0.7,
+      maxTokens: 2048,
+    };
+    render(<LlmCallEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('llm-max-tokens') as HTMLInputElement;
+    expect(Number(input.value)).toBe(2048);
+  });
+
+  it('calls onChange with { maxTokens: number } when a value is entered in max tokens', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<LlmCallEditor config={defaultConfig} onChange={onChange} />);
+
+    // Act — type a token count
+    const input = document.getElementById('llm-max-tokens')!;
+    await user.type(input, '500');
+
+    // Assert — last call carries maxTokens as a number, not a string
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('maxTokens');
+    expect(typeof lastArg.maxTokens).toBe('number');
+  });
+
+  it('calls onChange with { maxTokens: undefined } when the max tokens field is cleared', async () => {
+    // Arrange — start with a value so clearing produces an onChange call
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: LlmCallConfig = {
+      prompt: '',
+      modelOverride: '',
+      temperature: 0.7,
+      maxTokens: 1000,
+    };
+    render(<LlmCallEditor config={config} onChange={onChange} />);
+
+    // Act — clear the field; empty value maps to undefined in the handler
+    await user.clear(document.getElementById('llm-max-tokens')!);
+
+    // Assert — maxTokens is undefined when field is blank
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('maxTokens');
+    expect(lastArg.maxTokens).toBeUndefined();
+  });
+
+  // ── Response format select ─────────────────────────────────────────────────
+
+  it('renders the response format select', () => {
+    render(<LlmCallEditor config={defaultConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('llm-response-format')).toBeInTheDocument();
+  });
+
+  it('shows "text" as the default response format', () => {
+    render(<LlmCallEditor config={defaultConfig} onChange={vi.fn()} />);
+    const trigger = document.getElementById('llm-response-format')!;
+    expect(trigger).toHaveTextContent(/text/i);
+  });
+
+  it('shows "json" when responseFormat is set to "json"', () => {
+    const config: LlmCallConfig = {
+      prompt: '',
+      modelOverride: '',
+      temperature: 0.7,
+      responseFormat: 'json',
+    };
+    render(<LlmCallEditor config={config} onChange={vi.fn()} />);
+    const trigger = document.getElementById('llm-response-format')!;
+    expect(trigger).toHaveTextContent(/json/i);
+  });
+
+  it('calls onChange with { responseFormat: "json" } when user selects JSON', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<LlmCallEditor config={defaultConfig} onChange={onChange} />);
+
+    // Act — open the select and pick JSON
+    await user.click(document.getElementById('llm-response-format')!);
+    await user.click(screen.getByRole('option', { name: /json/i }));
+
+    // Assert — onChange called once with the correct format literal
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual({ responseFormat: 'json' });
+  });
+
+  it('calls onChange with { responseFormat: "text" } when user switches back to text', async () => {
+    // Arrange — start with JSON selected
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: LlmCallConfig = {
+      prompt: '',
+      modelOverride: '',
+      temperature: 0.7,
+      responseFormat: 'json',
+    };
+    render(<LlmCallEditor config={config} onChange={onChange} />);
+
+    // Act — open the select and pick Text
+    await user.click(document.getElementById('llm-response-format')!);
+    await user.click(screen.getByRole('option', { name: /^text$/i }));
+
+    // Assert
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual({ responseFormat: 'text' });
+  });
 });

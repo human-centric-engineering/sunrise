@@ -85,6 +85,94 @@ describe('ReflectEditor', () => {
     const infoButtons = screen.getAllByRole('button', { name: /more information/i });
     expect(infoButtons.length).toBeGreaterThanOrEqual(1);
   });
+
+  // ── Model override field ─────────────────────────────────────────────────
+
+  it('renders the model override input', () => {
+    render(<ReflectEditor config={emptyConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('reflect-model-override')).toBeInTheDocument();
+  });
+
+  it('shows the provided modelOverride value', () => {
+    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'claude-haiku-4-5' };
+    render(<ReflectEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('reflect-model-override') as HTMLInputElement;
+    expect(input.value).toBe('claude-haiku-4-5');
+  });
+
+  it('calls onChange with { modelOverride: string } when the model override field is filled', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ReflectEditor config={emptyConfig} onChange={onChange} />);
+
+    // Act — type a single character so the controlled component emits one onChange call
+    await user.type(document.getElementById('reflect-model-override')!, 'x');
+
+    // Assert — onChange was called with the modelOverride key populated
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ modelOverride: expect.anything() })
+    );
+  });
+
+  it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {
+    // Arrange — start with a non-empty override so clearing it has effect
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'abc' };
+    render(<ReflectEditor config={config} onChange={onChange} />);
+
+    // Act — clear the field (e.target.value becomes '', so onChange fires with `undefined`)
+    await user.clear(document.getElementById('reflect-model-override')!);
+
+    // Assert — the handler maps empty string to undefined
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('modelOverride');
+    expect(lastArg.modelOverride).toBeUndefined();
+  });
+
+  // ── Temperature field ────────────────────────────────────────────────────
+
+  it('renders the temperature input', () => {
+    render(<ReflectEditor config={emptyConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('reflect-temperature')).toBeInTheDocument();
+  });
+
+  it('shows the default temperature value of 0.3 when not provided', () => {
+    render(<ReflectEditor config={emptyConfig} onChange={vi.fn()} />);
+    const input = document.getElementById('reflect-temperature') as HTMLInputElement;
+    expect(Number(input.value)).toBe(0.3);
+  });
+
+  it('shows a provided temperature value', () => {
+    const config: ReflectConfig = { critiquePrompt: '', temperature: 0.8 };
+    render(<ReflectEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('reflect-temperature') as HTMLInputElement;
+    expect(Number(input.value)).toBe(0.8);
+  });
+
+  it('calls onChange with { temperature: number } when temperature input changes', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ReflectEditor config={emptyConfig} onChange={onChange} />);
+
+    // Act
+    const input = document.getElementById('reflect-temperature')!;
+    await user.clear(input);
+    await user.type(input, '0.5');
+
+    // Assert — onChange was called with a numeric temperature
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('temperature');
+    expect(typeof lastArg.temperature).toBe('number');
+  });
 });
 
 // ─── RagRetrieveEditor ────────────────────────────────────────────────────────
@@ -251,5 +339,93 @@ describe('PlanEditor', () => {
     render(<PlanEditor config={emptyConfig} onChange={vi.fn()} />);
     const infoButtons = screen.getAllByRole('button', { name: /more information/i });
     expect(infoButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Model override field ─────────────────────────────────────────────────
+
+  it('renders the model override input', () => {
+    render(<PlanEditor config={emptyConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('plan-model-override')).toBeInTheDocument();
+  });
+
+  it('shows the provided modelOverride value', () => {
+    const config: PlanConfig = { objective: '', modelOverride: 'claude-haiku-4-5' };
+    render(<PlanEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('plan-model-override') as HTMLInputElement;
+    expect(input.value).toBe('claude-haiku-4-5');
+  });
+
+  it('calls onChange with { modelOverride: string } when user types in the model override field', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<PlanEditor config={emptyConfig} onChange={onChange} />);
+
+    // Act — type a single character; controlled component emits one onChange call
+    await user.type(document.getElementById('plan-model-override')!, 'x');
+
+    // Assert — onChange was called with a modelOverride key
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ modelOverride: expect.anything() })
+    );
+  });
+
+  it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const config: PlanConfig = { objective: '', modelOverride: 'abc' };
+    render(<PlanEditor config={config} onChange={onChange} />);
+
+    // Act — clearing the field sends empty string; handler maps '' to undefined
+    await user.clear(document.getElementById('plan-model-override')!);
+
+    // Assert
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('modelOverride');
+    expect(lastArg.modelOverride).toBeUndefined();
+  });
+
+  // ── Temperature field ────────────────────────────────────────────────────
+
+  it('renders the temperature input', () => {
+    render(<PlanEditor config={emptyConfig} onChange={vi.fn()} />);
+    expect(document.getElementById('plan-temperature')).toBeInTheDocument();
+  });
+
+  it('shows the default temperature value of 0.3 when not provided', () => {
+    render(<PlanEditor config={emptyConfig} onChange={vi.fn()} />);
+    const input = document.getElementById('plan-temperature') as HTMLInputElement;
+    expect(Number(input.value)).toBe(0.3);
+  });
+
+  it('shows a provided temperature value', () => {
+    const config: PlanConfig = { objective: '', temperature: 1.0 };
+    render(<PlanEditor config={config} onChange={vi.fn()} />);
+    const input = document.getElementById('plan-temperature') as HTMLInputElement;
+    expect(Number(input.value)).toBe(1.0);
+  });
+
+  it('calls onChange with { temperature: number } when temperature input changes', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<PlanEditor config={emptyConfig} onChange={onChange} />);
+
+    // Act
+    const input = document.getElementById('plan-temperature')!;
+    await user.clear(input);
+    await user.type(input, '0.6');
+
+    // Assert — onChange fired with a numeric temperature
+    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(lastArg).toHaveProperty('temperature');
+    expect(typeof lastArg.temperature).toBe('number');
   });
 });
