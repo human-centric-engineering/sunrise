@@ -46,8 +46,8 @@ export interface OrchestrationSettings {
   defaultApprovalTimeoutMs: number | null;
   approvalDefaultAction: string | null;
   searchConfig: {
-    keywordBoostWeight: number;
-    vectorWeight: number;
+    keywordBoostWeight?: number;
+    vectorWeight?: number;
     hybridEnabled?: boolean;
     bm25Weight?: number;
   } | null;
@@ -190,12 +190,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     defaultValues: defaults,
   });
 
-  const watchedKeyword = watch('keywordBoostWeight');
-  const watchedVector = watch('vectorWeight');
   const watchedHybrid = watch('hybridEnabled');
-  const searchPartialFill =
-    (watchedKeyword !== '' && watchedVector === '') ||
-    (watchedKeyword === '' && watchedVector !== '');
 
   React.useEffect(() => {
     reset(defaults);
@@ -210,20 +205,30 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
   const onSubmit = async (values: z.output<typeof settingsFormSchema>) => {
     setError(null);
     try {
-      const searchConfig =
-        values.keywordBoostWeight !== null && values.vectorWeight !== null
-          ? {
-              keywordBoostWeight: values.keywordBoostWeight,
-              vectorWeight: values.vectorWeight,
-              hybridEnabled: values.hybridEnabled,
-              // When hybrid is on, default bm25Weight to 1.0 if the admin left it blank
-              ...(values.hybridEnabled
-                ? { bm25Weight: values.bm25Weight ?? 1.0 }
-                : values.bm25Weight !== null
-                  ? { bm25Weight: values.bm25Weight }
-                  : {}),
-            }
-          : null;
+      // Send searchConfig if the admin has set anything non-default — including
+      // just toggling hybrid on with no explicit weights. The Zod schema makes
+      // every field optional and the search-engine resolver falls back to
+      // built-in defaults per missing field.
+      const hasAnyOverride =
+        values.hybridEnabled ||
+        values.bm25Weight !== null ||
+        values.keywordBoostWeight !== null ||
+        values.vectorWeight !== null;
+      const searchConfig = hasAnyOverride
+        ? {
+            ...(values.keywordBoostWeight !== null
+              ? { keywordBoostWeight: values.keywordBoostWeight }
+              : {}),
+            ...(values.vectorWeight !== null ? { vectorWeight: values.vectorWeight } : {}),
+            hybridEnabled: values.hybridEnabled,
+            // When hybrid is on, default bm25Weight to 1.0 if the admin left it blank
+            ...(values.hybridEnabled
+              ? { bm25Weight: values.bm25Weight ?? 1.0 }
+              : values.bm25Weight !== null
+                ? { bm25Weight: values.bm25Weight }
+                : {}),
+          }
+        : null;
 
       const escalationConfig =
         values.escalationEnabled && escalationEmails.length > 0
@@ -809,13 +814,6 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                 </p>
               )}
             </div>
-
-            {searchPartialFill && (
-              <p className="text-xs text-amber-600 sm:col-span-2">
-                Both keyword and vector weights must be set together. If only one is provided,
-                search config will reset to built-in defaults on save.
-              </p>
-            )}
           </div>
         </CardContent>
       </Card>

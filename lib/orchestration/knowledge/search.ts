@@ -50,25 +50,18 @@ async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
     // Settings DB unavailable — use defaults silently
   }
 
-  if (!config) {
-    return {
-      keywordBoost: DEFAULT_KEYWORD_BOOST,
-      keywordBoostStrong: DEFAULT_KEYWORD_BOOST_STRONG,
-      vectorWeight: DEFAULT_VECTOR_WEIGHT,
-      hybridEnabled: false,
-      bm25Weight: DEFAULT_BM25_WEIGHT,
-    };
-  }
-
-  // Derive the strong (keyword-match) boost proportionally:
-  // default ratio is -0.05 / -0.02 = 2.5×
+  // Per-field fallback so a partial override (e.g. `{ hybridEnabled: true }`
+  // alone) inherits defaults for everything the admin didn't explicitly set.
+  // The strong (keyword-match) boost is derived proportionally from the soft
+  // boost — default ratio is -0.05 / -0.02 = 2.5×.
   const ratio = DEFAULT_KEYWORD_BOOST_STRONG / DEFAULT_KEYWORD_BOOST;
+  const keywordBoost = config?.keywordBoostWeight ?? DEFAULT_KEYWORD_BOOST;
   return {
-    keywordBoost: config.keywordBoostWeight,
-    keywordBoostStrong: config.keywordBoostWeight * ratio,
-    vectorWeight: config.vectorWeight,
-    hybridEnabled: config.hybridEnabled === true,
-    bm25Weight: config.bm25Weight ?? DEFAULT_BM25_WEIGHT,
+    keywordBoost,
+    keywordBoostStrong: keywordBoost * ratio,
+    vectorWeight: config?.vectorWeight ?? DEFAULT_VECTOR_WEIGHT,
+    hybridEnabled: config?.hybridEnabled === true,
+    bm25Weight: config?.bm25Weight ?? DEFAULT_BM25_WEIGHT,
   };
 }
 

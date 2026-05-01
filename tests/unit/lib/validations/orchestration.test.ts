@@ -2055,4 +2055,26 @@ describe('searchConfigSchema', () => {
     const result = searchConfigSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
+
+  it('accepts a hybrid-only override without legacy weights (the form must be able to send this)', () => {
+    const hybridOnly = { hybridEnabled: true, bm25Weight: 1.0 };
+    const result = searchConfigSchema.safeParse(hybridOnly);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.keywordBoostWeight).toBeUndefined();
+      expect(result.data.vectorWeight).toBeUndefined();
+      expect(result.data.hybridEnabled).toBe(true);
+      expect(result.data.bm25Weight).toBe(1.0);
+    }
+  });
+
+  it('accepts a single-field override (vectorWeight only)', () => {
+    const result = searchConfigSchema.safeParse({ vectorWeight: 1.5 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an empty object (treated as all-defaults)', () => {
+    const result = searchConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+  });
 });

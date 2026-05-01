@@ -361,6 +361,26 @@ describe('searchKnowledge — hybrid mode', () => {
     expect(results[0].finalScore).toBeUndefined();
   });
 
+  it('resolves hybrid mode from a partial searchConfig (only hybridEnabled persisted)', async () => {
+    // Regression: admin enables hybrid via the form without filling legacy
+    // weights. The settings row persists `{ hybridEnabled: true }` only;
+    // resolveSearchWeights must fall back to defaults for the missing fields.
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      searchConfig: { hybridEnabled: true },
+    } as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('section 21');
+
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    const params = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0].slice(1);
+    expect(sql).toContain('ts_rank_cd');
+    expect(sql).toContain('"searchVector"');
+    // vectorWeight defaulted to 1.0, bm25Weight defaulted to 1.0
+    expect(params[4]).toBe(1.0);
+    expect(params[5]).toBe(1.0);
+  });
+
   it('clamps similarity to [0, 1] for low/negative final scores', async () => {
     mockHybridSettings({ hybridEnabled: true, bm25Weight: 1.0 });
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([

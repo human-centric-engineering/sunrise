@@ -421,6 +421,31 @@ describe('SettingsForm', () => {
       });
     });
 
+    it('persists hybridEnabled even when the legacy weights are blank (regression)', async () => {
+      // Regression for a bug where toggling hybrid on without filling the
+      // vector-only weights silently dropped searchConfig to null.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      render(<SettingsForm initialSettings={EMPTY_SETTINGS} />);
+
+      const toggle = screen.getByRole('checkbox', { name: /enable hybrid search/i });
+      await user.click(toggle);
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+      const lastCall = vi.mocked(apiClient.patch).mock.calls[0];
+      const body = (lastCall[1] as { body: { searchConfig: unknown } }).body;
+      expect(body.searchConfig).not.toBeNull();
+      expect(body.searchConfig).toEqual({ hybridEnabled: true, bm25Weight: 1.0 });
+    });
+
     it('shows validation error when bm25Weight is above 2.0', async () => {
       const user = userEvent.setup();
       const { apiClient } = await import('@/lib/api/client');

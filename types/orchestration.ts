@@ -484,15 +484,20 @@ export interface AgentCostSummary {
 export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
-/** Tunable weights for knowledge-base search. */
+/**
+ * Tunable weights for knowledge-base search. All fields are optional —
+ * `resolveSearchWeights` in `lib/orchestration/knowledge/search.ts` falls
+ * back to built-in defaults for any field that is absent. This lets the
+ * admin form persist partial overrides (e.g. just `hybridEnabled: true`).
+ */
 export interface SearchConfig {
   /**
    * Vector-only mode: cosine-distance reduction for keyword-matching chunks
    * (non-positive, e.g. -0.02). Ignored when `hybridEnabled` is true.
    */
-  keywordBoostWeight: number;
+  keywordBoostWeight?: number;
   /** Multiplier applied to the vector similarity score (e.g. 1.0). Used in both modes. */
-  vectorWeight: number;
+  vectorWeight?: number;
   /**
    * When true, switch to hybrid (BM25-flavoured + vector) ranking using
    * `vectorWeight × vector_score + bm25Weight × ts_rank_cd(searchVector, …)`.
