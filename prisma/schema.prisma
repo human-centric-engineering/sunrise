@@ -319,6 +319,7 @@ model AiWorkflow {
   patternsUsed              Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
+  isSystem           Boolean  @default(false)
   templateSource     String?  // null = regular workflow, "builtin" = seed template, "custom" = admin-created
   metadata           Json?
   createdBy          String
@@ -333,6 +334,7 @@ model AiWorkflow {
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
+  @@index([isSystem])
   @@index([slug, isActive]) // Webhook trigger lookups: findFirst({ slug, isActive: true })
   @@map("ai_workflow")
 }

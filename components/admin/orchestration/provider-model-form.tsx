@@ -412,7 +412,14 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
         {/* Rating dimensions */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Reasoning Depth</Label>
+            <Label>
+              Reasoning Depth{' '}
+              <FieldHelp title="Reasoning depth">
+                How deeply the model can reason through complex, multi-step problems. &quot;Very
+                High&quot; = frontier reasoning models, &quot;None&quot; = no chain-of-thought
+                capability.
+              </FieldHelp>
+            </Label>
             <Select
               defaultValue={model?.reasoningDepth ?? 'medium'}
               onValueChange={(v) =>
@@ -431,7 +438,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Latency</Label>
+            <Label>
+              Latency{' '}
+              <FieldHelp title="Latency">
+                Response speed. &quot;Very Fast&quot; = sub-second first token (e.g. Groq),
+                &quot;Medium&quot; = typical cloud API latency.
+              </FieldHelp>
+            </Label>
             <Select
               defaultValue={model?.latency ?? 'medium'}
               onValueChange={(v) => setValue('latency', v as ModelFormData['latency'])}
@@ -447,7 +460,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Cost Efficiency</Label>
+            <Label>
+              Cost Efficiency{' '}
+              <FieldHelp title="Cost efficiency">
+                How cost-effective the model is per token. &quot;Very High&quot; = cheapest tier
+                (e.g. open models, small workers), &quot;None&quot; = premium pricing.
+              </FieldHelp>
+            </Label>
             <Select
               defaultValue={model?.costEfficiency ?? 'medium'}
               onValueChange={(v) =>
@@ -466,7 +485,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Context Length</Label>
+            <Label>
+              Context Length{' '}
+              <FieldHelp title="Context length">
+                Maximum input context window. &quot;Very High&quot; = 200k+ tokens, &quot;N/A&quot;
+                = not applicable (e.g. embedding models).
+              </FieldHelp>
+            </Label>
             <Select
               defaultValue={model?.contextLength ?? 'medium'}
               onValueChange={(v) => setValue('contextLength', v as ModelFormData['contextLength'])}
@@ -483,7 +508,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Tool Use</Label>
+            <Label>
+              Tool Use{' '}
+              <FieldHelp title="Tool use">
+                Function calling / tool-use capability. &quot;Strong&quot; = reliable structured
+                output and parallel tool calls, &quot;None&quot; = no function calling support.
+              </FieldHelp>
+            </Label>
             <Select
               defaultValue={model?.toolUse ?? 'moderate'}
               onValueChange={(v) => setValue('toolUse', v as ModelFormData['toolUse'])}
@@ -535,7 +566,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="costPerMillionTokens">Cost / 1M Tokens (USD)</Label>
+                <Label htmlFor="costPerMillionTokens">
+                  Cost / 1M Tokens (USD){' '}
+                  <FieldHelp title="Cost per million tokens">
+                    The provider&apos;s published price per million input tokens in USD. Used for
+                    cost comparison in the embedding provider modal.
+                  </FieldHelp>
+                </Label>
                 <Input
                   id="costPerMillionTokens"
                   {...register('costPerMillionTokens')}
@@ -566,7 +603,12 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                   checked={watch('hasFreeTier')}
                   onCheckedChange={(v) => setValue('hasFreeTier', !!v)}
                 />
-                <label htmlFor="hasFreeTier">Free Tier</label>
+                <label htmlFor="hasFreeTier">
+                  Free Tier{' '}
+                  <FieldHelp title="Free tier">
+                    Whether the provider offers a free usage tier or free credits for this model.
+                  </FieldHelp>
+                </label>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <Checkbox
@@ -574,12 +616,24 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                   checked={watch('local')}
                   onCheckedChange={(v) => setValue('local', !!v)}
                 />
-                <label htmlFor="localModel">Local / Self-hosted</label>
+                <label htmlFor="localModel">
+                  Local / Self-hosted{' '}
+                  <FieldHelp title="Local / self-hosted">
+                    Whether this model runs on your own infrastructure (e.g. via Ollama). Local
+                    models are preferred for the &quot;private&quot; intent.
+                  </FieldHelp>
+                </label>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Quality</Label>
+                <Label>
+                  Quality{' '}
+                  <FieldHelp title="Embedding quality">
+                    Relative quality rating for embedding output. &quot;High&quot; = best retrieval
+                    accuracy, &quot;Budget&quot; = optimised for cost over quality.
+                  </FieldHelp>
+                </Label>
                 <Select
                   defaultValue={model?.quality ?? ''}
                   onValueChange={(v) => setValue('quality', v as ModelFormData['quality'])}
@@ -596,7 +650,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="strengths">Strengths</Label>
+              <Label htmlFor="strengths">
+                Strengths{' '}
+                <FieldHelp title="Strengths">
+                  Short description of what this embedding model excels at (e.g. &quot;Best-in-class
+                  code retrieval&quot;, &quot;Multilingual support&quot;).
+                </FieldHelp>
+              </Label>
               <Textarea
                 id="strengths"
                 {...register('strengths')}
@@ -605,7 +665,13 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="setup">Setup Instructions</Label>
+              <Label htmlFor="setup">
+                Setup Instructions{' '}
+                <FieldHelp title="Setup">
+                  One-line setup hint for admins (e.g. &quot;API key → add as provider&quot;,
+                  &quot;ollama pull nomic-embed-text&quot;).
+                </FieldHelp>
+              </Label>
               <Input
                 id="setup"
                 {...register('setup')}

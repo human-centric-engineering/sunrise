@@ -5,6 +5,8 @@
  *   - `capabilitySlug: string` (required, validated upstream)
  *   - `args?: Record<string, unknown>` — passed through to the dispatcher.
  *     When omitted, `ctx.inputData` is forwarded instead.
+ *   - `argsFrom?: string` — step ID whose output should be used as args.
+ *     Takes precedence over `ctx.inputData` but not over explicit `args`.
  *
  * Workflow executions aren't bound to a specific `AiAgent`, so we pass
  * a sentinel `agentId` of the form `workflow:${workflowId}` to the
@@ -37,7 +39,19 @@ export async function executeToolCall(
     );
   }
 
-  const rawArgs: Record<string, unknown> = config.args ?? ctx.inputData;
+  // Priority: explicit args > argsFrom (step output reference) > ctx.inputData
+  let rawArgs: Record<string, unknown>;
+  if (config.args) {
+    rawArgs = config.args;
+  } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
+    const fromOutput = ctx.stepOutputs[config.argsFrom];
+    rawArgs =
+      typeof fromOutput === 'object' && !Array.isArray(fromOutput)
+        ? (fromOutput as Record<string, unknown>)
+        : { data: fromOutput };
+  } else {
+    rawArgs = ctx.inputData;
+  }
 
   const result = await capabilityDispatcher.dispatch(slug, rawArgs, {
     userId: ctx.userId,

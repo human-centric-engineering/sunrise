@@ -49,6 +49,7 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  apiLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
     Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
   ),

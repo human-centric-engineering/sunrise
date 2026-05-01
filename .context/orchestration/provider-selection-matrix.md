@@ -67,9 +67,11 @@ const recs = await recommendModels(intent, { limit?: number; includeInactive?: b
 // Returns ModelRecommendation[] sorted by score desc, then slug asc (deterministic tiebreaker)
 ```
 
-Scoring for chat intents: primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
+Scoring for chat intents (`thinking`, `doing`, `fast_looping`, `high_reliability`): primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points), tertiary tiebreaker from `contextLength` (up to 6 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
 
-Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts).
+Scoring for private intent: primary factor is `tierRole` match (60 points), strong `local` preference (30pts for `local: true`), `costEfficiency` secondary (up to 5pts per level), `contextLength` tertiary (2pts per level).
+
+Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts). Models with `quality: null` are treated as `'medium'`.
 
 ## Model Dimensions
 
@@ -145,6 +147,44 @@ npx vitest run tests/unit/lib/orchestration/llm/provider-selector
 # Integration tests (API endpoints, auth, validation)
 npx vitest run tests/integration/api/v1/admin/orchestration/provider-models
 ```
+
+## Model Audit Workflow
+
+The Provider Model Audit is an AI-powered workflow that evaluates model entries for accuracy, proposes changes for admin review, discovers new models released by providers, and detects deprecated or discontinued models for deactivation. It serves a dual purpose:
+
+1. **Genuinely useful** — catches stale ratings, deprecated models, and inaccurate classifications by having an LLM evaluate each entry against its knowledge of current model capabilities. Also identifies new models from providers that are not yet in the registry and proposes them for addition, and detects deprecated/discontinued models for deactivation (all with human approval).
+
+2. **Framework reference implementation** — exercises 10 of 15 orchestration step types end-to-end, proving the engine, approval queue, capability dispatch, budget enforcement, and SSE streaming work together.
+
+### Step types exercised
+
+| Step Type           | Pattern         | What It Tests                                                                                    |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------ |
+| `llm_call`          | Prompt Chaining | Structured JSON output, template interpolation                                                   |
+| `rag_retrieve`      | RAG             | Knowledge base search, similarity threshold                                                      |
+| `route`             | Routing         | LLM classification branching (chat/embedding/mixed)                                              |
+| `parallel`          | Parallelisation | Concurrent analysis + discovery branches                                                         |
+| `guard`             | Guardrails      | Enum value validation gate                                                                       |
+| `reflect`           | Reflection      | Draft-critique-revise loop                                                                       |
+| `evaluate`          | Evaluation      | Quality scoring against rubric                                                                   |
+| `human_approval`    | HITL            | Execution pause, approval queue, resume flow                                                     |
+| `tool_call`         | Tool Use        | `apply_audit_changes` + `add_provider_models` + `deactivate_provider_models` capability dispatch |
+| `send_notification` | —               | Email notification with template interpolation                                                   |
+
+### Trigger
+
+"Audit Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit, creates a workflow execution via `POST /workflows/:id/execute` and redirects to the execution detail page.
+
+### Files
+
+| File                                                                    | Purpose                                       |
+| ----------------------------------------------------------------------- | --------------------------------------------- |
+| `prisma/seeds/data/templates/provider-model-audit.ts`                   | 13-step DAG template definition               |
+| `prisma/seeds/010-model-auditor.ts`                                     | Agent seed with capability bindings           |
+| `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        | Capability that applies approved changes      |
+| `lib/orchestration/capabilities/built-in/add-provider-models.ts`        | Capability that adds approved new models      |
+| `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` | Capability that deactivates deprecated models |
+| `components/admin/orchestration/audit-models-dialog.tsx`                | Model selection + trigger dialog              |
 
 ## Related
 

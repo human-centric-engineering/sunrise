@@ -148,6 +148,83 @@ describe('executeToolCall', () => {
     );
   });
 
+  it('uses argsFrom step output (object) when config.args is absent', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const ctx = makeCtx({
+      stepOutputs: { prev_step: { foo: 'bar', baz: 42 } },
+    });
+    const step = makeStep({ capabilitySlug: 'my-tool', argsFrom: 'prev_step' });
+    await executeToolCall(step, ctx);
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'my-tool',
+      { foo: 'bar', baz: 42 },
+      expect.any(Object)
+    );
+  });
+
+  it('wraps argsFrom step output in { data } when output is non-object (string)', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const ctx = makeCtx({
+      stepOutputs: { prev_step: 'plain string output' },
+    });
+    const step = makeStep({ capabilitySlug: 'my-tool', argsFrom: 'prev_step' });
+    await executeToolCall(step, ctx);
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'my-tool',
+      { data: 'plain string output' },
+      expect.any(Object)
+    );
+  });
+
+  it('wraps argsFrom step output in { data } when output is an array', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const ctx = makeCtx({
+      stepOutputs: { prev_step: [1, 2, 3] },
+    });
+    const step = makeStep({ capabilitySlug: 'my-tool', argsFrom: 'prev_step' });
+    await executeToolCall(step, ctx);
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'my-tool',
+      { data: [1, 2, 3] },
+      expect.any(Object)
+    );
+  });
+
+  it('falls back to ctx.inputData when argsFrom references a missing step', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const ctx = makeCtx({
+      inputData: { fallback: true },
+      stepOutputs: {}, // no prev_step
+    });
+    const step = makeStep({ capabilitySlug: 'my-tool', argsFrom: 'prev_step' });
+    await executeToolCall(step, ctx);
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'my-tool',
+      { fallback: true },
+      expect.any(Object)
+    );
+  });
+
   it('uses ctx.inputData when config.args is not set', async () => {
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
       success: true,

@@ -238,6 +238,14 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidationRes
         if (!byId.has(target)) continue;
         const c = colour.get(target) ?? WHITE;
         if (c === GRAY) {
+          // Bounded retry edges (maxRetries + condition) are allowed to
+          // form back-edges — the engine enforces the iteration cap at
+          // runtime. Unconditional back-edges or edges without maxRetries
+          // are still flagged as cycles.
+          if (edge.maxRetries && edge.maxRetries > 0 && edge.condition) {
+            continue;
+          }
+
           // Found a back-edge → extract the cycle path.
           const cycleStart = stack.indexOf(target);
           const cyclePath = cycleStart >= 0 ? [...stack.slice(cycleStart), target] : [target];

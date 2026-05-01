@@ -34,6 +34,7 @@ import '@xyflow/react/dist/style.css';
 import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 
 import { addNode } from '@/components/admin/orchestration/workflow-builder/add-node';
+import { edgeTypes } from '@/components/admin/orchestration/workflow-builder/edge-types';
 import { nodeTypes } from '@/components/admin/orchestration/workflow-builder/node-types';
 import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
@@ -102,6 +103,7 @@ export function WorkflowCanvas({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange as (changes: NodeChange<PatternNode>[]) => void}
         onEdgesChange={onEdgesChange as (changes: EdgeChange[]) => void}
         onConnect={onConnect as (connection: Connection) => void}

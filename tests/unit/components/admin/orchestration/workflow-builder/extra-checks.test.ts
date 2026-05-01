@@ -367,4 +367,137 @@ describe('runExtraChecks', () => {
       expect(runExtraChecks([], [])).toHaveLength(0);
     });
   });
+
+  describe('CYCLE_DETECTED — bounded retry back-edges', () => {
+    it('still flags a back-edge when maxRetries is present but NO condition (label is absent)', () => {
+      // Arrange — B→A carries maxRetries in edge.data but no label at all.
+      // The checkCycles gate requires BOTH maxRetries > 0 AND condition to skip flagging.
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        {
+          id: 'b->a',
+          source: 'b',
+          target: 'a',
+          // No label — condition field will be undefined
+          data: { maxRetries: 3 },
+        },
+      ];
+
+      // Act
+      const errors = runExtraChecks(nodes, edges);
+
+      // Assert — no condition means it's still a plain cycle even with maxRetries
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].message).toContain('Cycle detected');
+    });
+
+    it('still flags a back-edge when maxRetries is 0 even with a condition label', () => {
+      // Arrange — B→A has label (condition) but maxRetries=0: the guard
+      // requires maxRetries > 0, so zero is treated as no retry cap → cycle.
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        {
+          id: 'b->a',
+          source: 'b',
+          target: 'a',
+          label: 'retry condition',
+          data: { maxRetries: 0 },
+        },
+      ];
+
+      // Act
+      const errors = runExtraChecks(nodes, edges);
+
+      // Assert — maxRetries=0 means the bounded-retry exemption is not granted
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].message).toContain('Cycle detected');
+    });
+
+    it('does NOT flag a back-edge that has maxRetries in edge data AND a non-empty label (condition)', () => {
+      // Arrange — A → B → A, but B→A carries maxRetries=3 in data and a label acting as condition.
+      // The frontend checkCycles reads maxRetries from edge.data and condition from edge.label.
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'llm_call', { prompt: 'bye' }, 'B'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        {
+          id: 'b->a',
+          source: 'b',
+          target: 'a',
+          label: 'retry',
+          data: { maxRetries: 3 },
+        },
+      ];
+
+      // Act
+      const errors = runExtraChecks(nodes, edges);
+
+      // Assert — the bounded retry back-edge must not be flagged as a cycle
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(0);
+    });
+
+    it('still flags a back-edge that has NO maxRetries in edge data even when a label is present', () => {
+      // Arrange — B→A has a label but maxRetries is absent: unbounded cycle must be caught
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        {
+          id: 'b->a',
+          source: 'b',
+          target: 'a',
+          label: 'retry',
+          // no data / no maxRetries
+        },
+      ];
+
+      // Act
+      const errors = runExtraChecks(nodes, edges);
+
+      // Assert — no maxRetries means it's still a plain cycle
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+      expect(cycles[0].message).toContain('Cycle detected');
+    });
+
+    it('still flags a back-edge that has maxRetries in edge data but an empty label (no condition)', () => {
+      // Arrange — B→A carries maxRetries but the label is empty: both fields are required
+      const nodes = [
+        makeNode('a', 'llm_call', { prompt: 'hi' }, 'A'),
+        makeNode('b', 'chain', {}, 'B'),
+      ];
+      const edges = [
+        makeEdge('a', 'b'),
+        {
+          id: 'b->a',
+          source: 'b',
+          target: 'a',
+          label: '',
+          data: { maxRetries: 3 },
+        },
+      ];
+
+      // Act
+      const errors = runExtraChecks(nodes, edges);
+
+      // Assert — empty label means condition is absent; cycle must be flagged
+      const cycles = errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycles).toHaveLength(1);
+    });
+  });
 });

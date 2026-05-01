@@ -36,6 +36,13 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   recommendModels: vi.fn(),
 }));
 
+vi.mock('@/lib/security/rate-limit', () => ({
+  apiLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';

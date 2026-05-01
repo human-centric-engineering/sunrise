@@ -22,7 +22,7 @@ The **new** and **[id]** sub-routes are still standalone server shells — bread
 
 - **Provider** — Radix `<Select>` seeded with distinct `providerSlug` values from the result set, plus "All providers".
 - **Tier** — all 6 `TIER_ROLE_META` entries (Thinking, Worker, Infrastructure, Control Plane, Local/Sovereign, Embedding).
-- **Capability** — `All` · `Chat` · `Embedding` · `Both`.
+- **Capability** — `All types` · `Chat` · `Embedding`.
 
 ### Columns
 
@@ -37,7 +37,7 @@ The **new** and **[id]** sub-routes are still standalone server shells — bread
 
 ### Sort
 
-Header clicks toggle `sortBy` (one of: `providerSlug`, `name`, `tierRole`, `reasoningDepth`, `latency`, `costEfficiency`, `contextLength`, `toolUse`) and `sortOrder` (`asc` / `desc`). Sort is client-side over the current result set.
+Header clicks toggle `sortKey` (one of: `providerSlug`, `name`, `tierRole`, `reasoningDepth`, `latency`, `costEfficiency`, `contextLength`, `toolUse`) and `sortAsc` (boolean). Sort is client-side over the current result set.
 
 ### Decision heuristic table
 
@@ -52,7 +52,7 @@ Rendered inline beneath the matrix. Six rows mapping task intent → recommended
 | `private`          | Local / Sovereign |
 | `embedding`        | Embedding         |
 
-Powered by `GET /api/v1/admin/orchestration/provider-models/recommend?intent=<intent>`, which returns `{ intent, recommendations, heuristic }` — `recommendations` is a scored list of live models in the matching tier.
+Hardcoded in the component — maps each intent to a tier, task characteristics, and rationale. The `recommend` endpoint exists as a separate API but is not used by the rendered table.
 
 ### "Add model" button
 
@@ -112,7 +112,7 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 - The submit handler assembles `capabilities[]` from the two checkboxes and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `capEmbedding` is off. In edit mode, unchecking `capEmbedding` explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
-- Every non-trivial field has a `<FieldHelp>` popover per the contextual-help rule.
+- Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
 
 ## Recommend endpoint
 
@@ -144,6 +144,39 @@ Response:
 ```
 
 Powered by `recommendModels()` in `lib/orchestration/llm/provider-selector.ts`.
+
+## Model Audit Workflow
+
+The matrix toolbar includes an **Audit Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness.
+
+### What it does
+
+1. Admin selects models to audit via a checkbox dialog (filter by provider, select all/deselect all)
+2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`
+3. The browser redirects to the execution detail page where SSE streaming shows real-time progress
+4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
+5. A `human_approval` step pauses execution and presents proposed changes for admin review
+6. On approval, the `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds newly discovered models, and `deactivate_provider_models` soft-deletes deprecated ones — all invalidate the model cache
+
+### Audit frequency
+
+Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence is once every few months, or when you notice a classification inaccuracy (e.g. a model's tier, reasoning depth, or cost rating seems wrong). The audit dialog shows when each model was last audited to help you prioritise.
+
+### Components
+
+| Component         | File                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| Trigger dialog    | `components/admin/orchestration/audit-models-dialog.tsx`                |
+| Button in matrix  | `components/admin/orchestration/provider-models-matrix.tsx`             |
+| Workflow template | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
+| Apply changes cap | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
+| Add models cap    | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
+| Deactivate cap    | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
+| Agent seed        | `prisma/seeds/010-model-auditor.ts`                                     |
+
+### Framework reference implementation
+
+This feature also serves as a reference implementation for the orchestration framework, exercising 10 of the 15 step types end-to-end: `llm_call`, `rag_retrieve`, `route`, `parallel`, `guard`, `reflect`, `evaluate`, `human_approval`, `tool_call`, and `send_notification`. FieldHelp annotations in the dialog explain which framework capability each element tests. See [Provider Selection Matrix — Model Audit Workflow](../orchestration/provider-selection-matrix.md#model-audit-workflow) for the full step-type breakdown.
 
 ## Related
 

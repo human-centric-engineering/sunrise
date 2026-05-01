@@ -170,14 +170,18 @@ export function workflowDefinitionToFlow(definition: WorkflowDefinition): {
           sourceHandle = `out-${handleIndex}`;
         }
       }
+      const isRetry = edge.maxRetries && edge.maxRetries > 0;
       edges.push({
         id: `${step.id}-${edge.targetStepId}-${i}`,
         source: step.id,
         target: edge.targetStepId,
-        label: edge.condition ?? undefined,
+        label: isRetry
+          ? `${edge.condition ?? ''} (retry \u00d7${edge.maxRetries})`.trim()
+          : (edge.condition ?? undefined),
         sourceHandle,
         targetHandle: 'in-0',
-        type: 'default',
+        type: isRetry ? 'retry' : 'default',
+        data: { maxRetries: edge.maxRetries },
       });
     });
   }
@@ -211,6 +215,11 @@ export function flowToWorkflowDefinition(
       .filter((e) => e.source === node.id && nodeIds.has(e.target))
       .map((e) => {
         let condition = typeof e.label === 'string' && e.label.length > 0 ? e.label : undefined;
+        // Strip the " (retry ×N)" suffix that workflowDefinitionToFlow appends
+        // so the stored condition is clean (e.g. "fail" not "fail (retry ×2)").
+        if (condition) {
+          condition = condition.replace(/\s*\(retry\s*[×x]\d+\)\s*$/i, '').trim() || undefined;
+        }
         if (!condition && e.sourceHandle) {
           const { outputLabels } = getStepOutputs(node.data.type, node.data.config);
           const idx = parseInt(e.sourceHandle.replace('out-', ''), 10);
@@ -218,7 +227,26 @@ export function flowToWorkflowDefinition(
             condition = outputLabels[idx].toLowerCase();
           }
         }
-        return { targetStepId: e.target, ...(condition ? { condition } : {}) };
+        const data = e.data;
+        // maxRetries can come from the edge data (round-trip) or from the
+        // guard step's config (user set it in the editor). Guard config
+        // applies only to fail-condition edges.
+        let maxRetries =
+          typeof data?.maxRetries === 'number' && data.maxRetries > 0 ? data.maxRetries : undefined;
+        if (
+          !maxRetries &&
+          node.data.type === 'guard' &&
+          condition?.toLowerCase() === 'fail' &&
+          typeof node.data.config.maxRetries === 'number' &&
+          node.data.config.maxRetries > 0
+        ) {
+          maxRetries = node.data.config.maxRetries;
+        }
+        return {
+          targetStepId: e.target,
+          ...(condition ? { condition } : {}),
+          ...(maxRetries ? { maxRetries } : {}),
+        };
       });
 
     const baseConfig = stripLayout(node.data.config ?? {});

@@ -196,6 +196,7 @@ function makeWorkflow(overrides: Partial<AiWorkflow> = {}): AiWorkflow {
     patternsUsed: [1, 2],
     isActive: true,
     isTemplate: false,
+    isSystem: false,
     metadata: null,
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01'),

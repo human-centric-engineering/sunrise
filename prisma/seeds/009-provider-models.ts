@@ -234,10 +234,10 @@ const unit: SeedUnit = {
         modelId: 'gemini-2.5-pro',
         name: 'Gemini 2.5 Pro',
         description:
-          'Google flagship. High reasoning with very large context and strong multimodal capabilities.',
+          'Google flagship. Very high reasoning with thinking mode, very large context and strong multimodal capabilities.',
         capabilities: ['chat'],
         tierRole: 'thinking',
-        reasoningDepth: 'high',
+        reasoningDepth: 'very_high',
         latency: 'medium',
         costEfficiency: 'medium',
         contextLength: 'very_high',
@@ -578,10 +578,10 @@ const unit: SeedUnit = {
       {
         slug: 'amazon-bedrock-claude',
         providerSlug: 'amazon',
-        modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-        name: 'Claude via Bedrock',
+        modelId: 'anthropic.claude-sonnet-4-20250514-v1:0',
+        name: 'Claude Sonnet 4 (Bedrock)',
         description:
-          'Claude models through AWS Bedrock. Enterprise-grade with compliance and data residency.',
+          'Claude Sonnet 4 through AWS Bedrock. Enterprise-grade with compliance and data residency.',
         capabilities: ['chat'],
         tierRole: 'control_plane',
         reasoningDepth: 'high',

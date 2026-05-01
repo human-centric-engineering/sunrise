@@ -70,6 +70,7 @@ import {
   budgetWarning,
   stepCompleted,
   stepFailed,
+  stepRetry,
   stepStarted,
   workflowCompleted,
   workflowFailed,
@@ -160,6 +161,8 @@ export class OrchestrationEngine {
     // --------------------------------------------------------------
     const byId = new Map(workflow.definition.steps.map((s) => [s.id, s]));
     const visited = new Set<string>();
+    // Bounded retry tracking: key = "sourceStepId→targetStepId", value = attempts used.
+    const retryCount = new Map<string, number>();
     const queue: string[] = resumeAfterStepId
       ? this.nextIdsAfter(byId, resumeAfterStepId)
       : [workflow.definition.entryStepId];
@@ -174,9 +177,13 @@ export class OrchestrationEngine {
 
     // Build in-degree map for convergence detection. A step is "ready"
     // only when ALL its predecessors have been visited.
+    // Bounded retry back-edges (maxRetries > 0 + condition) are excluded —
+    // they don't represent data dependencies and would cause deadlocks
+    // after cascade-clear removes the back-edge source from visited.
     const inDegree = new Map<string, Set<string>>();
     for (const step of workflow.definition.steps) {
       for (const edge of step.nextSteps) {
+        if (edge.maxRetries && edge.maxRetries > 0 && edge.condition) continue;
         if (!inDegree.has(edge.targetStepId)) {
           inDegree.set(edge.targetStepId, new Set());
         }
@@ -290,9 +297,81 @@ export class OrchestrationEngine {
         if (singleResult.output !== undefined) finalOutput = singleResult.output;
         if (singleResult.terminal) break;
 
-        // Enqueue next steps.
+        // Enqueue next steps (with bounded retry support).
         for (const id of singleResult.nextIds) {
-          if (!visited.has(id)) queue.push(id);
+          if (!visited.has(id)) {
+            queue.push(id);
+            continue;
+          }
+
+          // The target was already visited — check if the originating edge
+          // has a maxRetries cap that allows re-execution.
+          const retryEdge = step.nextSteps.find(
+            (e) => e.targetStepId === id && e.maxRetries && e.maxRetries > 0 && e.condition
+          );
+          if (!retryEdge) continue;
+
+          const edgeKey = `${step.id}\u2192${id}`;
+          const attempts = retryCount.get(edgeKey) ?? 0;
+          if (attempts >= retryEdge.maxRetries!) continue;
+
+          // Under the retry limit — re-queue the target.
+          retryCount.set(edgeKey, attempts + 1);
+
+          // Store retry context so the target step's prompt can reference
+          // the failure reason via {{__retryContext.failureReason}}.
+          ctx.variables.__retryContext = {
+            fromStep: step.id,
+            attempt: attempts + 1,
+            maxRetries: retryEdge.maxRetries,
+            failureReason:
+              typeof singleResult.output === 'object' &&
+              singleResult.output !== null &&
+              'reason' in singleResult.output
+                ? (singleResult.output as Record<string, unknown>).reason
+                : String(singleResult.output),
+          };
+
+          // Cascade-clear visited for the retry target and all its
+          // downstream dependents so the engine re-executes them.
+          const toClear = new Set<string>([id]);
+          const clearQueue = [id];
+          while (clearQueue.length > 0) {
+            const current = clearQueue.shift()!;
+            const currentStep = byId.get(current);
+            if (!currentStep) continue;
+            for (const edge of currentStep.nextSteps) {
+              if (visited.has(edge.targetStepId) && !toClear.has(edge.targetStepId)) {
+                toClear.add(edge.targetStepId);
+                clearQueue.push(edge.targetStepId);
+              }
+            }
+          }
+          for (const clearId of toClear) {
+            visited.delete(clearId);
+            pending.delete(clearId);
+          }
+
+          queue.push(id);
+
+          yield stepRetry(
+            step.id,
+            id,
+            attempts + 1,
+            retryEdge.maxRetries!,
+            (() => {
+              if (
+                typeof ctx.variables.__retryContext === 'object' &&
+                ctx.variables.__retryContext !== null
+              ) {
+                const reason = (ctx.variables.__retryContext as Record<string, unknown>)
+                  .failureReason;
+                if (typeof reason === 'string') return reason;
+                if (reason !== undefined && reason !== null) return JSON.stringify(reason);
+              }
+              return '';
+            })()
+          );
         }
         continue;
       }

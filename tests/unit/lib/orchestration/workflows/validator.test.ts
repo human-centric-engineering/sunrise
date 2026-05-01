@@ -374,6 +374,129 @@ describe('validateWorkflow', () => {
     expect(result.ok).toBe(true);
   });
 
+  describe('bounded retry back-edges', () => {
+    it('allows a back-edge that has both maxRetries and condition (no CYCLE_DETECTED error)', () => {
+      // Arrange — A → B → A, but B→A carries maxRetries:3 and condition:'retry'
+      // The validator should treat this as a bounded retry loop and skip the cycle flag.
+      const result = validateWorkflow(
+        def({
+          entryStepId: 'a',
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'b' }],
+            },
+            {
+              id: 'b',
+              name: 'B',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'a', maxRetries: 3, condition: 'retry' }],
+            },
+          ],
+        })
+      );
+
+      // Assert — no cycle error; the back-edge is a permitted bounded retry
+      const cycleErrors = result.errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycleErrors).toHaveLength(0);
+      // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; structural assertion on validation outcome
+      expect(result.ok).toBe(true);
+    });
+
+    it('still flags a back-edge that has maxRetries but NO condition', () => {
+      // Arrange — B→A has maxRetries but no condition: not a bounded retry, must be flagged
+      const result = validateWorkflow(
+        def({
+          entryStepId: 'a',
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'b' }],
+            },
+            {
+              id: 'b',
+              name: 'B',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'a', maxRetries: 3 }],
+            },
+          ],
+        })
+      );
+
+      // Act + Assert — cycle must still be reported
+      expect(result.ok).toBe(false);
+      const cycleErrors = result.errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycleErrors.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('still flags a back-edge that has condition but NO maxRetries', () => {
+      // Arrange — B→A has a condition but no maxRetries: unbounded cycle, must be flagged
+      const result = validateWorkflow(
+        def({
+          entryStepId: 'a',
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'b' }],
+            },
+            {
+              id: 'b',
+              name: 'B',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'a', condition: 'retry' }],
+            },
+          ],
+        })
+      );
+
+      // Act + Assert — cycle must still be reported
+      expect(result.ok).toBe(false);
+      const cycleErrors = result.errors.filter((e) => e.code === 'CYCLE_DETECTED');
+      expect(cycleErrors.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('still flags a plain back-edge with neither maxRetries nor condition (existing behavior)', () => {
+      // Arrange — direct A→B→A with no retry metadata; this is the pre-existing cycle scenario
+      const result = validateWorkflow(
+        def({
+          entryStepId: 'a',
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'b' }],
+            },
+            {
+              id: 'b',
+              name: 'B',
+              type: 'llm_call',
+              config: {},
+              nextSteps: [{ targetStepId: 'a' }],
+            },
+          ],
+        })
+      );
+
+      // Act + Assert — unchanged behavior: plain cycles are still errors
+      expect(result.ok).toBe(false);
+      expect(result.errors.some((e) => e.code === 'CYCLE_DETECTED')).toBe(true);
+    });
+  });
+
   it('reports each unique cycle signature once when multiple independent cycles exist', () => {
     // Arrange — two separate cycles:
     //   Cycle 1: a → b → a

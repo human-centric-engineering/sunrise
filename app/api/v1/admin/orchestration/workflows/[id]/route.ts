@@ -14,7 +14,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -66,6 +66,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (!current) throw new NotFoundError(`Workflow ${id} not found`);
 
   const body = await validateRequestBody(request, updateWorkflowSchema);
+
+  // System workflows cannot be deactivated or have their template status changed
+  if (current.isSystem) {
+    if (body.isActive === false) {
+      throw new ForbiddenError('System workflows cannot be deactivated');
+    }
+    if (body.isTemplate !== undefined) {
+      throw new ForbiddenError('System workflows cannot have their template status changed');
+    }
+  }
 
   const data: Prisma.AiWorkflowUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
@@ -149,6 +159,10 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   const current = await prisma.aiWorkflow.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Workflow ${id} not found`);
+
+  if (current.isSystem) {
+    throw new ForbiddenError('System workflows cannot be deleted');
+  }
 
   await prisma.aiWorkflow.update({
     where: { id },

@@ -703,6 +703,7 @@ export const importAgentsSchema = z.object({
 const conditionalEdgeSchema = z.object({
   targetStepId: z.string().min(1, 'Target step ID is required'),
   condition: z.string().max(1000).optional(),
+  maxRetries: z.number().int().min(1).max(10).optional(),
 });
 
 /** Single workflow step */
@@ -1173,6 +1174,10 @@ export const createProviderModelSchema = z.object({
     .string()
     .min(1, 'Provider slug is required')
     .max(50, 'Provider slug must be less than 50 characters')
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Provider slug must be lowercase alphanumeric with hyphens'
+    )
     .trim(),
 
   modelId: z
@@ -1293,6 +1298,8 @@ export type ListProviderModelsQuery = z.infer<typeof listProviderModelsQuerySche
 export const listWorkflowsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
   isTemplate: queryBooleanSchema.optional(),
+  isSystem: queryBooleanSchema.optional(),
+  slug: z.string().trim().max(100).optional(),
   q: z.string().trim().max(200).optional(),
 });
 
@@ -1829,6 +1836,7 @@ export const llmCallConfigSchema = stepErrorConfigSchema.extend({
 export const toolCallConfigSchema = stepErrorConfigSchema.extend({
   capabilitySlug: z.string().optional(),
   args: z.record(z.string(), z.unknown()).optional(),
+  argsFrom: z.string().max(100).optional(),
 });
 
 export const routeConfigSchema = stepErrorConfigSchema.extend({

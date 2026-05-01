@@ -30,6 +30,7 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Shield,
   Trash2,
 } from 'lucide-react';
 
@@ -90,6 +91,7 @@ export function WorkflowsTable({
   const [search, setSearch] = useState('');
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [showTemplates, setShowTemplates] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(initialError ?? null);
   const [deleteTarget, setDeleteTarget] = useState<AiWorkflowListItem | null>(null);
@@ -105,17 +107,25 @@ export function WorkflowsTable({
   const fetchWorkflows = useCallback(
     async (
       page = 1,
-      overrides?: { search?: string; sortField?: SortField; sortOrder?: 'asc' | 'desc' }
+      overrides?: {
+        search?: string;
+        sortField?: SortField;
+        sortOrder?: 'asc' | 'desc';
+        showTemplates?: boolean;
+      }
     ) => {
       setIsLoading(true);
       setListError(null);
       try {
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
+        const templatesVisible =
+          overrides?.showTemplates !== undefined ? overrides.showTemplates : showTemplates;
         const params = new URLSearchParams({
           page: String(page),
           limit: String(meta.limit),
         });
         if (searchValue) params.set('q', searchValue);
+        if (!templatesVisible) params.set('isTemplate', 'false');
 
         const res = await fetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?${params.toString()}`, {
           credentials: 'same-origin',
@@ -145,7 +155,7 @@ export function WorkflowsTable({
         setIsLoading(false);
       }
     },
-    [meta.limit, search, sortField, sortOrder]
+    [meta.limit, search, showTemplates, sortField, sortOrder]
   );
 
   const handleSearch = useCallback(
@@ -155,6 +165,14 @@ export function WorkflowsTable({
       searchTimeoutRef.current = setTimeout(() => {
         void fetchWorkflows(1, { search: value });
       }, 300);
+    },
+    [fetchWorkflows]
+  );
+
+  const handleToggleTemplates = useCallback(
+    (visible: boolean) => {
+      setShowTemplates(visible);
+      void fetchWorkflows(1, { showTemplates: visible });
     },
     [fetchWorkflows]
   );
@@ -268,18 +286,29 @@ export function WorkflowsTable({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative max-w-sm flex-1">
-          {isLoading ? (
-            <Loader2 className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 animate-spin" />
-          ) : (
-            <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-          )}
-          <Input
-            placeholder="Search workflows..."
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex flex-1 items-center gap-3">
+          <div className="relative max-w-sm flex-1">
+            {isLoading ? (
+              <Loader2 className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 animate-spin" />
+            ) : (
+              <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+            )}
+            <Input
+              placeholder="Search workflows..."
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Tip label={showTemplates ? 'Hide template workflows' : 'Show template workflows'}>
+            <Button
+              variant={showTemplates ? 'secondary' : 'outline'}
+              size="sm"
+              onClick={() => handleToggleTemplates(!showTemplates)}
+            >
+              Templates
+            </Button>
+          </Tip>
         </div>
         <Button asChild size="sm">
           <Link href="/admin/orchestration/workflows/new">
@@ -323,8 +352,8 @@ export function WorkflowsTable({
                 </Tip>
               </TableHead>
               <TableHead className="text-center">
-                <Tip label="Templates appear in the 'Use template' menu when creating new workflows">
-                  <span>Template</span>
+                <Tip label="System workflows are platform-managed. Templates appear in the 'Use template' menu.">
+                  <span>Type</span>
                 </Tip>
               </TableHead>
               <TableHead className="text-right">
@@ -378,7 +407,17 @@ export function WorkflowsTable({
                     <Badge variant="secondary">{workflow.patternsUsed.length}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    {workflow.isTemplate ? (
+                    {workflow.isSystem ? (
+                      <Tip label="System workflow — used internally by the platform. Cannot be deleted or deactivated.">
+                        <Badge
+                          variant="secondary"
+                          className="gap-1 px-1.5 py-0 text-[10px] font-medium"
+                        >
+                          <Shield className="h-3 w-3" />
+                          System
+                        </Badge>
+                      </Tip>
+                    ) : workflow.isTemplate ? (
                       <Badge title='This workflow appears in the "Use template" menu when creating new workflows'>
                         Template
                       </Badge>
@@ -400,11 +439,23 @@ export function WorkflowsTable({
                     )}
                   </TableCell>
                   <TableCell className="text-center">
-                    <Switch
-                      checked={workflow.isActive}
-                      onCheckedChange={(v) => void handleToggleStatus(workflow, v)}
-                      aria-label={`Toggle ${workflow.name} active`}
-                    />
+                    {workflow.isSystem ? (
+                      <Tip label="System workflows cannot be deactivated">
+                        <span className="inline-block">
+                          <Switch
+                            checked={workflow.isActive}
+                            disabled
+                            aria-label={`${workflow.name} is a system workflow`}
+                          />
+                        </span>
+                      </Tip>
+                    ) : (
+                      <Switch
+                        checked={workflow.isActive}
+                        onCheckedChange={(v) => void handleToggleStatus(workflow, v)}
+                        aria-label={`Toggle ${workflow.name} active`}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
@@ -429,14 +480,18 @@ export function WorkflowsTable({
                           <Copy className="mr-2 h-4 w-4" />
                           Duplicate
                         </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => setDeleteTarget(workflow)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
+                        {!workflow.isSystem && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => setDeleteTarget(workflow)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>

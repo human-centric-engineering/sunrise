@@ -33,18 +33,57 @@ export interface ValidationSummaryPanelProps {
 /** Human-readable headings per error code. */
 const CODE_LABELS: Record<string, string> = {
   MISSING_ENTRY: 'Missing entry step',
-  UNKNOWN_TARGET: 'Unknown target step',
+  UNKNOWN_TARGET: 'Broken connection',
   UNREACHABLE_STEP: 'Unreachable step',
-  CYCLE_DETECTED: 'Cycle detected',
-  DUPLICATE_STEP_ID: 'Duplicate step id',
+  CYCLE_DETECTED: 'Circular loop',
+  DUPLICATE_STEP_ID: 'Duplicate step name',
   MISSING_APPROVAL_PROMPT: 'Missing approval prompt',
   MISSING_CAPABILITY_SLUG: 'Missing capability',
   MISSING_GUARD_RULES: 'Missing guard rules',
   MISSING_EVALUATE_RUBRIC: 'Missing evaluation rubric',
   MISSING_EXTERNAL_URL: 'Missing external URL',
+  MISSING_AGENT_SLUG: 'Missing agent',
+  INSUFFICIENT_ROUTE_BRANCHES: 'Not enough routes',
   DISCONNECTED_NODE: 'Disconnected step',
   PARALLEL_WITHOUT_MERGE: 'Parallel branches never merge',
   MISSING_REQUIRED_CONFIG: 'Missing required configuration',
+  DANGLING_EDGE: 'Broken connection',
+};
+
+/**
+ * Human-friendly explanations per error code. These replace the raw
+ * technical messages from the validator so admins can understand what
+ * went wrong and how to fix it.
+ */
+const CODE_EXPLANATIONS: Record<string, string> = {
+  MISSING_ENTRY:
+    'The workflow has no starting point. Make sure one step is marked as the entry step.',
+  UNKNOWN_TARGET:
+    'A step connects to another step that doesn\u2019t exist. Check the connections and remove any broken links.',
+  UNREACHABLE_STEP:
+    'This step can\u2019t be reached from the start of the workflow. Connect it to the flow or remove it.',
+  CYCLE_DETECTED:
+    'Steps are connected in a loop that would run forever. Remove the connection that creates the loop.',
+  DUPLICATE_STEP_ID: 'Two or more steps share the same identifier. Each step needs a unique id.',
+  MISSING_APPROVAL_PROMPT:
+    'This approval step needs a message explaining what the reviewer should approve.',
+  MISSING_CAPABILITY_SLUG:
+    'This tool call step needs a capability selected so the engine knows which tool to invoke.',
+  MISSING_GUARD_RULES: 'This guard step needs validation rules so it knows what to check.',
+  MISSING_EVALUATE_RUBRIC:
+    'This evaluation step needs a scoring rubric so the AI knows how to rate quality.',
+  MISSING_EXTERNAL_URL: 'This external call step needs a URL to know where to send the request.',
+  MISSING_AGENT_SLUG:
+    'This agent call step needs an agent selected so the engine knows which agent to delegate to.',
+  INSUFFICIENT_ROUTE_BRANCHES:
+    'A routing step needs at least two branches to be useful — otherwise just use a direct connection.',
+  DISCONNECTED_NODE:
+    'This step isn\u2019t connected to anything. Wire it into the flow or remove it from the canvas.',
+  PARALLEL_WITHOUT_MERGE:
+    'The parallel branches go in different directions and never come back together. Add a shared downstream step.',
+  MISSING_REQUIRED_CONFIG:
+    'This step is missing a required setting. Open the step config panel to fill it in.',
+  DANGLING_EDGE: 'A connection points to a step that was deleted. Remove the broken connection.',
 };
 
 export function ValidationSummaryPanel({ errors, onFocusNode }: ValidationSummaryPanelProps) {
@@ -107,7 +146,9 @@ export function ValidationSummaryPanel({ errors, onFocusNode }: ValidationSummar
                 >
                   <span className="flex-1">
                     <span className="font-medium text-red-700 dark:text-red-300">{heading}</span>
-                    <span className="text-muted-foreground ml-2">{error.message}</span>
+                    <span className="text-muted-foreground ml-2">
+                      {CODE_EXPLANATIONS[error.code] ?? error.message}
+                    </span>
                   </span>
                 </Button>
               </li>

@@ -263,6 +263,112 @@ describe('workflowDefinitionToFlow', () => {
       expect(edge.targetHandle).toBe('in-0');
     }
   });
+
+  describe('retry edges', () => {
+    it('sets type "retry" on an edge whose ConditionalEdge has maxRetries > 0', () => {
+      // Arrange — a back-edge from B to A carrying maxRetries:2 and a condition
+      const definition: WorkflowDefinition = {
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 2, condition: 'fail' }],
+          },
+        ],
+      };
+
+      // Act
+      const { edges } = workflowDefinitionToFlow(definition);
+
+      // Assert — the retry back-edge gets type:'retry', not 'default'
+      const retryEdge = edges.find((e) => e.source === 'b' && e.target === 'a');
+      expect(retryEdge).toBeDefined();
+      expect(retryEdge?.type).toBe('retry');
+    });
+
+    it('includes "(retry ×N)" in the label of a retry edge, preserving the condition prefix', () => {
+      // Arrange — a retry edge with condition 'fail' and maxRetries 3
+      const definition: WorkflowDefinition = {
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 3, condition: 'fail' }],
+          },
+        ],
+      };
+
+      // Act
+      const { edges } = workflowDefinitionToFlow(definition);
+
+      // Assert — label is "fail (retry ×3)" — condition + retry annotation
+      const retryEdge = edges.find((e) => e.source === 'b' && e.target === 'a');
+      expect(retryEdge?.label).toBe('fail (retry \u00d73)');
+    });
+
+    it('stores maxRetries in edge data so the round-trip mapper can read it back', () => {
+      // Arrange — retry edge with maxRetries:2
+      const definition: WorkflowDefinition = {
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 2, condition: 'fail' }],
+          },
+        ],
+      };
+
+      // Act
+      const { edges } = workflowDefinitionToFlow(definition);
+
+      // Assert — edge.data.maxRetries carries the value the mapper needs on round-trip
+      const retryEdge = edges.find((e) => e.source === 'b' && e.target === 'a');
+      expect(retryEdge?.data?.maxRetries).toBe(2);
+    });
+
+    it('uses type "default" and no retry label for a plain (non-retry) edge', () => {
+      // Arrange — a normal unconditional edge has no maxRetries
+      const { edges } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
+
+      // Act + Assert — all edges in the linear chain must be 'default', not 'retry'
+      for (const edge of edges) {
+        expect(edge.type).toBe('default');
+      }
+    });
+  });
 });
 
 describe('flowToWorkflowDefinition', () => {
@@ -436,6 +542,71 @@ describe('flowToWorkflowDefinition', () => {
 
     const guardStep = result.steps.find((s) => s.id === 'guard');
     expect(guardStep?.nextSteps[0].condition).toBe('pass');
+  });
+
+  describe('maxRetries round-trip', () => {
+    it('strips the "(retry ×N)" suffix from the label so the stored condition is clean', () => {
+      // Arrange — an edge whose label was produced by workflowDefinitionToFlow for a retry edge
+      const guardNode: PatternNode = {
+        id: 'guard',
+        type: 'pattern',
+        position: { x: 0, y: 0 },
+        data: { label: 'Guard', type: 'guard', config: {} },
+      };
+      const targetNode = makeNode('target', 'Target', 'llm_call');
+      // Simulate the label as workflowDefinitionToFlow would produce it: "fail (retry ×2)"
+      const edge = {
+        id: 'e1',
+        source: 'guard',
+        target: 'target',
+        type: 'retry',
+        label: 'fail (retry \u00d72)',
+        data: { maxRetries: 2 },
+      };
+
+      // Act
+      const result = flowToWorkflowDefinition([guardNode, targetNode], [edge]);
+
+      // Assert — the stored condition is "fail" with no retry suffix
+      const guardStep = result.steps.find((s) => s.id === 'guard');
+      expect(guardStep?.nextSteps[0].condition).toBe('fail');
+    });
+
+    it('preserves maxRetries from edge data on the round-tripped ConditionalEdge', () => {
+      // Arrange — a retry edge whose data.maxRetries=3 must survive the round-trip
+      const nodeA = makeNode('a', 'A', 'llm_call');
+      const nodeB = makeNode('b', 'B', 'llm_call');
+      const edge = {
+        id: 'e1',
+        source: 'b',
+        target: 'a',
+        type: 'retry',
+        label: 'retry-condition (retry \u00d73)',
+        data: { maxRetries: 3 },
+      };
+
+      // Act
+      const result = flowToWorkflowDefinition([nodeA, nodeB], [edge]);
+
+      // Assert — maxRetries is preserved on the ConditionalEdge written to the definition
+      const stepB = result.steps.find((s) => s.id === 'b');
+      expect(stepB?.nextSteps).toHaveLength(1);
+      expect(stepB?.nextSteps[0].maxRetries).toBe(3);
+    });
+
+    it('omits maxRetries on the ConditionalEdge when edge data has none', () => {
+      // Arrange — a normal edge without retry metadata
+      const nodeA = makeNode('a', 'A', 'llm_call');
+      const nodeB = makeNode('b', 'B', 'llm_call');
+      const edge = { id: 'e1', source: 'a', target: 'b', type: 'default' };
+
+      // Act
+      const result = flowToWorkflowDefinition([nodeA, nodeB], [edge]);
+
+      // Assert — no maxRetries key on a plain edge
+      const stepA = result.steps.find((s) => s.id === 'a');
+      expect(stepA?.nextSteps[0]).not.toHaveProperty('maxRetries');
+    });
   });
 
   it('label takes priority over sourceHandle-derived condition', () => {

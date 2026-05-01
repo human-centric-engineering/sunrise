@@ -269,30 +269,3 @@ export async function getEmbeddingModels(): Promise<EmbeddingModelInfo[]> {
   }
   return [...EMBEDDING_MODELS];
 }
-
-// ---------------------------------------------------------------------------
-// Legacy filter helpers (deprecated — use DB queries or getEmbeddingModels)
-// ---------------------------------------------------------------------------
-
-export interface EmbeddingModelFilters {
-  schemaCompatibleOnly?: boolean;
-  hasFreeTier?: boolean;
-  local?: boolean;
-}
-
-/** @deprecated Use getEmbeddingModels() with manual filtering instead. */
-export function filterEmbeddingModels(filters: EmbeddingModelFilters = {}): EmbeddingModelInfo[] {
-  let result: EmbeddingModelInfo[] = [...EMBEDDING_MODELS];
-
-  if (filters.schemaCompatibleOnly) {
-    result = result.filter((m) => m.schemaCompatible);
-  }
-  if (filters.hasFreeTier) {
-    result = result.filter((m) => m.hasFreeTier);
-  }
-  if (filters.local !== undefined) {
-    result = result.filter((m) => m.local === filters.local);
-  }
-
-  return result;
-}

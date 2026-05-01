@@ -296,10 +296,22 @@ function isNonEmptyString(value: unknown): value is string {
  * instant feedback instead of waiting for the backend validator on save.
  */
 function checkCycles(nodes: readonly PatternNode[], edges: readonly Edge[]): ExtraCheckError[] {
-  const adj = new Map<string, string[]>();
+  // Build adjacency list with retry metadata so bounded back-edges
+  // can be distinguished from unbounded cycles.
+  interface AdjEntry {
+    target: string;
+    maxRetries?: number;
+    condition?: string;
+  }
+  const adj = new Map<string, AdjEntry[]>();
   for (const edge of edges) {
     const list = adj.get(edge.source) ?? [];
-    list.push(edge.target);
+    const data = edge.data;
+    list.push({
+      target: edge.target,
+      maxRetries: typeof data?.maxRetries === 'number' ? data.maxRetries : undefined,
+      condition: typeof edge.label === 'string' ? edge.label : undefined,
+    });
     adj.set(edge.source, list);
   }
 
@@ -315,19 +327,25 @@ function checkCycles(nodes: readonly PatternNode[], edges: readonly Edge[]): Ext
   const visit = (id: string, stack: string[]): void => {
     colour.set(id, GRAY);
     stack.push(id);
-    for (const next of adj.get(id) ?? []) {
-      const c = colour.get(next) ?? WHITE;
-      if (c === GRAY && !reported.has(next)) {
-        reported.add(next);
-        const cycleStart = stack.indexOf(next);
-        const cyclePath = cycleStart >= 0 ? stack.slice(cycleStart) : [next];
-        errors.push({
-          code: 'CYCLE_DETECTED',
-          message: `Cycle detected: ${cyclePath.join(' → ')} → ${next}`,
-          stepId: next,
-        });
+    for (const entry of adj.get(id) ?? []) {
+      const c = colour.get(entry.target) ?? WHITE;
+      if (c === GRAY) {
+        // Bounded retry edges with a condition are allowed.
+        if (entry.maxRetries && entry.maxRetries > 0 && entry.condition) {
+          continue;
+        }
+        if (!reported.has(entry.target)) {
+          reported.add(entry.target);
+          const cycleStart = stack.indexOf(entry.target);
+          const cyclePath = cycleStart >= 0 ? stack.slice(cycleStart) : [entry.target];
+          errors.push({
+            code: 'CYCLE_DETECTED',
+            message: `Cycle detected: ${cyclePath.join(' → ')} → ${entry.target}`,
+            stepId: entry.target,
+          });
+        }
       } else if (c === WHITE) {
-        visit(next, stack);
+        visit(entry.target, stack);
       }
     }
     stack.pop();
