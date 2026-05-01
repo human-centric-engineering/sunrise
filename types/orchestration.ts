@@ -484,12 +484,27 @@ export interface AgentCostSummary {
 export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
-/** Tunable weights for hybrid knowledge-base search. */
+/** Tunable weights for knowledge-base search. */
 export interface SearchConfig {
-  /** Cosine-distance reduction for keyword-matching chunks (non-positive, e.g. -0.02). */
+  /**
+   * Vector-only mode: cosine-distance reduction for keyword-matching chunks
+   * (non-positive, e.g. -0.02). Ignored when `hybridEnabled` is true.
+   */
   keywordBoostWeight: number;
-  /** Multiplier applied to the vector similarity score (e.g. 1.0). */
+  /** Multiplier applied to the vector similarity score (e.g. 1.0). Used in both modes. */
   vectorWeight: number;
+  /**
+   * When true, switch to hybrid (BM25-flavoured + vector) ranking using
+   * `vectorWeight × vector_score + bm25Weight × ts_rank_cd(searchVector, …)`.
+   * When false/undefined, behaviour is byte-for-byte the legacy vector-only path.
+   */
+  hybridEnabled?: boolean;
+  /**
+   * Multiplier on the keyword (BM25-flavoured) score when hybrid is enabled.
+   * Range 0.1–2.0; defaults to 1.0 when `hybridEnabled` is true and no value set.
+   * Ignored when `hybridEnabled` is false/undefined.
+   */
+  bm25Weight?: number;
 }
 
 /** Action taken when an approval gate times out. */
