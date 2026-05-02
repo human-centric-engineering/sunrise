@@ -22,6 +22,8 @@ Every agent has a monthly budget. When it hits 80%, you get a warning. At 100%, 
 
 When your primary LLM provider has an outage, a circuit breaker trips after five failures and your agent switches to the next provider in its fallback chain — automatically, without your users noticing. When the provider recovers, traffic routes back. Each agent can have up to five fallback providers. Your users experience continuity; you don't get paged at 2am.
 
+If the orchestration engine itself crashes mid-execution, the failure is captured rather than swallowed: the execution row is marked failed and a webhook fires immediately, instead of leaving a "stuck" record for an internal reaper to find later. Background workflows fail loudly, not silently — and you can poll a lightweight status endpoint to track any in-flight execution without paying for a full trace read.
+
 ### Humans stay in the loop
 
 For anything consequential — processing a refund, publishing content, submitting an application — a workflow can pause for human approval before the agent acts. Approvals work through the admin dashboard, but also through external channels: a Slack bot or email notification with signed approve/reject links, no login required. You can delegate approval authority to specific team members. There is a dedicated approval queue with a badge count in the sidebar so pending items don't get lost. This matters for trust, for compliance, and for the kinds of high-stakes applications where full automation is not yet appropriate.
@@ -49,6 +51,8 @@ You can clone any agent and run A/B experiments — compare two models, two sets
 ### Connect to your existing systems
 
 Workflows can run on cron schedules — automated, unattended, recurring. When things happen inside the platform, outbound webhooks and event hooks notify your other systems: Slack, email services, CRMs, monitoring tools. Delivery is tracked with retry on failure. Workflows can also call external APIs as a step type, so an agent can check inventory in your ERP, create a ticket in your helpdesk, or trigger a payment in your billing system. Self-service API keys with scoped permissions let partners or customers call specific agents programmatically without sharing admin credentials.
+
+Cron-driven maintenance is non-blocking — the platform's tick endpoint acknowledges scheduled work as soon as it is claimed, so external schedulers with short HTTP timeouts can drive the platform reliably without orchestrating around long-running cleanup tasks.
 
 ### Portable between environments
 
@@ -96,6 +100,6 @@ Sunrise is a Next.js 16 application. Clone the repository, configure environment
 
 ---
 
-**Last updated:** 2026-04-30
+**Last updated:** 2026-05-02
 
 For the full technical specification, see `functional-specification.md`. For competitive positioning and known gaps, see `maturity-analysis.md`. For concrete use cases and go-to-market examples, see `business-applications.md`.

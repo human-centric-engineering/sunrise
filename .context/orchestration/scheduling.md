@@ -51,6 +51,8 @@ Called every ~60 seconds by an external cron job hitting `POST /api/v1/admin/orc
 
 Returns `{ processed, succeeded, failed, errors }`.
 
+**Engine-crash handling.** If the engine throws an uncaught error inside `drainEngine`, `finalize()` never runs — so the engine's normal `workflow.failed` hook is not emitted. To prevent silent zombification, the catch block updates the execution row to `failed` (with `errorMessage` and `completedAt`) and emits a `workflow.execution.failed` hook event. Subscribers and `GET /executions/:id/status` see consistent state immediately rather than waiting for the next reaper sweep. See [Hooks — Event Types](./hooks.md#event-types) for the distinction between `workflow.failed` and `workflow.execution.failed`.
+
 ### `processPendingExecutions(staleThresholdMs?)`
 
 Recovery sweep that picks up `AiWorkflowExecution` rows stuck in `pending` status — e.g. due to a crash between row creation and engine invocation.
@@ -81,19 +83,39 @@ Called automatically by the unified maintenance tick.
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
-`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call:
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining six tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle.
 
-1. `processDueSchedules()` — workflow cron schedules
-2. `processPendingRetries()` — webhook subscription delivery retry queue
-3. `processPendingHookRetries()` — event-hook delivery retry queue
-4. `reapZombieExecutions()` — mark stale `running` executions as `failed` (30 min threshold)
-5. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding
-6. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows
-7. `processPendingExecutions()` — recover orphaned `pending` workflow executions
+1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
+2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_
+3. `processPendingHookRetries()` — event-hook delivery retry queue _(background)_
+4. `reapZombieExecutions()` — mark stale `running` executions as `failed`, 30 min threshold _(background)_
+5. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding _(background)_
+6. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows _(background)_
+7. `processPendingExecutions()` — recover orphaned `pending` workflow executions _(background)_
 
-Each function runs via `Promise.allSettled` — individual failures don't block others. Results are returned per-function.
+**Response shape:**
 
-**Overlap protection:** A module-level `tickRunning` flag prevents concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true }` immediately. See [Resilience](./resilience.md#maintenance-tick-overlap-protection).
+```jsonc
+{
+  "success": true,
+  "data": {
+    "schedules": { "processed": 2, "succeeded": 2, "failed": 0, "errors": [] },
+    "backgroundTasks": [
+      "webhookRetries",
+      "hookRetries",
+      "zombieReaper",
+      "embeddingBackfill",
+      "retention",
+      "pendingExecutionRecovery",
+    ],
+    "durationMs": 47,
+  },
+}
+```
+
+The schedules result is concretely reported. Per-task background results are NOT in the response — they are written to the application logger as `Maintenance tick background tasks completed` once the chain settles. This decouples HTTP duration from retention-sweep / embedding-backfill runtime so external cron callers can use a short HTTP timeout (e.g. 30s) without ever cutting off mid-task. Engine work inside `processDueSchedules` was already detached via `void drainEngine`, so the synchronous portion only includes DB-claim work.
+
+**Overlap protection:** A module-level `tickRunning` flag wraps the **entire** chain — synchronous schedules plus background tasks. If a tick is still running (synchronous _or_ background) when the next cron fires, the endpoint returns `{ skipped: true }` immediately. The guard releases when the background chain settles. See [Resilience](./resilience.md#maintenance-tick-overlap-protection).
 
 **Deployment:** Configure one external cron to call this endpoint every 60 seconds:
 
