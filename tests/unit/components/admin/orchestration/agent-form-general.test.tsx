@@ -171,6 +171,7 @@ describe('AgentForm — General tab', () => {
         rateLimitRpm: null,
         inputGuardMode: null,
         outputGuardMode: null,
+        citationGuardMode: null,
         maxHistoryTokens: null,
         retentionDays: null,
         visibility: 'internal',

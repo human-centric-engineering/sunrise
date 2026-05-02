@@ -345,6 +345,7 @@ export type ChatEvent =
     }
   | { type: 'warning'; code: string; message: string }
   | { type: 'content_reset'; reason: string }
+  | { type: 'citations'; citations: Citation[] }
   | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
   | { type: 'error'; code: string; message: string };
 
@@ -386,12 +387,51 @@ export interface MessageMetadata {
   modelUsed?: string;
   latencyMs?: number;
   costUsd?: number;
+  /**
+   * Source attributions that grounded the assistant response. Markers
+   * here align with `[N]` references in the message `content`. Empty or
+   * absent for non-RAG turns.
+   */
+  citations?: Citation[];
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
   // Present on error-marker messages (persisted when streaming fails completely)
   error?: boolean;
   errorCode?: string;
+}
+
+/**
+ * A source attribution surfaced by an agent response.
+ *
+ * Citations map a numeric marker (e.g. `[1]`, `[2]`) the LLM emits in
+ * its content to the underlying knowledge-base chunk it was drawn from.
+ * The streaming chat handler accumulates them across the tool loop,
+ * exposes the marker to the LLM via a `marker` field on each tool
+ * result item (so the model can reference them in prose), persists the
+ * envelope onto the assistant message metadata, and emits a `citations`
+ * event before `done` so clients can render a sources panel.
+ */
+export interface Citation {
+  /** Monotonic marker assigned by the chat handler (1-indexed). */
+  marker: number;
+  chunkId: string;
+  documentId: string;
+  documentName: string | null;
+  /** Section heading, or "Page N" for PDF-derived chunks. */
+  section: string | null;
+  patternNumber: number | null;
+  patternName: string | null;
+  /** Truncated excerpt of the source chunk for verification UI. */
+  excerpt: string;
+  /** Combined ranking score, normalised to [0, 1]. */
+  similarity: number;
+  /** Hybrid mode only: (1 − cosine_distance) component before weighting. */
+  vectorScore?: number;
+  /** Hybrid mode only: ts_rank_cd BM25-flavoured component before weighting. */
+  keywordScore?: number;
+  /** Hybrid mode only: blended `vectorWeight × vectorScore + bm25Weight × keywordScore`. */
+  finalScore?: number;
 }
 
 // ============================================================================
@@ -548,6 +588,12 @@ export interface OrchestrationSettings {
   inputGuardMode: InputGuardMode | null;
   /** Output guard behaviour for topic boundary enforcement. `null` = disabled. */
   outputGuardMode: OutputGuardMode | null;
+  /**
+   * Citation guard behaviour. Validates that responses grounded in
+   * retrieved knowledge include `[N]` markers matching the citation
+   * envelope. `null` = inherit `log_only`.
+   */
+  citationGuardMode: OutputGuardMode | null;
   /** Days to retain webhook delivery logs, or `null` for no auto-cleanup. */
   webhookRetentionDays: number | null;
   /** Days to retain cost logs, or `null` for no auto-cleanup. */

@@ -107,6 +107,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.outputGuardMode !== undefined) {
     updateData.outputGuardMode = body.outputGuardMode;
   }
+  if (body.citationGuardMode !== undefined) {
+    updateData.citationGuardMode = body.citationGuardMode;
+  }
   if (body.webhookRetentionDays !== undefined) {
     updateData.webhookRetentionDays = body.webhookRetentionDays;
   }

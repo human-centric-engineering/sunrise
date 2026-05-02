@@ -565,11 +565,13 @@ describe('CapabilityDispatcher', () => {
         {
           chunk: {
             id: 'chunk-1',
+            documentId: 'doc-1',
             content: 'ReAct pattern',
             patternNumber: 1,
             patternName: 'ReAct',
             section: 'Overview',
           },
+          documentName: 'Agentic Design Patterns',
           similarity: 0.92,
         },
       ]);
@@ -589,6 +591,8 @@ describe('CapabilityDispatcher', () => {
         results: [
           {
             chunkId: 'chunk-1',
+            documentId: 'doc-1',
+            documentName: 'Agentic Design Patterns',
             content: 'ReAct pattern',
             patternNumber: 1,
             patternName: 'ReAct',

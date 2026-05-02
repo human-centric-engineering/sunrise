@@ -30,11 +30,19 @@ type Args = z.infer<typeof schema>;
 
 interface ResultItem {
   chunkId: string;
+  documentId: string;
+  documentName: string | null;
   content: string;
   patternNumber: number | null;
   patternName: string | null;
   section: string | null;
   similarity: number;
+  /** Hybrid mode only: (1 − cosine_distance) component before weighting. */
+  vectorScore?: number;
+  /** Hybrid mode only: ts_rank_cd BM25-flavoured component before weighting. */
+  keywordScore?: number;
+  /** Hybrid mode only: blended `vectorWeight × vectorScore + bm25Weight × keywordScore`. */
+  finalScore?: number;
 }
 
 interface Data {
@@ -47,7 +55,7 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'search_knowledge_base',
     description:
-      'Semantic search over the agentic patterns knowledge base. Returns the top matching chunks ranked by cosine similarity with optional keyword boost.',
+      'Semantic search over the knowledge base. Returns the top matching chunks ranked by cosine similarity (with optional BM25-flavoured keyword scoring in hybrid mode). Each result carries a numeric `marker` field — when you ground a claim in a result, cite it inline using that marker in square brackets, e.g. "the deposit must be protected within 30 days [1]". A separate citations panel renders the source for each marker, so the user can verify the claim.',
     parameters: {
       type: 'object',
       properties: {
@@ -106,11 +114,16 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
     return this.success({
       results: results.map((r) => ({
         chunkId: r.chunk.id,
+        documentId: r.chunk.documentId,
+        documentName: r.documentName ?? null,
         content: r.chunk.content,
         patternNumber: r.chunk.patternNumber,
         patternName: r.chunk.patternName,
         section: r.chunk.section,
         similarity: r.similarity,
+        ...(r.vectorScore !== undefined ? { vectorScore: r.vectorScore } : {}),
+        ...(r.keywordScore !== undefined ? { keywordScore: r.keywordScore } : {}),
+        ...(r.finalScore !== undefined ? { finalScore: r.finalScore } : {}),
       })),
     });
   }

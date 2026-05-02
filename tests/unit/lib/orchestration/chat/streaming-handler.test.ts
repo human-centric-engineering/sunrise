@@ -93,11 +93,16 @@ vi.mock('@/lib/orchestration/chat/context-builder', () => ({
 
 vi.mock('@/lib/orchestration/chat/output-guard', () => ({
   scanOutput: vi.fn(() => ({ flagged: false, topicMatches: [], builtInMatches: [] })),
+  scanCitations: vi.fn(() => ({ flagged: false, underCited: false, hallucinatedMarkers: [] })),
 }));
 
 vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: vi.fn(() =>
-    Promise.resolve({ inputGuardMode: 'log_only', outputGuardMode: 'log_only' })
+    Promise.resolve({
+      inputGuardMode: 'log_only',
+      outputGuardMode: 'log_only',
+      citationGuardMode: 'log_only',
+    })
   ),
 }));
 
@@ -135,7 +140,7 @@ const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler'
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
-const { scanOutput } = await import('@/lib/orchestration/chat/output-guard');
+const { scanOutput, scanCitations } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
 const { withAgentBudgetLock } = await import('@/lib/orchestration/llm/budget-mutex');
@@ -561,6 +566,208 @@ describe('StreamingChatHandler', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(logCost).toHaveBeenCalledTimes(2);
+  });
+
+  // 8b ----------------------------------------------------------------------
+  it('emits a citations event with markers extracted from search_knowledge_base results', async () => {
+    const provider = mockProvider([
+      // Turn 1: tool call
+      [
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'tc1',
+            name: 'search_knowledge_base',
+            arguments: { query: 'tenancy' },
+          },
+        },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: text that cites both retrieved sources
+      [
+        {
+          type: 'text',
+          content:
+            'Deposit must be protected within 30 days [1] and the landlord must register it with one of three approved schemes [2].',
+        },
+        { type: 'done', usage: { inputTokens: 80, outputTokens: 18 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
+        results: [
+          {
+            chunkId: 'c1',
+            documentId: 'd1',
+            documentName: 'Tenancy Guide',
+            content: 'The deposit must be protected within 30 days of receipt.',
+            patternNumber: null,
+            patternName: null,
+            section: 'Page 12',
+            similarity: 0.91,
+          },
+          {
+            chunkId: 'c2',
+            documentId: 'd1',
+            documentName: 'Tenancy Guide',
+            content: 'There are three government-approved schemes.',
+            patternNumber: null,
+            patternName: null,
+            section: 'Page 13',
+            similarity: 0.87,
+          },
+        ],
+      },
+    });
+
+    const events = (await collect(streamChat(baseRequest))) as Array<{
+      type: string;
+      citations?: Array<{ marker: number; chunkId: string; documentName: string | null }>;
+    }>;
+    const citationEvents = events.filter((e) => e.type === 'citations');
+    expect(citationEvents).toHaveLength(1);
+    expect(citationEvents[0].citations).toHaveLength(2);
+    expect(citationEvents[0].citations!.map((c) => c.marker)).toEqual([1, 2]);
+    expect(citationEvents[0].citations!.map((c) => c.chunkId)).toEqual(['c1', 'c2']);
+
+    // Citations event sits between content and done.
+    const types = events.map((e) => e.type);
+    const citationsIdx = types.indexOf('citations');
+    const doneIdx = types.indexOf('done');
+    expect(citationsIdx).toBeLessThan(doneIdx);
+
+    // The augmented tool result that gets fed back to the LLM (and persisted)
+    // must include the marker on each item so the model can cite via [N].
+    const toolMsg = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => {
+        const arg = call[0] as { data: { role: string } };
+        return arg.data.role === 'tool';
+      }
+    );
+    expect(toolMsg).toBeDefined();
+    const toolContent = JSON.parse(
+      ((toolMsg as unknown[])[0] as { data: { content: string } }).data.content
+    );
+    expect(toolContent.data.results[0].marker).toBe(1);
+    expect(toolContent.data.results[1].marker).toBe(2);
+
+    // Citations are persisted on the terminal assistant message metadata.
+    const assistantMsgs = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => (call[0] as { data: { role: string } }).data.role === 'assistant'
+    );
+    const terminalAssistant = assistantMsgs[assistantMsgs.length - 1] as unknown[];
+    const meta = (terminalAssistant[0] as { data: { metadata?: { citations?: unknown[] } } }).data
+      .metadata;
+    expect(meta?.citations).toHaveLength(2);
+  });
+
+  // 8c ----------------------------------------------------------------------
+  it('continues marker numbering across multiple search calls in the same turn', async () => {
+    const provider = mockProvider([
+      // Turn 1: first search
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { query: 'foo' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: second search
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc2', name: 'search_knowledge_base', arguments: { query: 'bar' } },
+        },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 3: final answer that references markers from both calls
+      [
+        { type: 'text', content: 'Combined: [1] [2] [3].' },
+        { type: 'done', usage: { inputTokens: 50, outputTokens: 8 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    let dispatchCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- vi.fn mockImplementation accepts a Promise-returning fn
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      dispatchCount += 1;
+      if (dispatchCount === 1) {
+        return {
+          success: true,
+          data: {
+            results: [
+              {
+                chunkId: 'a',
+                documentId: 'doc',
+                documentName: 'Doc A',
+                content: 'first hit',
+                patternNumber: null,
+                patternName: null,
+                section: null,
+                similarity: 0.9,
+              },
+              {
+                chunkId: 'b',
+                documentId: 'doc',
+                documentName: 'Doc A',
+                content: 'second hit',
+                patternNumber: null,
+                patternName: null,
+                section: null,
+                similarity: 0.85,
+              },
+            ],
+          },
+        };
+      }
+      return {
+        success: true,
+        data: {
+          results: [
+            {
+              chunkId: 'c',
+              documentId: 'doc-2',
+              documentName: 'Doc B',
+              content: 'third hit',
+              patternNumber: null,
+              patternName: null,
+              section: null,
+              similarity: 0.8,
+            },
+          ],
+        },
+      };
+    });
+
+    const events = (await collect(streamChat(baseRequest))) as Array<{
+      type: string;
+      citations?: Array<{ marker: number; chunkId: string }>;
+    }>;
+    const citationEvents = events.filter((e) => e.type === 'citations');
+    expect(citationEvents).toHaveLength(1);
+    expect(citationEvents[0].citations!.map((c) => c.marker)).toEqual([1, 2, 3]);
+    expect(citationEvents[0].citations!.map((c) => c.chunkId)).toEqual(['a', 'b', 'c']);
+
+    // The marker assigned by extractCitations on turn 2's tool result must
+    // start at 3 (not reset to 1) — this is what the LLM sees in the
+    // tool message it consumes for turn 3's prose.
+    const toolMsgs = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => (call[0] as { data: { role: string } }).data.role === 'tool'
+    );
+    expect(toolMsgs).toHaveLength(2);
+    const secondToolContent = JSON.parse(
+      ((toolMsgs[1] as unknown[])[0] as { data: { content: string } }).data.content
+    );
+    expect(secondToolContent.data.results[0].marker).toBe(3);
   });
 
   // 9 -----------------------------------------------------------------------
@@ -1498,6 +1705,88 @@ describe('StreamingChatHandler', () => {
       expect(getProvider).toHaveBeenCalledWith('openai');
     });
 
+    it('preserves the citation accumulator across mid-stream provider fallback', async () => {
+      // Turn 1: primary provider throws mid-stream → fallback to provider B,
+      // which emits a tool_call. Tool dispatches successfully, returns one
+      // chunk. Turn 2: provider B emits final text with [1].
+      //
+      // The citations array is initialised outside the inner stream-retry
+      // loop, so a successful fallback path must still produce a citations
+      // event keyed to the chunk dispatched after recovery.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          yield { type: 'text', content: 'partial...' };
+          throw new Error('Connection reset');
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        // Recovery turn 1: tool_call only
+        [
+          {
+            type: 'tool_call',
+            toolCall: {
+              id: 'tc1',
+              name: 'search_knowledge_base',
+              arguments: { query: 'tenancy' },
+            },
+          },
+          { type: 'done', usage: { inputTokens: 20, outputTokens: 0 }, finishReason: 'tool_use' },
+        ],
+        // Recovery turn 2: final answer that cites the retrieved chunk
+        [
+          { type: 'text', content: 'Deposits must be protected within 30 days [1].' },
+          { type: 'done', usage: { inputTokens: 50, outputTokens: 10 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: {
+          results: [
+            {
+              chunkId: 'c1',
+              documentId: 'd1',
+              documentName: 'Tenancy Guide',
+              content: 'Deposits must be protected within 30 days of receipt.',
+              patternNumber: null,
+              patternName: null,
+              section: 'Page 12',
+              similarity: 0.91,
+            },
+          ],
+        },
+      });
+
+      const events = (await collect(streamChat(baseRequest))) as Array<{
+        type: string;
+        citations?: Array<{ marker: number; chunkId: string }>;
+      }>;
+      const citationEvents = events.filter((e) => e.type === 'citations');
+      expect(citationEvents).toHaveLength(1);
+      expect(citationEvents[0].citations!).toEqual([
+        expect.objectContaining({ marker: 1, chunkId: 'c1' }),
+      ]);
+
+      // Sanity: the fallback warning fires before citations.
+      const types = events.map((e) => e.type);
+      expect(types.indexOf('warning')).toBeLessThan(types.indexOf('citations'));
+      expect(types.indexOf('citations')).toBeLessThan(types.indexOf('done'));
+    });
+
     it('records circuit breaker failure on stream error before retrying', async () => {
       const failingProvider = {
         name: 'failing',
@@ -1746,6 +2035,179 @@ describe('output guard ordering', () => {
     expect(errorEvt).toMatchObject({ type: 'error', code: 'output_blocked' });
     // logCost should NOT have been called because guard blocked before cost logging
     expect(logCost).not.toHaveBeenCalled();
+  });
+});
+
+describe('citation guard', () => {
+  it("yields citation_required error when citationGuardMode='block' and the response under-cites", async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ citationGuardMode: 'block' })
+    );
+    (scanCitations as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      underCited: true,
+      hallucinatedMarkers: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'I checked but did not cite anything.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 8 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvt = events.find((e: unknown) => (e as Record<string, unknown>).type === 'error');
+    expect(errorEvt).toMatchObject({ type: 'error', code: 'citation_required' });
+    expect(errorEvt).toMatchObject({
+      message: expect.stringContaining('did not cite') as unknown as string,
+    });
+    // No `done` event when blocked.
+    const doneEvt = events.find((e: unknown) => (e as Record<string, unknown>).type === 'done');
+    expect(doneEvt).toBeUndefined();
+  });
+
+  it("yields citation_missing warning when citationGuardMode='warn_and_continue' and the response under-cites", async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ citationGuardMode: 'warn_and_continue' })
+    );
+    (scanCitations as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      underCited: true,
+      hallucinatedMarkers: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'I checked but did not cite anything.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 8 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const warningEvt = events.find(
+      (e: unknown) =>
+        (e as Record<string, unknown>).type === 'warning' &&
+        (e as Record<string, unknown>).code === 'citation_missing'
+    );
+    expect(warningEvt).toMatchObject({ type: 'warning', code: 'citation_missing' });
+    // Stream still completes.
+    expect(events.some((e: unknown) => (e as Record<string, unknown>).type === 'done')).toBe(true);
+  });
+
+  it('yields citation_hallucinated warning naming the bad markers when warn_and_continue and a marker has no citation', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ citationGuardMode: 'warn_and_continue' })
+    );
+    (scanCitations as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      underCited: false,
+      hallucinatedMarkers: [3, 7],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'See [1], [3] and [7] for details.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 12 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const warningEvt = events.find(
+      (e: unknown) =>
+        (e as Record<string, unknown>).type === 'warning' &&
+        (e as Record<string, unknown>).code === 'citation_hallucinated'
+    ) as { message: string } | undefined;
+    expect(warningEvt).toBeDefined();
+    expect(warningEvt!.message).toContain('3');
+    expect(warningEvt!.message).toContain('7');
+  });
+
+  it('output guard runs before citation guard — output_blocked wins when both would flag', async () => {
+    // Both guards would fire, both at block mode. The output guard runs
+    // first in the terminal-turn handler, so the stream must terminate
+    // with `output_blocked`, never reaching the citation guard.
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({
+        outputGuardMode: 'block',
+        citationGuardMode: 'block',
+        topicBoundaries: ['forbidden'],
+      })
+    );
+    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      topicMatches: ['forbidden'],
+      builtInMatches: [],
+    });
+    const citationScanMock = scanCitations as ReturnType<typeof vi.fn>;
+    citationScanMock.mockReturnValue({
+      flagged: true,
+      underCited: true,
+      hallucinatedMarkers: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'mentions forbidden, no markers either' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvts = events.filter(
+      (e: unknown) => (e as Record<string, unknown>).type === 'error'
+    );
+    expect(errorEvts).toHaveLength(1);
+    expect(errorEvts[0]).toMatchObject({ type: 'error', code: 'output_blocked' });
+    // Output guard short-circuits before citation guard runs.
+    expect(citationScanMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to global citationGuardMode when the agent's override is null", async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ citationGuardMode: null })
+    );
+    (getOrchestrationSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      inputGuardMode: 'log_only',
+      outputGuardMode: 'log_only',
+      citationGuardMode: 'block',
+    });
+    (scanCitations as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      underCited: true,
+      hallucinatedMarkers: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'response without citations' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvt = events.find((e: unknown) => (e as Record<string, unknown>).type === 'error');
+    expect(errorEvt).toMatchObject({ type: 'error', code: 'citation_required' });
   });
 });
 

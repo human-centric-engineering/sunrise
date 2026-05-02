@@ -118,6 +118,7 @@ export const createAgentSchema = z.object({
 
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -228,6 +229,7 @@ export const updateAgentSchema = z.object({
 
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -656,6 +658,7 @@ const bundledAgentSchema = z.object({
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
@@ -1730,6 +1733,7 @@ export const updateOrchestrationSettingsSchema = z
     approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     webhookRetentionDays: z
       .number()
       .int()
@@ -1776,6 +1780,7 @@ export const updateOrchestrationSettingsSchema = z
       v.approvalDefaultAction !== undefined ||
       v.inputGuardMode !== undefined ||
       v.outputGuardMode !== undefined ||
+      v.citationGuardMode !== undefined ||
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
       v.auditLogRetentionDays !== undefined ||
@@ -2083,6 +2088,22 @@ export const createApiKeySchema = z.object({
 
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
 
+/** Citation shape stored on assistant message metadata. */
+const citationSchema = z.object({
+  marker: z.number().int().positive(),
+  chunkId: z.string(),
+  documentId: z.string(),
+  documentName: z.string().nullable(),
+  section: z.string().nullable(),
+  patternNumber: z.number().int().nullable(),
+  patternName: z.string().nullable(),
+  excerpt: z.string(),
+  similarity: z.number(),
+  vectorScore: z.number().optional(),
+  keywordScore: z.number().optional(),
+  finalScore: z.number().optional(),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2093,6 +2114,7 @@ export const messageMetadataSchema = z.object({
   modelUsed: z.string().optional(),
   latencyMs: z.number().optional(),
   costUsd: z.number().optional(),
+  citations: z.array(citationSchema).optional(),
 });
 
 // ============================================================================

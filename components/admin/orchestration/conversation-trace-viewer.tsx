@@ -19,6 +19,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { cn } from '@/lib/utils';
 import { messageMetadataSchema } from '@/lib/validations/orchestration';
+import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
+import type { Citation } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,6 +29,7 @@ interface MessageMetadata {
   modelUsed?: string;
   latencyMs?: number;
   costUsd?: number;
+  citations?: Citation[];
 }
 
 export interface ConversationMessage {
@@ -102,6 +105,12 @@ function MessageCard({ message }: { message: ConversationMessage }) {
           <pre className="bg-muted/40 overflow-x-auto rounded p-2 font-mono text-xs">
             {message.content}
           </pre>
+        ) : message.role === 'assistant' ? (
+          <MessageWithCitations
+            content={message.content}
+            citations={meta.citations}
+            className="text-sm"
+          />
         ) : (
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         )}

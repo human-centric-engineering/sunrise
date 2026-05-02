@@ -178,6 +178,7 @@ model AiAgent {
   rateLimitRpm              Int?     // per-agent rate limit (requests per minute); null = use global default
   inputGuardMode            String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
   outputGuardMode           String?  // "log_only" | "warn_and_continue" | "block"; null = use global default
+  citationGuardMode         String?  // "log_only" | "warn_and_continue" | "block"; null = use global default. Flags responses that fail to cite retrieved sources or that cite hallucinated markers.
   maxHistoryTokens          Int?     // override token-aware history truncation; null = use model context window
   retentionDays             Int?     // auto-delete conversations older than N days; null = keep forever
   visibility                String   @default("internal") // "internal" | "public" | "invite_only"
@@ -838,6 +839,7 @@ model AiOrchestrationSettings {
   approvalDefaultAction  String?   @default("deny") // "deny" or "allow"
   inputGuardMode         String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   outputGuardMode        String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  citationGuardMode      String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   webhookRetentionDays       Int?
   costLogRetentionDays       Int?
   auditLogRetentionDays      Int?

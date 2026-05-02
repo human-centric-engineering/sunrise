@@ -63,6 +63,10 @@ function capabilityResultsFrame(
   return `event: capability_results\ndata: ${JSON.stringify({ results })}\n\n`;
 }
 
+function citationsFrame(citations: Array<Record<string, unknown>>): string {
+  return `event: citations\ndata: ${JSON.stringify({ citations })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ChatInterface', () => {
@@ -208,6 +212,68 @@ describe('ChatInterface', () => {
       expect(onCapabilityResult).toHaveBeenCalledWith('search_docs', { hits: 3 });
       expect(onCapabilityResult).toHaveBeenCalledWith('fetch_url', { status: 200 });
     });
+  });
+
+  it('attaches citations to the assistant message when a citations event arrives', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Deposits must be protected within 30 days [1].'),
+      citationsFrame([
+        {
+          marker: 1,
+          chunkId: 'c1',
+          documentId: 'd1',
+          documentName: 'Tenancy Guide',
+          section: 'Page 12',
+          patternNumber: null,
+          patternName: null,
+          excerpt: 'Deposits must be protected within 30 days of receipt.',
+          similarity: 0.91,
+        },
+      ]),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Tell me about deposit rules');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Marker chip and panel both render in the assistant message.
+    await waitFor(() => {
+      expect(screen.getByLabelText('Citation 1')).toBeInTheDocument();
+      expect(screen.getByText('Sources (1)')).toBeInTheDocument();
+      expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
+    });
+  });
+
+  it('does not transform [N] literals when no citations event fires', async () => {
+    // Regression: a non-RAG response that mentions `[5]` must not get
+    // any marker substitution if there are no citations attached.
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('See paragraph [5] of the manual.'),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('See paragraph [5] of the manual.')).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText(/Unmatched citation marker/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
   });
 
   it('calls onStreamComplete with full text when done event arrives', async () => {

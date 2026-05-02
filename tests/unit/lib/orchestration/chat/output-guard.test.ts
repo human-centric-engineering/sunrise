@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { scanOutput } from '@/lib/orchestration/chat/output-guard';
+import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard';
 
 describe('scanOutput', () => {
   it('returns unflagged for clean output with no boundaries', () => {
@@ -114,5 +114,66 @@ describe('scanOutput', () => {
     ]);
 
     expect(result.flagged).toBe(false);
+  });
+});
+
+describe('scanCitations', () => {
+  const cite = (marker: number) => ({ marker });
+
+  it('passes vacuously when no citations exist', () => {
+    const result = scanCitations('Here is some text without any markers.', []);
+    expect(result.flagged).toBe(false);
+    expect(result.underCited).toBe(false);
+    expect(result.hallucinatedMarkers).toEqual([]);
+  });
+
+  it('passes when text references a valid marker', () => {
+    const result = scanCitations('The deposit must be protected within 30 days [1].', [
+      cite(1),
+      cite(2),
+    ]);
+    expect(result.flagged).toBe(false);
+    expect(result.underCited).toBe(false);
+    expect(result.hallucinatedMarkers).toEqual([]);
+  });
+
+  it('flags under-citation when citations exist but no markers appear', () => {
+    const result = scanCitations(
+      'The deposit must be protected within 30 days, otherwise a Section 21 is invalid.',
+      [cite(1), cite(2)]
+    );
+    expect(result.flagged).toBe(true);
+    expect(result.underCited).toBe(true);
+    expect(result.hallucinatedMarkers).toEqual([]);
+  });
+
+  it('flags hallucinated markers that have no matching citation', () => {
+    const result = scanCitations('See [1] and [3] for the relevant rules.', [cite(1), cite(2)]);
+    expect(result.flagged).toBe(true);
+    expect(result.underCited).toBe(false);
+    expect(result.hallucinatedMarkers).toEqual([3]);
+  });
+
+  it('returns hallucinated markers sorted ascending and deduplicated', () => {
+    const result = scanCitations('See [9], then [3], and again [9] and [3].', [cite(1)]);
+    expect(result.flagged).toBe(true);
+    expect(result.hallucinatedMarkers).toEqual([3, 9]);
+  });
+
+  it('flags a response with only hallucinated markers as both under-cited and hallucinated', () => {
+    const result = scanCitations('See [99] for details.', [cite(1)]);
+    expect(result.flagged).toBe(true);
+    expect(result.underCited).toBe(true);
+    expect(result.hallucinatedMarkers).toEqual([99]);
+  });
+
+  it('treats `[N]` inside code blocks as ordinary markers (heuristic limitation)', () => {
+    // Heuristic: the regex is intentionally simple and does not skip code
+    // fences. This test pins the current behaviour. If a future change adds
+    // code-fence-aware skipping, update this expectation.
+    const result = scanCitations('```ts\nconst arr = [0]\n```\nSee source [1].', [cite(1)]);
+    expect(result.flagged).toBe(true);
+    expect(result.underCited).toBe(false);
+    expect(result.hallucinatedMarkers).toEqual([0]);
   });
 });

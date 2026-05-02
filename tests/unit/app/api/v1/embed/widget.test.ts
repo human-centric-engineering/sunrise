@@ -148,3 +148,66 @@ describe('GET /api/v1/embed/widget.js', () => {
     expect(body).toContain('class="status"');
   });
 });
+
+describe('Embed widget citation rendering', () => {
+  it('binds a handler for the `citations` SSE event', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    expect(body).toContain("evt.type === 'citations'");
+    expect(body).toContain('renderCitations(assistantSpan, fullText, evt.data.citations)');
+  });
+
+  it('declares the renderCitations helper that builds marker chips and a sources panel', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    expect(body).toContain('function renderCitations(span, fullText, citations)');
+    expect(body).toContain("className = 'citations-panel'");
+    expect(body).toContain("className = 'cite-marker'");
+  });
+
+  it('uses createElement + textContent (no innerHTML) for citation rendering', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    // Locate the renderCitations function body — assertion is on the
+    // sub-function only, since the surrounding widget code already
+    // avoids innerHTML on user-controlled paths.
+    const start = body.indexOf('function renderCitations');
+    const end = body.indexOf('messagesEl.scrollTop = messagesEl.scrollHeight;', start);
+    expect(start).toBeGreaterThan(-1);
+    const fnBody = body.slice(start, end);
+    expect(fnBody).toContain('document.createElement');
+    expect(fnBody).toContain('textContent');
+    expect(fnBody).not.toContain('innerHTML');
+  });
+
+  it('renders valid citation markers as focusable buttons with aria-label and scroll-on-click', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Valid markers use <button> so keyboard and screen-reader users
+    // can reach them; invalid (hallucinated) markers stay as <span>
+    // because there's no source to navigate to.
+    expect(body).toContain("createElement('button')");
+    expect(body).toContain("setAttribute('aria-label', 'Source ' + n)");
+    expect(body).toContain("setAttribute('aria-label', 'Unmatched citation marker ' + n)");
+    expect(body).toContain('scrollIntoView');
+    // Each citation li carries a data-cite-id attribute matching the
+    // marker so the button's click handler can locate it.
+    expect(body).toContain("setAttribute('data-cite-id', String(cite.marker))");
+  });
+
+  it('does not transform [N] when the citations envelope is empty (defensive guard)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Server never emits an empty citations event, but if it did, the
+    // helper must not flag every [N] in fullText as hallucinated.
+    expect(body).toContain('if (!citations || citations.length === 0) return;');
+  });
+
+  it('removes any orphaned citations panel when an error event fires after citations', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // If `done` throws after citations were emitted, the error handler
+    // re-fires; the bubble's textContent is reset but the panel must
+    // also be removed so the user does not see "Something went wrong"
+    // sitting next to a hanging sources list.
+    expect(body).toContain("bubbleDiv.querySelector('.citations-panel')");
+    expect(body).toContain('orphanPanel.remove()');
+  });
+});

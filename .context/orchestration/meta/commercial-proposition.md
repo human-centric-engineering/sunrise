@@ -40,6 +40,10 @@ A single `<script>` tag on any website creates an isolated chat interface connec
 
 Agents are not limited to their training data. You upload your own documents — product manuals, policy guides, knowledge articles — and the platform chunks, embeds, and indexes them for semantic search. Agents retrieve relevant content at query time, grounding their responses in your actual information rather than general knowledge. You control which categories of knowledge each agent can access, so a customer support agent and an internal operations agent draw from different document sets even though they share the same platform.
 
+### Your agents back up their answers
+
+When an agent uses your knowledge base, the response carries inline numbered citations — `[1]`, `[2]` — and a sources panel below the message showing the document name, section, and a verifiable excerpt for each. The citations flow through the API, the embed widget, and the conversation trace viewer, so you and your users can see exactly where every claim came from. You can opt the citation guard into warning or blocking mode so the platform flags responses that don't cite their retrieved sources or that reference sources that don't exist — useful for compliance-heavy domains (legal, financial, health) where ungrounded answers are a liability.
+
 ### Your agents remember your users
 
 Each user gets a persistent memory that their agent can read and write to across conversations. A financial advisor agent remembers that a user is self-employed and has two children. A customer support agent remembers a user's previous orders and preferences. This is not conversation history — it is structured, persistent knowledge about individual people that survives across sessions. The agent gets better at helping someone the more they interact with it, without the user having to repeat themselves.

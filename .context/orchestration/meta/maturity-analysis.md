@@ -2,15 +2,15 @@
 
 Competitive assessment of Sunrise's agent orchestration against production-ready platforms. Covers functional capabilities, architectural gaps, and prioritised improvements.
 
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-02
 
 ## TL;DR
 
-Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, and MCP server implementation with audit logging. It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, and embeddable chat. It **trails** on observability (no OTEL), multi-agent coordination patterns, horizontal scaling (3 in-memory stores), and evaluation tooling.
+Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, and knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026). It **trails** on observability (no OTEL), multi-agent coordination patterns, horizontal scaling (3 in-memory stores), and evaluation tooling.
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). 19 improvements are prioritised across P0–P3 tiers. The approval queue UI (previously P0 #4) shipped in April 2026.
+3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8) and citation/source attribution (previously P1 #2 in `improvement-priorities.md`) shipped May 2026.
 
 ---
 
@@ -108,19 +108,21 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Chat & Streaming
 
-| Capability                                | Sunrise | LangGraph | OpenAI SDK | Dify     | CrewAI   |
-| ----------------------------------------- | ------- | --------- | ---------- | -------- | -------- |
-| SSE streaming with tool loop              | Strong  | Strong    | Strong     | Strong   | Adequate |
-| Rolling conversation summary              | Strong  | Adequate  | None       | None     | None     |
-| Input guard (injection detection)         | Strong  | None      | Adequate   | Adequate | None     |
-| Output guard (content filtering)          | Strong  | None      | Adequate   | Adequate | None     |
-| Provider fallback mid-stream              | Strong  | None      | None       | None     | None     |
-| User memory system                        | Strong  | Adequate  | Adequate   | Adequate | Adequate |
-| Message caps (per-user, per-conversation) | Strong  | None      | None       | Adequate | None     |
-| SSE keepalive / auto-reconnect            | Strong  | Adequate  | N/A        | Adequate | None     |
-| Budget check mid-loop                     | Strong  | None      | None       | None     | None     |
+| Capability                                 | Sunrise | LangGraph | OpenAI SDK | Dify     | CrewAI   |
+| ------------------------------------------ | ------- | --------- | ---------- | -------- | -------- |
+| SSE streaming with tool loop               | Strong  | Strong    | Strong     | Strong   | Adequate |
+| Rolling conversation summary               | Strong  | Adequate  | None       | None     | None     |
+| Input guard (injection detection)          | Strong  | None      | Adequate   | Adequate | None     |
+| Output guard (content filtering)           | Strong  | None      | Adequate   | Adequate | None     |
+| Citation guard (under-cite / hallucinated) | Strong  | None      | None       | None     | None     |
+| Inline citation envelope on responses      | Strong  | None      | None       | None     | None     |
+| Provider fallback mid-stream               | Strong  | None      | None       | None     | None     |
+| User memory system                         | Strong  | Adequate  | Adequate   | Adequate | Adequate |
+| Message caps (per-user, per-conversation)  | Strong  | None      | None       | Adequate | None     |
+| SSE keepalive / auto-reconnect             | Strong  | Adequate  | N/A        | Adequate | None     |
+| Budget check mid-loop                      | Strong  | None      | None       | None     | None     |
 
-**Sunrise advantages:** The chat handler is comprehensive — mid-stream provider failover, input/output guards, rolling summaries, and budget checks inside the tool loop are all ahead of the field. This is the most production-hardened component.
+**Sunrise advantages:** The chat handler is comprehensive — mid-stream provider failover, input/output guards, rolling summaries, budget checks inside the tool loop, and a structured citation envelope (markers in the LLM-bound tool result, `[N]` rendered inline by chat / trace / embed surfaces, opt-in citation guard for under-cited or hallucinated markers) are all ahead of the field. This is the most production-hardened component.
 
 ### Human-in-the-Loop
 
@@ -156,18 +158,19 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Knowledge Base
 
-| Capability                    | Sunrise | Dify     | Haystack | LangGraph | Bedrock  |
-| ----------------------------- | ------- | -------- | -------- | --------- | -------- |
-| Multi-format ingestion        | Strong  | Strong   | Strong   | None      | Strong   |
-| Semantic chunking             | Strong  | Strong   | Strong   | None      | Adequate |
-| Vector search (pgvector)      | Strong  | Strong   | Strong   | None      | Strong   |
-| Hybrid search (BM25 + vector) | None    | Adequate | Strong   | None      | Adequate |
-| Document lifecycle management | Strong  | Strong   | Adequate | None      | Adequate |
-| PDF preview/confirm flow      | Strong  | None     | None     | None      | None     |
-| Namespace/team isolation      | None    | Adequate | Adequate | None      | Adequate |
-| Incremental document updates  | None    | Adequate | Adequate | None      | Adequate |
+| Capability                              | Sunrise | Dify     | Haystack | LangGraph | Bedrock  |
+| --------------------------------------- | ------- | -------- | -------- | --------- | -------- |
+| Multi-format ingestion                  | Strong  | Strong   | Strong   | None      | Strong   |
+| Semantic chunking                       | Strong  | Strong   | Strong   | None      | Adequate |
+| Vector search (pgvector)                | Strong  | Strong   | Strong   | None      | Strong   |
+| Hybrid search (BM25-flavoured + vector) | Strong  | Adequate | Strong   | None      | Adequate |
+| Inline citation envelope to UI / API    | Strong  | None     | None     | None      | Adequate |
+| Document lifecycle management           | Strong  | Strong   | Adequate | None      | Adequate |
+| PDF preview/confirm flow                | Strong  | None     | None     | None      | None     |
+| Namespace/team isolation                | None    | Adequate | Adequate | None      | Adequate |
+| Incremental document updates            | None    | Adequate | Adequate | None      | Adequate |
 
-**Sunrise advantages:** PDF preview/confirm workflow is unique. Document lifecycle (pending → processing → ready) is well-designed. **Key gaps:** No hybrid search (BM25 re-ranking), no per-team scoping.
+**Sunrise advantages:** PDF preview/confirm workflow is unique. Document lifecycle (pending → processing → ready) is well-designed. Hybrid search (PR #139, May 2026) and the citation envelope (this PR, May 2026) close two prior gaps and pull RAG quality and trustworthiness ahead of all evaluated peers. **Key gaps:** No per-team scoping, no incremental document updates.
 
 ### Production Deployment & Scaling
 
@@ -198,6 +201,8 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 4. **Capability dispatch architecture** — the 7-stage pipeline with the default-allow/default-deny split is more structured than any framework's tool model.
 
 5. **Audit trails** — immutable config change logging, instruction version history, workflow definition versions. Most frameworks have no equivalent.
+
+6. **Inline citation grounding** — structured `Citation` envelope flows from `search_knowledge_base` through the LLM-bound tool result (with `marker` field), into a dedicated SSE `citations` event, and onto the persisted assistant message metadata. Admin chat, conversation trace viewer, and the public Shadow-DOM embed widget all render `[N]` markers and a sources panel from the same envelope. An opt-in citation guard flags under-citation and hallucinated markers. No evaluated platform ships an end-to-end pipeline of this depth.
 
 ### Where Sunrise Is Competitive
 
@@ -236,6 +241,12 @@ Issues that would prevent recommending Sunrise orchestration for production work
 | 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE` | Standard practice      |
 
 > **Resolved:** Approval queue (previously P0 #4) — shipped April 2026. Admin UI with expandable rows, approve/reject actions, sidebar badge. External approval channels via HMAC-signed token endpoints, notification dispatcher with hook/webhook events, and approver scoping for delegated decisions.
+>
+> **Resolved:** Hybrid search (previously P1 #8) — shipped May 2026 (PR #139). Generated `searchVector` tsvector column with GIN index, opt-in `searchConfig.hybridEnabled`, blended ranking via `vectorWeight × vector_score + bm25Weight × keyword_score`, three-segment score breakdown, smoke test against real Postgres. `ts_rank_cd` documented honestly as a BM25 proxy.
+>
+> **Resolved:** Background execution model (previously P1 #6) — shipped May 2026 (PR #140). Non-blocking maintenance tick, lightweight execution status endpoint, live-poll status from the admin UI, `workflow.execution.failed` hook with engine-crash repair, sanitised hook payloads, liveness watchdog and token ownership on the maintenance tick.
+>
+> **Resolved:** Inline citation grounding (Tier 1 #2 in `improvement-priorities.md`) — shipped May 2026. New `Citation` type and `citations` SSE event, `[N]` marker substitution in admin React + vanilla-JS embed widget, opt-in `citationGuardMode` with under-citation and hallucinated-marker detection, persisted on assistant message metadata and rehydrated by the trace viewer.
 
 ### P1 — Meaningful Quality Gaps
 
@@ -245,9 +256,7 @@ Issues that limit capability or reliability in real-world use.
 | --- | ------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------- |
 | 4   | **Exact tokenisation**                | Heuristic (1 token ≈ 3.5 chars), 20–30% error on code/non-English | Per-provider tokeniser (tiktoken for OpenAI, Anthropic counter)                | LangChain, OpenAI SDK  |
 | 5   | **Full checkpoint recovery**          | Resume only from `human_approval` pauses                          | Persist execution state at every step; resume from any step after crash/deploy | LangGraph checkpointer |
-| 6   | **Background execution model**        | Synchronous workflow execution; caller blocks for duration        | Fire-and-forget with async result polling for cron/webhook triggers            | LangGraph Platform     |
 | 7   | **Maintenance tick distributed lock** | In-memory flag; multiple instances run duplicate maintenance      | Postgres advisory lock or Redis-based leader election                          | Standard practice      |
-| 8   | **Hybrid search (BM25 + vector)**     | pgvector cosine similarity only                                   | BM25 keyword scoring + vector re-ranking for improved recall                   | Haystack, Dify         |
 
 ### P2 — Competitive Parity
 

@@ -89,6 +89,36 @@ export function GET(request: NextRequest): Response {
       .msg.user { text-align: right; }
       .msg.user span { background: \${bubbleBg}; color: #fff; padding: 6px 12px; border-radius: 12px 12px 0 12px; display: inline-block; max-width: 85%; }
       .msg.assistant span { background: \${isDark ? '#374151' : '#f3f4f6'}; padding: 6px 12px; border-radius: 12px 12px 12px 0; display: inline-block; max-width: 85%; }
+      .cite-marker {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 16px; height: 16px; padding: 0 4px; margin: 0 2px;
+        border-radius: 3px; font-size: 10px; font-weight: 600;
+        line-height: 1; vertical-align: super;
+        background: \${isDark ? 'rgba(96, 165, 250, 0.18)' : 'rgba(37, 99, 235, 0.10)'};
+        color: \${bubbleBg};
+        border: none; cursor: pointer; font-family: inherit;
+      }
+      button.cite-marker:hover { filter: brightness(1.1); }
+      button.cite-marker:focus-visible { outline: 2px solid \${bubbleBg}; outline-offset: 1px; }
+      .cite-marker.cite-bad {
+        background: \${isDark ? 'rgba(217, 119, 6, 0.20)' : 'rgba(245, 158, 11, 0.18)'};
+        color: \${isDark ? '#fcd34d' : '#92400e'};
+        cursor: default;
+      }
+      .citations-panel {
+        margin-top: 8px; padding-top: 8px;
+        border-top: 1px solid \${border};
+        font-size: 12px;
+      }
+      .citations-heading { font-weight: 600; margin-bottom: 6px; opacity: 0.75; }
+      .citations-list { list-style: none; padding: 0; margin: 0; }
+      .citations-list li {
+        margin-bottom: 6px; padding: 6px 8px;
+        border: 1px solid \${border}; border-radius: 6px;
+      }
+      .cite-name { font-weight: 500; }
+      .cite-section { opacity: 0.7; }
+      .cite-excerpt { margin-top: 4px; opacity: 0.75; line-height: 1.4; white-space: pre-wrap; }
       .status { font-size: 12px; color: \${isDark ? '#9ca3af' : '#6b7280'}; font-style: italic; padding: 0 16px 4px; }
       .input-area {
         padding: 8px 12px; border-top: 1px solid \${border}; display: flex; gap: 8px;
@@ -155,6 +185,103 @@ export function GET(request: NextRequest): Response {
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return span;
+  }
+
+  // Re-renders an assistant bubble with [N] markers replaced by superscript
+  // nodes and appends a sources panel below the bubble. Uses createElement
+  // + textContent throughout so model output cannot inject HTML.
+  function renderCitations(span, fullText, citations) {
+    // Defensive early-return: empty envelopes should not happen (the
+    // server only emits the citations event when length > 0) but if one
+    // arrives we must not falsely flag every [N] in fullText as
+    // hallucinated.
+    if (!citations || citations.length === 0) return;
+    var validMarkers = {};
+    for (var i = 0; i < citations.length; i++) {
+      validMarkers[citations[i].marker] = true;
+    }
+    span.textContent = '';
+    var parts = fullText.split(/(\\[\\d+\\])/g);
+    for (var p = 0; p < parts.length; p++) {
+      var part = parts[p];
+      var match = part.match(/^\\[(\\d+)\\]$/);
+      if (match) {
+        var n = parseInt(match[1], 10);
+        var isValid = !!validMarkers[n];
+        // Use <button> for valid markers so they're focusable and tappable;
+        // hallucinated markers stay as <span> (non-interactive — there's
+        // nothing to navigate to) but get an aria-label for screen readers.
+        var sup;
+        if (isValid) {
+          sup = document.createElement('button');
+          sup.type = 'button';
+          sup.setAttribute('aria-label', 'Source ' + n);
+          sup.title = 'Source ' + n;
+          (function (markerN) {
+            sup.addEventListener('click', function () {
+              var msg = sup.closest('.msg');
+              if (!msg) return;
+              var target = msg.querySelector('[data-cite-id="' + markerN + '"]');
+              if (target && typeof target.scrollIntoView === 'function') {
+                target.scrollIntoView({ block: 'nearest' });
+              }
+            });
+          })(n);
+        } else {
+          sup = document.createElement('span');
+          sup.setAttribute('aria-label', 'Unmatched citation marker ' + n);
+          sup.title = 'Marker [' + n + '] has no matching citation';
+        }
+        sup.className = 'cite-marker' + (isValid ? '' : ' cite-bad');
+        sup.textContent = String(n);
+        span.appendChild(sup);
+      } else if (part) {
+        span.appendChild(document.createTextNode(part));
+      }
+    }
+
+    var msgDiv = span.parentElement;
+    if (!msgDiv) return;
+    var existing = msgDiv.querySelector('.citations-panel');
+    if (existing) existing.remove();
+
+    var panel = document.createElement('div');
+    panel.className = 'citations-panel';
+    var heading = document.createElement('div');
+    heading.className = 'citations-heading';
+    heading.textContent = 'Sources (' + citations.length + ')';
+    panel.appendChild(heading);
+    var list = document.createElement('ol');
+    list.className = 'citations-list';
+    for (var c = 0; c < citations.length; c++) {
+      var cite = citations[c];
+      var li = document.createElement('li');
+      li.setAttribute('data-cite-id', String(cite.marker));
+      var marker = document.createElement('span');
+      marker.className = 'cite-marker';
+      marker.textContent = String(cite.marker);
+      li.appendChild(marker);
+      var name = document.createElement('span');
+      name.className = 'cite-name';
+      name.textContent = ' ' + (cite.documentName || cite.patternName || 'Untitled source');
+      li.appendChild(name);
+      if (cite.section) {
+        var section = document.createElement('span');
+        section.className = 'cite-section';
+        section.textContent = ' \\u00B7 ' + cite.section;
+        li.appendChild(section);
+      }
+      if (cite.excerpt) {
+        var excerpt = document.createElement('div');
+        excerpt.className = 'cite-excerpt';
+        excerpt.textContent = cite.excerpt;
+        li.appendChild(excerpt);
+      }
+      list.appendChild(li);
+    }
+    panel.appendChild(list);
+    msgDiv.appendChild(panel);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   function parseSseBlocks(buffer) {
@@ -240,8 +367,16 @@ export function GET(request: NextRequest): Response {
             } else if (evt.type === 'status' && typeof evt.data.message === 'string') {
               statusEl.textContent = evt.data.message;
               statusEl.style.display = '';
+            } else if (evt.type === 'citations' && Array.isArray(evt.data.citations)) {
+              renderCitations(assistantSpan, fullText, evt.data.citations);
             } else if (evt.type === 'error') {
               assistantSpan.textContent = fullText || 'Something went wrong.';
+              // Drop any citations panel that may have been appended
+              // earlier in the stream — keeping it next to a generic
+              // error bubble would mislead the user.
+              var bubbleDiv = assistantSpan.parentElement;
+              var orphanPanel = bubbleDiv && bubbleDiv.querySelector('.citations-panel');
+              if (orphanPanel) orphanPanel.remove();
               endStream();
               return;
             } else if (evt.type === 'done') {

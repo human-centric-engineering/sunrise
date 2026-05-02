@@ -52,6 +52,7 @@ function makeValidSettings() {
     approvalDefaultAction: null,
     inputGuardMode: null,
     outputGuardMode: null,
+    citationGuardMode: null,
     webhookRetentionDays: null,
     costLogRetentionDays: null,
     auditLogRetentionDays: null,

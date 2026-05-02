@@ -73,6 +73,7 @@ const agentFormSchema = z.object({
   isActive: z.boolean(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']),
@@ -136,6 +137,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       isActive: agent?.isActive ?? true,
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+      citationGuardMode: (agent?.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
       retentionDays: agent?.retentionDays ?? null,
       visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
@@ -155,6 +157,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const currentIsActive = watch('isActive');
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
+  const currentCitationGuard = watch('citationGuardMode');
   const currentVisibility = watch('visibility');
 
   // Auto-generate slug from name in create mode until the user edits the slug.
@@ -799,6 +802,41 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="grid gap-2 rounded-md border p-3">
+              <Label htmlFor="citationGuardMode">
+                Citation guard{' '}
+                <FieldHelp title="Citation hygiene">
+                  Validates that responses grounded in retrieved knowledge include the{' '}
+                  <code>[N]</code> markers that align to the citation envelope. Flags under-citation
+                  (sources retrieved but none cited) and hallucinated markers (a marker referenced
+                  that no source produced). Leave on &ldquo;Use global default&rdquo; to inherit the
+                  platform-wide setting.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={currentCitationGuard ?? '__global__'}
+                onValueChange={(v) =>
+                  setValue(
+                    'citationGuardMode',
+                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                    {
+                      shouldValidate: true,
+                    }
+                  )
+                }
+              >
+                <SelectTrigger id="citationGuardMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Use global default</SelectItem>
+                  <SelectItem value="log_only">Log only</SelectItem>
+                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                  <SelectItem value="block">Block</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
@@ -969,6 +1007,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                         (fresh.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
                       outputGuardMode:
                         (fresh.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
+                      citationGuardMode:
+                        (fresh.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
                       maxHistoryTokens: fresh.maxHistoryTokens ?? null,
                       retentionDays: fresh.retentionDays ?? null,
                       visibility: (fresh.visibility as AgentFormData['visibility']) ?? 'internal',

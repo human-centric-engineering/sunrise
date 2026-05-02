@@ -309,4 +309,96 @@ describe('ConversationTraceViewer', () => {
       expect(screen.queryByText(/"modelUsed"/)).not.toBeInTheDocument();
     });
   });
+
+  describe('Citations rehydration', () => {
+    it('renders the sources panel and marker links from persisted metadata.citations', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'The deposit must be protected within 30 days [1].',
+              metadata: {
+                citations: [
+                  {
+                    marker: 1,
+                    chunkId: 'c1',
+                    documentId: 'd1',
+                    documentName: 'Tenancy Guide',
+                    section: 'Page 12',
+                    patternNumber: null,
+                    patternName: null,
+                    excerpt: 'Deposits must be protected within 30 days of receipt.',
+                    similarity: 0.91,
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByLabelText('Citation 1')).toHaveAttribute('href', '#citation-1');
+      expect(screen.getByText('Sources (1)')).toBeInTheDocument();
+      expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
+      expect(screen.getByText(/within 30 days of receipt/)).toBeInTheDocument();
+    });
+
+    it('does not render a sources panel when metadata.citations is absent', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'A general-knowledge answer with no retrieval.',
+              metadata: { modelUsed: 'claude-sonnet-4-6' },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+    });
+
+    it('degrades gracefully when persisted citations are malformed', () => {
+      // safeParse on the strict messageMetadataSchema fails for the
+      // whole metadata object when any field is the wrong shape — the
+      // trace viewer must still render the message text rather than
+      // throwing or showing a broken panel.
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Answer body.',
+              metadata: {
+                citations: [
+                  {
+                    // marker should be a number — pin a string here to
+                    // simulate a corrupt persisted entry from a future
+                    // schema migration or an out-of-band write.
+                    marker: 'one',
+                    chunkId: 'c1',
+                    documentId: 'd1',
+                    documentName: 'X',
+                    section: null,
+                    patternNumber: null,
+                    patternName: null,
+                    excerpt: 'corrupt',
+                    similarity: 0.5,
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByText('Answer body.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -81,6 +81,7 @@ export function hydrateSettings(row: {
   approvalDefaultAction: string | null;
   inputGuardMode: string | null;
   outputGuardMode: string | null;
+  citationGuardMode: string | null;
   webhookRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
@@ -132,6 +133,12 @@ export function hydrateSettings(row: {
         : isOutputGuard(row.outputGuardMode)
           ? row.outputGuardMode
           : null,
+    citationGuardMode:
+      row.citationGuardMode === null
+        ? null
+        : isOutputGuard(row.citationGuardMode)
+          ? row.citationGuardMode
+          : null,
     webhookRetentionDays: row.webhookRetentionDays,
     costLogRetentionDays: row.costLogRetentionDays,
     auditLogRetentionDays: row.auditLogRetentionDays,
@@ -161,6 +168,7 @@ export async function getOrchestrationSettings(): Promise<OrchestrationSettings>
       approvalDefaultAction: 'deny',
       inputGuardMode: 'log_only',
       outputGuardMode: 'log_only',
+      citationGuardMode: 'log_only',
     },
     update: {},
   });
