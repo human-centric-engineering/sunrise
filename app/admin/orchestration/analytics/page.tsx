@@ -97,9 +97,9 @@ async function getAgents(): Promise<AgentOption[]> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.AGENTS);
     if (!res.ok) return [];
-    const body = await parseApiResponse<{ agents: Array<{ id: string; name: string }> }>(res);
+    const body = await parseApiResponse<Array<{ id: string; name: string }>>(res);
     if (!body.success) return [];
-    return body.data.agents.map((a) => ({ id: a.id, name: a.name }));
+    return body.data.map((a) => ({ id: a.id, name: a.name }));
   } catch (err) {
     logger.error('analytics page: failed to load agents', err);
     return [];
