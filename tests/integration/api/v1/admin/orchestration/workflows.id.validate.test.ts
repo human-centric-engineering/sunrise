@@ -284,4 +284,36 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/validate', () => {
       expect(response.status).toBe(429);
     });
   });
+
+  describe('Malformed workflow definition', () => {
+    it('returns 400 with VALIDATION_ERROR and issue messages when workflowDefinition fails schema parse', async () => {
+      // Arrange: workflow exists but its stored definition is structurally invalid
+      // (steps is a string instead of an array — exercises the defParsed.error.issues.map callback)
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({
+          steps: 'not-an-array',
+          entryStepId: 'step-1',
+          errorStrategy: 'fail',
+        }) as never
+      );
+
+      // Act
+      const response = await POST(makePostRequest(), makeParams(WORKFLOW_ID));
+
+      // Assert: ValidationError with 400 and full error envelope
+      expect(response.status).toBe(400);
+      const data = await parseJson<{
+        success: boolean;
+        error: { code: string; message: string; details: { workflowDefinition: string[] } };
+      }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      expect(data.error.message).toMatch(/malformed definition/i);
+      // The route maps Zod issues to message strings via defParsed.error.issues.map(i => i.message)
+      expect(Array.isArray(data.error.details.workflowDefinition)).toBe(true);
+      expect(data.error.details.workflowDefinition.length).toBeGreaterThan(0);
+      expect(typeof data.error.details.workflowDefinition[0]).toBe('string');
+    });
+  });
 });

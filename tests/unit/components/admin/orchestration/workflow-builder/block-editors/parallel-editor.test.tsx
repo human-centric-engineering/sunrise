@@ -76,4 +76,19 @@ describe('ParallelEditor', () => {
     const infoButtons = screen.getAllByRole('button', { name: /more information/i });
     expect(infoButtons.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('calls onChange with { stragglerStrategy: "first-success" } when "First success" is selected', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ParallelEditor config={emptyConfig} onChange={onChange} />);
+
+    // Act: open the straggler-strategy Select then pick the "First success" option
+    const trigger = document.getElementById('parallel-strategy');
+    await user.click(trigger!);
+    await user.click(screen.getByRole('option', { name: /first success/i }));
+
+    // Assert: the onValueChange callback forwarded the correct value
+    expect(onChange).toHaveBeenCalledWith({ stragglerStrategy: 'first-success' });
+  });
 });

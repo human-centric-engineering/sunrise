@@ -27,13 +27,16 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
-  createRateLimitResponse: vi.fn(),
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { adminLimiter } from '@/lib/security/rate-limit';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { POST } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 
@@ -71,6 +74,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
   vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(makeWebhook() as never);
   globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
 });
@@ -231,5 +235,36 @@ describe('POST /webhooks/:id/test', () => {
     const body = await parseJson<{ data: { success: boolean; error: string } }>(response);
     expect(body.data.success).toBe(false);
     expect(body.data.error).toMatch(/timed out/i);
+  });
+
+  it('returns 429 when rate limit is exceeded', async () => {
+    // Arrange: admin limiter rejects the request
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+
+    // Act
+    const response = await POST(makeRequest(), makeParams());
+
+    // Assert: 429 with standard rate-limit error envelope
+    expect(response.status).toBe(429);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('RATE_LIMITED');
+  });
+
+  it('returns "Unknown error" when fetch rejects with a non-Error value', async () => {
+    // Arrange: fetch throws a string (non-Error) — exercises the third arm of the
+    // catch block: `err instanceof Error` is false → fallback to 'Unknown error'
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    globalThis.fetch = vi.fn().mockRejectedValue('string error');
+
+    // Act
+    const response = await POST(makeRequest(), makeParams());
+
+    // Assert: route returns 200 with "Unknown error" (not the raw string)
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { success: boolean; error: string } }>(response);
+    expect(body.data.success).toBe(false);
+    expect(body.data.error).toBe('Unknown error');
   });
 });

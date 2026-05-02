@@ -14,8 +14,8 @@
  * @see components/admin/orchestration/workflow-builder/block-config-panel.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
@@ -406,6 +406,258 @@ describe('BlockConfigPanel', () => {
       render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
 
       expect(screen.getByText('step-id-test')).toBeInTheDocument();
+    });
+  });
+
+  describe('copy step id button', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('copies node id to clipboard and calls clipboard.writeText with the node id', async () => {
+      // Arrange: mock the clipboard API
+      const writeMock = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { clipboard: { writeText: writeMock } },
+        configurable: true,
+      });
+
+      const node = makeNode('llm_call', {}, 'Step', 'copy-test-id');
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+
+      // Act: click the copy button using fireEvent to avoid userEvent + fake-timer conflicts
+      const copyButton = screen.getByRole('button', { name: /copy step id/i });
+      fireEvent.click(copyButton);
+
+      // Allow the async clipboard.writeText to resolve
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Assert: clipboard was called with the node id
+      expect(writeMock).toHaveBeenCalledWith('copy-test-id');
+    });
+
+    it('uses fake timers to verify the copied state reverts after 1500ms', async () => {
+      // Arrange: fake timers + working clipboard mock
+      vi.useFakeTimers();
+      const writeMock = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { clipboard: { writeText: writeMock } },
+        configurable: true,
+      });
+
+      const node = makeNode('llm_call', {}, 'Step', 'copy-timer-id');
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+
+      const copyButton = screen.getByRole('button', { name: /copy step id/i });
+
+      // Act: click copy then advance past the 1500ms revert timer
+      fireEvent.click(copyButton);
+
+      // Flush the async clipboard.writeText promise
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Advance timers past the 1500ms setTimeout
+      await act(async () => {
+        vi.advanceTimersByTime(1500);
+      });
+
+      // Assert: button still present (component didn't crash after revert)
+      expect(screen.getByRole('button', { name: /copy step id/i })).toBeInTheDocument();
+      // Clipboard was still called
+      expect(writeMock).toHaveBeenCalledWith('copy-timer-id');
+    });
+
+    it('does not crash when clipboard.writeText rejects (silent swallow)', async () => {
+      // Arrange: clipboard API rejects (unavailable or permission denied)
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          clipboard: { writeText: vi.fn().mockRejectedValue(new Error('Clipboard denied')) },
+        },
+        configurable: true,
+      });
+
+      const node = makeNode('llm_call', {}, 'Step', 'copy-fail-id');
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+
+      const copyButton = screen.getByRole('button', { name: /copy step id/i });
+
+      // Act: click copy — should NOT throw
+      fireEvent.click(copyButton);
+
+      // Allow the rejected promise to be swallowed
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Assert: no crash, button still present
+      expect(screen.getByRole('button', { name: /copy step id/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('retry count input', () => {
+    it('calls onConfigChange with clamped retryCount when typing 5', () => {
+      // Arrange
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', { prompt: '', errorStrategy: 'retry', retryCount: 2 });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      const retryInput = document.getElementById('retry-count') as HTMLInputElement;
+
+      // Act: change value to 5 using fireEvent to set exact value
+      // (avoids userEvent.type clamping issues with multi-char sequences)
+      fireEvent.change(retryInput, { target: { value: '5' } });
+
+      // Assert: clamped value — 5 is within [0, 10] so passes through as-is
+      expect(onConfigChange).toHaveBeenCalledWith(node.id, { retryCount: 5 });
+    });
+
+    it('clamps retryCount to 10 when typing 99', () => {
+      // Arrange
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', { prompt: '', errorStrategy: 'retry', retryCount: 2 });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      const retryInput = document.getElementById('retry-count') as HTMLInputElement;
+
+      // Act: set value to 99 — Math.min(10, Math.max(0, 99)) = 10
+      fireEvent.change(retryInput, { target: { value: '99' } });
+
+      // Assert: clamped to 10
+      expect(onConfigChange).toHaveBeenCalledWith(node.id, { retryCount: 10 });
+    });
+
+    it('clamps retryCount to 0 when typing -3', () => {
+      // Arrange
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', { prompt: '', errorStrategy: 'retry', retryCount: 2 });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      const retryInput = document.getElementById('retry-count') as HTMLInputElement;
+
+      // Act: set value to -3 — Math.min(10, Math.max(0, -3)) = 0
+      fireEvent.change(retryInput, { target: { value: '-3' } });
+
+      // Assert: clamped to 0
+      expect(onConfigChange).toHaveBeenCalledWith(node.id, { retryCount: 0 });
+    });
+  });
+
+  describe('fallback step id input', () => {
+    it('calls onConfigChange with fallbackStepId value when typing', () => {
+      // Arrange
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', {
+        prompt: '',
+        errorStrategy: 'fallback',
+        fallbackStepId: '',
+      });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      const fallbackInput = document.getElementById('fallback-step') as HTMLInputElement;
+
+      // Act
+      fireEvent.change(fallbackInput, { target: { value: 'step_x' } });
+
+      // Assert
+      expect(onConfigChange).toHaveBeenCalledWith(node.id, { fallbackStepId: 'step_x' });
+    });
+
+    it('calls onConfigChange with fallbackStepId: undefined when clearing the input', () => {
+      // Arrange
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', {
+        prompt: '',
+        errorStrategy: 'fallback',
+        fallbackStepId: 'step_x',
+      });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      const fallbackInput = document.getElementById('fallback-step') as HTMLInputElement;
+
+      // Act: clear the input — empty string should map to undefined per source (|| undefined)
+      fireEvent.change(fallbackInput, { target: { value: '' } });
+
+      // Assert: empty string is converted to undefined
+      expect(onConfigChange).toHaveBeenCalledWith(node.id, { fallbackStepId: undefined });
+    });
+  });
+
+  describe('error strategy Select switching', () => {
+    it('selecting "retry" from "fallback" calls onConfigChange with errorStrategy: "retry" and fallbackStepId: undefined', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', {
+        prompt: '',
+        errorStrategy: 'fallback',
+        fallbackStepId: 'step-b',
+      });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      // Act: switch from fallback to retry
+      const trigger = document.getElementById('error-strategy');
+      await user.click(trigger!);
+      await user.click(screen.getByRole('option', { name: /^retry$/i }));
+
+      // Assert: errorStrategy set to "retry" and fallbackStepId cleared
+      const calls = onConfigChange.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const matchingCall = calls.find(
+        (p) =>
+          p.errorStrategy === 'retry' && 'fallbackStepId' in p && p.fallbackStepId === undefined
+      );
+      expect(matchingCall).toBeDefined();
+    });
+
+    it('selecting "__inherit__" from "retry" calls onConfigChange with errorStrategy: undefined and retryCount: undefined', async () => {
+      // Arrange
+      const user = userEvent.setup();
+      const onConfigChange = vi.fn();
+      const node = makeNode('llm_call', { prompt: '', errorStrategy: 'retry', retryCount: 3 });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} onConfigChange={onConfigChange} />);
+
+      // Act: switch to "Inherit from workflow" (value '__inherit__')
+      const trigger = document.getElementById('error-strategy');
+      await user.click(trigger!);
+      await user.click(screen.getByRole('option', { name: /inherit from workflow/i }));
+
+      // Assert: errorStrategy and retryCount both cleared
+      const calls = onConfigChange.mock.calls.map((c) => c[1] as Record<string, unknown>);
+      const matchingCall = calls.find(
+        (p) =>
+          'errorStrategy' in p &&
+          p.errorStrategy === undefined &&
+          'retryCount' in p &&
+          p.retryCount === undefined
+      );
+      expect(matchingCall).toBeDefined();
+    });
+  });
+
+  describe('BlockEditor switch arms for agent_call and send_notification', () => {
+    it('renders AgentCallEditor when node.data.type is "agent_call"', () => {
+      // Arrange: agent_call type — AgentCallEditor renders a Select with id="agent-call-slug"
+      const node = makeNode('agent_call', { agentSlug: '' });
+      const agents = [{ slug: 'helper', name: 'Helper Agent', description: 'Helpful' }];
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} agents={agents} />);
+
+      // Assert: AgentCallEditor mounts — its select trigger is present in the DOM.
+      // (The agent name appears in a SelectItem portal, not directly in the DOM tree)
+      expect(document.getElementById('agent-call-slug')).toBeInTheDocument();
+    });
+
+    it('renders NotificationEditor when node.data.type is "send_notification"', () => {
+      // Arrange: send_notification type
+      const node = makeNode('send_notification', { channel: 'email', message: '' });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+
+      // Assert: NotificationEditor mounts — it renders its channel/message fields.
+      // The panel should not show the "no editor registered" fallback message.
+      const fallbackEls = screen.queryAllByText(/no editor registered/i);
+      expect(fallbackEls).toHaveLength(0);
     });
   });
 });

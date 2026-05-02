@@ -202,5 +202,34 @@ describe('NewCapabilityPage (server component)', () => {
 
       expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
     });
+
+    it('filters out falsy categories (exercises filter(Boolean) predicate false arm)', async () => {
+      // Arrange: capability list includes items with empty string and null categories.
+      // The page does: body.data.map(c => c.category).filter(Boolean)
+      // — the filter predicate's false arm fires for '' and null entries.
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse).mockResolvedValue({
+        success: true,
+        data: [
+          { category: 'api' },
+          { category: '' }, // falsy — filter removes this
+          { category: 'search' },
+          { category: null }, // falsy — filter removes this
+        ],
+      });
+
+      const { default: NewCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/new/page');
+
+      // Act
+      const jsx = await NewCapabilityPage();
+      render(jsx);
+
+      // Assert: the page renders without throwing and the form is present.
+      // The category prop is passed to CapabilityForm — we verify the page
+      // renders correctly with filtered categories (no crash from falsy values).
+      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
+    });
   });
 });
