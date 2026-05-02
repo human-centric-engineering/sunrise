@@ -75,6 +75,12 @@ Data attributes:
 
 The loader script uses Shadow DOM for style isolation. The `apiBase` URL is baked in at serve time from the request's `origin`.
 
+### Citation rendering
+
+When the SSE stream emits a `citations` event (see [Streaming Chat — Citations](./chat.md#citations)), the widget rebuilds the assistant bubble: `[N]` markers in the streamed text become superscript chips, and a sources panel is appended below the bubble with each marker's document name, optional section, and excerpt. Hallucinated markers (no matching citation) get an amber `cite-bad` style.
+
+All citation rendering uses `createElement` + `textContent` — model output is never passed through `innerHTML`, so a hostile knowledge document cannot inject DOM into the host page through the widget.
+
 ## Chat stream endpoint
 
 ```

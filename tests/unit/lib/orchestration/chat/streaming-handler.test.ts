@@ -568,6 +568,104 @@ describe('StreamingChatHandler', () => {
     expect(logCost).toHaveBeenCalledTimes(2);
   });
 
+  // 8b ----------------------------------------------------------------------
+  it('emits a citations event with markers extracted from search_knowledge_base results', async () => {
+    const provider = mockProvider([
+      // Turn 1: tool call
+      [
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'tc1',
+            name: 'search_knowledge_base',
+            arguments: { query: 'tenancy' },
+          },
+        },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: text that cites both retrieved sources
+      [
+        {
+          type: 'text',
+          content:
+            'Deposit must be protected within 30 days [1] and the landlord must register it with one of three approved schemes [2].',
+        },
+        { type: 'done', usage: { inputTokens: 80, outputTokens: 18 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
+        results: [
+          {
+            chunkId: 'c1',
+            documentId: 'd1',
+            documentName: 'Tenancy Guide',
+            content: 'The deposit must be protected within 30 days of receipt.',
+            patternNumber: null,
+            patternName: null,
+            section: 'Page 12',
+            similarity: 0.91,
+          },
+          {
+            chunkId: 'c2',
+            documentId: 'd1',
+            documentName: 'Tenancy Guide',
+            content: 'There are three government-approved schemes.',
+            patternNumber: null,
+            patternName: null,
+            section: 'Page 13',
+            similarity: 0.87,
+          },
+        ],
+      },
+    });
+
+    const events = (await collect(streamChat(baseRequest))) as Array<{
+      type: string;
+      citations?: Array<{ marker: number; chunkId: string; documentName: string | null }>;
+    }>;
+    const citationEvents = events.filter((e) => e.type === 'citations');
+    expect(citationEvents).toHaveLength(1);
+    expect(citationEvents[0].citations).toHaveLength(2);
+    expect(citationEvents[0].citations!.map((c) => c.marker)).toEqual([1, 2]);
+    expect(citationEvents[0].citations!.map((c) => c.chunkId)).toEqual(['c1', 'c2']);
+
+    // Citations event sits between content and done.
+    const types = events.map((e) => e.type);
+    const citationsIdx = types.indexOf('citations');
+    const doneIdx = types.indexOf('done');
+    expect(citationsIdx).toBeLessThan(doneIdx);
+
+    // The augmented tool result that gets fed back to the LLM (and persisted)
+    // must include the marker on each item so the model can cite via [N].
+    const toolMsg = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => {
+        const arg = call[0] as { data: { role: string } };
+        return arg.data.role === 'tool';
+      }
+    );
+    expect(toolMsg).toBeDefined();
+    const toolContent = JSON.parse(
+      ((toolMsg as unknown[])[0] as { data: { content: string } }).data.content
+    );
+    expect(toolContent.data.results[0].marker).toBe(1);
+    expect(toolContent.data.results[1].marker).toBe(2);
+
+    // Citations are persisted on the terminal assistant message metadata.
+    const assistantMsgs = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call: unknown[]) => (call[0] as { data: { role: string } }).data.role === 'assistant'
+    );
+    const terminalAssistant = assistantMsgs[assistantMsgs.length - 1] as unknown[];
+    const meta = (terminalAssistant[0] as { data: { metadata?: { citations?: unknown[] } } }).data
+      .metadata;
+    expect(meta?.citations).toHaveLength(2);
+  });
+
   // 9 -----------------------------------------------------------------------
   it('skipFollowup short-circuit: yields done after capability_result without a second LLM turn', async () => {
     const provider = mockProvider([

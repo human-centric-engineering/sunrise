@@ -110,12 +110,12 @@ The dispatcher and `getCapabilityDefinitions` use deliberately asymmetric defaul
 
 ### `search_knowledge_base`
 
-Semantic search over the agentic patterns knowledge base. Delegates to `searchKnowledge` in `lib/orchestration/knowledge/search.ts`.
+Semantic search over the knowledge base. Delegates to `searchKnowledge` in `lib/orchestration/knowledge/search.ts` (vector-only or hybrid mode, controlled by `searchConfig.hybridEnabled`).
 
 ```json
 {
   "name": "search_knowledge_base",
-  "description": "Semantic search over the agentic patterns knowledge base.",
+  "description": "Semantic search over the knowledge base. Each result carries a `marker` field — cite via [N] in your response.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -128,7 +128,11 @@ Semantic search over the agentic patterns knowledge base. Delegates to `searchKn
 }
 ```
 
-Returns `{ results: [{ chunkId, content, patternNumber, patternName, section, similarity }] }`. Zero matches is a valid success — not an error.
+Returns `{ results: [{ chunkId, documentId, documentName, content, patternNumber, patternName, section, similarity, vectorScore?, keywordScore?, finalScore? }] }`. Zero matches is a valid success — not an error.
+
+**Citation contract.** This capability is registered as a citation producer in `lib/orchestration/chat/citations.ts`. The chat handler post-processes every result it returns: each item gets a monotonic `marker` injected before the result is yielded, persisted, and fed back to the LLM. The tool description instructs the model to cite via `[N]` so the marker appears inline in the assistant's text. The accumulated `Citation[]` envelope is surfaced to the client as a `citations` SSE event and persisted on the assistant message metadata. See [Streaming Chat — Citations](./chat.md#citations) for the full lifecycle.
+
+The hybrid score fields (`vectorScore`, `keywordScore`, `finalScore`) are present only when the search ran in hybrid mode — they let admin trace viewers explain _why_ a particular chunk ranked high.
 
 ### `get_pattern_detail`
 

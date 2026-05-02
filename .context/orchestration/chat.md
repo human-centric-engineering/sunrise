@@ -88,7 +88,7 @@ interface ChatRequest {
 All events are defined in `types/orchestration.ts`. Every turn produces this ordered sequence (zero or more `content` in place of `content*`):
 
 ```
-start → [warning]? → content* → [content_reset → content*]? → [status → capability_result → (content* | done)]* → (done | error)
+start → [warning]? → content* → [content_reset → content*]? → [status → capability_result → (content* | done)]* → [citations]? → (done | error)
 ```
 
 `warning` and `content_reset` can appear at any point in the sequence; the diagram above shows their most common positions.
@@ -98,12 +98,27 @@ Concretely:
 1. **`start`** — always emitted first, once the user message has been persisted and the conversation resolved. Carries `conversationId` and the persisted user `messageId`.
 2. **`content`** — zero or more. One per `text` chunk from the provider. The `delta` is the incremental text; concatenate for the full assistant message.
 3. **`status`** — emitted before each LLM turn (`Thinking...` for the first, `Processing tool results...` for follow-ups) and before dispatching a tool call (e.g. `Executing search_knowledge_base`).
-4. **`capability_result`** — emitted after the dispatcher resolves. Carries `capabilitySlug` and the raw `CapabilityResult` object (including any `success: false` gates like `requires_approval`).
+4. **`capability_result`** — emitted after the dispatcher resolves. Carries `capabilitySlug` and the raw `CapabilityResult` object (including any `success: false` gates like `requires_approval`). For citation-producing capabilities (currently `search_knowledge_base`), each result item is augmented with a `marker: number` field — see [Citations](#citations) below.
 5. **Loop or terminate** — if the `CapabilityResult.skipFollowup` flag is true, emit `done` and return. Otherwise the handler rebuilds the message array with `assistant` + `tool` turns appended and runs another LLM turn. Up to `MAX_TOOL_ITERATIONS` turns per request.
-6. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
-7. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
-8. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `provider_retry` (falling back to next provider). Clients should display transiently and clear when the stream ends.
-9. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
+6. **`citations`** — emitted once at the end of the turn (just before `done`) when at least one citation-producing tool returned results. Carries the full `Citation[]` envelope keyed by the markers that appear in the assistant text. Skipped when no citations were produced.
+7. **`done`** — terminal. Carries `tokenUsage` (sum for the final turn), `costUsd` (final turn cost only), `provider` (the resolved provider slug, useful when fallback activated), and `model` (the model id used).
+8. **`error`** — terminal alternative. Carries a stable `code` and user-safe `message`. See "Error codes" below.
+9. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `citation_missing` / `citation_hallucinated` (citation guard detected a violation in `warn_and_continue` mode), `provider_retry` (falling back to next provider). Clients should display transiently and clear when the stream ends.
+10. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
+
+## Citations
+
+When the LLM grounds a response in retrieved knowledge, the handler accumulates a turn-level citations envelope and surfaces it through three channels:
+
+1. **The LLM** sees a `marker: number` field on each tool-result item it consumes. The tool description instructs the model to cite via `[N]` syntax (e.g. `"the deposit must be protected within 30 days [1]"`). Markers are monotonic across the entire turn — if `search_knowledge_base` is called twice, the second call's markers continue from the first call's last value.
+2. **The SSE client** receives a `citations` event with the typed `Citation[]` envelope. Each entry carries `marker`, `chunkId`, `documentId`, `documentName`, `section`, `excerpt`, `similarity`, optional `patternNumber` / `patternName`, and the hybrid scores (`vectorScore`, `keywordScore`, `finalScore`) when running in hybrid search mode.
+3. **The persisted assistant message** carries the same envelope on `metadata.citations` so the trace viewer can render the citation panel post-hoc.
+
+Currently `search_knowledge_base` is the only citation-producing capability; the registry list lives in `lib/orchestration/chat/citations.ts#CITATION_PRODUCING_SLUGS`. Adding a new capability to the set is a one-line change once its result envelope matches the expected shape.
+
+Citations are attached only to the **terminal** assistant message (the one that contains the `[N]` markers). Interim tool-call turns do not carry citations because the LLM has not yet produced grounded text.
+
+The [output guard](./output-guard.md) ships an opt-in `citationGuardMode` that flags two failure modes: under-citation (citations were retrieved but no marker appears in the response) and hallucinated markers (a marker referenced that no citation produced).
 
 ## Tool Loop Semantics
 

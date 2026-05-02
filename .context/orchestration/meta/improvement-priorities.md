@@ -34,7 +34,7 @@ The items that disproportionately unlock the worked examples in `business-applic
 | #   | Improvement                                                      | Value     | Effort               | Status            |
 | --- | ---------------------------------------------------------------- | --------- | -------------------- | ----------------- |
 | 1   | Hybrid search (BM25-flavoured + vector re-ranking)               | Very high | Moderate             | ✅ Done (PR #139) |
-| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate         | 🟢 Next up        |
+| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate         | ✅ Done (this PR) |
 | 3   | Expanded built-in capability library                             | Very high | Low (per capability) | ⚪ Not started    |
 | 4   | More workflow templates aligned to business-application patterns | High      | Low                  | ⚪ Not started    |
 | 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate             | ⚪ Not started    |
@@ -47,13 +47,13 @@ The items that disproportionately unlock the worked examples in `business-applic
 
 **Critical files (for reference):** `lib/orchestration/knowledge/search.ts`, `prisma/migrations/20260501172919_add_knowledge_chunk_search_vector/`, `.context/orchestration/knowledge.md`.
 
-### 2. Citation / source attribution in responses — 🟢 Next up
+### 2. Citation / source attribution in responses — ✅ Done
 
-**Why.** Domain-expert applications (legal, financial, health, planning, tenant rights, mortgage broker, regenerative agriculture) are unsellable without verifiable sourcing. The chunks already carry source metadata; the gap is consistent surfacing through the chat handler and a rendering contract for the embed widget. This is what converts "AI says…" into "your knowledge base says, on page 47…" — the difference between a demo and a tool a partner will sign for.
+**Why it mattered.** Domain-expert applications (legal, financial, health, planning, tenant rights, mortgage broker, regenerative agriculture) are unsellable without verifiable sourcing. The chunks already carried source metadata; the gap was consistent surfacing through the chat handler and a rendering contract for the admin and embed surfaces.
 
-**Approach.** Add a structured citation field to the SSE event stream and tool-result envelope; render in chat UI / embed widget; let the output guard enforce "every grounded claim must cite" as an opt-in policy.
+**What shipped.** A new `Citation` type and `citations` SSE event surface citation-producing tool results to the client. `search_knowledge_base` is registered as the first citation producer — the streaming handler post-processes its results, assigns monotonic `[N]` markers across all tool calls in a turn, augments the result the LLM consumes so the model emits inline citations, and persists the envelope on the assistant message metadata. A reusable `MessageWithCitations` React component renders markers as superscript references and a collapsible sources panel; a vanilla-JS port handles the embed widget. An opt-in `citationGuardMode` (per-agent + global) flags under-citation and hallucinated markers via the existing log_only / warn_and_continue / block precedence pattern.
 
-**Critical files:** `lib/orchestration/chat/` (handler, context builder, output guard), embed widget renderer, `app/admin/orchestration/conversations/` (trace viewer).
+**Critical files (for reference):** `lib/orchestration/chat/citations.ts`, `lib/orchestration/chat/streaming-handler.ts`, `lib/orchestration/chat/output-guard.ts`, `lib/orchestration/capabilities/built-in/search-knowledge.ts`, `components/admin/orchestration/chat/message-with-citations.tsx`, `app/api/v1/embed/widget.js/route.ts`, `.context/orchestration/chat.md` (Citations section), `.context/orchestration/output-guard.md` (Citation Guard section).
 
 ### 3. Expanded built-in capability library
 
@@ -178,7 +178,7 @@ A pragmatic order for the next sprints, optimised for "shortest path to a sellab
 
 | Sprint | Theme                   | Items                                                            |
 | ------ | ----------------------- | ---------------------------------------------------------------- |
-| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, **2 (citations)**, 5 (ingestion)       |
+| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, 5 (ingestion)    |
 | 2      | Velocity to first pilot | 4 (templates), 3 (capability library)                            |
 | 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                 |
 | 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI) |

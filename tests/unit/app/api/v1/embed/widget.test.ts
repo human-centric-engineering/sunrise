@@ -148,3 +148,35 @@ describe('GET /api/v1/embed/widget.js', () => {
     expect(body).toContain('class="status"');
   });
 });
+
+describe('Embed widget citation rendering', () => {
+  it('binds a handler for the `citations` SSE event', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    expect(body).toContain("evt.type === 'citations'");
+    expect(body).toContain('renderCitations(assistantSpan, fullText, evt.data.citations)');
+  });
+
+  it('declares the renderCitations helper that builds marker chips and a sources panel', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    expect(body).toContain('function renderCitations(span, fullText, citations)');
+    expect(body).toContain("className = 'citations-panel'");
+    expect(body).toContain("className = 'cite-marker'");
+  });
+
+  it('uses createElement + textContent (no innerHTML) for citation rendering', async () => {
+    const response = GET(makeGetRequest());
+    const body = await response.text();
+    // Locate the renderCitations function body — assertion is on the
+    // sub-function only, since the surrounding widget code already
+    // avoids innerHTML on user-controlled paths.
+    const start = body.indexOf('function renderCitations');
+    const end = body.indexOf('messagesEl.scrollTop = messagesEl.scrollHeight;', start);
+    expect(start).toBeGreaterThan(-1);
+    const fnBody = body.slice(start, end);
+    expect(fnBody).toContain('document.createElement');
+    expect(fnBody).toContain('textContent');
+    expect(fnBody).not.toContain('innerHTML');
+  });
+});
