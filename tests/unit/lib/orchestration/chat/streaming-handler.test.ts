@@ -1705,6 +1705,88 @@ describe('StreamingChatHandler', () => {
       expect(getProvider).toHaveBeenCalledWith('openai');
     });
 
+    it('preserves the citation accumulator across mid-stream provider fallback', async () => {
+      // Turn 1: primary provider throws mid-stream → fallback to provider B,
+      // which emits a tool_call. Tool dispatches successfully, returns one
+      // chunk. Turn 2: provider B emits final text with [1].
+      //
+      // The citations array is initialised outside the inner stream-retry
+      // loop, so a successful fallback path must still produce a citations
+      // event keyed to the chunk dispatched after recovery.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          yield { type: 'text', content: 'partial...' };
+          throw new Error('Connection reset');
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        // Recovery turn 1: tool_call only
+        [
+          {
+            type: 'tool_call',
+            toolCall: {
+              id: 'tc1',
+              name: 'search_knowledge_base',
+              arguments: { query: 'tenancy' },
+            },
+          },
+          { type: 'done', usage: { inputTokens: 20, outputTokens: 0 }, finishReason: 'tool_use' },
+        ],
+        // Recovery turn 2: final answer that cites the retrieved chunk
+        [
+          { type: 'text', content: 'Deposits must be protected within 30 days [1].' },
+          { type: 'done', usage: { inputTokens: 50, outputTokens: 10 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: {
+          results: [
+            {
+              chunkId: 'c1',
+              documentId: 'd1',
+              documentName: 'Tenancy Guide',
+              content: 'Deposits must be protected within 30 days of receipt.',
+              patternNumber: null,
+              patternName: null,
+              section: 'Page 12',
+              similarity: 0.91,
+            },
+          ],
+        },
+      });
+
+      const events = (await collect(streamChat(baseRequest))) as Array<{
+        type: string;
+        citations?: Array<{ marker: number; chunkId: string }>;
+      }>;
+      const citationEvents = events.filter((e) => e.type === 'citations');
+      expect(citationEvents).toHaveLength(1);
+      expect(citationEvents[0].citations!).toEqual([
+        expect.objectContaining({ marker: 1, chunkId: 'c1' }),
+      ]);
+
+      // Sanity: the fallback warning fires before citations.
+      const types = events.map((e) => e.type);
+      expect(types.indexOf('warning')).toBeLessThan(types.indexOf('citations'));
+      expect(types.indexOf('citations')).toBeLessThan(types.indexOf('done'));
+    });
+
     it('records circuit breaker failure on stream error before retrying', async () => {
       const failingProvider = {
         name: 'failing',
