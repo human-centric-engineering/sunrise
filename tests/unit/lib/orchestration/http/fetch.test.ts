@@ -113,6 +113,35 @@ describe('executeHttpRequest', () => {
     expect(headers['Idempotency-Key']).toBe('order_42');
   });
 
+  it('authHeaders override case-different opts.headers (closes smuggling path)', async () => {
+    // Security regression: an opts.headers entry like `authorization`
+    // (lowercase) must not coexist with the canonical `Authorization`
+    // produced by applyAuth — fetch's Headers ctor would otherwise
+    // concatenate them as `authorization: attacker, Bearer real`.
+    process.env.MY_TOKEN = 'sk_real';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await executeHttpRequest({
+      url: 'https://api.allowed.com/v1/x',
+      method: 'POST',
+      body: '{}',
+      headers: { authorization: 'Bearer attacker' },
+      auth: { type: 'bearer', secret: 'MY_TOKEN' },
+    });
+
+    const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    const authEntries = Object.entries(headers).filter(
+      ([k]) => k.toLowerCase() === 'authorization'
+    );
+    expect(authEntries).toHaveLength(1);
+    expect(authEntries[0]?.[1]).toBe('Bearer sk_real');
+  });
+
   it('omits body and Content-Type for GET requests', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{"ok":true}', {

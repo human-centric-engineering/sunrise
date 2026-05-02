@@ -24,6 +24,7 @@ import {
 import { isHostAllowed, ALLOWED_HOSTS_ENV } from '@/lib/orchestration/http/allowlist';
 import { applyAuth, type HttpAuthConfig } from '@/lib/orchestration/http/auth';
 import { HttpError } from '@/lib/orchestration/http/errors';
+import { mergeHeaders } from '@/lib/orchestration/http/headers';
 import {
   resolveIdempotencyHeader,
   type HttpIdempotencyConfig,
@@ -104,12 +105,15 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
   const { url: authedUrl, headers: authHeaders } = applyAuth(opts.auth, opts.url, method, body);
   const idempotencyHeaders = resolveIdempotencyHeader(opts.idempotency);
 
-  const headers: Record<string, string> = {
-    ...(BODYLESS_METHODS.has(method) ? {} : { 'Content-Type': 'application/json' }),
-    ...(opts.headers ?? {}),
-    ...authHeaders,
-    ...idempotencyHeaders,
-  };
+  // mergeHeaders is case-insensitive — opts.headers (caller-supplied, possibly
+  // LLM-influenced) cannot smuggle a `authorization` past authHeaders'
+  // `Authorization` by varying case.
+  const headers = mergeHeaders(
+    BODYLESS_METHODS.has(method) ? undefined : { 'Content-Type': 'application/json' },
+    opts.headers,
+    authHeaders,
+    idempotencyHeaders
+  );
 
   logger.info('HTTP request: sending', {
     method,

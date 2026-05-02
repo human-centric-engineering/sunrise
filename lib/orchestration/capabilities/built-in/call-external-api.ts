@@ -34,6 +34,7 @@ import type {
 import {
   executeHttpRequest,
   HttpError,
+  mergeHeaders,
   type HttpAuthConfig,
   type HttpMethod,
   type ResponseTransform,
@@ -193,10 +194,9 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
         }
       : undefined;
 
-    const headers: Record<string, string> = {
-      ...(args.headers ?? {}),
-      ...(customConfig?.forcedHeaders ?? {}),
-    };
+    // mergeHeaders is case-insensitive so the LLM can't smuggle an
+    // `authorization` past forcedHeaders' `Authorization` by varying case.
+    const headers = mergeHeaders(args.headers, customConfig?.forcedHeaders);
 
     const idempotency = customConfig?.autoIdempotency
       ? { key: 'auto', headerName: customConfig.idempotencyHeader }

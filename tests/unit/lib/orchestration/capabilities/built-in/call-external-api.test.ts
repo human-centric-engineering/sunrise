@@ -302,6 +302,36 @@ describe('CallExternalApiCapability', () => {
       expect(headers.Accept).toBe('application/json');
     });
 
+    it('forcedHeaders override LLM headers regardless of case (closes smuggling path)', async () => {
+      // Security regression: previously a plain JS spread let a lowercase
+      // `authorization` from the LLM coexist alongside a canonical
+      // `Authorization` from forcedHeaders. fetch's Headers constructor
+      // would then concatenate the two as a single comma-separated value.
+      bindCustomConfig({
+        forcedHeaders: { Authorization: 'Bearer admin-controlled' },
+      });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          headers: { authorization: 'Bearer attacker' },
+          body: {},
+        },
+        context
+      );
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      const authEntries = Object.entries(headers).filter(
+        ([k]) => k.toLowerCase() === 'authorization'
+      );
+      expect(authEntries).toHaveLength(1);
+      expect(authEntries[0]?.[1]).toBe('Bearer admin-controlled');
+    });
+
     it('autoIdempotency injects an Idempotency-Key header', async () => {
       bindCustomConfig({ autoIdempotency: true });
       const fetchSpy = mockFetchJson(200, { ok: true });

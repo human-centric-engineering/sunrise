@@ -15,6 +15,7 @@ export {
 } from '@/lib/orchestration/http/allowlist';
 export { applyAuth, type HttpAuthConfig, type HttpAuthType } from '@/lib/orchestration/http/auth';
 export { HttpError, type HttpErrorCode } from '@/lib/orchestration/http/errors';
+export { mergeHeaders } from '@/lib/orchestration/http/headers';
 export {
   executeHttpRequest,
   type HttpMethod,
