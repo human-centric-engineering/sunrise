@@ -96,10 +96,14 @@ export function GET(request: NextRequest): Response {
         line-height: 1; vertical-align: super;
         background: \${isDark ? 'rgba(96, 165, 250, 0.18)' : 'rgba(37, 99, 235, 0.10)'};
         color: \${bubbleBg};
+        border: none; cursor: pointer; font-family: inherit;
       }
+      button.cite-marker:hover { filter: brightness(1.1); }
+      button.cite-marker:focus-visible { outline: 2px solid \${bubbleBg}; outline-offset: 1px; }
       .cite-marker.cite-bad {
         background: \${isDark ? 'rgba(217, 119, 6, 0.20)' : 'rgba(245, 158, 11, 0.18)'};
         color: \${isDark ? '#fcd34d' : '#92400e'};
+        cursor: default;
       }
       .citations-panel {
         margin-top: 8px; padding-top: 8px;
@@ -203,12 +207,33 @@ export function GET(request: NextRequest): Response {
       var match = part.match(/^\\[(\\d+)\\]$/);
       if (match) {
         var n = parseInt(match[1], 10);
-        var sup = document.createElement('span');
-        sup.className = 'cite-marker' + (validMarkers[n] ? '' : ' cite-bad');
+        var isValid = !!validMarkers[n];
+        // Use <button> for valid markers so they're focusable and tappable;
+        // hallucinated markers stay as <span> (non-interactive — there's
+        // nothing to navigate to) but get an aria-label for screen readers.
+        var sup;
+        if (isValid) {
+          sup = document.createElement('button');
+          sup.type = 'button';
+          sup.setAttribute('aria-label', 'Source ' + n);
+          sup.title = 'Source ' + n;
+          (function (markerN) {
+            sup.addEventListener('click', function () {
+              var msg = sup.closest('.msg');
+              if (!msg) return;
+              var target = msg.querySelector('[data-cite-id="' + markerN + '"]');
+              if (target && typeof target.scrollIntoView === 'function') {
+                target.scrollIntoView({ block: 'nearest' });
+              }
+            });
+          })(n);
+        } else {
+          sup = document.createElement('span');
+          sup.setAttribute('aria-label', 'Unmatched citation marker ' + n);
+          sup.title = 'Marker [' + n + '] has no matching citation';
+        }
+        sup.className = 'cite-marker' + (isValid ? '' : ' cite-bad');
         sup.textContent = String(n);
-        sup.title = validMarkers[n]
-          ? 'Source ' + n
-          : 'Marker [' + n + '] has no matching citation';
         span.appendChild(sup);
       } else if (part) {
         span.appendChild(document.createTextNode(part));
@@ -231,6 +256,7 @@ export function GET(request: NextRequest): Response {
     for (var c = 0; c < citations.length; c++) {
       var cite = citations[c];
       var li = document.createElement('li');
+      li.setAttribute('data-cite-id', String(cite.marker));
       var marker = document.createElement('span');
       marker.className = 'cite-marker';
       marker.textContent = String(cite.marker);

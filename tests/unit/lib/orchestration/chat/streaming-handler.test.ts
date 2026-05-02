@@ -2053,6 +2053,50 @@ describe('citation guard', () => {
     expect(warningEvt!.message).toContain('7');
   });
 
+  it('output guard runs before citation guard — output_blocked wins when both would flag', async () => {
+    // Both guards would fire, both at block mode. The output guard runs
+    // first in the terminal-turn handler, so the stream must terminate
+    // with `output_blocked`, never reaching the citation guard.
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({
+        outputGuardMode: 'block',
+        citationGuardMode: 'block',
+        topicBoundaries: ['forbidden'],
+      })
+    );
+    (scanOutput as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      topicMatches: ['forbidden'],
+      builtInMatches: [],
+    });
+    const citationScanMock = scanCitations as ReturnType<typeof vi.fn>;
+    citationScanMock.mockReturnValue({
+      flagged: true,
+      underCited: true,
+      hallucinatedMarkers: [],
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'mentions forbidden, no markers either' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const errorEvts = events.filter(
+      (e: unknown) => (e as Record<string, unknown>).type === 'error'
+    );
+    expect(errorEvts).toHaveLength(1);
+    expect(errorEvts[0]).toMatchObject({ type: 'error', code: 'output_blocked' });
+    // Output guard short-circuits before citation guard runs.
+    expect(citationScanMock).not.toHaveBeenCalled();
+  });
+
   it("falls back to global citationGuardMode when the agent's override is null", async () => {
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeAgent({ citationGuardMode: null })

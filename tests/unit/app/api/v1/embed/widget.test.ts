@@ -179,4 +179,25 @@ describe('Embed widget citation rendering', () => {
     expect(fnBody).toContain('textContent');
     expect(fnBody).not.toContain('innerHTML');
   });
+
+  it('renders valid citation markers as focusable buttons with aria-label and scroll-on-click', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Valid markers use <button> so keyboard and screen-reader users
+    // can reach them; invalid (hallucinated) markers stay as <span>
+    // because there's no source to navigate to.
+    expect(body).toContain("createElement('button')");
+    expect(body).toContain("setAttribute('aria-label', 'Source ' + n)");
+    expect(body).toContain("setAttribute('aria-label', 'Unmatched citation marker ' + n)");
+    expect(body).toContain('scrollIntoView');
+    // Each citation li carries a data-cite-id attribute matching the
+    // marker so the button's click handler can locate it.
+    expect(body).toContain("setAttribute('data-cite-id', String(cite.marker))");
+  });
+
+  it('does not transform [N] when the citations envelope is empty (defensive guard)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Server never emits an empty citations event, but if it did, the
+    // helper must not flag every [N] in fullText as hallucinated.
+    expect(body).toContain('if (!citations || citations.length === 0) return;');
+  });
 });
