@@ -1938,10 +1938,20 @@ export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   headers: z.record(z.string(), z.string()).optional(),
   bodyTemplate: z.string().optional(),
   timeoutMs: z.number().optional(),
-  authType: z.enum(['none', 'bearer', 'api-key', 'query-param']).optional(),
+  authType: z.enum(['none', 'bearer', 'api-key', 'query-param', 'basic', 'hmac']).optional(),
   authSecret: z.string().optional(),
   /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
   authQueryParam: z.string().optional(),
+  /** Header name for the HMAC signature when authType is 'hmac' (default: 'X-Signature'). */
+  hmacHeaderName: z.string().optional(),
+  /** Digest algorithm when authType is 'hmac' (default: 'sha256'). */
+  hmacAlgorithm: z.enum(['sha256', 'sha512']).optional(),
+  /** Template for the signed string when authType is 'hmac'. Tokens: `{method}`, `{path}`, `{body}`. Default: `{method}\n{path}\n{body}`. */
+  hmacBodyTemplate: z.string().optional(),
+  /** Idempotency key. `'auto'` generates a UUID; any other string is used verbatim. Omit to skip the header. */
+  idempotencyKey: z.string().optional(),
+  /** Header name for the idempotency key (default: 'Idempotency-Key'). */
+  idempotencyKeyHeader: z.string().optional(),
   /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
   maxResponseBytes: z.number().int().positive().optional(),
   /** Optional transformation to apply to the response body before returning step output. */
