@@ -1,32 +1,39 @@
 # External calls
 
-The `external_call` workflow step type makes HTTP requests to external APIs. Lives in `lib/orchestration/engine/executors/external-call.ts`.
+The `external_call` workflow step type makes HTTP requests to external APIs. Lives in `lib/orchestration/engine/executors/external-call.ts` — a thin adapter that handles workflow-step concerns (interpolation, `ExecutorError` mapping, `StepResult` shape) and delegates the actual HTTP machinery to `lib/orchestration/http/`. The `call_external_api` capability shares the same shared module so both surfaces stay consistent.
 
 ## Quick reference
 
 | Feature               | Path                                                                                     |
 | --------------------- | ---------------------------------------------------------------------------------------- |
 | Executor              | `lib/orchestration/engine/executors/external-call.ts`                                    |
+| Shared HTTP module    | `lib/orchestration/http/` (allowlist, auth, idempotency, response, fetch)                |
 | Outbound rate limiter | `lib/orchestration/engine/outbound-rate-limiter.ts`                                      |
 | Config schema         | `lib/validations/orchestration.ts` → `externalCallConfigSchema`                          |
 | UI editor             | `components/admin/orchestration/workflow-builder/block-editors/external-call-editor.tsx` |
 | Tests                 | `tests/unit/lib/orchestration/engine/executors/external-call.test.ts`                    |
+| Shared module tests   | `tests/unit/lib/orchestration/http/`                                                     |
 | Rate limiter tests    | `tests/unit/lib/orchestration/engine/outbound-rate-limiter.test.ts`                      |
 
 ## Config fields
 
-| Field               | Type                                               | Default     | Description                                                              |
-| ------------------- | -------------------------------------------------- | ----------- | ------------------------------------------------------------------------ |
-| `url`               | `string`                                           | required    | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`           |
-| `method`            | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`  | `POST`      | HTTP method                                                              |
-| `headers`           | `Record<string, string>`                           | `{}`        | Additional HTTP headers                                                  |
-| `bodyTemplate`      | `string`                                           | —           | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation |
-| `timeoutMs`         | `number`                                           | `30000`     | Request timeout in ms                                                    |
-| `authType`          | `'none' \| 'bearer' \| 'api-key' \| 'query-param'` | `'none'`    | Authentication scheme                                                    |
-| `authSecret`        | `string`                                           | —           | Environment variable name holding the secret (never the raw value)       |
-| `authQueryParam`    | `string`                                           | `'api_key'` | Query parameter name when `authType` is `'query-param'`                  |
-| `maxResponseBytes`  | `number`                                           | `1048576`   | Maximum response body size (1 MB)                                        |
-| `responseTransform` | `{ type, expression }`                             | —           | Transform the response body before returning (see below)                 |
+| Field                  | Type                                                                    | Default                    | Description                                                                   |
+| ---------------------- | ----------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------- |
+| `url`                  | `string`                                                                | required                   | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`                |
+| `method`               | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`                       | `POST`                     | HTTP method                                                                   |
+| `headers`              | `Record<string, string>`                                                | `{}`                       | Additional HTTP headers                                                       |
+| `bodyTemplate`         | `string`                                                                | —                          | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation      |
+| `timeoutMs`            | `number`                                                                | `30000`                    | Request timeout in ms                                                         |
+| `authType`             | `'none' \| 'bearer' \| 'api-key' \| 'query-param' \| 'basic' \| 'hmac'` | `'none'`                   | Authentication scheme                                                         |
+| `authSecret`           | `string`                                                                | —                          | Environment variable name holding the secret (never the raw value)            |
+| `authQueryParam`       | `string`                                                                | `'api_key'`                | Query parameter name when `authType` is `'query-param'`                       |
+| `hmacHeaderName`       | `string`                                                                | `'X-Signature'`            | Header name for the HMAC signature when `authType` is `'hmac'`                |
+| `hmacAlgorithm`        | `'sha256' \| 'sha512'`                                                  | `'sha256'`                 | HMAC digest algorithm                                                         |
+| `hmacBodyTemplate`     | `string`                                                                | `{method}\n{path}\n{body}` | Template for the signed string. Tokens: `{method}`, `{path}`, `{body}`        |
+| `idempotencyKey`       | `string \| 'auto'`                                                      | —                          | `'auto'` for fresh UUID per call; explicit string used verbatim. Omit to skip |
+| `idempotencyKeyHeader` | `string`                                                                | `'Idempotency-Key'`        | Header name for the idempotency key                                           |
+| `maxResponseBytes`     | `number`                                                                | `1048576`                  | Maximum response body size (1 MB)                                             |
+| `responseTransform`    | `{ type, expression }`                                                  | —                          | Transform the response body before returning (see below)                      |
 
 ## Response Transformation
 
@@ -81,12 +88,18 @@ If the env var is missing, the executor **fails fast** with a non-retriable `mis
 
 ### Auth types
 
-| Type          | Behavior                                        |
-| ------------- | ----------------------------------------------- |
-| `none`        | No auth headers added                           |
-| `bearer`      | `Authorization: Bearer <secret>` header         |
-| `api-key`     | `X-API-Key: <secret>` header                    |
-| `query-param` | Appends `?<authQueryParam>=<secret>` to the URL |
+| Type          | Behavior                                                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`        | No auth headers added                                                                                                                                                |
+| `bearer`      | `Authorization: Bearer <secret>` header                                                                                                                              |
+| `api-key`     | `X-API-Key: <secret>` header                                                                                                                                         |
+| `query-param` | Appends `?<authQueryParam>=<secret>` to the URL                                                                                                                      |
+| `basic`       | `Authorization: Basic base64(<secret>)`. Env var with `:` (e.g. `user:pass`) is base64-encoded; without `:`, treated as already-encoded                              |
+| `hmac`        | Signs `${method}\n${path}\n${body}` (or custom `hmacBodyTemplate`) with the secret using SHA-256 or SHA-512; sets the digest as the `X-Signature` header (or custom) |
+
+### Idempotency
+
+When `idempotencyKey` is set, the executor attaches an `Idempotency-Key` header (or custom `idempotencyKeyHeader`). Use `'auto'` for a fresh UUID per call, or an explicit string for deterministic keys (e.g. tied to a business identifier). Essential for safe retries on payment APIs.
 
 ## Resilience
 
@@ -131,11 +144,11 @@ The external call executor links to the execution-level abort signal (`ctx.signa
 
 ## Observability
 
-The executor logs:
+The shared HTTP module logs:
 
-- **Before request**: `External call: sending request` with `stepId`, `method`, `hostname`, `path`, `timeoutMs`
-- **On success**: `External call: success` with `stepId`, `method`, `hostname`, `status`, `latencyMs`
-- **On non-2xx**: `External call: non-2xx response` (warning) with `status`, `retriable`, `latencyMs`, `bodyPreview` (first 200 chars)
+- **Before request**: `HTTP request: sending` with `method`, `hostname`, `path`, `timeoutMs`, plus any `logContext` from the caller (the executor passes `stepId`)
+- **On success**: `HTTP request: success` with `method`, `hostname`, `status`, `latencyMs`, plus `logContext`
+- **On non-2xx**: `HTTP request: non-2xx response` (warning) with `status`, `retriable`, `latencyMs`, `bodyPreview` (first 200 chars), plus `logContext`
 
 Auth headers and secrets are never logged.
 

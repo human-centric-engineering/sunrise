@@ -84,6 +84,8 @@ For processes more complex than a conversation, you compose workflows: multi-ste
 
 If you are not sure where to start, a built-in design patterns library covers 21 agentic patterns — routing, chaining, reflection, planning, multi-agent coordination, and more — with an interactive explorer and an advisor chatbot that recommends patterns based on your use case.
 
+For vendor integrations — sending transactional email, charging customers, posting to a chat platform, creating a calendar event, rendering a PDF — Sunrise takes a deliberate stance: rather than bundling SDKs for every vendor, you get one sharpened generic outbound-HTTP capability plus a comprehensive recipes cookbook that documents how to wire it for each common pattern (with worked examples for two or three vendors per pattern). The trade-off versus a "thousand integrations" framework is honest: Sunrise stays dependency-light and version-stable; the integrations you actually wire up are documented end-to-end and unbiased to a specific vendor; anything not covered by a recipe is a documented short walk away via the capability builder.
+
 The platform supports eight LLM provider types — Anthropic, OpenAI, Google, Mistral, Cohere, Voyage AI, Ollama, and any OpenAI-compatible endpoint. You can start with a local model for development, deploy with a commercial provider, and add fallbacks across vendors. Switching or adding providers does not require code changes.
 
 ---

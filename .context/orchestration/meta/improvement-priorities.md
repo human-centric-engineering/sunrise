@@ -31,13 +31,13 @@ Items in `maturity-analysis.md` that depend on horizontal-scale assumptions are 
 
 The items that disproportionately unlock the worked examples in `business-applications.md` without large architectural change.
 
-| #   | Improvement                                                      | Value     | Effort               | Status            |
-| --- | ---------------------------------------------------------------- | --------- | -------------------- | ----------------- |
-| 1   | Hybrid search (BM25-flavoured + vector re-ranking)               | Very high | Moderate             | ✅ Done (PR #139) |
-| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate         | ✅ Done (this PR) |
-| 3   | Expanded built-in capability library                             | Very high | Low (per capability) | ⚪ Not started    |
-| 4   | More workflow templates aligned to business-application patterns | High      | Low                  | ⚪ Not started    |
-| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate             | ⚪ Not started    |
+| #   | Improvement                                                      | Value     | Effort       | Status            |
+| --- | ---------------------------------------------------------------- | --------- | ------------ | ----------------- |
+| 1   | Hybrid search (BM25-flavoured + vector re-ranking)               | Very high | Moderate     | ✅ Done (PR #139) |
+| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate | ✅ Done (this PR) |
+| 3   | Sharpened HTTP fetcher + dependency-free recipes cookbook        | Very high | Moderate     | ✅ Done (this PR) |
+| 4   | More workflow templates aligned to business-application patterns | High      | Low          | ⚪ Not started    |
+| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate     | ⚪ Not started    |
 
 ### 1. Hybrid search (BM25-flavoured + vector re-ranking) — ✅ Done
 
@@ -55,13 +55,15 @@ The items that disproportionately unlock the worked examples in `business-applic
 
 **Critical files (for reference):** `lib/orchestration/chat/citations.ts`, `lib/orchestration/chat/streaming-handler.ts`, `lib/orchestration/chat/output-guard.ts`, `lib/orchestration/capabilities/built-in/search-knowledge.ts`, `components/admin/orchestration/chat/message-with-citations.tsx`, `app/api/v1/embed/widget.js/route.ts`, `.context/orchestration/chat.md` (Citations section), `.context/orchestration/output-guard.md` (Citation Guard section).
 
-### 3. Expanded built-in capability library
+### 3. Sharpened HTTP fetcher + dependency-free recipes cookbook — ✅ Done
 
-**Why.** Maturity-analysis flags "7 built-in capabilities vs. LangChain's 1000+" as a gap. For small teams, the cost of writing each capability is high and the same handful keep recurring across business-applications: send email, send SMS, post to Slack, take a Stripe payment / issue refund within threshold, create calendar event, generate PDF, fetch from a generic REST endpoint with auth. Without these, every wedge project starts with 1–2 weeks of capability plumbing before the agent does anything useful.
+**Why it mattered.** Maturity-analysis framed the gap as "7 built-in capabilities vs. LangChain's 1000+ tool integrations." The original plan was to ship per-vendor capability classes (`StripeCapability`, `PostmarkCapability`, `GoogleCalendarCapability`, etc.). On review, that approach has two problems for a starter template Sunrise's downstream forks copy: each vendor SDK adds a transitive dependency tree, security surface, and version-pin burden; and naming a capability after a vendor ships a product opinion that different forks may not share (Postmark vs SendGrid; Stripe vs Adyen).
 
-**Approach.** Each new capability follows the existing `BaseCapability` shape. Repeatable per-capability cost. Prioritise: generic authenticated HTTP fetcher, Stripe (charge / refund / customer lookup), email send (Postmark/SendGrid), Slack / Discord notify, Google Calendar create-event, simple PDF/HTML document generator.
+**What shipped.** A single sharpened generic HTTP-fetcher capability + a comprehensive recipes cookbook. The HTTP foundation moved out of the workflow `external_call` executor into a shared `lib/orchestration/http/` module so the new capability and the workflow step share one implementation. The shared module gained three additions the recipes need: HMAC request signing, Idempotency-Key header support, and Basic auth — on top of the existing `none` / `bearer` / `api-key` / `query-param` modes. The new `call_external_api` capability gives an agent outbound HTTP power within the deployment allowlist; auth credentials, URL-prefix restrictions, and idempotency policy live in `AiAgentCapability.customConfig` so the LLM never sees secret env-var names and can't escape an admin-defined URL prefix. Five comprehensive recipes (transactional email, payment charge, chat notification, calendar event, document render) document how to wire common integrations without bundling any vendor SDK.
 
-**Critical files:** `lib/orchestration/capabilities/built-in/`, `prisma/schema.prisma` (`AiCapability` seeds), the `orchestration-capability-builder` skill.
+**Critical files (for reference):** `lib/orchestration/http/` (the new shared module — allowlist, auth, idempotency, response, fetch), `lib/orchestration/capabilities/built-in/call-external-api.ts`, `lib/orchestration/engine/executors/external-call.ts` (now a thin shim), `lib/validations/orchestration.ts` (`externalCallConfigSchema` extended), `prisma/seeds/011-call-external-api.ts`, `.context/orchestration/recipes/` (six markdown files), `.context/orchestration/capabilities.md` (new section), `.context/orchestration/external-calls.md` (new auth modes documented).
+
+**Versus LangChain's 1000+ stance.** Sunrise's edge is curation: ten built-in capabilities you can trust + one extensible primitive + worked recipes for the integrations developers actually wire up. Anything not covered by a recipe is a documented `/orchestration-capability-builder` skill invocation away from being a proper capability class.
 
 ### 4. More workflow templates aligned to business-application patterns
 
@@ -179,7 +181,7 @@ A pragmatic order for the next sprints, optimised for "shortest path to a sellab
 | Sprint | Theme                   | Items                                                            |
 | ------ | ----------------------- | ---------------------------------------------------------------- |
 | 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, 5 (ingestion)    |
-| 2      | Velocity to first pilot | 4 (templates), 3 (capability library)                            |
+| 2      | Velocity to first pilot | 4 (templates), ~~3 (HTTP fetcher + recipes)~~ ✅                 |
 | 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                 |
 | 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI) |
 

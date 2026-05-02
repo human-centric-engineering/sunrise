@@ -77,19 +77,19 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Tool / Capability System
 
-| Capability                                           | Sunrise  | LangGraph | CrewAI   | Haystack | OpenAI SDK | Dify     | Google ADK |
-| ---------------------------------------------------- | -------- | --------- | -------- | -------- | ---------- | -------- | ---------- |
-| Capability registry (DB-backed)                      | Strong   | None      | None     | None     | None       | Adequate | None       |
-| Dispatch pipeline (7-stage)                          | Strong   | Adequate  | Weak     | Adequate | Adequate   | Adequate | Adequate   |
-| Rate limiting per capability                         | Strong   | None      | None     | None     | None       | None     | None       |
-| Approval gating                                      | Strong   | Strong    | None     | None     | Adequate   | None     | Adequate   |
-| Zod validation on args                               | Strong   | Adequate  | Weak     | Adequate | Strong     | None     | Adequate   |
-| Default-allow dispatch / default-deny LLM visibility | Strong   | None      | None     | None     | None       | None     | None       |
-| Built-in capability library                          | Adequate | Strong    | Adequate | Strong   | Strong     | Strong   | Strong     |
-| MCP integration                                      | Strong   | Adequate  | Adequate | None     | Strong     | Adequate | Strong     |
-| Third-party tool integrations                        | Weak     | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   |
+| Capability                                           | Sunrise | LangGraph | CrewAI   | Haystack | OpenAI SDK | Dify     | Google ADK |
+| ---------------------------------------------------- | ------- | --------- | -------- | -------- | ---------- | -------- | ---------- |
+| Capability registry (DB-backed)                      | Strong  | None      | None     | None     | None       | Adequate | None       |
+| Dispatch pipeline (7-stage)                          | Strong  | Adequate  | Weak     | Adequate | Adequate   | Adequate | Adequate   |
+| Rate limiting per capability                         | Strong  | None      | None     | None     | None       | None     | None       |
+| Approval gating                                      | Strong  | Strong    | None     | None     | Adequate   | None     | Adequate   |
+| Zod validation on args                               | Strong  | Adequate  | Weak     | Adequate | Strong     | None     | Adequate   |
+| Default-allow dispatch / default-deny LLM visibility | Strong  | None      | None     | None     | None       | None     | None       |
+| Built-in capability library + recipe cookbook        | Strong  | Strong    | Adequate | Strong   | Strong     | Strong   | Strong     |
+| MCP integration                                      | Strong  | Adequate  | Adequate | None     | Strong     | Adequate | Strong     |
+| Third-party tool integrations                        | Weak    | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   |
 
-**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. **Key gap:** Built-in capability count (7) is thin vs. LangChain's 1000+ integrations.
+**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. The 10 curated built-in capabilities + the `call_external_api` outbound-HTTP primitive + a comprehensive recipes cookbook (transactional email, payments, chat notifications, calendar events, document rendering — see `.context/orchestration/recipes/`) cover the integrations Sunrise's deployment profile actually needs without bundling vendor SDKs. The deliberate trade vs. LangChain's "1000+ tool integrations" is curation: every capability and recipe is verified end-to-end and dependency-free; LangChain's count includes community-contributed integrations of variable maintenance status.
 
 ### Multi-Agent Coordination
 
@@ -224,7 +224,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 13. **Evaluation tooling** — LLM-driven completion handler vs. Haystack's 8 named evaluators or LangSmith's regression testing.
 
-14. **Third-party integrations** — 7 built-in capabilities vs. LangChain's 1000+ tool integrations.
+14. **Third-party integration breadth (raw count).** LangChain ships 1000+ community-contributed tool integrations; Sunrise curates 10 trusted built-ins plus the `call_external_api` outbound-HTTP primitive plus 5 recipe-driven patterns covering the most common shapes (email, payments, chat, calendar, document render). The trade is deliberate — curation + extensibility over count — but if a buyer's evaluation rubric is purely raw integration count, Sunrise will look thin. Mitigation is the recipe + `/orchestration-capability-builder` skill path: any new integration is a documented short walk away.
 
 ---
 
@@ -247,6 +247,8 @@ Issues that would prevent recommending Sunrise orchestration for production work
 > **Resolved:** Background execution model (previously P1 #6) — shipped May 2026 (PR #140). Non-blocking maintenance tick, lightweight execution status endpoint, live-poll status from the admin UI, `workflow.execution.failed` hook with engine-crash repair, sanitised hook payloads, liveness watchdog and token ownership on the maintenance tick.
 >
 > **Resolved:** Inline citation grounding (Tier 1 #2 in `improvement-priorities.md`) — shipped May 2026. New `Citation` type and `citations` SSE event, `[N]` marker substitution in admin React + vanilla-JS embed widget, opt-in `citationGuardMode` with under-citation and hallucinated-marker detection, persisted on assistant message metadata and rehydrated by the trace viewer.
+>
+> **Resolved:** Sharpened HTTP fetcher + dependency-free recipes cookbook (Tier 1 #3 in `improvement-priorities.md`) — shipped May 2026. Extracted shared `lib/orchestration/http/` module from the workflow `external_call` executor; added HMAC request signing, Idempotency-Key header support, and Basic auth on top of existing auth modes. New `call_external_api` capability lets agents make outbound HTTP calls within the deployment allowlist; auth credentials, URL-prefix restrictions, and idempotency policy live in `AiAgentCapability.customConfig` so the LLM never sees secret env-var names. Five comprehensive recipes (transactional email, payment charge, chat notification, calendar event, document render) document common integration shapes without bundling vendor SDKs. Deliberately trades raw integration count for curation + extensibility.
 
 ### P1 — Meaningful Quality Gaps
 

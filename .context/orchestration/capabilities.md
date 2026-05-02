@@ -41,7 +41,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | Export                         | Kind      | Purpose                                                                                  |
 | ------------------------------ | --------- | ---------------------------------------------------------------------------------------- |
 | `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`      |
-| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the nine built-in handlers                                          |
+| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the ten built-in handlers                                           |
 | `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list) |
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                              |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                      |
@@ -51,7 +51,49 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                           |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                          |
 
-Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`, `EscalateToHumanCapability`, `ApplyAuditChangesCapability`, `AddProviderModelsCapability`, `DeactivateProviderModelsCapability`) are **not** re-exported — callers go through the dispatcher.
+Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`, `EscalateToHumanCapability`, `ApplyAuditChangesCapability`, `AddProviderModelsCapability`, `DeactivateProviderModelsCapability`, `CallExternalApiCapability`) are **not** re-exported — callers go through the dispatcher.
+
+## Outbound HTTP: `call_external_api`
+
+The `call_external_api` capability gives an agent the ability to make outbound HTTP requests to allowlisted hosts. It is the foundation Sunrise uses for vendor integrations (transactional email, payments, chat notifications, calendar events, document rendering) — see [`recipes/`](./recipes/index.md) for worked examples per pattern.
+
+**Why one generic capability rather than per-vendor classes.** Bundling vendor SDKs (Stripe, Postmark, Slack, etc.) costs a lot in dependency footprint and version-pin burden, and ships a product opinion. Sunrise instead curates a single sharpened HTTP primitive plus pattern-named recipes that show developers how to wire any specific vendor.
+
+**Security posture:**
+
+- Hosts are gated by `ORCHESTRATION_ALLOWED_HOSTS` (the `lib/orchestration/http/allowlist.ts` module).
+- Auth credentials are env-var names referenced from the per-agent `AiAgentCapability.customConfig` row — never in args, never visible to the LLM, never logged.
+- Optional `allowedUrlPrefixes` in `customConfig` constrains the LLM to specific paths within an allowed host (recommended for payment-shaped APIs).
+- Optional `autoIdempotency: true` in `customConfig` attaches an `Idempotency-Key` header on every call (essential for safe retries on payment APIs).
+
+**Args (LLM-supplied):**
+
+| Field             | Type                                              | Required | Description                                                                  |
+| ----------------- | ------------------------------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `url`             | `string` (URL)                                    | Yes      | Fully qualified HTTPS URL                                                    |
+| `method`          | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'` | Yes      | HTTP method                                                                  |
+| `headers`         | `Record<string, string>`                          | No       | Optional request headers; per-binding `forcedHeaders` override matching keys |
+| `body`            | `string \| object`                                | No       | Object → JSON-stringified; string → verbatim. Ignored for GET/DELETE         |
+| `responseExtract` | `string` (JMESPath)                               | No       | Optional inline transform; falls back to binding `defaultResponseTransform`  |
+
+**Per-agent `customConfig` (admin-supplied via `AiAgentCapability.customConfig`):**
+
+| Field                      | Type                                                                                 | Description                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `allowedUrlPrefixes`       | `string[]`                                                                           | URL allowlist within the host. LLM URL must `startsWith` one |
+| `auth`                     | `{ type, secret?, queryParam?, hmacHeaderName?, hmacAlgorithm?, hmacBodyTemplate? }` | Auth config; `secret` is an env var name                     |
+| `forcedHeaders`            | `Record<string, string>`                                                             | Headers always applied; override LLM-supplied keys           |
+| `autoIdempotency`          | `boolean`                                                                            | When true, attach a fresh UUID `Idempotency-Key` per call    |
+| `idempotencyHeader`        | `string`                                                                             | Override the default `Idempotency-Key` header name           |
+| `defaultResponseTransform` | `{ type: 'jmespath' \| 'template', expression: string }`                             | Applied unless `responseExtract` is supplied                 |
+| `timeoutMs`                | `number`                                                                             | Per-binding timeout override                                 |
+| `maxResponseBytes`         | `number`                                                                             | Per-binding response cap override                            |
+
+**Error codes returned in `CapabilityResult.error.code`:** `invalid_args`, `url_not_allowed`, `host_not_allowed`, `auth_failed`, `rate_limited`, `http_error`, `timeout`, `response_too_large`, `request_aborted`, `request_failed`.
+
+**Implementation:** `lib/orchestration/capabilities/built-in/call-external-api.ts`. Delegates to `lib/orchestration/http/` for the actual HTTP call.
+
+**Don't bypass the recipes.** If you find yourself binding `call_external_api` for a pattern that isn't covered by a recipe and isn't a one-off, add a recipe — it's a markdown file, takes an hour, and saves the next person the same investigation.
 
 ## The `BaseCapability` Contract
 
