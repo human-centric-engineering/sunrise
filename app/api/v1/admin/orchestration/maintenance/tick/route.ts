@@ -3,16 +3,25 @@
  *
  * POST /api/v1/admin/orchestration/maintenance/tick
  *
- * Runs all periodic maintenance tasks in one call:
- * 1. processDueSchedules() — workflow cron schedules
- * 2. processPendingRetries() — webhook delivery retry queue
- * 3. processPendingHookRetries() — event-hook delivery retry queue
- * 4. reapZombieExecutions() — mark stale running executions as failed
- * 5. backfillMissingEmbeddings() — re-embed messages that failed embedding
- * 6. enforceRetentionPolicies() — delete conversations past retention window
- * 7. processPendingExecutions() — recover orphaned pending workflow executions
+ * Runs all periodic maintenance tasks. The HTTP response returns once
+ * `processDueSchedules()` has claimed and fired any due schedules; the
+ * remaining six tasks run as a background chain inside the same overlap
+ * guard and log their results when they settle.
  *
- * Designed to be called every ~60s by an external cron job.
+ *   1. processDueSchedules()         — workflow cron schedules            (awaited)
+ *   2. processPendingRetries()       — webhook delivery retry queue       (background)
+ *   3. processPendingHookRetries()   — event-hook delivery retry queue    (background)
+ *   4. reapZombieExecutions()        — mark stale running execs as failed (background)
+ *   5. backfillMissingEmbeddings()   — re-embed messages that failed      (background)
+ *   6. enforceRetentionPolicies()    — delete past retention window       (background)
+ *   7. processPendingExecutions()    — recover orphaned pending workflows (background)
+ *
+ * Designed to be called every ~60s by an external cron job. The 202
+ * response decouples HTTP duration from retention/reaper runtime so a
+ * cron caller with a short timeout never cuts off mid-task. Engine work
+ * inside `processDueSchedules` was already detached via `void drainEngine`,
+ * so HTTP duration is bounded by DB-claim work only.
+ *
  * Auth: Admin role required (session or API key with admin scope).
  */
 
@@ -36,6 +45,15 @@ export function __test_setTickRunning(value: boolean): void {
   tickRunning = value;
 }
 
+const BACKGROUND_TASK_NAMES = [
+  'webhookRetries',
+  'hookRetries',
+  'zombieReaper',
+  'embeddingBackfill',
+  'retention',
+  'pendingExecutionRecovery',
+] as const;
+
 export const POST = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
@@ -49,37 +67,49 @@ export const POST = withAdminAuth(async (request) => {
   tickRunning = true;
   const startMs = Date.now();
 
+  let schedules: Awaited<ReturnType<typeof processDueSchedules>> | { error: string };
   try {
-    const [schedules, retries, hookRetries, reaper, embeddings, retention, pendingRecovery] =
-      await Promise.allSettled([
-        processDueSchedules(),
-        processPendingRetries(),
-        processPendingHookRetries(),
-        reapZombieExecutions(),
-        backfillMissingEmbeddings(),
-        enforceRetentionPolicies(),
-        processPendingExecutions(),
-      ]);
-
-    function unwrap<T>(r: PromiseSettledResult<T>): T | { error: string } {
-      return r.status === 'fulfilled' ? r.value : { error: String(r.reason) };
-    }
-
-    const results = {
-      schedules: unwrap(schedules),
-      webhookRetries: unwrap(retries),
-      hookRetries: unwrap(hookRetries),
-      zombieReaper: unwrap(reaper),
-      embeddingBackfill: unwrap(embeddings),
-      retention: unwrap(retention),
-      pendingExecutionRecovery: unwrap(pendingRecovery),
-      durationMs: Date.now() - startMs,
-    };
-
-    logger.info('Maintenance tick completed', results);
-
-    return successResponse(results);
-  } finally {
-    tickRunning = false;
+    schedules = await processDueSchedules();
+  } catch (err) {
+    schedules = { error: err instanceof Error ? err.message : String(err) };
   }
+
+  // Background chain: settles asynchronously, releases the overlap guard
+  // when complete, and logs per-task results.
+  void Promise.allSettled([
+    processPendingRetries(),
+    processPendingHookRetries(),
+    reapZombieExecutions(),
+    backfillMissingEmbeddings(),
+    enforceRetentionPolicies(),
+    processPendingExecutions(),
+  ])
+    .then((settled) => {
+      const summary = Object.fromEntries(
+        BACKGROUND_TASK_NAMES.map((name, i) => {
+          const result = settled[i];
+          return [
+            name,
+            result.status === 'fulfilled' ? result.value : { error: String(result.reason) },
+          ];
+        })
+      );
+      logger.info('Maintenance tick background tasks completed', {
+        ...summary,
+        totalDurationMs: Date.now() - startMs,
+      });
+    })
+    .finally(() => {
+      tickRunning = false;
+    });
+
+  return successResponse(
+    {
+      schedules,
+      backgroundTasks: BACKGROUND_TASK_NAMES,
+      durationMs: Date.now() - startMs,
+    },
+    undefined,
+    { status: 202 }
+  );
 });
