@@ -99,6 +99,8 @@ Layout:
 - **Input/Output**: collapsible JSON cards
 - **Step timeline**: reuses `ExecutionTraceEntryRow` for each trace entry (status pill, label, type, duration, tokens, cost, expandable output/error)
 
+**Live status polling.** The summary section (status, current step, tokens, cost, error banner) is driven by `useExecutionStatusPoller` (`lib/hooks/use-execution-status-poller.ts`), which polls `GET /executions/:id/status` every 3 seconds while the execution is in a non-terminal status. The poll uses the lightweight status endpoint (no trace, no input/output) so it stays cheap on long-running executions. Once the status flips to `completed`/`failed`/`cancelled` the hook stops polling and calls `router.refresh()` so the server-rendered trace updates with the final state. The trace itself, input/output JSON, and budget cap come from the initial server-rendered fetch and are not polled.
+
 ## Logging Audit
 
 All key orchestration files use structured logging:

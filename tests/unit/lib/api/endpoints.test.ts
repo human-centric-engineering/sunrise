@@ -464,6 +464,9 @@ describe('API Endpoints', () => {
       expect(API.ADMIN.ORCHESTRATION.executionById(id)).toBe(
         '/api/v1/admin/orchestration/executions/exec-456'
       );
+      expect(API.ADMIN.ORCHESTRATION.executionStatus(id)).toBe(
+        '/api/v1/admin/orchestration/executions/exec-456/status'
+      );
       expect(API.ADMIN.ORCHESTRATION.executionApprove(id)).toBe(
         '/api/v1/admin/orchestration/executions/exec-456/approve'
       );

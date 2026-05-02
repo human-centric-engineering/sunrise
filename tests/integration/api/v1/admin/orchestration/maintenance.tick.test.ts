@@ -7,9 +7,10 @@
  *
  * Key assertions:
  * - Admin auth required
- * - Calls all 5 maintenance functions
- * - Returns results from each function
- * - Handles individual function failures gracefully
+ * - Returns 202 with schedules result + backgroundTasks list
+ * - Invokes all 7 maintenance functions (one synchronous, six background)
+ * - Schedules error is captured in payload; background still kicks off
+ * - Overlap guard prevents concurrent ticks
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -86,6 +87,7 @@ vi.mock('@/lib/orchestration/retention', () => ({
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { logger } from '@/lib/logging';
 import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
@@ -107,6 +109,16 @@ async function parseJson<T>(response: Response): Promise<T> {
   return JSON.parse(await response.text()) as T;
 }
 
+const SCHEDULE_RESULT = { processed: 2, succeeded: 2, failed: 0, errors: [] };
+const RETENTION_RESULT = {
+  deleted: 10,
+  agentsProcessed: 2,
+  webhookDeliveriesDeleted: 0,
+  hookDeliveriesDeleted: 0,
+  costLogsDeleted: 0,
+  auditLogsDeleted: 0,
+};
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
@@ -116,12 +128,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(processDueSchedules).mockResolvedValue({
-      processed: 2,
-      succeeded: 2,
-      failed: 0,
-      errors: [],
-    });
+    vi.mocked(processDueSchedules).mockResolvedValue(SCHEDULE_RESULT);
     vi.mocked(processPendingRetries).mockResolvedValue(3);
     vi.mocked(processPendingHookRetries).mockResolvedValue(2);
     vi.mocked(reapZombieExecutions).mockResolvedValue({
@@ -130,14 +137,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       abandonedApprovals: 0,
     });
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 5, failed: 0 });
-    vi.mocked(enforceRetentionPolicies).mockResolvedValue({
-      deleted: 10,
-      agentsProcessed: 2,
-      webhookDeliveriesDeleted: 0,
-      hookDeliveriesDeleted: 0,
-      costLogsDeleted: 0,
-      auditLogsDeleted: 0,
-    });
+    vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_RESULT);
     vi.mocked(processPendingExecutions).mockResolvedValue({
       recovered: 0,
       failed: 0,
@@ -161,48 +161,93 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(response.status).toBe(403);
   });
 
-  it('calls all maintenance functions and returns results', async () => {
+  it('returns 202 with schedules result and backgroundTasks list', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
     const response = await POST(makeRequest());
 
-    expect(response.status).toBe(200);
-    const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
+    expect(response.status).toBe(202);
+    const body = await parseJson<{
+      success: boolean;
+      data: { schedules: unknown; backgroundTasks: string[]; durationMs: number };
+    }>(response);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
-    expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
-    expect(body.data.webhookRetries).toBe(3);
-    expect(body.data.hookRetries).toBe(2);
-    expect(body.data.zombieReaper).toEqual({ reaped: 1, stalePending: 0, abandonedApprovals: 0 });
-    expect(body.data.embeddingBackfill).toEqual({ processed: 5, failed: 0 });
-    expect(body.data.retention).toEqual({
-      deleted: 10,
-      agentsProcessed: 2,
-      webhookDeliveriesDeleted: 0,
-      hookDeliveriesDeleted: 0,
-      costLogsDeleted: 0,
-      auditLogsDeleted: 0,
-    });
+    expect(body.data.schedules).toEqual(SCHEDULE_RESULT);
+    expect(body.data.backgroundTasks).toEqual([
+      'webhookRetries',
+      'hookRetries',
+      'zombieReaper',
+      'embeddingBackfill',
+      'retention',
+      'pendingExecutionRecovery',
+    ]);
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });
 
-  it('handles individual function failures gracefully', async () => {
+  it('still invokes the six background maintenance functions', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await POST(makeRequest());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(processPendingRetries).toHaveBeenCalledTimes(1);
+    expect(processPendingHookRetries).toHaveBeenCalledTimes(1);
+    expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
+    expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
+    expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
+    expect(processPendingExecutions).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs the per-task background summary when the chain settles', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await POST(makeRequest());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'Maintenance tick background tasks completed',
+      expect.objectContaining({
+        webhookRetries: 3,
+        hookRetries: 2,
+        zombieReaper: { reaped: 1, stalePending: 0, abandonedApprovals: 0 },
+        embeddingBackfill: { processed: 5, failed: 0 },
+        retention: RETENTION_RESULT,
+        totalDurationMs: expect.any(Number),
+      })
+    );
+  });
+
+  it('captures an individual background task failure in the log summary', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(processPendingRetries).mockRejectedValue(new Error('Redis connection failed'));
 
     const response = await POST(makeRequest());
+    expect(response.status).toBe(202);
 
-    expect(response.status).toBe(200);
-    const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
-    // test-review:accept tobe_true — structural boolean assertion on API response field
-    expect(body.success).toBe(true);
-    // The failed function should report an error string
-    expect(body.data.webhookRetries).toEqual({
-      error: expect.stringContaining('Redis connection failed'),
-    });
-    // Other functions should succeed
-    expect(body.data.schedules).toEqual({ processed: 2, succeeded: 2, failed: 0, errors: [] });
-    expect(body.data.zombieReaper).toEqual({ reaped: 1, stalePending: 0, abandonedApprovals: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'Maintenance tick background tasks completed',
+      expect.objectContaining({
+        webhookRetries: { error: expect.stringContaining('Redis connection failed') },
+        // Other tasks still succeed
+        zombieReaper: { reaped: 1, stalePending: 0, abandonedApprovals: 0 },
+      })
+    );
+  });
+
+  it('reports a schedules failure in the synchronous payload', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(processDueSchedules).mockRejectedValue(new Error('schedule lock timeout'));
+
+    const response = await POST(makeRequest());
+    expect(response.status).toBe(202);
+
+    const body = await parseJson<{
+      data: { schedules: { error: string } };
+    }>(response);
+    expect(body.data.schedules).toEqual({ error: 'schedule lock timeout' });
   });
 
   it('returns skipped when tick is already running', async () => {
@@ -212,16 +257,16 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    const body = await parseJson<{ success: boolean; data: { skipped: boolean; reason: string } }>(
-      response
-    );
+    const body = await parseJson<{
+      success: boolean;
+      data: { skipped: boolean; reason: string };
+    }>(response);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.data.skipped).toBe(true);
     expect(body.data.reason).toBe('previous tick still running');
 
-    // None of the maintenance functions should have been called
     expect(processDueSchedules).not.toHaveBeenCalled();
     expect(processPendingRetries).not.toHaveBeenCalled();
     expect(processPendingHookRetries).not.toHaveBeenCalled();

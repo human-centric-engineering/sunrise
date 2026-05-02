@@ -170,7 +170,13 @@ Applies to both single and parallel tool dispatch paths.
 
 ## Maintenance Tick Overlap Protection
 
-The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions. The flag is cleared in a `finally` block to guarantee reset even on errors.
+The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions.
+
+The guard's lifetime extends past the HTTP response. The tick awaits `processDueSchedules()` synchronously and then kicks off the other six maintenance tasks as a fire-and-forget background chain (so the cron caller never times out on a slow retention sweep). The flag is cleared in the background chain's `.finally()` — meaning a follow-up tick that arrives while retention or embedding backfill is still running will see `tickRunning === true` and be correctly skipped, even though the previous HTTP response has already returned 202. See [Scheduling — Unified Maintenance Tick](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred) for the full response contract.
+
+**Liveness watchdog.** A 5-minute `setTimeout` watchdog runs alongside the background chain. If the chain has not settled when the watchdog fires, it logs `Maintenance tick: background chain exceeded max duration; releasing guard` and force-clears `tickRunning` so subsequent ticks can proceed — preventing a single hung maintenance task (e.g. a stuck DB connection or an un-timed-out external call inside a sweep) from indefinitely blocking the platform's maintenance cycle. The hung chain itself still runs to completion in the background; the watchdog only releases the overlap guard. The warning log line is the operational signal that something inside one of the maintenance tasks is misbehaving.
+
+**Token-based ownership.** Each accepted tick claims a fresh monotonic `currentTickToken` and tags its background chain + watchdog with it. Both the watchdog and the `.finally()` only release `tickRunning` if the current token still equals the tick's own token. This prevents a late-settling old chain (whose watchdog already force-released the guard, allowing a new tick to take over) from accidentally releasing the new tick's guard.
 
 This is sufficient for single-server deployments. Multi-instance deployments would need a distributed lock (e.g. Postgres advisory lock or Redis).
 

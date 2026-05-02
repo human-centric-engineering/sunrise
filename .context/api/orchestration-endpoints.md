@@ -55,6 +55,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/definition-history`       | GET                | Workflow definition version history                     | 5.1     |
 | `/workflows/:id/definition-revert`        | POST               | Revert to previous definition version                   | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace                           | 3.2     |
+| `/executions/:id/status`                  | GET                | Lightweight status read (no trace, polling-friendly)    | —       |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                | 3.2     |
 | `/executions/:id/reject`                  | POST               | Reject paused execution with reason                     | —       |
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                       | 5.1     |

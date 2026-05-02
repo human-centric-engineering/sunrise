@@ -42,3 +42,7 @@ coverage
 # The remediation ledger uses column-aligned pipe tables that Prettier collapses,
 # which breaks the deterministic read-parse-write round-trip used by /test-triage.
 .claude/testing/remediation-ledger.md
+
+# Per-developer local Claude Code settings (gitignored, written by the CLI).
+# Format is owned by the tool, so Prettier should not gate `npm run validate` on it.
+.claude/settings.local.json

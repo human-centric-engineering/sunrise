@@ -56,6 +56,14 @@ vi.mock('@/lib/validations/orchestration', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
@@ -63,10 +71,13 @@ import {
   isValidCron,
   processDueSchedules,
   processPendingExecutions,
+  sanitiseHookErrorMessage,
 } from '@/lib/orchestration/scheduling/scheduler';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -158,6 +169,40 @@ describe('isValidCron', () => {
   it('returns false for invalid cron expressions', () => {
     expect(isValidCron('not a cron')).toBe(false);
     expect(isValidCron('60 25 * * *')).toBe(false);
+  });
+});
+
+describe('sanitiseHookErrorMessage', () => {
+  it('returns short messages unchanged when no paths are present', () => {
+    expect(sanitiseHookErrorMessage('Boom')).toBe('Boom');
+    expect(sanitiseHookErrorMessage('LLM timeout after 30s')).toBe('LLM timeout after 30s');
+  });
+
+  it('replaces POSIX absolute paths with <path>', () => {
+    expect(sanitiseHookErrorMessage('Cannot read /Users/alice/code/sunrise/lib/foo.ts')).toBe(
+      'Cannot read <path>'
+    );
+    expect(sanitiseHookErrorMessage('Error in /home/runner/work/repo/lib/x.ts at line 42')).toBe(
+      'Error in <path> at line 42'
+    );
+  });
+
+  it('replaces Windows absolute paths with <path>', () => {
+    expect(sanitiseHookErrorMessage('Module not found: C:\\Users\\bob\\app\\lib\\db.ts')).toBe(
+      'Module not found: <path>'
+    );
+  });
+
+  it('truncates messages exceeding the max length', () => {
+    const long = 'X'.repeat(500);
+    const result = sanitiseHookErrorMessage(long);
+    expect(result).toHaveLength(200);
+    expect(result.endsWith('…')).toBe(true);
+  });
+
+  it('does not truncate messages exactly at the max length boundary', () => {
+    const exact = 'A'.repeat(200);
+    expect(sanitiseHookErrorMessage(exact)).toBe(exact);
   });
 });
 
@@ -503,5 +548,193 @@ describe('processPendingExecutions', () => {
     expect(result.errors[0]).toEqual(
       expect.objectContaining({ executionId: 'exec_2', error: 'Unexpected' })
     );
+  });
+});
+
+// ─── drainEngine crash path ─────────────────────────────────────────────────
+//
+// drainEngine is private and called via `void drainEngine(...)` from both
+// processDueSchedules (line 193) and processPendingExecutions (line 295).
+// We exercise it indirectly via those entry points and use vi.waitFor to
+// observe side-effects that land after the entry point's promise resolves.
+
+describe('drainEngine: engine crash path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiWorkflowSchedule.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    vi.mocked(workflowDefinitionSchema.safeParse).mockReturnValue({
+      success: true,
+      data: VALID_DEFINITION,
+    } as never);
+  });
+
+  it('marks execution FAILED and emits workflow.execution.failed when engine throws (scheduled path)', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Engine throws on first iteration
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('engine boom');
+      })()
+    );
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => {
+      expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+        where: { id: 'exec_1' },
+        data: {
+          status: 'failed',
+          errorMessage: 'engine boom',
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'engine boom',
+      });
+      // Mirror to the webhook subscriptions subsystem so admins can subscribe
+      // via the existing /admin/orchestration/webhooks UI.
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('execution_crashed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'engine boom',
+      });
+    });
+  });
+
+  it('still emits workflow.execution.failed when the row update itself fails', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockRejectedValue(new Error('DB down'));
+
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('engine boom');
+      })()
+    );
+
+    await processDueSchedules();
+
+    // Notification is not gated on row update success — reaper is the safety net.
+    await vi.waitFor(() => {
+      expect(emitHookEvent).toHaveBeenCalledWith(
+        'workflow.execution.failed',
+        expect.objectContaining({ executionId: 'exec_1', error: 'engine boom' })
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'Scheduler: failed to mark crashed execution as failed',
+        expect.objectContaining({ executionId: 'exec_1', error: 'DB down' })
+      );
+    });
+  });
+
+  it('does not emit workflow.execution.failed when engine completes normally', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Empty generator — for-await completes without throwing
+    mockExecute.mockReturnValue((async function* () {})());
+
+    await processDueSchedules();
+
+    // Flush microtasks so the void drainEngine settles.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(emitHookEvent).not.toHaveBeenCalled();
+    expect(dispatchWebhookEvent).not.toHaveBeenCalled();
+    // Catch-path row update only; the legitimate finalize() update is mocked
+    // away because OrchestrationEngine itself is mocked. So no update call here.
+    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+
+  it('marks execution FAILED and emits hook when engine throws on recovery path', async () => {
+    const exec = makeExecution({ id: 'exec_1' });
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);
+
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('recovery boom');
+      })()
+    );
+
+    await processPendingExecutions();
+
+    await vi.waitFor(() => {
+      expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+        where: { id: 'exec_1' },
+        data: {
+          status: 'failed',
+          errorMessage: 'recovery boom',
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'recovery boom',
+      });
+    });
+  });
+
+  it('sanitises the hook payload error but persists the full message to the row (wiring proof)', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Error message contains an absolute path — the sanitiser MUST strip it
+    // from the hook payload, but the DB row MUST retain the full message.
+    const dirtyMessage = 'Cannot read /Users/alice/code/sunrise/lib/foo.ts at line 42';
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error(dirtyMessage);
+      })()
+    );
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => {
+      expect(emitHookEvent).toHaveBeenCalledWith(
+        'workflow.execution.failed',
+        expect.objectContaining({ error: 'Cannot read <path> at line 42' })
+      );
+    });
+
+    // DB row keeps the full unsanitised message — admins see the truth via
+    // the admin UI / status endpoint.
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec_1' },
+      data: expect.objectContaining({
+        errorMessage: dirtyMessage,
+      }),
+    });
   });
 });

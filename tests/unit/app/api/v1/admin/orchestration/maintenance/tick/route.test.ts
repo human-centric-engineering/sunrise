@@ -3,26 +3,27 @@
  *
  * POST /api/v1/admin/orchestration/maintenance/tick
  *
- * Runs all periodic maintenance tasks in one call and returns a summary
- * of results. Auth: Admin role required.
+ * The tick awaits processDueSchedules synchronously, then runs the other
+ * six maintenance tasks as a fire-and-forget background chain so the HTTP
+ * response is bounded by schedule-claim work (DB ops only) rather than by
+ * retention sweeps or embedding backfills.
  *
  * Test Coverage:
- * - Returns 401 when unauthenticated
- * - Returns 429 when rate limited
- * - Returns 200 with all task results on success
- * - Includes durationMs in the response
- * - Partial failures: each task result is unwrapped independently
- *   (one task throwing does not prevent others from running)
- * - Error string is returned when a task rejects
- * - All five tasks are called on every request
+ * - 401 when unauthenticated
+ * - 429 when rate limited
+ * - 202 with schedules result + backgroundTasks list on success
+ * - schedules.error in payload when processDueSchedules rejects
+ * - All seven maintenance tasks are still invoked (six in the background)
+ * - HTTP response returns before slow background tasks complete
+ * - Overlap guard releases only after the background chain settles
  *
  * @see app/api/v1/admin/orchestration/maintenance/tick/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-// ─── Module mocks ───────────────────────────────────���────────────────────────
+// ─── Module mocks ───────────────────────────────────────────────────────────
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -72,10 +73,11 @@ vi.mock('@/lib/orchestration/retention', () => ({
   enforceRetentionPolicies: vi.fn(),
 }));
 
-// ─── Imports ──────────────────────────────────���────────────────────────────���
+// ─── Imports ────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { logger } from '@/lib/logging';
 import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
@@ -83,9 +85,12 @@ import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reape
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
-import { POST } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
+import {
+  POST,
+  __test_setTickRunning,
+} from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
 
-// ─── Helpers ─────────────────────────────────────────────────────────���──────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeRequest(): NextRequest {
   return new NextRequest('http://localhost:3000/api/v1/admin/orchestration/maintenance/tick', {
@@ -97,9 +102,23 @@ async function parseJson<T>(response: Response): Promise<T> {
   return JSON.parse(await response.text()) as T;
 }
 
-// ─── Fixtures ───────────────────��─────────────────────────────────��──────────
+/** Returns a {promise, resolve} pair so a test can hold a background task pending. */
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
-const DEFAULT_SCHEDULE_RESULT = { triggered: 2, skipped: 0 };
+// ─── Fixtures ───────────────────────────────────────────────────────────────
+
+const DEFAULT_SCHEDULE_RESULT = {
+  processed: 2,
+  succeeded: 2,
+  failed: 0,
+  errors: [],
+};
 const DEFAULT_RETRY_RESULT = 3;
 const DEFAULT_HOOK_RETRY_RESULT = 2;
 const DEFAULT_REAPER_RESULT = { reaped: 1, stalePending: 0, abandonedApprovals: 0 };
@@ -114,23 +133,26 @@ const DEFAULT_RETENTION_RESULT = {
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 
-// ─── Tests ────────────────────────────────────────────────────────────────��─
+// ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
+  afterEach(() => {
+    // Background chain releases tickRunning in .finally — force-clear in case
+    // a test holds a deferred task open or the microtask hasn't drained yet.
+    __test_setTickRunning(false);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default: admin auth passes
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
-    // Default: rate limit passes
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
     vi.mocked(createRateLimitResponse).mockReturnValue(
       Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
     );
 
-    // Default: all tasks succeed
-    vi.mocked(processDueSchedules).mockResolvedValue(DEFAULT_SCHEDULE_RESULT as never);
+    vi.mocked(processDueSchedules).mockResolvedValue(DEFAULT_SCHEDULE_RESULT);
     vi.mocked(processPendingRetries).mockResolvedValue(DEFAULT_RETRY_RESULT);
     vi.mocked(processPendingHookRetries).mockResolvedValue(DEFAULT_HOOK_RETRY_RESULT);
     vi.mocked(reapZombieExecutions).mockResolvedValue(DEFAULT_REAPER_RESULT);
@@ -139,27 +161,21 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
   });
 
-  // ── Authentication ──────────────────────���───────────────────���───────────
+  // ── Authentication ───────────────────────────────────────────────────────
 
   it('returns 401 when unauthenticated', async () => {
-    // Arrange
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
-    // Act
     const response = await POST(makeRequest());
 
-    // Assert
     expect(response.status).toBe(401);
   });
 
   it('does not call any maintenance tasks when unauthenticated', async () => {
-    // Arrange
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
 
-    // Act
     await POST(makeRequest());
 
-    // Assert: no tasks run
     expect(processDueSchedules).not.toHaveBeenCalled();
     expect(processPendingRetries).not.toHaveBeenCalled();
     expect(reapZombieExecutions).not.toHaveBeenCalled();
@@ -167,10 +183,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(enforceRetentionPolicies).not.toHaveBeenCalled();
   });
 
-  // ── Rate limiting ───────────────────────────────────────────────────────
+  // ── Rate limiting ────────────────────────────────────────────────────────
 
   it('returns 429 when rate limited', async () => {
-    // Arrange: rate limit exceeded
     vi.mocked(adminLimiter.check).mockReturnValue({
       success: false,
       limit: 10,
@@ -178,15 +193,12 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       reset: Date.now() + 60_000,
     } as never);
 
-    // Act
     const response = await POST(makeRequest());
 
-    // Assert
     expect(response.status).toBe(429);
   });
 
   it('does not run tasks when rate limited', async () => {
-    // Arrange
     vi.mocked(adminLimiter.check).mockReturnValue({
       success: false,
       limit: 10,
@@ -194,93 +206,53 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       reset: Date.now() + 60_000,
     } as never);
 
-    // Act
     await POST(makeRequest());
 
-    // Assert: no tasks run
     expect(processDueSchedules).not.toHaveBeenCalled();
   });
 
-  // ── Happy path ──────────────────────────────���───────────────────────────
+  // ── Happy path ───────────────────────────────────────────────────────────
 
-  it('returns 200 with all task results on success', async () => {
-    // Act
+  it('returns 202 with schedules result and backgroundTasks list', async () => {
     const response = await POST(makeRequest());
-    const body = await parseJson<{ success: boolean; data: Record<string, unknown> }>(response);
+    const body = await parseJson<{
+      success: boolean;
+      data: { schedules: unknown; backgroundTasks: string[]; durationMs: number };
+    }>(response);
 
-    // Assert
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
-  });
-
-  it('includes schedules result in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { schedules: unknown } }>(response);
-
-    // Assert
     expect(body.data.schedules).toEqual(DEFAULT_SCHEDULE_RESULT);
-  });
-
-  it('includes webhookRetries result in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { webhookRetries: number } }>(response);
-
-    // Assert
-    expect(body.data.webhookRetries).toBe(DEFAULT_RETRY_RESULT);
-  });
-
-  it('includes hookRetries result in response data', async () => {
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { hookRetries: number } }>(response);
-
-    expect(body.data.hookRetries).toBe(DEFAULT_HOOK_RETRY_RESULT);
-  });
-
-  it('includes zombieReaper result in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { zombieReaper: unknown } }>(response);
-
-    // Assert
-    expect(body.data.zombieReaper).toEqual(DEFAULT_REAPER_RESULT);
-  });
-
-  it('includes embeddingBackfill result in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { embeddingBackfill: unknown } }>(response);
-
-    // Assert
-    expect(body.data.embeddingBackfill).toEqual(DEFAULT_EMBEDDER_RESULT);
-  });
-
-  it('includes retention result in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { retention: unknown } }>(response);
-
-    // Assert
-    expect(body.data.retention).toEqual(DEFAULT_RETENTION_RESULT);
-  });
-
-  it('includes durationMs in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{ data: { durationMs: number } }>(response);
-
-    // Assert: durationMs is a non-negative number
+    expect(body.data.backgroundTasks).toEqual([
+      'webhookRetries',
+      'hookRetries',
+      'zombieReaper',
+      'embeddingBackfill',
+      'retention',
+      'pendingExecutionRecovery',
+    ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('calls all seven maintenance tasks', async () => {
-    // Act
-    await POST(makeRequest());
+  it('does not include background task results in the synchronous response', async () => {
+    const response = await POST(makeRequest());
+    const body = await parseJson<{ data: Record<string, unknown> }>(response);
 
-    // Assert: all tasks called exactly once
+    expect(body.data).not.toHaveProperty('webhookRetries');
+    expect(body.data).not.toHaveProperty('hookRetries');
+    expect(body.data).not.toHaveProperty('zombieReaper');
+    expect(body.data).not.toHaveProperty('embeddingBackfill');
+    expect(body.data).not.toHaveProperty('retention');
+    expect(body.data).not.toHaveProperty('pendingExecutionRecovery');
+  });
+
+  it('still invokes all seven maintenance tasks (six in background)', async () => {
+    await POST(makeRequest());
+    // Drain microtasks so the background chain has a chance to fire.
+    await new Promise((resolve) => setImmediate(resolve));
+
     expect(processDueSchedules).toHaveBeenCalledTimes(1);
     expect(processPendingRetries).toHaveBeenCalledTimes(1);
     expect(processPendingHookRetries).toHaveBeenCalledTimes(1);
@@ -290,114 +262,202 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(processPendingExecutions).toHaveBeenCalledTimes(1);
   });
 
-  it('includes pendingExecutionRecovery in response data', async () => {
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{
-      data: { pendingExecutionRecovery: unknown };
-    }>(response);
-
-    // Assert
-    expect(body.data.pendingExecutionRecovery).toEqual(DEFAULT_PENDING_RECOVERY_RESULT);
-  });
-
-  // ── Partial task failure ────────────────────────────────────────────────
-
-  it('returns 200 even when one task throws — other results still included', async () => {
-    // Arrange: schedules task fails
-    vi.mocked(processDueSchedules).mockRejectedValue(new Error('DB timeout'));
-
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{
-      success: boolean;
-      data: {
-        schedules: unknown;
-        webhookRetries: unknown;
-        zombieReaper: unknown;
-      };
-    }>(response);
-
-    // Assert: 200 despite partial failure
-    expect(response.status).toBe(200);
-    // test-review:accept tobe_true — structural boolean assertion on API response field
-    expect(body.success).toBe(true);
-
-    // Other tasks still return their results
-    expect(body.data.webhookRetries).toBe(DEFAULT_RETRY_RESULT);
-    expect(body.data.zombieReaper).toEqual(DEFAULT_REAPER_RESULT);
-  });
-
-  it('returns error string for a failed task result', async () => {
-    // Arrange: retention task fails
-    vi.mocked(enforceRetentionPolicies).mockRejectedValue(new Error('Prisma connection lost'));
-
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{
-      data: { retention: { error: string } };
-    }>(response);
-
-    // Assert: error is captured as string
-    expect(body.data.retention).toHaveProperty('error');
-    expect(body.data.retention.error).toContain('Prisma connection lost');
-  });
-
-  it('returns error strings for all tasks when all fail', async () => {
-    // Arrange: all tasks fail
-    vi.mocked(processDueSchedules).mockRejectedValue(new Error('Error A'));
-    vi.mocked(processPendingRetries).mockRejectedValue(new Error('Error B'));
-    vi.mocked(processPendingHookRetries).mockRejectedValue(new Error('Error B2'));
-    vi.mocked(reapZombieExecutions).mockRejectedValue(new Error('Error C'));
-    vi.mocked(backfillMissingEmbeddings).mockRejectedValue(new Error('Error D'));
-    vi.mocked(enforceRetentionPolicies).mockRejectedValue(new Error('Error E'));
-    vi.mocked(processPendingExecutions).mockRejectedValue(new Error('Error F'));
-
-    // Act
-    const response = await POST(makeRequest());
-    const body = await parseJson<{
-      success: boolean;
-      data: {
-        schedules: { error: string };
-        webhookRetries: { error: string };
-        hookRetries: { error: string };
-        zombieReaper: { error: string };
-        embeddingBackfill: { error: string };
-        retention: { error: string };
-        pendingExecutionRecovery: { error: string };
-      };
-    }>(response);
-
-    // Assert: response is still 200 with error fields
-    expect(response.status).toBe(200);
-    // test-review:accept tobe_true — structural boolean assertion on API response field
-    expect(body.success).toBe(true);
-    expect(body.data.schedules).toHaveProperty('error');
-    expect(body.data.webhookRetries).toHaveProperty('error');
-    expect(body.data.hookRetries).toHaveProperty('error');
-    expect(body.data.zombieReaper).toHaveProperty('error');
-    expect(body.data.embeddingBackfill).toHaveProperty('error');
-    expect(body.data.retention).toHaveProperty('error');
-    expect(body.data.pendingExecutionRecovery).toHaveProperty('error');
-  });
-
-  it('tasks run concurrently (Promise.allSettled semantics)', async () => {
-    // Arrange: track call order
-    const callOrder: string[] = [];
-    vi.mocked(processDueSchedules).mockImplementation(async () => {
-      callOrder.push('schedules');
-      return DEFAULT_SCHEDULE_RESULT as never;
-    });
-    vi.mocked(reapZombieExecutions).mockImplementation(async () => {
-      callOrder.push('reaper');
-      return DEFAULT_REAPER_RESULT;
-    });
-
-    // Act
+  it('logs background task summary when the chain settles', async () => {
     await POST(makeRequest());
+    await new Promise((resolve) => setImmediate(resolve));
 
-    // Assert: both were called (order may vary with concurrent execution)
-    expect(callOrder).toContain('schedules');
-    expect(callOrder).toContain('reaper');
+    expect(logger.info).toHaveBeenCalledWith(
+      'Maintenance tick background tasks completed',
+      expect.objectContaining({
+        webhookRetries: DEFAULT_RETRY_RESULT,
+        hookRetries: DEFAULT_HOOK_RETRY_RESULT,
+        zombieReaper: DEFAULT_REAPER_RESULT,
+        embeddingBackfill: DEFAULT_EMBEDDER_RESULT,
+        retention: DEFAULT_RETENTION_RESULT,
+        pendingExecutionRecovery: DEFAULT_PENDING_RECOVERY_RESULT,
+        totalDurationMs: expect.any(Number),
+      })
+    );
+  });
+
+  // ── Non-blocking behaviour ───────────────────────────────────────────────
+
+  it('returns the HTTP response before slow background tasks complete', async () => {
+    // Hold the slowest task pending — the response must still come back.
+    const deferred = createDeferred<typeof DEFAULT_RETENTION_RESULT>();
+    vi.mocked(enforceRetentionPolicies).mockReturnValue(deferred.promise);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(202);
+    // Background task is still pending — guard is held.
+    // (We resolve it here so afterEach cleanup completes cleanly.)
+    deferred.resolve(DEFAULT_RETENTION_RESULT);
+  });
+
+  // ── Schedules failure ────────────────────────────────────────────────────
+
+  it('returns schedules.error in payload when processDueSchedules rejects', async () => {
+    vi.mocked(processDueSchedules).mockRejectedValue(new Error('schedules DB down'));
+
+    const response = await POST(makeRequest());
+    const body = await parseJson<{
+      data: { schedules: { error: string }; backgroundTasks: string[] };
+    }>(response);
+
+    expect(response.status).toBe(202);
+    expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
+    // Background tasks still kick off even when schedules fail.
+    expect(body.data.backgroundTasks).toHaveLength(6);
+  });
+
+  it('still kicks off background tasks when schedules reject', async () => {
+    vi.mocked(processDueSchedules).mockRejectedValue(new Error('schedules DB down'));
+
+    await POST(makeRequest());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(processPendingRetries).toHaveBeenCalledTimes(1);
+    expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
+    expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Overlap guard ────────────────────────────────────────────────────────
+
+  it('returns skipped when a previous tick is still running', async () => {
+    __test_setTickRunning(true);
+
+    const response = await POST(makeRequest());
+    const body = await parseJson<{
+      success: boolean;
+      data: { skipped: boolean; reason: string };
+    }>(response);
+
+    expect(response.status).toBe(200);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
+    expect(body.success).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
+    expect(body.data.skipped).toBe(true);
+    expect(body.data.reason).toBe('previous tick still running');
+
+    expect(processDueSchedules).not.toHaveBeenCalled();
+  });
+
+  it('holds the overlap guard while background tasks are pending', async () => {
+    const deferred = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+    vi.mocked(reapZombieExecutions).mockReturnValue(deferred.promise);
+
+    const first = await POST(makeRequest());
+    expect(first.status).toBe(202);
+
+    // Second tick while background is pending — must be skipped.
+    const second = await POST(makeRequest());
+    const body = await parseJson<{ data: { skipped: boolean } }>(second);
+    expect(body.data.skipped).toBe(true);
+    // test-review:accept tobe_true — structural boolean assertion on API response field
+    expect(body.data.skipped).toBe(true);
+
+    // Resolve and let the background chain settle.
+    deferred.resolve(DEFAULT_REAPER_RESULT);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Third tick after the chain settled — should run.
+    const third = await POST(makeRequest());
+    expect(third.status).toBe(202);
+    const thirdBody = await parseJson<{ data: { skipped?: boolean } }>(third);
+    expect(thirdBody.data.skipped).toBeUndefined();
+  });
+
+  // ── Watchdog ─────────────────────────────────────────────────────────────
+
+  describe('background-chain watchdog', () => {
+    const BACKGROUND_TASK_MAX_MS = 5 * 60 * 1000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('force-releases the guard if the background chain hangs past the max duration', async () => {
+      // Hang the background chain by holding a deferred forever.
+      const deferred = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred.promise);
+
+      const first = await POST(makeRequest());
+      expect(first.status).toBe(202);
+
+      // While the chain is pending, a second tick is correctly skipped.
+      const skipped = await POST(makeRequest());
+      const skippedBody = await parseJson<{ data: { skipped?: boolean } }>(skipped);
+      expect(skippedBody.data.skipped).toBe(true);
+
+      // Advance past the watchdog timeout.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      // The watchdog should have logged a warning and released the guard.
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.objectContaining({ maxDurationMs: BACKGROUND_TASK_MAX_MS })
+      );
+
+      // A subsequent tick now runs instead of being skipped.
+      const recovered = await POST(makeRequest());
+      const recoveredBody = await parseJson<{ data: { skipped?: boolean } }>(recovered);
+      expect(recovered.status).toBe(202);
+      expect(recoveredBody.data.skipped).toBeUndefined();
+
+      // Resolve the original deferred so afterEach can clean up.
+      deferred.resolve(DEFAULT_REAPER_RESULT);
+    });
+
+    it('does not warn when the background chain settles before the watchdog fires', async () => {
+      const first = await POST(makeRequest());
+      expect(first.status).toBe(202);
+
+      // Drain microtasks so the background chain has a chance to settle.
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Now advance past the watchdog timeout — it should already have been cleared.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.any(Object)
+      );
+    });
+
+    it('a late-settling old chain does not release a newer tick guard (token ownership)', async () => {
+      // Tick 1 hangs.
+      const deferred1 = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred1.promise);
+
+      await POST(makeRequest());
+
+      // Watchdog fires for tick 1, releasing the guard.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      // Tick 2 starts; hangs again. New token claims the guard.
+      const deferred2 = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred2.promise);
+
+      const second = await POST(makeRequest());
+      expect(second.status).toBe(202);
+
+      // Tick 1's deferred finally resolves — its .finally MUST NOT release the
+      // guard because tick 2 currently owns it.
+      deferred1.resolve(DEFAULT_REAPER_RESULT);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Confirm the guard is still held by tick 2 — a fresh tick is skipped.
+      const stillSkipped = await POST(makeRequest());
+      const stillSkippedBody = await parseJson<{ data: { skipped?: boolean } }>(stillSkipped);
+      expect(stillSkippedBody.data.skipped).toBe(true);
+
+      // Cleanup.
+      deferred2.resolve(DEFAULT_REAPER_RESULT);
+    });
   });
 });

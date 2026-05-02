@@ -18,6 +18,8 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 /**
@@ -45,6 +47,30 @@ export function isValidCron(cronExpression: string): boolean {
   }
 }
 
+/**
+ * Sanitise an error message before sending it to outbound hook subscribers.
+ *
+ * Webhook receivers are admin-trusted but may forward to broader-audience
+ * destinations (Slack channels, third-party automation platforms). Raw JS
+ * error messages from an engine crash can contain absolute filesystem paths,
+ * stack-derived internal references, or kilobytes of detail that nobody
+ * outside the platform should see. This helper strips obvious leaks and
+ * caps the length.
+ *
+ * The full unsanitised message is still persisted to `AiWorkflowExecution.errorMessage`
+ * so admins can inspect it via the admin UI; only the hook payload is curated.
+ *
+ * Exported for unit testing.
+ */
+const HOOK_ERROR_MAX_LEN = 200;
+const ABS_PATH_PATTERN = /(?:\/[\w.@-]+)+|[A-Za-z]:\\[\w.@\\-]+/g;
+
+export function sanitiseHookErrorMessage(message: string): string {
+  const noPaths = message.replace(ABS_PATH_PATTERN, '<path>');
+  if (noPaths.length <= HOOK_ERROR_MAX_LEN) return noPaths;
+  return noPaths.slice(0, HOOK_ERROR_MAX_LEN - 1) + '…';
+}
+
 export interface ScheduleProcessResult {
   processed: number;
   succeeded: number;
@@ -57,6 +83,11 @@ export interface ScheduleProcessResult {
  * for side-effects only (DB checkpoints, status transitions).
  *
  * Runs fire-and-forget — callers use `void drainEngine(...)`.
+ *
+ * On uncaught engine errors, the row is marked FAILED and the
+ * `workflow.execution.failed` hook is emitted. The engine's own
+ * `workflow.failed` hook is NOT emitted on this path because
+ * `finalize()` never ran — see `lib/orchestration/engine/orchestration-engine.ts`.
  */
 async function drainEngine(
   executionId: string,
@@ -74,10 +105,51 @@ async function drainEngine(
       // Events consumed for side-effects only (DB checkpoints).
     }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
     logger.error('Scheduler: engine invocation failed for execution', {
       executionId,
       workflowSlug: workflow.slug,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage,
+    });
+
+    // finalize() never ran — repair the row so /status and the hook payload
+    // agree. The zombie reaper remains the safety net if this also fails.
+    try {
+      await prisma.aiWorkflowExecution.update({
+        where: { id: executionId },
+        data: {
+          status: WorkflowStatus.FAILED,
+          errorMessage,
+          completedAt: new Date(),
+        },
+      });
+    } catch (updateErr) {
+      logger.error('Scheduler: failed to mark crashed execution as failed', {
+        executionId,
+        error: updateErr instanceof Error ? updateErr.message : String(updateErr),
+      });
+    }
+
+    const sanitisedError = sanitiseHookErrorMessage(errorMessage);
+    const crashPayload = {
+      executionId,
+      workflowId: workflow.id,
+      workflowSlug: workflow.slug,
+      userId,
+      error: sanitisedError,
+    };
+
+    // Mirror the crash to both notification subsystems:
+    //   1. Event hooks (in-process, filterable, lightweight)
+    //   2. Webhook subscriptions (durable per-delivery audit, admin-UI configurable)
+    // Admins can subscribe via either system depending on their delivery
+    // requirements. Both payloads carry the sanitised error.
+    emitHookEvent('workflow.execution.failed', crashPayload);
+    void dispatchWebhookEvent('execution_crashed', crashPayload).catch((dispatchErr) => {
+      logger.warn('Webhook dispatch failed for execution_crashed', {
+        executionId,
+        error: dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr),
+      });
     });
   }
 }

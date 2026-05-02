@@ -595,6 +595,7 @@ export const WEBHOOK_EVENT_TYPES = [
   'budget_threshold_reached',
   'execution_completed',
   'execution_failed',
+  'execution_crashed',
 ] as const;
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];

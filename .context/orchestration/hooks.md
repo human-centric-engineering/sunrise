@@ -49,10 +49,22 @@ Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 | `workflow.started`             | `lib/orchestration/engine/orchestration-engine.ts`    |
 | `workflow.completed`           | `lib/orchestration/engine/orchestration-engine.ts`    |
 | `workflow.failed`              | `lib/orchestration/engine/orchestration-engine.ts`    |
+| `workflow.execution.failed`    | `lib/orchestration/scheduling/scheduler.ts`           |
 | `workflow.paused_for_approval` | `lib/orchestration/engine/orchestration-engine.ts`    |
 | `message.created`              | `lib/orchestration/chat/streaming-handler.ts`         |
 | `conversation.started`         | `lib/orchestration/chat/streaming-handler.ts`         |
 | `agent.updated`                | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
+
+`workflow.failed` and `workflow.execution.failed` are not the same event:
+
+- `workflow.failed` fires from the engine's `finalize()` when a step errors, the budget is exceeded, or the DAG deadlocks — i.e. the engine reached its terminal block with `WorkflowStatus.FAILED`.
+- `workflow.execution.failed` fires from `drainEngine` when the engine itself throws an uncaught error, so `finalize()` never ran. The execution row would otherwise zombify until the reaper picks it up — `drainEngine` updates the row to `failed` in the same catch block before emitting, so subscribers and `/executions/:id/status` see consistent state immediately.
+
+Use `workflow.execution.failed` for "background workflow crashed entirely" alerts; use `workflow.failed` for normal step-level failure handling.
+
+The `error` field in the `workflow.execution.failed` payload is sanitised before dispatch — absolute filesystem paths (POSIX and Windows) are replaced with `<path>` and the message is truncated to 200 characters. Webhook receivers are admin-trusted but may forward to broader-audience destinations; the unsanitised message is still persisted to `AiWorkflowExecution.errorMessage` and visible to admins via `/executions/:id` and `/executions/:id/status`. See `sanitiseHookErrorMessage` in `lib/orchestration/scheduling/scheduler.ts`.
+
+**Dual dispatch on engine crash.** The same engine-crash event is mirrored into the [Webhook Subscriptions](../admin/orchestration-webhooks.md) subsystem as `execution_crashed` so admins who configure outbound notifications via the webhook UI (rather than the API-only event hooks) receive the alert. Both subsystems get the same sanitised payload. Subscribe via either system depending on your delivery requirements: event hooks for in-process filterable dispatch, webhook subscriptions for durable per-delivery audit + admin-UI configuration.
 
 ## Event Payload
 

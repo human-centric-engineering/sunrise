@@ -269,16 +269,18 @@ If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
 
 ## Execution statuses
 
-| Status                | Meaning                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------- |
-| `pending`             | Ready to run but no engine attached — set by approve/retry before the client reconnects |
-| `running`             | Engine is actively processing steps                                                     |
-| `paused_for_approval` | Waiting for a human to approve a `human_approval` step                                  |
-| `completed`           | All steps finished successfully                                                         |
-| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped, or abandoned approval)     |
-| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`                                     |
+| Status                | Meaning                                                                                                                       |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `pending`             | Ready to run but no engine attached — set by approve/retry before the client reconnects                                       |
+| `running`             | Engine is actively processing steps                                                                                           |
+| `paused_for_approval` | Waiting for a human to approve a `human_approval` step                                                                        |
+| `completed`           | All steps finished successfully                                                                                               |
+| `failed`              | A step threw an error (or budget exceeded, or zombie-reaped, or abandoned approval, or the engine itself crashed — see below) |
+| `cancelled`           | Stopped by a user via `POST /executions/:id/cancel`                                                                           |
 
 The `pending` → `running` transition happens inside `initRun()` when the engine picks up a resume. This gap prevents the zombie reaper from sweeping rows before the client reconnects.
+
+The terminal `failed` status is normally written by the engine's own `finalize()` (and accompanied by a `workflow.failed` hook). When the engine itself throws an uncaught error, `finalize()` never runs — in that case `drainEngine` (`lib/orchestration/scheduling/scheduler.ts`) writes `failed` directly from its catch block and emits a distinct `workflow.execution.failed` hook, so subscribers and `/executions/:id/status` see consistent terminal state immediately rather than waiting for the zombie reaper. See [Hooks — Event Types](./hooks.md#event-types) for the distinction.
 
 ## Zombie reaper
 
