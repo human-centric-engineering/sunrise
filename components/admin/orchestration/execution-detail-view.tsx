@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useExecutionStatusPoller } from '@/lib/hooks/use-execution-status-poller';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
@@ -127,10 +128,26 @@ function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
 
 export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewProps) {
   const router = useRouter();
-  const duration = formatDuration(execution.startedAt, execution.completedAt);
+
+  // Live status — polls /executions/:id/status while the execution is in a
+  // non-terminal status, then triggers router.refresh() so the trace catches
+  // up. The poller returns the static initial snapshot once terminal.
+  const live = useExecutionStatusPoller(execution.id, {
+    id: execution.id,
+    status: execution.status,
+    currentStep: execution.currentStep,
+    errorMessage: execution.errorMessage,
+    totalTokensUsed: execution.totalTokensUsed,
+    totalCostUsd: execution.totalCostUsd,
+    startedAt: execution.startedAt,
+    completedAt: execution.completedAt,
+    createdAt: execution.createdAt,
+  });
+
+  const duration = formatDuration(live.startedAt, live.completedAt);
   const budgetUsed =
     execution.budgetLimitUsd && execution.budgetLimitUsd > 0
-      ? (execution.totalCostUsd / execution.budgetLimitUsd) * 100
+      ? (live.totalCostUsd / execution.budgetLimitUsd) * 100
       : null;
 
   const [actionLoading, setActionLoading] = useState(false);
@@ -232,9 +249,9 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     [execution.id, router]
   );
 
-  const canCancel = execution.status === 'running' || execution.status === 'paused_for_approval';
-  const canApprove = execution.status === 'paused_for_approval';
-  const canRetry = execution.status === 'failed';
+  const canCancel = live.status === 'running' || live.status === 'paused_for_approval';
+  const canApprove = live.status === 'paused_for_approval';
+  const canRetry = live.status === 'failed';
   const failedStepId = canRetry ? trace.find((e) => e.status === 'failed')?.stepId : undefined;
 
   // Extract approval prompt from awaiting trace entry
@@ -332,8 +349,8 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Badge variant={STATUS_BADGE[execution.status] ?? 'outline'}>
-              {formatStatus(execution.status)}
+            <Badge variant={STATUS_BADGE[live.status] ?? 'outline'}>
+              {formatStatus(live.status)}
             </Badge>
           </CardContent>
         </Card>
@@ -348,7 +365,7 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-lg font-bold">{execution.totalTokensUsed.toLocaleString()}</span>
+            <span className="text-lg font-bold">{live.totalTokensUsed.toLocaleString()}</span>
           </CardContent>
         </Card>
         <Card>
@@ -362,7 +379,7 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-lg font-bold">${execution.totalCostUsd.toFixed(4)}</span>
+            <span className="text-lg font-bold">${live.totalCostUsd.toFixed(4)}</span>
           </CardContent>
         </Card>
         <Card>
@@ -422,14 +439,14 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
       </div>
 
       {/* Error banner */}
-      {execution.errorMessage && (
+      {live.errorMessage && (
         <div
           role="alert"
           className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
         >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap">
-            {execution.errorMessage}
+            {live.errorMessage}
           </pre>
         </div>
       )}

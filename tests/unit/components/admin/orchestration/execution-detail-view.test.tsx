@@ -21,8 +21,19 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh }) 
 
 const mockPost = vi.fn().mockResolvedValue({ success: true });
 vi.mock('@/lib/api/client', () => ({
-  apiClient: { post: (...args: unknown[]) => mockPost(...args) },
+  apiClient: {
+    post: (...args: unknown[]) => mockPost(...args),
+    get: vi.fn().mockResolvedValue({}),
+  },
   APIClientError: class extends Error {},
+}));
+
+// Pass the initial snapshot straight through — these tests don't exercise
+// the live-polling behaviour, which has its own test file.
+vi.mock('@/lib/hooks/use-execution-status-poller', () => ({
+  useExecutionStatusPoller: <T,>(_id: string, initial: T): T => initial,
+  isTerminalStatus: (s: string) => s === 'completed' || s === 'failed' || s === 'cancelled',
+  EXECUTION_STATUS_POLL_INTERVAL_MS: 3000,
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
