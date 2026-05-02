@@ -208,4 +208,81 @@ describe('useExecutionStatusPoller', () => {
     expect(apiClient.get).toHaveBeenCalledTimes(1);
     expect(result.current.currentStep).toBe('fast');
   });
+
+  it('rethrows non-APIClientError failures so genuine bugs are not silently masked', async () => {
+    const initial = makeSnapshot({ status: 'running' });
+    const fresh = makeSnapshot({ status: 'running', currentStep: 'recovered' });
+
+    // The hook's catch block rethrows non-APIClientError values; because
+    // setInterval calls `void poll()`, the rethrow surfaces as an unhandled
+    // rejection. We intercept it here so the test asserts that the rethrow
+    // path actually fired without leaking an unhandled rejection into vitest.
+    const captured: unknown[] = [];
+    const handler = (reason: unknown): void => {
+      captured.push(reason);
+    };
+    process.on('unhandledRejection', handler);
+
+    try {
+      vi.mocked(apiClient.get)
+        .mockRejectedValueOnce(new TypeError('not an APIClientError'))
+        .mockResolvedValueOnce(fresh);
+
+      const { result } = renderHook(() => useExecutionStatusPoller(EXECUTION_ID, initial));
+
+      // First tick rejects with a non-APIClientError → exercises the
+      // `!(err instanceof APIClientError)` truthy branch + rethrow.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(EXECUTION_STATUS_POLL_INTERVAL_MS);
+      });
+      // Snapshot unchanged because setSnapshot was never reached.
+      expect(result.current.currentStep).toBe('step1');
+
+      // The interval keeps running — the next tick still polls and updates,
+      // so a transient non-APIClientError doesn't permanently kill the hook.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(EXECUTION_STATUS_POLL_INTERVAL_MS);
+      });
+      expect(result.current.currentStep).toBe('recovered');
+
+      expect(
+        captured.some((r) => r instanceof TypeError && r.message === 'not an APIClientError')
+      ).toBe(true);
+    } finally {
+      process.off('unhandledRejection', handler);
+    }
+  });
+
+  it('discards the response and skips router.refresh when cancelled mid-fetch', async () => {
+    const initial = makeSnapshot({ status: 'running' });
+
+    // Deferred — we resolve it manually after unmount so the cancellation
+    // check between `await apiClient.get(...)` and `setSnapshot(...)` runs.
+    let resolveGet: ((value: ExecutionStatusSnapshot) => void) | undefined;
+    const pending = new Promise<ExecutionStatusSnapshot>((r) => {
+      resolveGet = r;
+    });
+    vi.mocked(apiClient.get).mockReturnValueOnce(pending);
+
+    const { unmount } = renderHook(() => useExecutionStatusPoller(EXECUTION_ID, initial));
+
+    // Fire the interval — apiClient.get is now in-flight
+    await act(async () => {
+      vi.advanceTimersByTime(EXECUTION_STATUS_POLL_INTERVAL_MS);
+    });
+    expect(apiClient.get).toHaveBeenCalledTimes(1);
+
+    // Unmount before the fetch resolves — flips the closure's `cancelled` flag
+    unmount();
+
+    // Now resolve the in-flight fetch with a terminal status. The post-fetch
+    // cancellation guard must short-circuit before setSnapshot/router.refresh.
+    await act(async () => {
+      resolveGet?.(makeSnapshot({ status: 'completed' }));
+      await pending;
+      await Promise.resolve();
+    });
+
+    expect(mockRouterRefresh).not.toHaveBeenCalled();
+  });
 });
