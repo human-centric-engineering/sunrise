@@ -31,13 +31,13 @@ Items in `maturity-analysis.md` that depend on horizontal-scale assumptions are 
 
 The items that disproportionately unlock the worked examples in `business-applications.md` without large architectural change.
 
-| #   | Improvement                                                      | Value     | Effort       | Status            |
-| --- | ---------------------------------------------------------------- | --------- | ------------ | ----------------- |
-| 1   | Hybrid search (BM25-flavoured + vector re-ranking)               | Very high | Moderate     | ✅ Done (PR #139) |
-| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate | ✅ Done (this PR) |
-| 3   | Sharpened HTTP fetcher + dependency-free recipes cookbook        | Very high | Moderate     | ✅ Done (this PR) |
-| 4   | More workflow templates aligned to business-application patterns | High      | Low          | ⚪ Not started    |
-| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate     | ⚪ Not started    |
+| #   | Improvement                                                      | Value     | Effort       | Status                            |
+| --- | ---------------------------------------------------------------- | --------- | ------------ | --------------------------------- |
+| 1   | Hybrid search (BM25-flavoured + vector re-ranking)               | Very high | Moderate     | ✅ Done (PR #139)                 |
+| 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate | ✅ Done (this PR)                 |
+| 3   | Sharpened HTTP fetcher + dependency-free recipes cookbook        | Very high | Moderate     | ✅ Done (this PR)                 |
+| 4   | More workflow templates aligned to business-application patterns | High      | Low          | ✅ Done (this PR, narrowed scope) |
+| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate     | ⚪ Not started                    |
 
 ### 1. Hybrid search (BM25-flavoured + vector re-ranking) — ✅ Done
 
@@ -65,13 +65,22 @@ The items that disproportionately unlock the worked examples in `business-applic
 
 **Versus LangChain's 1000+ stance.** Sunrise's edge is curation: ten built-in capabilities you can trust + one extensible primitive + worked recipes for the integrations developers actually wire up. Anything not covered by a recipe is a documented `/orchestration-capability-builder` skill invocation away from being a proper capability class.
 
-### 4. More workflow templates aligned to business-application patterns
+### 4. More workflow templates aligned to business-application patterns — ✅ Done (narrowed scope)
 
-**Why.** The 30 worked examples cluster around a handful of repeated shapes: conversational intake → triage → human-reviewed summary; knowledge consultation with citation; approval-gated action (refund, letter, document); scheduled monitoring → alert; multi-step assessment with evidence capture. Codifying these as templates is mostly content work and meaningfully shortens the time from "we have a partner" to "we have a working pilot."
+**Why it mattered.** The 30 worked examples cluster around a handful of repeated shapes: conversational intake → triage → human-reviewed summary; knowledge consultation with citation; approval-gated action (refund, letter, document); scheduled monitoring → alert; multi-step assessment with evidence capture; conversational learning; multi-agent orchestration. Codifying these as templates shortens the time from "we have a partner" to "we have a working pilot."
 
-**Approach.** JSON DAG definitions only; no engine changes. Five existing templates expand to ~10–12.
+**What changed in scoping.** A gap audit against the existing nine built-in templates showed the catalogue was already substantial — `customer-support`, `content-pipeline`, `saas-backend`, `research-agent`, `conversational-learning`, `data-pipeline`, `outreach-safety`, `code-review`, `autonomous-research` (plus `provider-model-audit` seeded separately as a working installed workflow via `010-model-auditor.ts`). Of the seven recurring shapes, only two were genuinely under-served: **knowledge consultation with citation** (6 of 30 worked examples, 0 dedicated templates) and **scheduled monitoring → alert** (4 of 30 worked examples, 0 dedicated templates). All other shapes were adequately or over-served. Templates also turn out to be primarily _bootstrap / educational_ rather than production-ready: real partner deployments are narrow enough that the AI builder skills (`/orchestration-solution-builder`, `/orchestration-workflow-builder`) carry the long tail better than catalogue growth ever will.
 
-**Critical files:** `lib/orchestration/workflows/templates/`, admin workflow builder seed.
+**What shipped (this PR).** Two new templates filling the genuine gaps:
+
+- `tpl-cited-knowledge-advisor` — RAG via the citation-emitting `search_knowledge_base` capability → answer with mandatory inline `[N]` markers → fail-closed citation guard → optional human review. Targets advisor-style agents in legal, financial, medical, and regulatory domains.
+- `tpl-scheduled-source-monitor` — `external_call` → LLM-classified diff vs. previous snapshot → route on change tier → notify on material change. Targets lender-criteria, regulatory, supply-chain, and council-commitment monitoring.
+
+Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-test capability allowlist) and pass the full `validateWorkflow()` + `runExtraChecks()` suite (112 assertions, 11 templates × 10–12 invariants).
+
+**Critical files (for reference):** `prisma/seeds/data/templates/cited-knowledge-advisor.ts`, `prisma/seeds/data/templates/scheduled-source-monitor.ts`, `prisma/seeds/data/templates/index.ts`, `prisma/seeds/004-builtin-templates.ts`, `tests/unit/lib/orchestration/workflows/templates/index.test.ts`.
+
+**Why the catalogue should not grow further.** Each additional template adds maintenance load (seed `hashInputs` drift, test churn, possibility-space confusion in the picker) for diminishing returns. The 11-template catalogue now covers all seven recurring shapes; future custom workflows belong to the AI builder skills, not the seed catalogue.
 
 ### 5. Document-ingestion robustness for real-world inputs
 
@@ -184,12 +193,12 @@ These were P0–P2 in `maturity-analysis.md` but lose value or relevance under s
 
 A pragmatic order for the next sprints, optimised for "shortest path to a sellable wedge."
 
-| Sprint | Theme                   | Items                                                            |
-| ------ | ----------------------- | ---------------------------------------------------------------- |
-| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, 5 (ingestion)    |
-| 2      | Velocity to first pilot | 4 (templates), ~~3 (HTTP fetcher + recipes)~~ ✅                 |
-| 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                 |
-| 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI) |
+| Sprint | Theme                   | Items                                                              |
+| ------ | ----------------------- | ------------------------------------------------------------------ |
+| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, 5 (ingestion)      |
+| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅ |
+| 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                   |
+| 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)   |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.
 
