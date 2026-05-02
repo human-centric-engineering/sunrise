@@ -685,4 +685,41 @@ describe('drainEngine: engine crash path', () => {
       });
     });
   });
+
+  it('sanitises the hook payload error but persists the full message to the row (wiring proof)', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Error message contains an absolute path — the sanitiser MUST strip it
+    // from the hook payload, but the DB row MUST retain the full message.
+    const dirtyMessage = 'Cannot read /Users/alice/code/sunrise/lib/foo.ts at line 42';
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error(dirtyMessage);
+      })()
+    );
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => {
+      expect(emitHookEvent).toHaveBeenCalledWith(
+        'workflow.execution.failed',
+        expect.objectContaining({ error: 'Cannot read <path> at line 42' })
+      );
+    });
+
+    // DB row keeps the full unsanitised message — admins see the truth via
+    // the admin UI / status endpoint.
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec_1' },
+      data: expect.objectContaining({
+        errorMessage: dirtyMessage,
+      }),
+    });
+  });
 });
