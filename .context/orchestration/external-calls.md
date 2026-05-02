@@ -17,23 +17,24 @@ The `external_call` workflow step type makes HTTP requests to external APIs. Liv
 
 ## Config fields
 
-| Field                  | Type                                                                    | Default                    | Description                                                                   |
-| ---------------------- | ----------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------- |
-| `url`                  | `string`                                                                | required                   | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`                |
-| `method`               | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`                       | `POST`                     | HTTP method                                                                   |
-| `headers`              | `Record<string, string>`                                                | `{}`                       | Additional HTTP headers                                                       |
-| `bodyTemplate`         | `string`                                                                | —                          | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation      |
-| `timeoutMs`            | `number`                                                                | `30000`                    | Request timeout in ms                                                         |
-| `authType`             | `'none' \| 'bearer' \| 'api-key' \| 'query-param' \| 'basic' \| 'hmac'` | `'none'`                   | Authentication scheme                                                         |
-| `authSecret`           | `string`                                                                | —                          | Environment variable name holding the secret (never the raw value)            |
-| `authQueryParam`       | `string`                                                                | `'api_key'`                | Query parameter name when `authType` is `'query-param'`                       |
-| `hmacHeaderName`       | `string`                                                                | `'X-Signature'`            | Header name for the HMAC signature when `authType` is `'hmac'`                |
-| `hmacAlgorithm`        | `'sha256' \| 'sha512'`                                                  | `'sha256'`                 | HMAC digest algorithm                                                         |
-| `hmacBodyTemplate`     | `string`                                                                | `{method}\n{path}\n{body}` | Template for the signed string. Tokens: `{method}`, `{path}`, `{body}`        |
-| `idempotencyKey`       | `string \| 'auto'`                                                      | —                          | `'auto'` for fresh UUID per call; explicit string used verbatim. Omit to skip |
-| `idempotencyKeyHeader` | `string`                                                                | `'Idempotency-Key'`        | Header name for the idempotency key                                           |
-| `maxResponseBytes`     | `number`                                                                | `1048576`                  | Maximum response body size (1 MB)                                             |
-| `responseTransform`    | `{ type, expression }`                                                  | —                          | Transform the response body before returning (see below)                      |
+| Field                  | Type                                                                    | Default                    | Description                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`                  | `string`                                                                | required                   | Target endpoint. Host must be in `ORCHESTRATION_ALLOWED_HOSTS`                                                                                    |
+| `method`               | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'`                       | `POST`                     | HTTP method                                                                                                                                       |
+| `headers`              | `Record<string, string>`                                                | `{}`                       | Additional HTTP headers                                                                                                                           |
+| `bodyTemplate`         | `string`                                                                | —                          | JSON template with `{{input}}` / `{{steps.stepId.output}}` interpolation                                                                          |
+| `timeoutMs`            | `number`                                                                | `30000`                    | Request timeout in ms                                                                                                                             |
+| `authType`             | `'none' \| 'bearer' \| 'api-key' \| 'query-param' \| 'basic' \| 'hmac'` | `'none'`                   | Authentication scheme                                                                                                                             |
+| `authSecret`           | `string`                                                                | —                          | Environment variable name holding the secret (never the raw value)                                                                                |
+| `authQueryParam`       | `string`                                                                | `'api_key'`                | Query parameter name when `authType` is `'query-param'`                                                                                           |
+| `apiKeyHeaderName`     | `string`                                                                | `'X-API-Key'`              | Header name when `authType` is `'api-key'`. Lets vendors with non-standard names (e.g. Postmark's `X-Postmark-Server-Token`) use the api-key path |
+| `hmacHeaderName`       | `string`                                                                | `'X-Signature'`            | Header name for the HMAC signature when `authType` is `'hmac'`                                                                                    |
+| `hmacAlgorithm`        | `'sha256' \| 'sha512'`                                                  | `'sha256'`                 | HMAC digest algorithm                                                                                                                             |
+| `hmacBodyTemplate`     | `string`                                                                | `{method}\n{path}\n{body}` | Template for the signed string. Tokens: `{method}`, `{path}`, `{body}`                                                                            |
+| `idempotencyKey`       | `string \| 'auto'`                                                      | —                          | `'auto'` for fresh UUID per call; explicit string used verbatim. Omit to skip                                                                     |
+| `idempotencyKeyHeader` | `string`                                                                | `'Idempotency-Key'`        | Header name for the idempotency key                                                                                                               |
+| `maxResponseBytes`     | `number`                                                                | `1048576`                  | Maximum response body size (1 MB)                                                                                                                 |
+| `responseTransform`    | `{ type, expression }`                                                  | —                          | Transform the response body before returning (see below)                                                                                          |
 
 ## Response Transformation
 
@@ -128,6 +129,18 @@ Non-retriable errors skip the engine's `retry` error strategy entirely — there
 ### Response size limiting
 
 Responses are capped at `maxResponseBytes` (default 1 MB). Both `Content-Length` header and actual body size are checked. Oversized responses produce a non-retriable `response_too_large` error.
+
+### Binary response handling
+
+Responses with binary content types are detected and returned as a base64 wrapper rather than UTF-8-decoded (which would corrupt the bytes). The wrapper shape:
+
+```json
+{ "encoding": "base64", "contentType": "application/pdf", "data": "<base64-encoded body>" }
+```
+
+Detected binary content types: `application/pdf`, `application/octet-stream`, `application/zip`, and anything matching `image/*`, `audio/*`, or `video/*`. Other content types (JSON, text, anything not in the binary set) take the existing parse path.
+
+The capability layer surfaces this wrapper directly as the `body` of `CapabilityResult.data` — consumers detect it via `isBinaryResponseBody(body)` (re-exported from `@/lib/orchestration/http`) and typically hand the bytes to a storage capability rather than letting the LLM see base64 inline.
 
 ### Per-step timeout
 

@@ -175,6 +175,21 @@ describe('executeHttpRequest', () => {
     ).rejects.toMatchObject({ code: 'http_error', retriable: false, status: 400 });
   });
 
+  it('still throws http_error when reading the error body itself fails', async () => {
+    // Exercises the `.catch(() => '')` arm — non-2xx response whose text()
+    // rejects (e.g. abort during body read). The HttpError still surfaces
+    // with an empty body preview rather than masking the upstream failure.
+    const errorResponse = new Response(null, { status: 500 });
+    Object.defineProperty(errorResponse, 'text', {
+      value: () => Promise.reject(new Error('body read failed')),
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errorResponse);
+
+    await expect(
+      executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' })
+    ).rejects.toMatchObject({ code: 'http_error', status: 500 });
+  });
+
   it('throws request_aborted when caller signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -185,6 +200,36 @@ describe('executeHttpRequest', () => {
         signal: controller.signal,
       })
     ).rejects.toMatchObject({ code: 'request_aborted' });
+  });
+
+  it('aborts in-flight when caller signal triggers mid-request', async () => {
+    // Exercises the `onExternalAbort` listener: the caller's signal aborts
+    // AFTER fetch has been kicked off but before it resolves. The listener
+    // forwards to the internal AbortController, which propagates to the
+    // mocked fetch and surfaces as request_timeout (AbortError → name
+    // === 'AbortError' branch in fetch.ts).
+    const controller = new AbortController();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const initSignal = init?.signal;
+      return new Promise<Response>((_, reject) => {
+        initSignal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    });
+
+    const promise = executeHttpRequest({
+      url: 'https://api.allowed.com/x',
+      method: 'GET',
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+
+    queueMicrotask(() => controller.abort());
+
+    await expect(promise).rejects.toMatchObject({ code: 'request_timeout' });
   });
 
   it('returns body with transformError when transform throws', async () => {

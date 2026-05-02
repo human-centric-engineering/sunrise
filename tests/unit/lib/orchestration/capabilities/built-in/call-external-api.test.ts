@@ -435,6 +435,91 @@ describe('CallExternalApiCapability', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('response_too_large');
     });
+
+    it('maps a 503 response to http_error (retriable HttpError variant)', async () => {
+      noBinding();
+      mockFetchJson(503, 'service unavailable');
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('http_error');
+    });
+
+    it('maps a network failure to request_failed', async () => {
+      noBinding();
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('econnrefused'));
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('request_failed');
+    });
+
+    it('maps a fetch timeout (AbortError) to timeout', async () => {
+      noBinding();
+      // Mock fetch to honour the AbortSignal it's handed by the HTTP module's
+      // internal AbortController. With timeoutMs=10, the controller aborts
+      // before the mocked fetch resolves.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        async (_url, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          })
+      );
+      bindCustomConfig({ timeoutMs: 10 });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('timeout');
+    });
+
+    it('maps an outbound rate-limit hit to rate_limited', async () => {
+      // Drive the limiter to allowed=false by setting the env var to 1
+      // request/min, then issuing two calls.
+      process.env.ORCHESTRATION_OUTBOUND_RATE_LIMIT = '1';
+      resetOutboundRateLimiters();
+      noBinding();
+      mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      // First call consumes the per-minute budget.
+      await cap.execute({ url: 'https://api.allowed.com/x', method: 'GET' }, context);
+      // Second call should hit the rate limit.
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('rate_limited');
+    });
+  });
+
+  describe('response transform error surfaced on success result', () => {
+    it('returns success: true with body + transformError when defaultResponseTransform throws', async () => {
+      bindCustomConfig({
+        defaultResponseTransform: { type: 'jmespath', expression: 'invalid syntax !!!' },
+      });
+      mockFetchJson(200, { user: { id: 'u1' } });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+      expect(result.success).toBe(true);
+      expect(result.data?.body).toEqual({ user: { id: 'u1' } });
+      expect(result.data?.transformError).toBeTruthy();
+    });
   });
 
   describe('malformed customConfig', () => {

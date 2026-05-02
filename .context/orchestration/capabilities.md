@@ -68,26 +68,27 @@ The `call_external_api` capability gives an agent the ability to make outbound H
 
 **Args (LLM-supplied):**
 
-| Field             | Type                                              | Required | Description                                                                  |
-| ----------------- | ------------------------------------------------- | -------- | ---------------------------------------------------------------------------- |
-| `url`             | `string` (URL)                                    | Yes      | Fully qualified HTTPS URL                                                    |
-| `method`          | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'` | Yes      | HTTP method                                                                  |
-| `headers`         | `Record<string, string>`                          | No       | Optional request headers; per-binding `forcedHeaders` override matching keys |
-| `body`            | `string \| object`                                | No       | Object → JSON-stringified; string → verbatim. Ignored for GET/DELETE         |
-| `responseExtract` | `string` (JMESPath)                               | No       | Optional inline transform; falls back to binding `defaultResponseTransform`  |
+| Field             | Type                                              | Required       | Description                                                                                                                |
+| ----------------- | ------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `url`             | `string` (URL)                                    | Yes (see note) | Fully qualified HTTPS URL. Optional when the binding pins a `forcedUrl` — in that case the LLM-supplied value is discarded |
+| `method`          | `'GET' \| 'POST' \| 'PUT' \| 'PATCH' \| 'DELETE'` | Yes            | HTTP method                                                                                                                |
+| `headers`         | `Record<string, string>`                          | No             | Optional request headers; per-binding `forcedHeaders` override matching keys (case-insensitively)                          |
+| `body`            | `string \| object`                                | No             | Object → JSON-stringified; string → verbatim. Ignored for GET/DELETE                                                       |
+| `responseExtract` | `string` (JMESPath)                               | No             | Optional inline transform; falls back to binding `defaultResponseTransform`                                                |
 
 **Per-agent `customConfig` (admin-supplied via `AiAgentCapability.customConfig`):**
 
-| Field                      | Type                                                                                 | Description                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| `allowedUrlPrefixes`       | `string[]`                                                                           | URL allowlist within the host. LLM URL must `startsWith` one |
-| `auth`                     | `{ type, secret?, queryParam?, hmacHeaderName?, hmacAlgorithm?, hmacBodyTemplate? }` | Auth config; `secret` is an env var name                     |
-| `forcedHeaders`            | `Record<string, string>`                                                             | Headers always applied; override LLM-supplied keys           |
-| `autoIdempotency`          | `boolean`                                                                            | When true, attach a fresh UUID `Idempotency-Key` per call    |
-| `idempotencyHeader`        | `string`                                                                             | Override the default `Idempotency-Key` header name           |
-| `defaultResponseTransform` | `{ type: 'jmespath' \| 'template', expression: string }`                             | Applied unless `responseExtract` is supplied                 |
-| `timeoutMs`                | `number`                                                                             | Per-binding timeout override                                 |
-| `maxResponseBytes`         | `number`                                                                             | Per-binding response cap override                            |
+| Field                      | Type                                                                                                    | Description                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowedUrlPrefixes`       | `string[]`                                                                                              | URL allowlist within the host. LLM URL must `startsWith` one. Ignored when `forcedUrl` is set                                                                                                                               |
+| `forcedUrl`                | `string` (URL)                                                                                          | Replaces the LLM-supplied `url` entirely. Use for endpoints where the URL itself is a credential (chat-platform incoming webhooks). When set, the LLM does not need to supply `url` at all and `allowedUrlPrefixes` is moot |
+| `auth`                     | `{ type, secret?, queryParam?, apiKeyHeaderName?, hmacHeaderName?, hmacAlgorithm?, hmacBodyTemplate? }` | Auth config; `secret` is an env var name. `apiKeyHeaderName` overrides the default `X-API-Key` header for vendors that use a custom name (e.g. Postmark's `X-Postmark-Server-Token`)                                        |
+| `forcedHeaders`            | `Record<string, string>`                                                                                | Headers always applied; override LLM-supplied keys (case-insensitively — `Authorization` from forced wins over `authorization` from args)                                                                                   |
+| `autoIdempotency`          | `boolean`                                                                                               | When true, attach a fresh UUID `Idempotency-Key` per call                                                                                                                                                                   |
+| `idempotencyHeader`        | `string`                                                                                                | Override the default `Idempotency-Key` header name                                                                                                                                                                          |
+| `defaultResponseTransform` | `{ type: 'jmespath' \| 'template', expression: string }`                                                | Applied unless `responseExtract` is supplied                                                                                                                                                                                |
+| `timeoutMs`                | `number`                                                                                                | Per-binding timeout override                                                                                                                                                                                                |
+| `maxResponseBytes`         | `number`                                                                                                | Per-binding response cap override                                                                                                                                                                                           |
 
 **Error codes returned in `CapabilityResult.error.code`:** `invalid_args`, `url_not_allowed`, `host_not_allowed`, `auth_failed`, `rate_limited`, `http_error`, `timeout`, `response_too_large`, `request_aborted`, `request_failed`.
 
