@@ -67,6 +67,7 @@ import {
   isValidCron,
   processDueSchedules,
   processPendingExecutions,
+  sanitiseHookErrorMessage,
 } from '@/lib/orchestration/scheduling/scheduler';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -163,6 +164,40 @@ describe('isValidCron', () => {
   it('returns false for invalid cron expressions', () => {
     expect(isValidCron('not a cron')).toBe(false);
     expect(isValidCron('60 25 * * *')).toBe(false);
+  });
+});
+
+describe('sanitiseHookErrorMessage', () => {
+  it('returns short messages unchanged when no paths are present', () => {
+    expect(sanitiseHookErrorMessage('Boom')).toBe('Boom');
+    expect(sanitiseHookErrorMessage('LLM timeout after 30s')).toBe('LLM timeout after 30s');
+  });
+
+  it('replaces POSIX absolute paths with <path>', () => {
+    expect(sanitiseHookErrorMessage('Cannot read /Users/alice/code/sunrise/lib/foo.ts')).toBe(
+      'Cannot read <path>'
+    );
+    expect(sanitiseHookErrorMessage('Error in /home/runner/work/repo/lib/x.ts at line 42')).toBe(
+      'Error in <path> at line 42'
+    );
+  });
+
+  it('replaces Windows absolute paths with <path>', () => {
+    expect(sanitiseHookErrorMessage('Module not found: C:\\Users\\bob\\app\\lib\\db.ts')).toBe(
+      'Module not found: <path>'
+    );
+  });
+
+  it('truncates messages exceeding the max length', () => {
+    const long = 'X'.repeat(500);
+    const result = sanitiseHookErrorMessage(long);
+    expect(result).toHaveLength(200);
+    expect(result.endsWith('…')).toBe(true);
+  });
+
+  it('does not truncate messages exactly at the max length boundary', () => {
+    const exact = 'A'.repeat(200);
+    expect(sanitiseHookErrorMessage(exact)).toBe(exact);
   });
 });
 

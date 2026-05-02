@@ -46,6 +46,30 @@ export function isValidCron(cronExpression: string): boolean {
   }
 }
 
+/**
+ * Sanitise an error message before sending it to outbound hook subscribers.
+ *
+ * Webhook receivers are admin-trusted but may forward to broader-audience
+ * destinations (Slack channels, third-party automation platforms). Raw JS
+ * error messages from an engine crash can contain absolute filesystem paths,
+ * stack-derived internal references, or kilobytes of detail that nobody
+ * outside the platform should see. This helper strips obvious leaks and
+ * caps the length.
+ *
+ * The full unsanitised message is still persisted to `AiWorkflowExecution.errorMessage`
+ * so admins can inspect it via the admin UI; only the hook payload is curated.
+ *
+ * Exported for unit testing.
+ */
+const HOOK_ERROR_MAX_LEN = 200;
+const ABS_PATH_PATTERN = /(?:\/[\w.@-]+)+|[A-Za-z]:\\[\w.@\\-]+/g;
+
+export function sanitiseHookErrorMessage(message: string): string {
+  const noPaths = message.replace(ABS_PATH_PATTERN, '<path>');
+  if (noPaths.length <= HOOK_ERROR_MAX_LEN) return noPaths;
+  return noPaths.slice(0, HOOK_ERROR_MAX_LEN - 1) + '…';
+}
+
 export interface ScheduleProcessResult {
   processed: number;
   succeeded: number;
@@ -110,7 +134,7 @@ async function drainEngine(
       workflowId: workflow.id,
       workflowSlug: workflow.slug,
       userId,
-      error: errorMessage,
+      error: sanitiseHookErrorMessage(errorMessage),
     });
   }
 }

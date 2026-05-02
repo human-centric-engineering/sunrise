@@ -62,6 +62,8 @@ Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
 Use `workflow.execution.failed` for "background workflow crashed entirely" alerts; use `workflow.failed` for normal step-level failure handling.
 
+The `error` field in the `workflow.execution.failed` payload is sanitised before dispatch — absolute filesystem paths (POSIX and Windows) are replaced with `<path>` and the message is truncated to 200 characters. Webhook receivers are admin-trusted but may forward to broader-audience destinations; the unsanitised message is still persisted to `AiWorkflowExecution.errorMessage` and visible to admins via `/executions/:id` and `/executions/:id/status`. See `sanitiseHookErrorMessage` in `lib/orchestration/scheduling/scheduler.ts`.
+
 ## Event Payload
 
 ```ts
