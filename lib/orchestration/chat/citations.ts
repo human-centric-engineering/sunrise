@@ -105,14 +105,18 @@ export function extractCitations(
     if (!isSearchResultItem(raw)) continue;
     const marker = nextMarker++;
     augmentedItems.push({ ...raw, marker });
+    // The type guard only enforces the load-bearing fields (chunkId,
+    // documentId, content, similarity). Optional metadata fields can
+    // arrive as `undefined`; coalesce to null so the persisted shape
+    // matches the Citation type contract.
     newCitations.push({
       marker,
       chunkId: raw.chunkId,
       documentId: raw.documentId,
       documentName: raw.documentName ?? null,
-      section: raw.section,
-      patternNumber: raw.patternNumber,
-      patternName: raw.patternName,
+      section: raw.section ?? null,
+      patternNumber: raw.patternNumber ?? null,
+      patternName: raw.patternName ?? null,
       excerpt: truncateExcerpt(raw.content),
       similarity: raw.similarity,
       ...(raw.vectorScore !== undefined ? { vectorScore: raw.vectorScore } : {}),

@@ -309,4 +309,57 @@ describe('ConversationTraceViewer', () => {
       expect(screen.queryByText(/"modelUsed"/)).not.toBeInTheDocument();
     });
   });
+
+  describe('Citations rehydration', () => {
+    it('renders the sources panel and marker links from persisted metadata.citations', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'The deposit must be protected within 30 days [1].',
+              metadata: {
+                citations: [
+                  {
+                    marker: 1,
+                    chunkId: 'c1',
+                    documentId: 'd1',
+                    documentName: 'Tenancy Guide',
+                    section: 'Page 12',
+                    patternNumber: null,
+                    patternName: null,
+                    excerpt: 'Deposits must be protected within 30 days of receipt.',
+                    similarity: 0.91,
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByLabelText('Citation 1')).toHaveAttribute('href', '#citation-1');
+      expect(screen.getByText('Sources (1)')).toBeInTheDocument();
+      expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
+      expect(screen.getByText(/within 30 days of receipt/)).toBeInTheDocument();
+    });
+
+    it('does not render a sources panel when metadata.citations is absent', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'A general-knowledge answer with no retrieval.',
+              metadata: { modelUsed: 'claude-sonnet-4-6' },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+    });
+  });
 });

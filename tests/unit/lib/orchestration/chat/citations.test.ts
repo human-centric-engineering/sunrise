@@ -121,4 +121,23 @@ describe('extractCitations', () => {
     const output = extractCitations('search_knowledge_base', result, 1);
     expect(output.citations[0].documentName).toBe(null);
   });
+
+  it('coalesces missing optional fields to null to match the Citation type', () => {
+    // Type-guard only enforces load-bearing fields; missing optional
+    // fields must not leak through as `undefined`.
+    const item = {
+      chunkId: 'sparse-1',
+      documentId: 'doc-2',
+      content: 'minimal item',
+      similarity: 0.8,
+      // patternNumber, patternName, section, documentName all omitted
+    };
+    const result = searchResult([item]);
+    const output = extractCitations('search_knowledge_base', result, 1);
+    const c = output.citations[0];
+    expect(c.documentName).toBe(null);
+    expect(c.section).toBe(null);
+    expect(c.patternNumber).toBe(null);
+    expect(c.patternName).toBe(null);
+  });
 });
