@@ -367,4 +367,97 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     const thirdBody = await parseJson<{ data: { skipped?: boolean } }>(third);
     expect(thirdBody.data.skipped).toBeUndefined();
   });
+
+  // ── Watchdog ─────────────────────────────────────────────────────────────
+
+  describe('background-chain watchdog', () => {
+    const BACKGROUND_TASK_MAX_MS = 5 * 60 * 1000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('force-releases the guard if the background chain hangs past the max duration', async () => {
+      // Hang the background chain by holding a deferred forever.
+      const deferred = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred.promise);
+
+      const first = await POST(makeRequest());
+      expect(first.status).toBe(202);
+
+      // While the chain is pending, a second tick is correctly skipped.
+      const skipped = await POST(makeRequest());
+      const skippedBody = await parseJson<{ data: { skipped?: boolean } }>(skipped);
+      expect(skippedBody.data.skipped).toBe(true);
+
+      // Advance past the watchdog timeout.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      // The watchdog should have logged a warning and released the guard.
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.objectContaining({ maxDurationMs: BACKGROUND_TASK_MAX_MS })
+      );
+
+      // A subsequent tick now runs instead of being skipped.
+      const recovered = await POST(makeRequest());
+      const recoveredBody = await parseJson<{ data: { skipped?: boolean } }>(recovered);
+      expect(recovered.status).toBe(202);
+      expect(recoveredBody.data.skipped).toBeUndefined();
+
+      // Resolve the original deferred so afterEach can clean up.
+      deferred.resolve(DEFAULT_REAPER_RESULT);
+    });
+
+    it('does not warn when the background chain settles before the watchdog fires', async () => {
+      const first = await POST(makeRequest());
+      expect(first.status).toBe(202);
+
+      // Drain microtasks so the background chain has a chance to settle.
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Now advance past the watchdog timeout — it should already have been cleared.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.any(Object)
+      );
+    });
+
+    it('a late-settling old chain does not release a newer tick guard (token ownership)', async () => {
+      // Tick 1 hangs.
+      const deferred1 = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred1.promise);
+
+      await POST(makeRequest());
+
+      // Watchdog fires for tick 1, releasing the guard.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS);
+
+      // Tick 2 starts; hangs again. New token claims the guard.
+      const deferred2 = createDeferred<typeof DEFAULT_REAPER_RESULT>();
+      vi.mocked(reapZombieExecutions).mockReturnValue(deferred2.promise);
+
+      const second = await POST(makeRequest());
+      expect(second.status).toBe(202);
+
+      // Tick 1's deferred finally resolves — its .finally MUST NOT release the
+      // guard because tick 2 currently owns it.
+      deferred1.resolve(DEFAULT_REAPER_RESULT);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Confirm the guard is still held by tick 2 — a fresh tick is skipped.
+      const stillSkipped = await POST(makeRequest());
+      const stillSkippedBody = await parseJson<{ data: { skipped?: boolean } }>(stillSkipped);
+      expect(stillSkippedBody.data.skipped).toBe(true);
+
+      // Cleanup.
+      deferred2.resolve(DEFAULT_REAPER_RESULT);
+    });
+  });
 });

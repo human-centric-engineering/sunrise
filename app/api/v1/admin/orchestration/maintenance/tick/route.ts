@@ -40,6 +40,15 @@ import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
 /** Module-level guard against overlapping tick executions. */
 let tickRunning = false;
 
+/**
+ * Per-tick monotonic token. Each accepted tick claims a fresh token and
+ * tags its background chain + watchdog with it. Only the owning token can
+ * release `tickRunning` — this prevents a late-settling old chain (whose
+ * watchdog already force-released the guard) from accidentally releasing
+ * a newer tick's guard.
+ */
+let currentTickToken = 0;
+
 /** Exposed for testing only — simulate an in-progress tick. */
 export function __test_setTickRunning(value: boolean): void {
   tickRunning = value;
@@ -54,6 +63,15 @@ const BACKGROUND_TASK_NAMES = [
   'pendingExecutionRecovery',
 ] as const;
 
+/**
+ * Watchdog timeout for the background chain. If the chain hasn't settled
+ * within this window we force-release the guard so subsequent ticks can
+ * proceed. Five minutes is a generous upper bound — any single maintenance
+ * task taking longer than this represents a real incident worth flagging
+ * via the warning log line.
+ */
+const BACKGROUND_TASK_MAX_MS = 5 * 60 * 1000;
+
 export const POST = withAdminAuth(async (request) => {
   const clientIP = getClientIP(request);
   const rateLimit = adminLimiter.check(clientIP);
@@ -65,6 +83,7 @@ export const POST = withAdminAuth(async (request) => {
   }
 
   tickRunning = true;
+  const myTickToken = ++currentTickToken;
   const startMs = Date.now();
 
   let schedules: Awaited<ReturnType<typeof processDueSchedules>> | { error: string };
@@ -73,6 +92,18 @@ export const POST = withAdminAuth(async (request) => {
   } catch (err) {
     schedules = { error: err instanceof Error ? err.message : String(err) };
   }
+
+  // Watchdog: force-release the guard if the background chain hangs past
+  // the max duration. Token-checked so we only release if this tick still
+  // owns the guard.
+  const watchdogId = setTimeout(() => {
+    if (currentTickToken !== myTickToken || !tickRunning) return;
+    logger.warn('Maintenance tick: background chain exceeded max duration; releasing guard', {
+      maxDurationMs: BACKGROUND_TASK_MAX_MS,
+      tickStartMs: startMs,
+    });
+    tickRunning = false;
+  }, BACKGROUND_TASK_MAX_MS);
 
   // Background chain: settles asynchronously, releases the overlap guard
   // when complete, and logs per-task results.
@@ -100,7 +131,13 @@ export const POST = withAdminAuth(async (request) => {
       });
     })
     .finally(() => {
-      tickRunning = false;
+      clearTimeout(watchdogId);
+      // Only release the guard if this tick still owns it. If the watchdog
+      // already fired and a newer tick has taken over, leave the newer tick's
+      // state alone.
+      if (currentTickToken === myTickToken) {
+        tickRunning = false;
+      }
     });
 
   return successResponse(
