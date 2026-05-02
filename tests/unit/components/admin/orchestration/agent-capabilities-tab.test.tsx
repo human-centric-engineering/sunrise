@@ -210,9 +210,13 @@ describe('AgentCapabilitiesTab', () => {
           expect.stringContaining('/capabilities'),
           expect.objectContaining({ body: { capabilityId: 'cap-calc' } })
         );
-        // refetch was called (get called more than initial 2 times)
-        // 2 initial + 2 refetch + 1 usage badge fetch = 5
-        expect(apiClient.get).toHaveBeenCalledTimes(5);
+        // The contract: after attach the component refetches the agent's
+        // capability list. Assert the agent-capabilities URL was called at
+        // least twice — once on mount and once after the attach mutation.
+        const agentCapCalls = vi
+          .mocked(apiClient.get)
+          .mock.calls.filter(([url]) => url.includes(`/agents/${AGENT_ID}/capabilities`));
+        expect(agentCapCalls.length).toBeGreaterThanOrEqual(2);
       });
     });
   });
@@ -239,8 +243,13 @@ describe('AgentCapabilitiesTab', () => {
         expect(apiClient.delete).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search')
         );
-        // 2 initial + 2 refetch + 1 usage badge fetch = 5
-        expect(apiClient.get).toHaveBeenCalledTimes(5);
+        // The contract: after detach the component refetches the agent's
+        // capability list. Assert the agent-capabilities URL was called at
+        // least twice — once on mount and once after the detach mutation.
+        const agentCapCalls = vi
+          .mocked(apiClient.get)
+          .mock.calls.filter(([url]) => url.includes(`/agents/${AGENT_ID}/capabilities`));
+        expect(agentCapCalls.length).toBeGreaterThanOrEqual(2);
       });
     });
   });

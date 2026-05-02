@@ -53,6 +53,7 @@ import {
   PausedForApproval,
 } from '@/lib/orchestration/engine/errors';
 import { prisma } from '@/lib/db/client';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -2452,5 +2453,41 @@ describe('OrchestrationEngine', () => {
     const event = rawEvent as Extract<ExecutionEvent, { type: 'step_retry' }>;
 
     expect(event.reason).toBe('{"code":"GUARD_FAIL","detail":"input rejected"}');
+  });
+
+  // ─── Hook event dispatch (Finding 21) ────────────────────────────────────
+  // The engine calls emitHookEvent at workflow lifecycle boundaries. Verify the
+  // dispatch contract: 'workflow.started' fires at the start of a successful
+  // run and 'workflow.completed' fires when the DAG finishes cleanly.
+  // We assert on the emitHookEvent mock's call list (the mock is defined at the
+  // top of this file in the vi.mock('@/lib/orchestration/hooks/registry') block).
+
+  it('dispatches workflow.started and workflow.completed hook events on a successful linear run', async () => {
+    // Arrange
+    registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 1, costUsd: 0.001 }));
+
+    // Act
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    // Assert: the hook dispatcher received the lifecycle events in order
+    const hookCalls = vi.mocked(emitHookEvent).mock.calls;
+    const eventNames = hookCalls.map(([name]) => name);
+
+    expect(eventNames).toContain('workflow.started');
+    expect(eventNames).toContain('workflow.completed');
+
+    // 'workflow.started' must be emitted before 'workflow.completed'
+    const startedIdx = eventNames.indexOf('workflow.started');
+    const completedIdx = eventNames.indexOf('workflow.completed');
+    expect(startedIdx).toBeLessThan(completedIdx);
+
+    // The payload for workflow.started must include the execution and workflow IDs
+    const startedCall = hookCalls[startedIdx];
+    expect(startedCall[1]).toEqual(
+      expect.objectContaining({
+        executionId: expect.any(String),
+        workflowId: 'wf_test',
+      })
+    );
   });
 });
