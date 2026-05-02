@@ -56,6 +56,10 @@ vi.mock('@/lib/validations/orchestration', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
@@ -67,6 +71,7 @@ import {
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -503,5 +508,146 @@ describe('processPendingExecutions', () => {
     expect(result.errors[0]).toEqual(
       expect.objectContaining({ executionId: 'exec_2', error: 'Unexpected' })
     );
+  });
+});
+
+// ─── drainEngine crash path ─────────────────────────────────────────────────
+//
+// drainEngine is private and called via `void drainEngine(...)` from both
+// processDueSchedules (line 193) and processPendingExecutions (line 295).
+// We exercise it indirectly via those entry points and use vi.waitFor to
+// observe side-effects that land after the entry point's promise resolves.
+
+describe('drainEngine: engine crash path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiWorkflowSchedule.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    vi.mocked(workflowDefinitionSchema.safeParse).mockReturnValue({
+      success: true,
+      data: VALID_DEFINITION,
+    } as never);
+  });
+
+  it('marks execution FAILED and emits workflow.execution.failed when engine throws (scheduled path)', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Engine throws on first iteration
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('engine boom');
+      })()
+    );
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => {
+      expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+        where: { id: 'exec_1' },
+        data: {
+          status: 'failed',
+          errorMessage: 'engine boom',
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'engine boom',
+      });
+    });
+  });
+
+  it('still emits workflow.execution.failed when the row update itself fails', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockRejectedValue(new Error('DB down'));
+
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('engine boom');
+      })()
+    );
+
+    await processDueSchedules();
+
+    // Notification is not gated on row update success — reaper is the safety net.
+    await vi.waitFor(() => {
+      expect(emitHookEvent).toHaveBeenCalledWith(
+        'workflow.execution.failed',
+        expect.objectContaining({ executionId: 'exec_1', error: 'engine boom' })
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'Scheduler: failed to mark crashed execution as failed',
+        expect.objectContaining({ executionId: 'exec_1', error: 'DB down' })
+      );
+    });
+  });
+
+  it('does not emit workflow.execution.failed when engine completes normally', async () => {
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_1',
+      inputData: { topic: 'test' },
+    } as never);
+
+    // Empty generator — for-await completes without throwing
+    mockExecute.mockReturnValue((async function* () {})());
+
+    await processDueSchedules();
+
+    // Flush microtasks so the void drainEngine settles.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(emitHookEvent).not.toHaveBeenCalled();
+    // Catch-path row update only; the legitimate finalize() update is mocked
+    // away because OrchestrationEngine itself is mocked. So no update call here.
+    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+
+  it('marks execution FAILED and emits hook when engine throws on recovery path', async () => {
+    const exec = makeExecution({ id: 'exec_1' });
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);
+
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('recovery boom');
+      })()
+    );
+
+    await processPendingExecutions();
+
+    await vi.waitFor(() => {
+      expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+        where: { id: 'exec_1' },
+        data: {
+          status: 'failed',
+          errorMessage: 'recovery boom',
+          completedAt: expect.any(Date),
+        },
+      });
+      expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'recovery boom',
+      });
+    });
   });
 });

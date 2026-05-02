@@ -18,6 +18,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 /**
@@ -57,6 +58,11 @@ export interface ScheduleProcessResult {
  * for side-effects only (DB checkpoints, status transitions).
  *
  * Runs fire-and-forget — callers use `void drainEngine(...)`.
+ *
+ * On uncaught engine errors, the row is marked FAILED and the
+ * `workflow.execution.failed` hook is emitted. The engine's own
+ * `workflow.failed` hook is NOT emitted on this path because
+ * `finalize()` never ran — see `lib/orchestration/engine/orchestration-engine.ts`.
  */
 async function drainEngine(
   executionId: string,
@@ -74,10 +80,37 @@ async function drainEngine(
       // Events consumed for side-effects only (DB checkpoints).
     }
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
     logger.error('Scheduler: engine invocation failed for execution', {
       executionId,
       workflowSlug: workflow.slug,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage,
+    });
+
+    // finalize() never ran — repair the row so /status and the hook payload
+    // agree. The zombie reaper remains the safety net if this also fails.
+    try {
+      await prisma.aiWorkflowExecution.update({
+        where: { id: executionId },
+        data: {
+          status: WorkflowStatus.FAILED,
+          errorMessage,
+          completedAt: new Date(),
+        },
+      });
+    } catch (updateErr) {
+      logger.error('Scheduler: failed to mark crashed execution as failed', {
+        executionId,
+        error: updateErr instanceof Error ? updateErr.message : String(updateErr),
+      });
+    }
+
+    emitHookEvent('workflow.execution.failed', {
+      executionId,
+      workflowId: workflow.id,
+      workflowSlug: workflow.slug,
+      userId,
+      error: errorMessage,
     });
   }
 }
