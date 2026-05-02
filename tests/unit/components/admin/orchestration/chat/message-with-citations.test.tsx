@@ -101,4 +101,25 @@ describe('MessageWithCitations', () => {
     const list = screen.getByRole('list');
     expect(within(list).queryByText(/·/)).not.toBeInTheDocument();
   });
+
+  it('reveals a collapsed sources panel when a valid marker is clicked', async () => {
+    const user = userEvent.setup();
+    render(<MessageWithCitations content="See [1]" citations={[makeCitation({ marker: 1 })]} />);
+    const toggle = screen.getByRole('button', { name: /sources \(1\)/i });
+    // Collapse the panel first so we can verify the click re-opens it.
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(screen.getByLabelText('Citation 1'));
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('prevents navigation when a hallucinated marker is clicked', () => {
+    render(<MessageWithCitations content="See [9]" citations={[makeCitation({ marker: 1 })]} />);
+    const link = screen.getByLabelText('Unmatched citation marker 9');
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link.dispatchEvent(event);
+    // React's synthetic preventDefault propagates to the native event.
+    expect(event.defaultPrevented).toBe(true);
+  });
 });
