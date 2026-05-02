@@ -170,7 +170,9 @@ Applies to both single and parallel tool dispatch paths.
 
 ## Maintenance Tick Overlap Protection
 
-The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions. The flag is cleared in a `finally` block to guarantee reset even on errors.
+The unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`) uses a module-level `tickRunning` boolean flag to prevent concurrent execution. If a tick is still running when the next cron fires, the endpoint returns `{ skipped: true, reason: 'previous tick still running' }` without calling any maintenance functions.
+
+The guard's lifetime extends past the HTTP response. The tick awaits `processDueSchedules()` synchronously and then kicks off the other six maintenance tasks as a fire-and-forget background chain (so the cron caller never times out on a slow retention sweep). The flag is cleared in the background chain's `.finally()` — meaning a follow-up tick that arrives while retention or embedding backfill is still running will see `tickRunning === true` and be correctly skipped, even though the previous HTTP response has already returned 202. See [Scheduling — Unified Maintenance Tick](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred) for the full response contract.
 
 This is sufficient for single-server deployments. Multi-instance deployments would need a distributed lock (e.g. Postgres advisory lock or Redis).
 
