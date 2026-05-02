@@ -32,6 +32,7 @@ import { EscalateToHumanCapability } from '@/lib/orchestration/capabilities/buil
 import { ApplyAuditChangesCapability } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
 import { DeactivateProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/deactivate-provider-models';
+import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/built-in/call-external-api';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
@@ -51,6 +52,7 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new ApplyAuditChangesCapability());
   capabilityDispatcher.register(new AddProviderModelsCapability());
   capabilityDispatcher.register(new DeactivateProviderModelsCapability());
+  capabilityDispatcher.register(new CallExternalApiCapability());
   registered = true;
 }
 

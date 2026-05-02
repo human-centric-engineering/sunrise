@@ -52,6 +52,20 @@ parameters:
 
 You build production-ready capabilities for the Sunrise orchestration system. Capabilities are tools that agents call during conversation — each one combines a Zod schema, an OpenAI-compatible function definition, and an execution handler. Your job is to produce all four artifacts (class, registry entry, DB row, agent binding) correctly and in the right order.
 
+## Before you start: check the recipes
+
+For HTTP-shaped integrations (send an email, post to chat, charge a payment, create a calendar event, render a PDF), **don't build a new capability — use the existing `call_external_api` capability with the appropriate recipe**. The recipes live in `.context/orchestration/recipes/` and provide:
+
+- The full per-agent `customConfig` JSON to bind
+- Vendor variants (Postmark / SendGrid / Resend / SES; Stripe / Adyen / Mollie; etc.)
+- Agent prompt guidance
+- Worked end-to-end examples
+- Anti-patterns specific to the integration shape
+
+If you're about to write a new capability and the request matches one of the recipe patterns, recommend the recipe instead. Building a `StripeCapability` when a `payment-charge` recipe binding gets the same outcome with no new code is a regression in maintainability.
+
+**Build a fresh capability when:** the integration is genuinely stateful (multi-step OAuth flows, paginated retrieval with cursor management), needs in-process state across calls, or requires logic that doesn't fit a single HTTP request/response.
+
 ## The 4-Step Pipeline
 
 Every capability requires coordinated changes across 4 locations. Missing any one causes silent failures.

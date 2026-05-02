@@ -38,10 +38,8 @@ vi.mock('@/lib/logging', () => ({
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
-import {
-  executeExternalCall,
-  resetAllowlistCache,
-} from '@/lib/orchestration/engine/executors/external-call';
+import { executeExternalCall } from '@/lib/orchestration/engine/executors/external-call';
+import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
 import { resetOutboundRateLimiters } from '@/lib/orchestration/engine/outbound-rate-limiter';
 import { logger } from '@/lib/logging';
 import type { WorkflowStep } from '@/types/orchestration';
@@ -149,8 +147,11 @@ describe('executeExternalCall', () => {
 
     await executeExternalCall(makeStep(), makeCtx());
 
+    // Logging happens in the shared HTTP module — message strings are
+    // module-level identifiers, but `stepId` is propagated via
+    // `logContext` so admins can still correlate to the workflow step.
     expect(logger.info).toHaveBeenCalledWith(
-      'External call: sending request',
+      'HTTP request: sending',
       expect.objectContaining({
         stepId: 'ext1',
         method: 'POST',
@@ -158,7 +159,7 @@ describe('executeExternalCall', () => {
       })
     );
     expect(logger.info).toHaveBeenCalledWith(
-      'External call: success',
+      'HTTP request: success',
       expect.objectContaining({
         stepId: 'ext1',
         status: 200,
@@ -451,7 +452,7 @@ describe('executeExternalCall', () => {
     await executeExternalCall(makeStep(), makeCtx()).catch(() => {});
 
     expect(logger.warn).toHaveBeenCalledWith(
-      'External call: non-2xx response',
+      'HTTP request: non-2xx response',
       expect.objectContaining({
         status: 400,
         retriable: false,

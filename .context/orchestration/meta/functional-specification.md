@@ -201,15 +201,22 @@ This prevents the LLM from being confused by tools it shouldn't use while mainta
 
 ### 4.4 Built-in Capabilities
 
-| Capability               | Function                                                                |
-| ------------------------ | ----------------------------------------------------------------------- |
-| `search_knowledge_base`  | Semantic search across ingested documents; produces a citation envelope |
-| `estimate_workflow_cost` | Pre-execution cost estimation for workflows                             |
-| `get_pattern_detail`     | Retrieve agentic design pattern information                             |
-| `read_user_memory`       | Access user-specific memory store                                       |
-| `write_user_memory`      | Persist user-specific information                                       |
+| Capability                   | Function                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| `search_knowledge_base`      | Semantic search across ingested documents; produces a citation envelope                            |
+| `estimate_workflow_cost`     | Pre-execution cost estimation for workflows                                                        |
+| `get_pattern_detail`         | Retrieve agentic design pattern information                                                        |
+| `read_user_memory`           | Access user-specific memory store                                                                  |
+| `write_user_memory`          | Persist user-specific information                                                                  |
+| `escalate_to_human`          | Signal a conversation needs human attention; dispatches webhook for helpdesk routing               |
+| `apply_audit_changes`        | Apply approved model audit field changes to `AiProviderModel`                                      |
+| `add_provider_models`        | Create new `AiProviderModel` entries from audit proposals                                          |
+| `deactivate_provider_models` | Soft-delete models by setting `isActive = false`                                                   |
+| `call_external_api`          | Outbound HTTP to allowlisted hosts; per-agent auth/idempotency/URL-prefix policy in `customConfig` |
 
 System capabilities are protected (`isSystem: true`) — they cannot be deleted or deactivated.
+
+For vendor integrations (transactional email, payments, chat notifications, calendar events, document rendering), `call_external_api` + the recipes cookbook at `.context/orchestration/recipes/` covers the common patterns without bundling vendor SDKs. Each recipe is pattern-named (not vendor-named) and gives the full per-agent `customConfig` JSON, agent prompt guidance, worked example, and anti-patterns.
 
 ---
 

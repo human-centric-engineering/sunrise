@@ -45,13 +45,14 @@ describe('registerBuiltInCapabilities', () => {
     expect(capabilityDispatcher.has('apply_audit_changes')).toBe(true);
     expect(capabilityDispatcher.has('add_provider_models')).toBe(true);
     expect(capabilityDispatcher.has('deactivate_provider_models')).toBe(true);
+    expect(capabilityDispatcher.has('call_external_api')).toBe(true);
   });
 
   it('is idempotent (second call is a no-op)', () => {
     const spy = vi.spyOn(capabilityDispatcher, 'register');
     registerBuiltInCapabilities();
     registerBuiltInCapabilities();
-    expect(spy).toHaveBeenCalledTimes(9); // only from the first call
+    expect(spy).toHaveBeenCalledTimes(10); // only from the first call
     spy.mockRestore();
   });
 });
