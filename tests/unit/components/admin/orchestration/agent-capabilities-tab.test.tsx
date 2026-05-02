@@ -29,8 +29,8 @@ vi.mock('@/lib/api/client', () => ({
   APIClientError: class APIClientError extends Error {
     constructor(
       message: string,
-      public statusCode = 500,
-      public code = 'INTERNAL_ERROR'
+      public code = 'INTERNAL_ERROR',
+      public status = 500
     ) {
       super(message);
       this.name = 'APIClientError';
@@ -210,9 +210,13 @@ describe('AgentCapabilitiesTab', () => {
           expect.stringContaining('/capabilities'),
           expect.objectContaining({ body: { capabilityId: 'cap-calc' } })
         );
-        // refetch was called (get called more than initial 2 times)
-        // 2 initial + 2 refetch + 1 usage badge fetch = 5
-        expect(apiClient.get).toHaveBeenCalledTimes(5);
+        // The contract: after attach the component refetches the agent's
+        // capability list. Assert the agent-capabilities URL was called at
+        // least twice — once on mount and once after the attach mutation.
+        const agentCapCalls = vi
+          .mocked(apiClient.get)
+          .mock.calls.filter(([url]) => url.includes(`/agents/${AGENT_ID}/capabilities`));
+        expect(agentCapCalls.length).toBeGreaterThanOrEqual(2);
       });
     });
   });
@@ -239,8 +243,13 @@ describe('AgentCapabilitiesTab', () => {
         expect(apiClient.delete).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search')
         );
-        // 2 initial + 2 refetch + 1 usage badge fetch = 5
-        expect(apiClient.get).toHaveBeenCalledTimes(5);
+        // The contract: after detach the component refetches the agent's
+        // capability list. Assert the agent-capabilities URL was called at
+        // least twice — once on mount and once after the detach mutation.
+        const agentCapCalls = vi
+          .mocked(apiClient.get)
+          .mock.calls.filter(([url]) => url.includes(`/agents/${AGENT_ID}/capabilities`));
+        expect(agentCapCalls.length).toBeGreaterThanOrEqual(2);
       });
     });
   });
@@ -396,6 +405,280 @@ describe('AgentCapabilitiesTab', () => {
       // Assert: inline error message
       await waitFor(() => {
         expect(screen.getByText(/attach failed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders generic fallback message when Detach DELETE rejects with a non-APIClientError', async () => {
+      // Arrange: initial fetch succeeds; DELETE throws a plain Error
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.mocked(apiClient.delete).mockRejectedValue(new Error('timeout'));
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      // Act: click Detach
+      await user.click(screen.getByRole('button', { name: /detach/i }));
+
+      // Assert: generic fallback message (not the plain Error message)
+      await waitFor(() => {
+        expect(screen.getByText(/could not detach capability/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders generic fallback message when Toggle PATCH rejects with a non-APIClientError', async () => {
+      // Arrange: initial fetch succeeds; PATCH throws a plain Error
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.mocked(apiClient.patch).mockRejectedValue(new Error('connection refused'));
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      // Act: click the Switch
+      const switches = screen.getAllByRole('switch');
+      await user.click(switches[0]);
+
+      // Assert: generic fallback message
+      await waitFor(() => {
+        expect(screen.getByText(/could not update capability/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Loading state ─────────────────────────────────────────────────────────
+
+  describe('loading state', () => {
+    it('shows loading spinner while fetching', async () => {
+      // Arrange: never resolve
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockReturnValue(new Promise(() => {}));
+
+      // Act
+      const { container } = render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      // Assert: spinner visible, no columns rendered yet
+      expect(container.querySelector('.animate-spin')).toBeInTheDocument();
+      expect(screen.queryByText('Attached')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── usageBadge branches ───────────────────────────────────────────────────
+
+  describe('usageBadge display', () => {
+    function makeUsageLink(capabilityId: string, slug: string) {
+      return makeLink('link-u', capabilityId, 'Test Cap', slug);
+    }
+
+    it('shows no badge when limit is null and calls is 0', async () => {
+      // Arrange: link has null rateLimit, capability has null rateLimit → calls=0
+      const { apiClient } = await import('@/lib/api/client');
+      const capNoLimit = makeCapability('cap-no-limit', 'No Limit Cap', 'no-limit');
+      const linkNoLimit = { ...makeUsageLink('cap-no-limit', 'no-limit'), capability: capNoLimit };
+
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/agents/')) return Promise.resolve([linkNoLimit]);
+        return Promise.resolve([capNoLimit]);
+      });
+      // usage fetch returns 0 calls for the slug
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/usage')) return Promise.resolve({ usage: { 'no-limit': 0 } });
+        if (url.includes('/agents/')) return Promise.resolve([linkNoLimit]);
+        return Promise.resolve([capNoLimit]);
+      });
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('No Limit Cap')).toBeInTheDocument());
+
+      // No calls/min badge rendered — usageBadge returned null
+      expect(screen.queryByText(/calls\/min/i)).not.toBeInTheDocument();
+    });
+
+    it('shows calls/min badge when limit is null but calls > 0', async () => {
+      // Arrange: no rate limit, but 5 calls made
+      const { apiClient } = await import('@/lib/api/client');
+      const capNoLimit = makeCapability('cap-active', 'Active Cap', 'active-cap');
+      const linkNoLimit = {
+        ...makeLink('link-a', 'cap-active', 'Active Cap', 'active-cap'),
+        capability: capNoLimit,
+      };
+
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/usage')) return Promise.resolve({ usage: { 'active-cap': 5 } });
+        if (url.includes('/agents/')) return Promise.resolve([linkNoLimit]);
+        return Promise.resolve([capNoLimit]);
+      });
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText(/5 calls\/min/i)).toBeInTheDocument());
+    });
+
+    it('shows red badge text when usage is at or above the rate limit', async () => {
+      // Arrange: rateLimit=10, calls=10 → ratio=1 → red
+      const { apiClient } = await import('@/lib/api/client');
+      const capLimited = {
+        ...makeCapability('cap-limit', 'Limited Cap', 'limited-cap'),
+        rateLimit: 10,
+      };
+      const linkLimited = {
+        ...makeLink('link-l', 'cap-limit', 'Limited Cap', 'limited-cap'),
+        customRateLimit: null,
+        capability: capLimited,
+      };
+
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/usage')) return Promise.resolve({ usage: { 'limited-cap': 10 } });
+        if (url.includes('/agents/')) return Promise.resolve([linkLimited]);
+        return Promise.resolve([capLimited]);
+      });
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      // Badge shows "10 / 10 /min"
+      await waitFor(() => expect(screen.getByText('10 / 10 /min')).toBeInTheDocument());
+
+      // Badge element has red color class
+      const badge = screen.getByText('10 / 10 /min');
+      expect(badge.className).toContain('text-red-600');
+    });
+
+    it('shows amber badge text when usage is between 80% and 100% of rate limit', async () => {
+      // Arrange: rateLimit=10, calls=8 → ratio=0.8 → amber
+      const { apiClient } = await import('@/lib/api/client');
+      const capAmber = { ...makeCapability('cap-amber', 'Amber Cap', 'amber-cap'), rateLimit: 10 };
+      const linkAmber = {
+        ...makeLink('link-am', 'cap-amber', 'Amber Cap', 'amber-cap'),
+        customRateLimit: null,
+        capability: capAmber,
+      };
+
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/usage')) return Promise.resolve({ usage: { 'amber-cap': 8 } });
+        if (url.includes('/agents/')) return Promise.resolve([linkAmber]);
+        return Promise.resolve([capAmber]);
+      });
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('8 / 10 /min')).toBeInTheDocument());
+
+      const badge = screen.getByText('8 / 10 /min');
+      expect(badge.className).toContain('text-amber-600');
+    });
+
+    it('customRateLimit overrides capability rateLimit in usageBadge', async () => {
+      // Arrange: capability.rateLimit=100, customRateLimit=5, calls=5 → ratio=1 → red
+      const { apiClient } = await import('@/lib/api/client');
+      const capHighLimit = {
+        ...makeCapability('cap-hl', 'High Limit Cap', 'hl-cap'),
+        rateLimit: 100,
+      };
+      const linkCustom = {
+        ...makeLink('link-c', 'cap-hl', 'High Limit Cap', 'hl-cap'),
+        customRateLimit: 5,
+        capability: capHighLimit,
+      };
+
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('/usage')) return Promise.resolve({ usage: { 'hl-cap': 5 } });
+        if (url.includes('/agents/')) return Promise.resolve([linkCustom]);
+        return Promise.resolve([capHighLimit]);
+      });
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      // customRateLimit=5 is used, so ratio = 5/5 = 1 → red badge
+      await waitFor(() => expect(screen.getByText('5 / 5 /min')).toBeInTheDocument());
+
+      const badge = screen.getByText('5 / 5 /min');
+      expect(badge.className).toContain('text-red-600');
+    });
+  });
+
+  // ── Configure dialog — validation branches ────────────────────────────────
+
+  describe('configure dialog validation', () => {
+    it('shows JSON parse error when customConfig is invalid JSON', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      // Act: type invalid JSON into config textarea
+      const configArea = screen.getByRole('textbox', { name: /custom config/i });
+      await user.clear(configArea);
+      await user.type(configArea, 'not-valid-json');
+
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      // Assert: JSON error shown, PATCH not called
+      await waitFor(() => {
+        expect(screen.getByText(/not valid json/i)).toBeInTheDocument();
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('shows rate limit error when customRateLimit is not a positive number', async () => {
+      // Arrange
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      // Act: type invalid rate limit (0 is not a positive number)
+      const rateLimitInput = screen.getByRole('spinbutton', { name: /custom rate limit/i });
+      await user.clear(rateLimitInput);
+      await user.type(rateLimitInput, '0');
+
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      // Assert: rate limit validation error shown
+      await waitFor(() => {
+        expect(screen.getByText(/rate limit must be a positive number/i)).toBeInTheDocument();
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('shows error message from APIClientError when save PATCH fails', async () => {
+      // Arrange
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.mocked(apiClient.patch).mockRejectedValue(
+        new APIClientError('Capability not found', 'NOT_FOUND', 404)
+      );
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      // Assert: APIClientError message shown in dialog
+      await waitFor(() => {
+        expect(screen.getByText(/capability not found/i)).toBeInTheDocument();
       });
     });
   });

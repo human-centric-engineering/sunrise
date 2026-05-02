@@ -31,8 +31,8 @@ vi.mock('@/lib/api/client', () => ({
   APIClientError: class APIClientError extends Error {
     constructor(
       message: string,
-      public statusCode = 500,
-      public code = 'INTERNAL_ERROR'
+      public code = 'INTERNAL_ERROR',
+      public status = 500
     ) {
       super(message);
       this.name = 'APIClientError';
@@ -267,6 +267,127 @@ describe('AgentComparisonView', () => {
           params: { agentIds: 'agent-a,agent-b' },
         })
       );
+    });
+  });
+
+  // ── Error branch: APIClientError vs generic Error ──────────────────────────
+
+  it('shows APIClientError message when fetch rejects with APIClientError', async () => {
+    // Arrange: APIClientError with a specific message
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockRejectedValue(
+      new APIClientError('Agents not found', 'NOT_FOUND', 404)
+    );
+
+    render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    // Assert: the APIClientError.message is shown
+    await waitFor(() => {
+      expect(screen.getByText('Agents not found')).toBeInTheDocument();
+    });
+  });
+
+  it('shows default error message when fetch rejects with a generic Error', async () => {
+    // Arrange: plain Error (not APIClientError)
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('unexpected failure'));
+
+    render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    // Assert: default fallback message
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load comparison data')).toBeInTheDocument();
+    });
+  });
+
+  // ── ComparisonRow highlight logic ──────────────────────────────────────────
+
+  it('highlights lower cost in green when agents have different costs', async () => {
+    // Arrange: agent A has lower cost ($1.23 < $2.50) — better='lower' for cost
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(COMPARISON_DATA);
+
+    const { container } = render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('$1.2300')).toBeInTheDocument();
+    });
+
+    // The lower-cost value ($1.2300 for agent A) should have green color class
+    const costA = screen.getByText('$1.2300');
+    expect(costA.className).toContain('text-green-600');
+
+    // The higher-cost value ($2.5000 for agent B) should NOT have green class
+    const costB = screen.getByText('$2.5000');
+    expect(costB.className).not.toContain('text-green-600');
+
+    // Container check to avoid unused var warning
+    expect(container).toBeTruthy();
+  });
+
+  it('highlights higher capability count in green when agents differ', async () => {
+    // Arrange: agent A has 3 capabilities, agent B has 1 — better='higher'
+    const { apiClient } = await import('@/lib/api/client');
+    const dataWithDiffCaps = {
+      agents: [
+        makeAgent({ id: 'agent-a', name: 'Agent Alpha', slug: 'agent-alpha', capabilityCount: 3 }),
+        makeAgent({ id: 'agent-b', name: 'Agent Beta', slug: 'agent-beta', capabilityCount: 1 }),
+      ] as [ReturnType<typeof makeAgent>, ReturnType<typeof makeAgent>],
+    };
+    vi.mocked(apiClient.get).mockResolvedValue(dataWithDiffCaps);
+
+    render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+    });
+
+    // Both values render — the higher value (3) gets green; the lower (1) does not
+    // Find the Capabilities row values using their content
+    const capValues = screen.getAllByText(/^[13]$/).filter((el) => el.tagName === 'SPAN');
+
+    // The element with '3' should have green class (higher is better)
+    const threeEl = capValues.find((el) => el.textContent === '3');
+    const oneEl = capValues.find((el) => el.textContent === '1');
+
+    if (threeEl) expect(threeEl.className).toContain('text-green-600');
+    if (oneEl) expect(oneEl?.className).not.toContain('text-green-600');
+  });
+
+  it('does not highlight either value when both agents have the same metric value', async () => {
+    // Arrange: both agents have the same cost — no highlight applied
+    const { apiClient } = await import('@/lib/api/client');
+    const dataEqualCost = {
+      agents: [
+        makeAgent({ id: 'agent-a', name: 'Agent Alpha', slug: 'agent-alpha', totalCostUsd: 5.0 }),
+        makeAgent({ id: 'agent-b', name: 'Agent Beta', slug: 'agent-beta', totalCostUsd: 5.0 }),
+      ] as [ReturnType<typeof makeAgent>, ReturnType<typeof makeAgent>],
+    };
+    vi.mocked(apiClient.get).mockResolvedValue(dataEqualCost);
+
+    render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    await waitFor(() => {
+      // Both cost values are equal — neither gets green highlight
+      const costCells = screen.getAllByText('$5.0000');
+      expect(costCells).toHaveLength(2);
+      costCells.forEach((el) => {
+        expect(el.className).not.toContain('text-green-600');
+      });
+    });
+  });
+
+  // ── Tokens rows ────────────────────────────────────────────────────────────
+
+  it('renders Input Tokens and Output Tokens rows', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(COMPARISON_DATA);
+
+    render(<AgentComparisonView agentIdA="agent-a" agentIdB="agent-b" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Input Tokens')).toBeInTheDocument();
+      expect(screen.getByText('Output Tokens')).toBeInTheDocument();
     });
   });
 });

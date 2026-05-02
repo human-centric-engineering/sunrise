@@ -109,7 +109,6 @@ export function CapabilitiesTable({
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AiCapabilityListItem | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -233,15 +232,18 @@ export function CapabilitiesTable({
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
+    const target = deleteTarget;
     setIsLoading(true);
-    setDeleteError(null);
+    setListError(null);
+    setDeleteTarget(null);
     try {
-      await apiClient.delete(API.ADMIN.ORCHESTRATION.capabilityById(deleteTarget.id));
-      setDeleteTarget(null);
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.capabilityById(target.id));
       void fetchCapabilities(meta.page);
     } catch (err) {
-      setDeleteError(
-        err instanceof APIClientError ? err.message : 'Delete failed. Try again in a moment.'
+      setListError(
+        err instanceof APIClientError
+          ? `Couldn't delete "${target.name}": ${err.message}`
+          : `Couldn't delete "${target.name}". Try again.`
       );
     } finally {
       setIsLoading(false);
@@ -516,11 +518,10 @@ export function CapabilitiesTable({
       <DeleteCapabilityDialog
         target={deleteTarget}
         usedBy={deleteTarget?._agents ?? []}
-        error={deleteError}
+        error={null}
         isDeleting={isLoading}
         onCancel={() => {
           setDeleteTarget(null);
-          setDeleteError(null);
         }}
         onConfirm={() => void handleDelete()}
       />
