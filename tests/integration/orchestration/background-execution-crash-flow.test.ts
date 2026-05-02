@@ -70,6 +70,10 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('@/lib/validations/orchestration', () => ({
   workflowDefinitionSchema: {
     safeParse: vi.fn(),
@@ -83,6 +87,7 @@ import { GET as GetStatus } from '@/app/api/v1/admin/orchestration/executions/[i
 import { prisma } from '@/lib/db/client';
 import { auth } from '@/lib/auth/config';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -219,6 +224,17 @@ describe('background workflow crash flow (e2e)', () => {
       .mock.calls.find((c) => c[0] === 'workflow.execution.failed');
     expect(failureHookCall).toBeDefined();
     expect(failureHookCall![1]).toEqual({
+      executionId: EXECUTION_ID,
+      workflowId: WORKFLOW_ID,
+      workflowSlug: WORKFLOW_SLUG,
+      userId: ADMIN_ID,
+      error: 'engine internal failure',
+    });
+
+    // 6b. The webhook subscriptions subsystem should also receive the event so
+    // admins who configured a webhook via the /admin/orchestration/webhooks UI
+    // (instead of the API-only event hooks) get the same notification.
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith('execution_crashed', {
       executionId: EXECUTION_ID,
       workflowId: WORKFLOW_ID,
       workflowSlug: WORKFLOW_SLUG,

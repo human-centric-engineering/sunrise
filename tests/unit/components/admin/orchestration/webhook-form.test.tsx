@@ -6,7 +6,7 @@
  * - Validates URL required
  * - Validates secret min length
  * - Generate secret button populates the field
- * - Events checkboxes render all 11 event types
+ * - Events checkboxes render all 12 event types (incl. execution_crashed)
  * - Events min validation (at least one event required)
  * - Create happy path (post + navigate)
  * - Edit mode pre-populated fields
@@ -84,11 +84,16 @@ describe('WebhookForm', () => {
     expect(screen.getByRole('button', { name: /create webhook/i })).toBeInTheDocument();
   });
 
-  it('renders all 11 event type checkboxes', () => {
+  it('renders all 12 event type checkboxes', () => {
     render(<WebhookForm mode="create" />);
 
     const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes.length).toBe(11);
+    expect(checkboxes.length).toBe(12);
+  });
+
+  it('includes execution_crashed in the event list (engine-crash subscriptions)', () => {
+    render(<WebhookForm mode="create" />);
+    expect(screen.getByText(/execution crashed/i)).toBeInTheDocument();
   });
 
   it('validates URL is required on submit', async () => {

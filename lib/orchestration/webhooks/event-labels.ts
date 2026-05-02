@@ -14,6 +14,7 @@ export const EVENT_LABELS: Record<string, string> = {
   budget_threshold_reached: 'Budget Threshold Reached',
   execution_completed: 'Execution Completed',
   execution_failed: 'Execution Failed',
+  execution_crashed: 'Execution Crashed (engine error)',
 };
 
 /** Returns the human-readable label or formats the raw value as title case. */

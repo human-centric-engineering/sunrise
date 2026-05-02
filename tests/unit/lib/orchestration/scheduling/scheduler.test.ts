@@ -60,6 +60,10 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
@@ -73,6 +77,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -598,6 +603,15 @@ describe('drainEngine: engine crash path', () => {
         userId: 'user_1',
         error: 'engine boom',
       });
+      // Mirror to the webhook subscriptions subsystem so admins can subscribe
+      // via the existing /admin/orchestration/webhooks UI.
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('execution_crashed', {
+        executionId: 'exec_1',
+        workflowId: 'wf_1',
+        workflowSlug: 'test-workflow',
+        userId: 'user_1',
+        error: 'engine boom',
+      });
     });
   });
 
@@ -649,6 +663,7 @@ describe('drainEngine: engine crash path', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(emitHookEvent).not.toHaveBeenCalled();
+    expect(dispatchWebhookEvent).not.toHaveBeenCalled();
     // Catch-path row update only; the legitimate finalize() update is mocked
     // away because OrchestrationEngine itself is mocked. So no update call here.
     expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();

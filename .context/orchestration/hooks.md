@@ -64,6 +64,8 @@ Use `workflow.execution.failed` for "background workflow crashed entirely" alert
 
 The `error` field in the `workflow.execution.failed` payload is sanitised before dispatch — absolute filesystem paths (POSIX and Windows) are replaced with `<path>` and the message is truncated to 200 characters. Webhook receivers are admin-trusted but may forward to broader-audience destinations; the unsanitised message is still persisted to `AiWorkflowExecution.errorMessage` and visible to admins via `/executions/:id` and `/executions/:id/status`. See `sanitiseHookErrorMessage` in `lib/orchestration/scheduling/scheduler.ts`.
 
+**Dual dispatch on engine crash.** The same engine-crash event is mirrored into the [Webhook Subscriptions](../admin/orchestration-webhooks.md) subsystem as `execution_crashed` so admins who configure outbound notifications via the webhook UI (rather than the API-only event hooks) receive the alert. Both subsystems get the same sanitised payload. Subscribe via either system depending on your delivery requirements: event hooks for in-process filterable dispatch, webhook subscriptions for durable per-delivery audit + admin-UI configuration.
+
 ## Event Payload
 
 ```ts

@@ -51,7 +51,7 @@ Called every ~60 seconds by an external cron job hitting `POST /api/v1/admin/orc
 
 Returns `{ processed, succeeded, failed, errors }`.
 
-**Engine-crash handling.** If the engine throws an uncaught error inside `drainEngine`, `finalize()` never runs — so the engine's normal `workflow.failed` hook is not emitted. To prevent silent zombification, the catch block updates the execution row to `failed` (with `errorMessage` and `completedAt`) and emits a `workflow.execution.failed` hook event. Subscribers and `GET /executions/:id/status` see consistent state immediately rather than waiting for the next reaper sweep. See [Hooks — Event Types](./hooks.md#event-types) for the distinction between `workflow.failed` and `workflow.execution.failed`.
+**Engine-crash handling.** If the engine throws an uncaught error inside `drainEngine`, `finalize()` never runs — so the engine's normal `workflow.failed` hook is not emitted. To prevent silent zombification, the catch block updates the execution row to `failed` (with `errorMessage` and `completedAt`) and dispatches the crash to **both** notification subsystems: the `workflow.execution.failed` event hook (for code-configured filterable dispatch) and the `execution_crashed` webhook subscription event (for admin-UI-configured durable delivery). Both payloads carry the same sanitised error. Subscribers and `GET /executions/:id/status` see consistent state immediately rather than waiting for the next reaper sweep. See [Hooks — Event Types](./hooks.md#event-types) for the distinction between `workflow.failed` and `workflow.execution.failed`, and the [Webhook UI](../admin/orchestration-webhooks.md) for admin-driven subscription management.
 
 ### `processPendingExecutions(staleThresholdMs?)`
 

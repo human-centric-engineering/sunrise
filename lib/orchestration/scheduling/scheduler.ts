@@ -19,6 +19,7 @@ import { logger } from '@/lib/logging';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 /**
@@ -129,12 +130,26 @@ async function drainEngine(
       });
     }
 
-    emitHookEvent('workflow.execution.failed', {
+    const sanitisedError = sanitiseHookErrorMessage(errorMessage);
+    const crashPayload = {
       executionId,
       workflowId: workflow.id,
       workflowSlug: workflow.slug,
       userId,
-      error: sanitiseHookErrorMessage(errorMessage),
+      error: sanitisedError,
+    };
+
+    // Mirror the crash to both notification subsystems:
+    //   1. Event hooks (in-process, filterable, lightweight)
+    //   2. Webhook subscriptions (durable per-delivery audit, admin-UI configurable)
+    // Admins can subscribe via either system depending on their delivery
+    // requirements. Both payloads carry the sanitised error.
+    emitHookEvent('workflow.execution.failed', crashPayload);
+    void dispatchWebhookEvent('execution_crashed', crashPayload).catch((dispatchErr) => {
+      logger.warn('Webhook dispatch failed for execution_crashed', {
+        executionId,
+        error: dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr),
+      });
     });
   }
 }

@@ -30,7 +30,7 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 
 - URL input (required) with safety hint (private IPs, localhost, metadata endpoints blocked)
 - Signing secret input with auto-generate button (`whsec_` prefix + 32 random hex chars)
-- 11 event checkboxes from `WEBHOOK_EVENT_TYPES`
+- 12 event checkboxes from `WEBHOOK_EVENT_TYPES` (including `execution_crashed` for engine-crash alerts — see [Hooks](../orchestration/hooks.md#event-types))
 - Description textarea
 - Active toggle
 - In edit mode, empty secret field = keep current secret
