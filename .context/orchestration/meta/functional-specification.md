@@ -2,7 +2,7 @@
 
 A comprehensive specification of the AI agent orchestration system built into the Sunrise platform.
 
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-02
 
 ---
 
@@ -201,13 +201,13 @@ This prevents the LLM from being confused by tools it shouldn't use while mainta
 
 ### 4.4 Built-in Capabilities
 
-| Capability               | Function                                    |
-| ------------------------ | ------------------------------------------- |
-| `search_knowledge_base`  | Semantic search across ingested documents   |
-| `estimate_workflow_cost` | Pre-execution cost estimation for workflows |
-| `get_pattern_detail`     | Retrieve agentic design pattern information |
-| `read_user_memory`       | Access user-specific memory store           |
-| `write_user_memory`      | Persist user-specific information           |
+| Capability               | Function                                                                |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `search_knowledge_base`  | Semantic search across ingested documents; produces a citation envelope |
+| `estimate_workflow_cost` | Pre-execution cost estimation for workflows                             |
+| `get_pattern_detail`     | Retrieve agentic design pattern information                             |
+| `read_user_memory`       | Access user-specific memory store                                       |
+| `write_user_memory`      | Persist user-specific information                                       |
 
 System capabilities are protected (`isSystem: true`) — they cannot be deleted or deactivated.
 
@@ -285,11 +285,12 @@ Each step can define its own error handling:
 
 The chat handler is the primary consumer-facing interface — an SSE stream that supports multi-turn conversation with tool use:
 
-- **SSE event types**: `start`, `content`, `status`, `tool_call`, `tool_result`, `done`, `error`
+- **SSE event types**: `start`, `content`, `status`, `capability_result`, `capability_results`, `warning`, `content_reset`, `citations`, `done`, `error`
 - **Tool loop**: Iterative tool calling until the LLM produces a final response
 - **Rolling summary**: Long conversations are summarised to fit context windows
 - **Provider failover**: Mid-stream switch to fallback provider on failure
 - **Budget check**: Verified before each LLM call in the tool loop
+- **Citation envelope**: Citation-producing tools (currently `search_knowledge_base`) get their results augmented with monotonic `[N]` markers so the LLM can cite inline. The handler emits a single `citations` event before `done` and persists the envelope on the assistant message metadata.
 
 ### 6.2 Context Building
 
@@ -322,6 +323,15 @@ Content filtering on LLM responses:
 - **Brand voice**: Enforce tone and terminology constraints
 
 Same three modes as input guard: `log_only`, `warn_and_continue`, `block`.
+
+### 6.4.1 Citation Guard
+
+Opt-in companion to the output guard. Validates that responses grounded in retrieved knowledge include `[N]` markers matching the citation envelope. Detects two failure modes:
+
+- **Under-citation**: citations were retrieved but no `[N]` marker appears in the response
+- **Hallucinated marker**: a `[N]` marker appears that no citation produced
+
+Vacuously passes when no citations were produced, so non-RAG responses are never flagged. Per-agent + global `citationGuardMode` field follows the same `log_only` / `warn_and_continue` / `block` precedence as input/output guards.
 
 ### 6.5 Message Controls
 
@@ -714,14 +724,15 @@ The Learning UI provides interactive exploration, an advisor chatbot for pattern
 3. **Provider resilience** — circuit breaker + fallback chains + mid-stream failover is ahead of every evaluated framework
 4. **7-stage capability dispatch** — structured pipeline from registry to cost logging with rate limiting and approval gates
 5. **MCP server with audit** — one of very few platforms exposing capabilities via MCP (not just consuming); full audit trail
-6. **Dual safety guards** — input injection detection + output content filtering, both configurable per-agent
-7. **Platform-agnostic core** — zero Next.js imports in `lib/orchestration/`; testable and portable
-8. **Immutable audit trails** — config changes, instruction versions, and MCP requests all logged
-9. **Embeddable deployment** — Shadow DOM widget deployable on any website with a single script tag
-10. **Complete admin surface** — 20+ pages managing the full agent lifecycle without touching code
+6. **Triple safety guards** — input injection detection, output content filtering, and citation hygiene (under-citation / hallucinated-marker), all configurable per-agent
+7. **Inline citation pipeline** — RAG-grounded responses carry structured `Citation` envelopes from search through to the SSE client and persisted message metadata; the LLM cites via `[N]` markers, the admin chat / trace viewer / embed widget render a sources panel for verification
+8. **Platform-agnostic core** — zero Next.js imports in `lib/orchestration/`; testable and portable
+9. **Immutable audit trails** — config changes, instruction versions, and MCP requests all logged
+10. **Embeddable deployment** — Shadow DOM widget deployable on any website with a single script tag
+11. **Complete admin surface** — 20+ pages managing the full agent lifecycle without touching code
 
 ---
 
 ## Specification Status
 
-This document describes the implemented system as of April 2026. For competitive positioning and identified gaps, see `maturity-analysis.md`. For commercial application opportunities, see `business-applications.md`.
+This document describes the implemented system as of May 2026. For competitive positioning and identified gaps, see `maturity-analysis.md`. For commercial application opportunities, see `business-applications.md`.
