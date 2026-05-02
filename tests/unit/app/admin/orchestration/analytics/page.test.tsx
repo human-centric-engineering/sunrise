@@ -66,10 +66,9 @@ function setupHappyPath() {
     .mockResolvedValueOnce({ success: true, data: { questions: mockUnanswered } } as never)
     .mockResolvedValueOnce({ success: true, data: { feedback: mockFeedback } } as never)
     .mockResolvedValueOnce({ success: true, data: { gaps: mockContentGaps } } as never)
-    .mockResolvedValueOnce({
-      success: true,
-      data: { agents: mockAgents },
-    } as never);
+    // Agents endpoint returns paginatedResponse, where `data` is the array itself
+    // (not wrapped in an `{ agents: [...] }` envelope).
+    .mockResolvedValueOnce({ success: true, data: mockAgents } as never);
 }
 
 // ---------------------------------------------------------------------------
