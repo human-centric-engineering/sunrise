@@ -23,7 +23,7 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent, MessageMetadata } from '@/types/orchestration';
+import type { ChatEvent, Citation, MessageMetadata } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -37,6 +37,7 @@ import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
 import { scanOutput } from '@/lib/orchestration/chat/output-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import { extractCitations } from '@/lib/orchestration/chat/citations';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
@@ -337,6 +338,14 @@ export class StreamingChatHandler {
       const toolFailureCounts = new Map<string, number>();
       const TOOL_FAILURE_THRESHOLD = 2;
 
+      // Citation accumulator. Populated by citation-producing tools
+      // (currently `search_knowledge_base`); markers are monotonic
+      // across the whole turn so the LLM can reference any retrieved
+      // chunk via `[N]` syntax. Surfaced via the `citations` SSE event
+      // and persisted on the terminal assistant message metadata.
+      const citations: Citation[] = [];
+      let nextCitationMarker = 1;
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
@@ -493,22 +502,27 @@ export class StreamingChatHandler {
         // Persist assistant message AFTER output guard (blocked responses
         // are never saved). Tool-call turns also persist here so the
         // conversation history is complete for the next LLM iteration.
+        // Citations are only attached to the terminal turn (no tool calls
+        // pending) — they describe the sources the LLM cited in its final
+        // text, so interim tool-call turns don't carry them.
         if (assistantText.length > 0) {
+          const isTerminalTurn = toolCalls.size === 0;
+          const assistantMetadata: MessageMetadata = {};
+          if (usage) {
+            assistantMetadata.tokenUsage = {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              totalTokens: usage.inputTokens + usage.outputTokens,
+            };
+          }
+          if (isTerminalTurn && citations.length > 0) {
+            assistantMetadata.citations = citations;
+          }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
-            ...(usage
-              ? {
-                  metadata: {
-                    tokenUsage: {
-                      inputTokens: usage.inputTokens,
-                      outputTokens: usage.outputTokens,
-                      totalTokens: usage.inputTokens + usage.outputTokens,
-                    },
-                  },
-                }
-              : {}),
+            ...(Object.keys(assistantMetadata).length > 0 ? { metadata: assistantMetadata } : {}),
           });
           // Queue async embedding for semantic search (non-blocking)
           queueMessageEmbedding(assistantMsg.id, assistantText);
@@ -536,6 +550,9 @@ export class StreamingChatHandler {
           }
 
           getBreaker(usedSlug).recordSuccess();
+          if (citations.length > 0) {
+            yield { type: 'citations', citations };
+          }
           yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
           return;
         }
@@ -640,17 +657,25 @@ export class StreamingChatHandler {
             };
           }
 
-          yield { type: 'capability_result', capabilitySlug: tc.name, result };
+          // Augment with citation markers before emitting / persisting /
+          // feeding back to the LLM. Citations from earlier iterations
+          // accumulate in the turn-level array.
+          const extracted = extractCitations(tc.name, result, nextCitationMarker);
+          citations.push(...extracted.citations);
+          nextCitationMarker = extracted.nextMarker;
+          const augmentedResult = extracted.augmentedResult;
+
+          yield { type: 'capability_result', capabilitySlug: tc.name, result: augmentedResult };
 
           await this.persistMessage({
             conversationId: conversation.id,
             role: 'tool',
-            content: JSON.stringify(result),
+            content: JSON.stringify(augmentedResult),
             capabilitySlug: tc.name,
             toolCallId: tc.id,
             metadata: {
               toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
-              result,
+              result: augmentedResult,
             },
           });
 
@@ -660,6 +685,9 @@ export class StreamingChatHandler {
 
           if (result.skipFollowup) {
             getBreaker(usedSlug).recordSuccess();
+            if (citations.length > 0) {
+              yield { type: 'citations', citations };
+            }
             yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
             return;
           }
@@ -667,7 +695,7 @@ export class StreamingChatHandler {
           messages = [
             ...messages,
             { role: 'assistant', content: assistantText, toolCalls: [tc] },
-            { role: 'tool', content: JSON.stringify(result), toolCallId: tc.id },
+            { role: 'tool', content: JSON.stringify(augmentedResult), toolCallId: tc.id },
           ];
         } else {
           // Multiple tool calls — dispatch in parallel for performance.
@@ -768,23 +796,29 @@ export class StreamingChatHandler {
               toolFailureCounts.set(tc.name, prevFails + 1);
             }
 
-            results.push({ capabilitySlug: tc.name, result });
+            // Augment with citation markers (no-op for non-citation tools).
+            const extracted = extractCitations(tc.name, result, nextCitationMarker);
+            citations.push(...extracted.citations);
+            nextCitationMarker = extracted.nextMarker;
+            const augmentedResult = extracted.augmentedResult;
+
+            results.push({ capabilitySlug: tc.name, result: augmentedResult });
 
             await this.persistMessage({
               conversationId: conversation.id,
               role: 'tool',
-              content: JSON.stringify(result),
+              content: JSON.stringify(augmentedResult),
               capabilitySlug: tc.name,
               toolCallId: tc.id,
               metadata: {
                 toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
-                result,
+                result: augmentedResult,
               },
             });
 
             toolResultMessages.push({
               role: 'tool',
-              content: JSON.stringify(result),
+              content: JSON.stringify(augmentedResult),
               toolCallId: tc.id,
             });
 
@@ -799,6 +833,9 @@ export class StreamingChatHandler {
 
           if (anySkipFollowup) {
             getBreaker(usedSlug).recordSuccess();
+            if (citations.length > 0) {
+              yield { type: 'citations', citations };
+            }
             yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
             return;
           }
