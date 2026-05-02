@@ -120,6 +120,8 @@ export const API = {
         `/api/v1/admin/orchestration/workflows/${id}/save-as-template`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
+      executionStatus: (id: string): string =>
+        `/api/v1/admin/orchestration/executions/${id}/status`,
       executionApprove: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       executionReject: (id: string): string =>
