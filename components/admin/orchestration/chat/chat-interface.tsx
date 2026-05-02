@@ -46,6 +46,8 @@ import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
+import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
+import type { Citation } from '@/types/orchestration';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -91,6 +93,8 @@ export interface ChatInterfaceProps {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** Source attributions surfaced via the `citations` SSE event. */
+  citations?: Citation[];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -287,6 +291,16 @@ export function ChatInterface({
                 }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
                 setWarning(parsed.data.message);
+              } else if (parsed.type === 'citations' && Array.isArray(parsed.data.citations)) {
+                const citations = parsed.data.citations as Citation[];
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === 'assistant') {
+                    updated[updated.length - 1] = { ...last, citations };
+                  }
+                  return updated;
+                });
               } else if (parsed.type === 'error') {
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
@@ -438,24 +452,24 @@ export function ChatInterface({
           <div
             key={i}
             className={cn(
-              'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
-              msg.role === 'user' ? 'bg-muted text-foreground ml-auto' : 'mr-auto'
+              'max-w-[85%] rounded-lg px-3 py-2 text-sm',
+              msg.role === 'user'
+                ? 'bg-muted text-foreground ml-auto whitespace-pre-wrap'
+                : 'mr-auto'
             )}
           >
             {isLastAssistantEmpty(i, msg) ? (
               <ThinkingIndicator message={status} />
-            ) : (
+            ) : msg.role === 'assistant' ? (
               <>
-                {msg.content}
+                <MessageWithCitations content={msg.content} citations={msg.citations} />
                 {/* Inline status during streaming — shown below content */}
-                {streaming &&
-                  msg.role === 'assistant' &&
-                  msg.content &&
-                  i === messages.length - 1 &&
-                  status && (
-                    <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
-                  )}
+                {streaming && msg.content && i === messages.length - 1 && status && (
+                  <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
+                )}
               </>
+            ) : (
+              msg.content
             )}
           </div>
         ))}

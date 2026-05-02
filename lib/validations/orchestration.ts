@@ -2088,6 +2088,22 @@ export const createApiKeySchema = z.object({
 
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
 
+/** Citation shape stored on assistant message metadata. */
+const citationSchema = z.object({
+  marker: z.number().int().positive(),
+  chunkId: z.string(),
+  documentId: z.string(),
+  documentName: z.string().nullable(),
+  section: z.string().nullable(),
+  patternNumber: z.number().int().nullable(),
+  patternName: z.string().nullable(),
+  excerpt: z.string(),
+  similarity: z.number(),
+  vectorScore: z.number().optional(),
+  keywordScore: z.number().optional(),
+  finalScore: z.number().optional(),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2098,6 +2114,7 @@ export const messageMetadataSchema = z.object({
   modelUsed: z.string().optional(),
   latencyMs: z.number().optional(),
   costUsd: z.number().optional(),
+  citations: z.array(citationSchema).optional(),
 });
 
 // ============================================================================
