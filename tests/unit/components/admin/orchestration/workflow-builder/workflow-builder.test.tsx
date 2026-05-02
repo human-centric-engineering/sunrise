@@ -233,6 +233,7 @@ describe('WorkflowBuilder', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('mode="create"', () => {
@@ -1022,10 +1023,8 @@ describe('WorkflowBuilder', () => {
         />
       );
       // TemplateBanner renders a BookOpen icon inside a distinctive banner.
-      // When isTemplate=false the entire banner is absent — check for the
-      // banner's unique border colour class which no palette block uses.
-      const bannerEl = document.querySelector('.border-blue-200');
-      expect(bannerEl).toBeNull();
+      // When isTemplate=false the entire banner is absent — check via data-testid.
+      expect(screen.queryByTestId('template-banner')).not.toBeInTheDocument();
     });
   });
 
@@ -1071,8 +1070,7 @@ describe('WorkflowBuilder', () => {
         />
       );
       // The description bar is not present — workflow description is empty
-      const bannerEl = document.querySelector('.border-blue-200');
-      expect(bannerEl).toBeNull();
+      expect(screen.queryByTestId('template-banner')).not.toBeInTheDocument();
     });
   });
 

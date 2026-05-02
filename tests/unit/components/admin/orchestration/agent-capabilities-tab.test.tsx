@@ -29,8 +29,8 @@ vi.mock('@/lib/api/client', () => ({
   APIClientError: class APIClientError extends Error {
     constructor(
       message: string,
-      public statusCode = 500,
-      public code = 'INTERNAL_ERROR'
+      public code = 'INTERNAL_ERROR',
+      public status = 500
     ) {
       super(message);
       this.name = 'APIClientError';

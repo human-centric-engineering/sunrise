@@ -259,6 +259,27 @@ describe('NewWorkflowPage', () => {
       const builder = screen.getByTestId('workflow-builder');
       expect(builder).toHaveAttribute('data-templates-count', '0');
     });
+
+    it('passes empty templates when API returns success but data fails templateListSchema', async () => {
+      // Arrange: fetch succeeds; body.success=true but data items are missing required
+      // templateItemSchema fields (slug, name, description, etc.) — safeParse returns failure
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: false } as never) // capabilities → []
+        .mockResolvedValueOnce({ success: false } as never) // agents → []
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ not: 'a-template' }], // fails templateItemSchema
+        } as never); // templates
+      const searchParams = Promise.resolve({});
+
+      // Act
+      render(await NewWorkflowPage({ searchParams }));
+
+      // Assert: templateListSchema.safeParse fails → [] forwarded to builder
+      const builder = screen.getByTestId('workflow-builder');
+      expect(builder).toHaveAttribute('data-templates-count', '0');
+    });
   });
 
   // ── searchParams.definition branch ───────────────────────────────────────

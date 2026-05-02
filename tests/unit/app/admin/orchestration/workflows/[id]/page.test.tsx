@@ -105,8 +105,16 @@ describe('EditWorkflowPage', () => {
 
   describe('notFound behavior', () => {
     it('calls notFound when getWorkflow returns null (res.ok false)', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+      // Arrange: only the workflow fetcher fails — capabilities/agents/templates succeed with
+      // empty arrays so they don't exercise unrelated branches.
+      vi.mocked(serverFetch).mockImplementation((url: string) => {
+        if (String(url).includes('/workflows/wf-missing')) return Promise.resolve(notOkResponse());
+        return Promise.resolve(okResponse());
+      });
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: [] } as never) // capabilities
+        .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
+        .mockResolvedValueOnce({ success: true, data: [] } as never); // templates
       const params = Promise.resolve({ id: 'wf-missing' });
 
       // Act & Assert
@@ -238,6 +246,34 @@ describe('EditWorkflowPage', () => {
       );
       const builder = screen.getByTestId('workflow-builder');
       expect(builder).toHaveAttribute('data-capabilities-count', '0');
+    });
+  });
+
+  // ── getTemplates Zod parse-failure branch ─────────────────────────────────
+
+  describe('getTemplates schema parse failure', () => {
+    it('passes empty templates when API returns success but data fails templateListSchema', async () => {
+      // Arrange: workflow + capabilities + agents all succeed; templates body.data passes
+      // body.success=true but contains objects that do not satisfy templateItemSchema
+      // (missing required fields like slug, name, description, etc.).
+      const workflow = createMockWorkflow();
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: workflow } as never) // workflow
+        .mockResolvedValueOnce({ success: true, data: [] } as never) // capabilities
+        .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ not: 'a-template' }], // fails templateItemSchema — missing slug, name, etc.
+        } as never); // templates
+      const params = Promise.resolve({ id: 'wf-123' });
+
+      // Act
+      render(await EditWorkflowPage({ params }));
+
+      // Assert: templateListSchema.safeParse fails → templates=[]; builder receives 0 templates
+      const builder = screen.getByTestId('workflow-builder');
+      expect(builder).toHaveAttribute('data-templates-count', '0');
     });
   });
 

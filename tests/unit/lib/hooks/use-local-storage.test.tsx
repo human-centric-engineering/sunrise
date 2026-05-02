@@ -139,20 +139,25 @@ describe('useLocalStorage', () => {
     original('k.quota.sanity', '1');
   });
 
-  it('remove() swallows localStorage.removeItem errors', () => {
+  it('remove() swallows localStorage.removeItem errors and warns via logger', () => {
+    const warnSpy = vi.mocked(logger.warn);
     const removeSpy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
       throw new Error('SecurityError');
     });
 
     const { result } = renderHook(() => useLocalStorage<string>('k.remove-throws', 'a'));
 
-    expect(() => {
-      act(() => {
-        result.current[2]();
-      });
-    }).not.toThrow();
+    act(() => {
+      result.current[2]();
+    });
+
+    // Assert: hook did not throw and logger.warn was invoked with the correct context
     expect(result.current[0]).toBe('a');
     expect(removeSpy).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('failed to remove value'),
+      expect.objectContaining({ key: 'k.remove-throws' })
+    );
     removeSpy.mockRestore();
   });
 

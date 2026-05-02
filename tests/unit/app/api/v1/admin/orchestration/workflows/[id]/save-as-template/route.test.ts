@@ -201,6 +201,30 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
     vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeTemplate() as never);
   });
 
+  // ─── Rate limiting ──────────────────────────────────────────────────
+
+  describe('rate limiting', () => {
+    it('should return 429 when adminLimiter.check indicates the limit is exceeded', async () => {
+      // Arrange: override the default (success=true) with a failed rate-limit check
+      vi.mocked(adminLimiter.check).mockReturnValueOnce({
+        success: false,
+        limit: 10,
+        remaining: 0,
+        reset: Date.now() + 60000,
+      });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      // Act
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<ErrorBody>(response);
+
+      // Assert: createRateLimitResponse was called and returned a 429
+      expect(response.status).toBe(429);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('RATE_LIMITED');
+    });
+  });
+
   // ─── Authentication ─────────────────────────────────────────────────
 
   describe('authentication', () => {

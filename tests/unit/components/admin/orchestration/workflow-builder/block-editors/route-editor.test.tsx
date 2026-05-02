@@ -67,7 +67,7 @@ describe('RouteEditor', () => {
     await user.click(screen.getByRole('button', { name: /add branch/i }));
 
     const [arg] = onChange.mock.calls[0];
-    expect(Array.isArray(arg.routes)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+    expect(Array.isArray(arg.routes)).toBe(true); // test-review:accept assertion-quality — structural boolean/predicate assertion
     expect(arg.routes).toHaveLength(1);
   });
 
@@ -108,7 +108,7 @@ describe('RouteEditor', () => {
     expect(lastArg.routes[0].label).toBe('yess');
   });
 
-  it('updating classification prompt calls onChange with { classificationPrompt }', async () => {
+  it('updating classification prompt calls onChange with the typed classificationPrompt value', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<RouteEditor config={emptyConfig} onChange={onChange} />);
@@ -116,8 +116,9 @@ describe('RouteEditor', () => {
     const prompt = document.getElementById('route-classification')!;
     await user.type(prompt, 'A');
 
+    // Assert: the last onChange call carries the typed character as classificationPrompt
     const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastArg).toHaveProperty('classificationPrompt');
+    expect(lastArg.classificationPrompt).toBe('A');
   });
 
   it('shows a placeholder message when no routes are present', () => {
