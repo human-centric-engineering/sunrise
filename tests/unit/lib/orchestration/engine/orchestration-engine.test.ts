@@ -268,6 +268,33 @@ describe('OrchestrationEngine', () => {
     expect(failed.error).toBe('Budget exceeded');
   });
 
+  it('budget overrun yields workflow_failed without step_completed for the over-budget step', async () => {
+    // Event-ordering contract: when a step's cost pushes the run over budget,
+    // the engine yields workflow_failed instead of step_completed for that step.
+    // This keeps the event stream causally honest — a downstream consumer never
+    // sees step_completed for a step whose cost broke the budget.
+    registerStepType('llm_call', async (step) => ({
+      output: step.id,
+      tokensUsed: 0,
+      costUsd: 1,
+    }));
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+      userId: USER_ID,
+      budgetLimitUsd: 0.5,
+    });
+
+    // Step A is the over-budget step (its $1 cost pushes us past $0.5).
+    const stepACompleted = events.find((e) => e.type === 'step_completed' && e.stepId === 'a');
+    const failed = events.find((e) => e.type === 'workflow_failed');
+
+    expect(stepACompleted).toBeUndefined();
+    expect(failed).toBeDefined();
+
+    // Failure event must be emitted with the over-budget step's id.
+    expect((failed as Extract<ExecutionEvent, { type: 'workflow_failed' }>).failedStepId).toBe('a');
+  });
+
   it('budget warning fires at 80% of the limit', async () => {
     // Two steps × $0.42 = $0.84 which is > 80% of $1 on step 1, and exceeds budget on step 2.
     let call = 0;
@@ -591,20 +618,6 @@ describe('OrchestrationEngine', () => {
     // Engine should still complete despite checkpoint failures
     expect(types).toContain('workflow_completed');
   });
-
-  // ─── BudgetExceeded catch branch in executeSingleStep ────────────
-  // NOTE (source finding): the `if (err instanceof BudgetExceeded)` branch
-  // in executeSingleStep (orchestration-engine.ts ~line 589) is unreachable
-  // when BudgetExceeded is thrown by an executor. runStepWithStrategy wraps
-  // all non-PausedForApproval errors (including BudgetExceeded) into
-  // ExecutorError with code 'executor_threw', so the BudgetExceeded instance
-  // never propagates out of runStepWithStrategy. An existing test
-  // ("BudgetExceeded thrown by executor is wrapped and sanitized…") already
-  // covers the observable behaviour. The todo below tracks the unreachable
-  // branch until the source is updated.
-  it.todo(
-    'BudgetExceeded thrown by executor reaches executeSingleStep BudgetExceeded branch (source fix needed — see source finding)'
-  );
 
   // ─── finalize() DB failure ────────────────────────────────────────
 
@@ -2327,12 +2340,11 @@ describe('OrchestrationEngine', () => {
 
   // ─── BudgetExceeded from executor ─────────────────────────────────
 
-  it('BudgetExceeded thrown by executor is wrapped and sanitized like any unexpected error', async () => {
+  it('BudgetExceeded thrown by executor propagates as workflow_failed("Budget exceeded")', async () => {
     // Arrange — executor throws BudgetExceeded directly.
-    // NOTE: runStepWithStrategy wraps any non-PausedForApproval error (including
-    // BudgetExceeded) into ExecutorError with code 'executor_threw', so the
-    // BudgetExceeded-specific catch in executeSingleStep is bypassed.
-    // The resulting sanitized error message is the generic "failed unexpectedly" form.
+    // runStepWithStrategy re-throws BudgetExceeded (alongside PausedForApproval)
+    // so executeSingleStep's BudgetExceeded catch fires with the un-wrapped
+    // error and emits the budget-specific terminal event.
     registerStepType('llm_call', async () => {
       throw new BudgetExceeded(1.5, 1.0);
     });
@@ -2341,16 +2353,15 @@ describe('OrchestrationEngine', () => {
     const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
     const types = events.map((e) => e.type);
 
-    // Assert — workflow fails (engine does not crash).
+    // Assert — terminal event is the budget-specific failure, not a generic wrap.
     expect(types).toContain('workflow_failed');
     expect(types).not.toContain('workflow_completed');
     const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
       ExecutionEvent,
       { type: 'workflow_failed' }
     >;
-    // BudgetExceeded gets wrapped into ExecutorError(code='executor_threw'),
-    // so sanitizeError returns the generic scrubbed message.
-    expect(failed.error).toBe('Step "a" failed unexpectedly');
+    expect(failed.error).toBe('Budget exceeded');
+    expect(failed.failedStepId).toBe('a');
   });
 
   // ─── Bounded retry back-edge logic ───────────────────────────────────────

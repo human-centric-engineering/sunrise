@@ -562,6 +562,7 @@ export class OrchestrationEngine {
           return await invokeExecutor();
         } catch (err) {
           if (err instanceof PausedForApproval) throw err;
+          if (err instanceof BudgetExceeded) throw err;
           lastError =
             err instanceof ExecutorError
               ? err
@@ -587,6 +588,7 @@ export class OrchestrationEngine {
       return await invokeExecutor();
     } catch (err) {
       if (err instanceof PausedForApproval) throw err;
+      if (err instanceof BudgetExceeded) throw err;
       const execErr =
         err instanceof ExecutorError
           ? err
@@ -751,9 +753,12 @@ export class OrchestrationEngine {
     });
     await this.checkpoint(executionId, ctx, trace);
 
-    yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
-
-    // Budget check
+    // Budget check — runs BEFORE step_completed so the event stream's
+    // causality is honest. If this step's cost pushes the run over budget,
+    // the workflow_failed event is the terminal event for this step; we do
+    // not yield step_completed because the workflow failed at this step.
+    // The trace entry above still records the cost so observability stays
+    // intact.
     if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
       yield workflowFailed('Budget exceeded', step.id);
       return {
@@ -764,6 +769,9 @@ export class OrchestrationEngine {
         nextIds: [],
       };
     }
+
+    yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+
     if (
       budgetLimitUsd &&
       ctx.totalCostUsd >= budgetLimitUsd * BUDGET_WARN_FRACTION &&
