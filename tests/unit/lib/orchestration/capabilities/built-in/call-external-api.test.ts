@@ -522,17 +522,29 @@ describe('CallExternalApiCapability', () => {
     });
   });
 
-  describe('malformed customConfig', () => {
-    it('falls back to no-binding behaviour when customConfig fails Zod', async () => {
+  describe('malformed customConfig (fail-closed)', () => {
+    it('refuses the call with invalid_binding when customConfig fails Zod', async () => {
+      // Security: silently downgrading to no-binding behaviour when the
+      // JSON column is malformed would let the LLM call any path on the
+      // allowlisted host with no auth — for chat-webhook bindings where
+      // the URL itself is the credential, that's a real exfiltration
+      // path. Refuse the call until an admin repairs the column.
       bindCustomConfig({ allowedUrlPrefixes: 'not-an-array' });
-      mockFetchJson(200, { ok: true });
       const cap = new CallExternalApiCapability();
       const result = await cap.execute(
         { url: 'https://api.allowed.com/x', method: 'POST', body: {} },
         context
       );
-      // No URL-prefix guard, no auth — request still goes through.
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+    });
+
+    it('does not even attempt the HTTP request when customConfig is malformed', async () => {
+      bindCustomConfig({ allowedUrlPrefixes: 'not-an-array' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute({ url: 'https://api.allowed.com/x', method: 'POST', body: {} }, context);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

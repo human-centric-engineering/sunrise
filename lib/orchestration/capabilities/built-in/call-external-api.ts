@@ -158,7 +158,26 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
   protected readonly schema = argsSchema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
-    const customConfig = await this.loadCustomConfig(context.agentId);
+    const loaded = await this.loadCustomConfig(context.agentId);
+
+    // Fail-closed on malformed binding JSON: every per-binding guard rail
+    // (forcedUrl, allowedUrlPrefixes, auth, forcedHeaders) is gated on
+    // `customConfig?.<field>`, so silently downgrading to "no binding"
+    // would let the LLM call any path on the allowlisted host with no
+    // auth — a real risk for chat-webhook-style bindings where the URL
+    // itself is the credential. Refuse the call until an admin repairs
+    // the customConfig column.
+    if (loaded.kind === 'malformed') {
+      logger.error('call_external_api: refusing call — customConfig JSON is malformed', {
+        agentId: context.agentId,
+        issues: loaded.issues,
+      });
+      return this.error(
+        'Capability binding is misconfigured — admin must repair the customConfig JSON',
+        'invalid_binding'
+      );
+    }
+    const customConfig = loaded.config;
 
     // forcedUrl takes precedence over both args.url and allowedUrlPrefixes —
     // the binding pins one exact endpoint and the LLM-supplied URL is discarded.
@@ -243,27 +262,24 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
     }
   }
 
-  private async loadCustomConfig(agentId: string): Promise<CustomConfig | undefined> {
+  private async loadCustomConfig(agentId: string): Promise<LoadCustomConfigResult> {
     const binding = await prisma.aiAgentCapability.findFirst({
       where: { agentId, capability: { slug: SLUG } },
       select: { customConfig: true },
     });
-    if (!binding?.customConfig) return undefined;
+    if (!binding?.customConfig) return { kind: 'ok', config: undefined };
 
     const parsed = customConfigSchema.safeParse(binding.customConfig);
     if (!parsed.success) {
-      logger.warn(
-        'call_external_api: malformed customConfig — falling back to no-binding behaviour',
-        {
-          agentId,
-          issues: parsed.error.issues,
-        }
-      );
-      return undefined;
+      return { kind: 'malformed', issues: parsed.error.issues };
     }
-    return parsed.data;
+    return { kind: 'ok', config: parsed.data };
   }
 }
+
+type LoadCustomConfigResult =
+  | { kind: 'ok'; config: CustomConfig | undefined }
+  | { kind: 'malformed'; issues: ReadonlyArray<unknown> };
 
 function stringifyBody(body: Args['body']): string | undefined {
   if (body === undefined) return undefined;

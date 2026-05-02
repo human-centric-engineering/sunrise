@@ -90,7 +90,7 @@ The `call_external_api` capability gives an agent the ability to make outbound H
 | `timeoutMs`                | `number`                                                                                                | Per-binding timeout override                                                                                                                                                                                                |
 | `maxResponseBytes`         | `number`                                                                                                | Per-binding response cap override                                                                                                                                                                                           |
 
-**Error codes returned in `CapabilityResult.error.code`:** `invalid_args`, `url_not_allowed`, `host_not_allowed`, `auth_failed`, `rate_limited`, `http_error`, `timeout`, `response_too_large`, `request_aborted`, `request_failed`.
+**Error codes returned in `CapabilityResult.error.code`:** `invalid_args`, `invalid_binding` (returned fail-closed when the per-agent `customConfig` JSON fails its Zod schema; admin must repair the row before the agent can call this capability again), `url_not_allowed`, `host_not_allowed`, `auth_failed`, `rate_limited`, `http_error`, `timeout`, `response_too_large`, `request_aborted`, `request_failed`.
 
 **Implementation:** `lib/orchestration/capabilities/built-in/call-external-api.ts`. Delegates to `lib/orchestration/http/` for the actual HTTP call.
 
