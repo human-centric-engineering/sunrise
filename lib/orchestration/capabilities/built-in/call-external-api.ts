@@ -49,12 +49,17 @@ const customConfigSchema = z
   .object({
     /** Optional URL-prefix allowlist. If set, the LLM-supplied URL must startsWith one entry. */
     allowedUrlPrefixes: z.array(z.string().url()).min(1).optional(),
+    /** Replaces the LLM-supplied URL entirely. When set, `allowedUrlPrefixes` is ignored — the binding
+     * pins one exact endpoint. Useful for chat-platform incoming webhooks where the URL itself is a
+     * secret the LLM should not need to know. */
+    forcedUrl: z.string().url().optional(),
     /** Auth config — `type: 'none'` is valid and explicit. */
     auth: z
       .object({
         type: z.enum(['none', 'bearer', 'api-key', 'query-param', 'basic', 'hmac']),
         secret: z.string().optional(),
         queryParam: z.string().optional(),
+        apiKeyHeaderName: z.string().optional(),
         hmacHeaderName: z.string().optional(),
         hmacAlgorithm: z.enum(['sha256', 'sha512']).optional(),
         hmacBodyTemplate: z.string().optional(),
@@ -83,7 +88,8 @@ const customConfigSchema = z
 type CustomConfig = z.infer<typeof customConfigSchema>;
 
 const argsSchema = z.object({
-  url: z.string().url().max(2048),
+  /** Optional — the binding's `forcedUrl` (if set) takes precedence; otherwise this is required. */
+  url: z.string().url().max(2048).optional(),
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   headers: z.record(z.string(), z.string()).optional(),
   body: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
@@ -119,7 +125,7 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
         url: {
           type: 'string',
           description:
-            'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix.',
+            'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix. May be omitted when the binding pins a `forcedUrl`.',
           maxLength: 2048,
         },
         method: {
@@ -144,7 +150,7 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
           maxLength: 2000,
         },
       },
-      required: ['url', 'method'],
+      required: ['method'],
     },
   };
 
@@ -153,9 +159,21 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
     const customConfig = await this.loadCustomConfig(context.agentId);
 
+    // forcedUrl takes precedence over both args.url and allowedUrlPrefixes —
+    // the binding pins one exact endpoint and the LLM-supplied URL is discarded.
+    const url = customConfig?.forcedUrl ?? args.url;
+    if (!url) {
+      return this.error(
+        'No URL supplied — provide a `url` arg, or bind `forcedUrl` in the customConfig',
+        'invalid_args'
+      );
+    }
+
     if (
+      !customConfig?.forcedUrl &&
       customConfig?.allowedUrlPrefixes &&
-      !customConfig.allowedUrlPrefixes.some((prefix) => args.url.startsWith(prefix))
+      args.url &&
+      !customConfig.allowedUrlPrefixes.some((prefix) => args.url!.startsWith(prefix))
     ) {
       return this.error(
         `URL not allowed by binding: must start with one of ${customConfig.allowedUrlPrefixes.join(', ')}`,
@@ -168,6 +186,7 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
           type: customConfig.auth.type,
           secret: customConfig.auth.secret,
           queryParam: customConfig.auth.queryParam,
+          apiKeyHeaderName: customConfig.auth.apiKeyHeaderName,
           hmacHeaderName: customConfig.auth.hmacHeaderName,
           hmacAlgorithm: customConfig.auth.hmacAlgorithm,
           hmacBodyTemplate: customConfig.auth.hmacBodyTemplate,
@@ -191,7 +210,7 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
 
     try {
       const response = await executeHttpRequest({
-        url: args.url,
+        url,
         method: args.method as HttpMethod,
         headers,
         body,

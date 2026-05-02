@@ -58,14 +58,13 @@ Notes:
 
 - **`maxResponseBytes: 5242880`** (5 MB) — PDFs are bigger than the default 1 MB cap. Bump as needed; reject very large rendered docs at the binding rather than the network
 - **`timeoutMs: 60000`** — rendering takes seconds, sometimes 10+. The default 30s timeout is borderline
-- **No `defaultResponseTransform`** — the response is binary PDF bytes, which the response transform can't process. The capability returns the raw body (base64-encoded by the response handler if the content-type is non-JSON / non-text). The agent then hands the bytes to a follow-up capability (e.g. `upload_to_storage`)
+- **Binary response shape.** When the renderer returns `application/pdf` (or any image/audio/video/octet-stream/zip), the HTTP module wraps the body as `{ encoding: 'base64', contentType: 'application/pdf', data: '<base64>' }` rather than UTF-8-decoding (which would corrupt the bytes). The agent receives this wrapper as its tool-call result; pass it to a storage capability (e.g. an `upload_to_storage` capability — see [Common variants](#9-common-variants)) rather than letting the LLM try to interpret base64 directly
+- **No `defaultResponseTransform`** — JMESPath/template transforms only make sense for structured (JSON) responses. Skip the transform for binary
 - **PDFShift uses Basic auth** with the API key as username and an empty password. Set `PDFSHIFT_API_KEY=sk_xxx:` (with trailing colon) for the Basic encoder to produce the right value
 
-> **Binary response handling caveat.** The current HTTP module returns binary responses as a UTF-8-decoded string, which corrupts PDF bytes. **For binary rendering, either (a) use a renderer that returns a hosted URL instead of bytes, or (b) extend the HTTP module to return base64-encoded bodies for non-text content-types — see the follow-up note in [Common variants](#9-common-variants).** Until that's resolved, the recipe's primary path is "renderer returns a URL", not "renderer returns bytes".
+### Alternative: renderer returns a hosted URL
 
-### Path that works today: renderer returns a hosted URL
-
-DocRaptor (and PDFShift with `?response_type=url`) can be configured to upload the result to their CDN and return a JSON body with the URL. That works inside the current binary-response constraint.
+If your renderer plan supports it (DocRaptor's `async: true` mode, PDFShift with `?response_type=url`), have the vendor host the rendered file and return a JSON body with the URL. The agent gets a URL string instead of base64 bytes — easier to quote back to the user, and avoids needing a storage capability.
 
 ```json
 {
@@ -181,10 +180,11 @@ Body: `{ "source": "<html>", "filename": "...", "use_print": true }`. With the r
 
 ## 9. Common variants
 
-- **Binary-response support (open follow-up).** Adding base64 encoding for non-text content-types in the HTTP module unlocks the "renderer returns bytes inline" flow. Tracked as a follow-up; until then, prefer hosted-URL responses
+- **Storage capability (open follow-up).** The HTTP module now wraps binary responses as `{ encoding: 'base64', contentType, data }`, but the LLM has nowhere useful to put base64 bytes inside a conversation. A complementary `upload_to_storage` capability — that takes the binary wrapper, uploads to S3/Vercel Blob, and returns a public/signed URL — would close the loop. Tracked in `improvement-priorities.md` Tier 3
 - **Multi-page reports.** Beyond ~10 pages the LLM-emitted HTML body becomes too large for a tool call. Move to a workflow that builds the HTML with `llm_call` steps and a final `external_call` step
 - **Templated rendering.** DocRaptor and similar accept a `document_url` instead of inline `document_content` — point at a template URL on your own host and pass `data` as variables. Reduces the size of the LLM-emitted body
 - **Self-hosted with auth.** If your Gotenberg instance is on a public network, front it with Basic auth or an API key check in your reverse proxy. Then bind `call_external_api` with `auth: { type: 'basic', ... }`
+- **Multipart bodies (open follow-up).** Gotenberg expects `multipart/form-data` with file parts, which the HTTP module doesn't construct natively. Tracked in `improvement-priorities.md` Tier 3 — for now front Gotenberg with a small JSON-to-multipart adapter on your own host
 
 ## 10. Anti-patterns
 

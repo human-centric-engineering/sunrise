@@ -41,13 +41,11 @@ Rotate webhook URLs annually or whenever a team member with access leaves.
 
 Worked example: Slack incoming webhook.
 
-The trick: **the LLM should not be allowed to pick the webhook URL** (that's the secret). Instead, bind a fixed URL via `forcedHeaders`-style indirection — but for a URL we use a different pattern. Two options:
-
-### Option A: tight `allowedUrlPrefixes` to the exact webhook URL
+The webhook URL is the credential — the LLM should not need to know it. Bind it via `forcedUrl` so the agent can call the capability without ever seeing the URL:
 
 ```json
 {
-  "allowedUrlPrefixes": ["${env:SLACK_WEBHOOK_URL}"],
+  "forcedUrl": "https://hooks.slack.com/services/T01.../B02.../xyzabc",
   "forcedHeaders": { "Content-Type": "application/json" },
   "auth": { "type": "none" },
   "defaultResponseTransform": { "type": "template", "expression": "ok" },
@@ -56,23 +54,20 @@ The trick: **the LLM should not be allowed to pick the webhook URL** (that's the
 }
 ```
 
-The `${env:SLACK_WEBHOOK_URL}` is resolved at admin-binding save time. The LLM must supply a URL that startsWith the resolved value, which is the full URL — so effectively the LLM has to repeat the URL exactly. The LLM sees the URL in the binding's allowed prefixes (visible in trace) and emits it in the tool call.
+When `forcedUrl` is set, the LLM-supplied `url` arg is discarded and the binding-pinned URL is used. The capability function definition allows omitting `url` entirely, so the agent prompt can describe the tool as "post a message" without the LLM needing to pick a URL. The host (`hooks.slack.com`) still has to be in `ORCHESTRATION_ALLOWED_HOSTS` — `forcedUrl` is a binding constraint, not an allowlist bypass.
 
-### Option B (preferred for unique-recipient bindings): `forcedHeaders` + a fixed dummy URL the LLM provides
+Storing the actual webhook URL in `customConfig` is acceptable for chat webhooks because the URL itself is the credential and is scoped per-channel. Rotate the webhook URL (and update the binding) annually or when team access changes. If you'd rather keep the URL in env vars only, use the alternative below.
 
-Simpler: tell the LLM to call a placeholder URL like `https://hooks.slack.com/services/PLACEHOLDER`, and let `forcedHeaders` rewrite via a `forcedUrl` key.
+### Alternative: env-resolved `forcedUrl` at admin-save time
 
-> ⚠ The HTTP module does not currently support `forcedUrl` rewriting. Use Option A for v1. This is a known follow-up — see [Common variants](#9-common-variants).
-
-For Option A, document the URL in the agent prompt rather than relying on the LLM to remember it.
+If your admin pipeline supports it (some orgs require all secrets to live in env vars only, never DB columns), set `forcedUrl: "${env:SLACK_WEBHOOK_URL}"` and have the binding-save endpoint resolve the env var at write time. **The current admin API does not perform this substitution** — see [Common variants](#9-common-variants) for the open follow-up. Until then, the inline `forcedUrl` is the supported path.
 
 ## 6. Agent prompt guidance
 
 Append to the agent's system instructions:
 
 ```
-You can post a single notification to the team Slack channel via the `call_external_api` tool. Call:
-  - url: <paste the exact SLACK_WEBHOOK_URL value here at agent-create time>
+You can post a single notification to the team Slack channel via the `call_external_api` tool. The destination URL is configured by the admin — you don't need to specify it. Call:
   - method: POST
   - body: { "text": "<the message>", "blocks": [optional Slack Block Kit blocks] }
 
@@ -83,19 +78,18 @@ POLICY:
   - Never include API keys, customer PII, or anything that would not be appropriate in a public team channel in the message body.
 ```
 
-For the URL — embed it once in the system prompt at agent creation time so the LLM doesn't have to guess. The trace will show the URL in tool calls but admins control who has trace access. **If the URL leaks, rotate the webhook.**
+The URL never appears in the agent prompt or the trace — `forcedUrl` keeps it out of LLM context entirely. **If the URL leaks via the binding's `customConfig`, rotate the webhook.**
 
 ## 7. Worked example
 
 User: _"Post to the team channel that the daily ingestion job finished — 142 documents processed, 3 errors."_
 
-LLM emits:
+LLM emits (no URL — bindings supply it via `forcedUrl`):
 
 ```json
 {
   "tool": "call_external_api",
   "args": {
-    "url": "https://hooks.slack.com/services/T01.../B02.../xyzabc",
     "method": "POST",
     "body": {
       "text": "Daily ingestion finished: 142 documents processed, 3 errors.",
@@ -113,7 +107,7 @@ LLM emits:
 }
 ```
 
-Capability dispatcher checks the URL against `allowedUrlPrefixes` (matches), sends:
+Capability dispatcher resolves the binding's `forcedUrl` and sends:
 
 ```http
 POST /services/T01.../B02.../xyzabc HTTP/1.1
@@ -135,7 +129,7 @@ Agent: _"Posted to the team channel."_
 
 ```json
 {
-  "allowedUrlPrefixes": ["${env:DISCORD_WEBHOOK_URL}"],
+  "forcedUrl": "https://discord.com/api/webhooks/<id>/<token>",
   "forcedHeaders": { "Content-Type": "application/json" },
   "defaultResponseTransform": { "type": "template", "expression": "posted: {{id}}" },
   "timeoutMs": 10000,
@@ -149,7 +143,7 @@ Discord body: `{ "content": "the message", "username": "optional override", "emb
 
 ```json
 {
-  "allowedUrlPrefixes": ["${env:TEAMS_WEBHOOK_URL}"],
+  "forcedUrl": "https://<tenant>.webhook.office.com/...",
   "forcedHeaders": { "Content-Type": "application/json" },
   "defaultResponseTransform": { "type": "template", "expression": "posted" },
   "timeoutMs": 10000,
@@ -168,8 +162,8 @@ Outbound webhooks don't sign. If you migrate to Slack's chat.postMessage Web API
 - **Threading.** Slack incoming webhooks don't support threading (you can't pass `thread_ts`). For threads, use `chat.postMessage` with bearer auth — different recipe / capability binding
 - **Mentions.** Slack: `<@USER_ID>` in `text` notifies the user. Discord: `<@user_id>`. Teams: `<at>...</at>` inside an Adaptive Card
 - **Throttling.** Slack rate-limits incoming webhooks at ~1/sec per webhook URL with bursts. Set `ORCHESTRATION_OUTBOUND_RATE_LIMIT` low for Slack-heavy agents
-- **`forcedUrl` follow-up.** When the HTTP module gains `forcedHeaders.forcedUrl` (or equivalent) support, switch to it so the LLM does not need to know the webhook URL at all. Until then, Option A is correct
-- **Multi-channel.** Bind `call_external_api` once per channel (each with its own `customConfig` and webhook env var). The LLM picks which channel by which capability slug it calls — give them descriptive names like `notify_eng_channel` if you wrap them, or just rely on prompt guidance
+- **Env-resolved `forcedUrl` (open follow-up).** Today the binding stores the resolved webhook URL inline in `customConfig`. An admin-API substitution path that resolves `${env:VAR}` at binding-save time would let the URL stay in env vars only — see `improvement-priorities.md` Tier 3
+- **Multi-channel.** Bind `call_external_api` once per channel (each with its own `customConfig` and `forcedUrl`). The LLM picks which channel by which capability slug it calls — give them descriptive names like `notify_eng_channel` if you wrap them, or just rely on prompt guidance
 
 ## 10. Anti-patterns
 

@@ -37,7 +37,7 @@ const unit: SeedUnit = {
               url: {
                 type: 'string',
                 description:
-                  'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix.',
+                  'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix. May be omitted when the binding pins a `forcedUrl`.',
                 maxLength: 2048,
               },
               method: {
@@ -62,7 +62,7 @@ const unit: SeedUnit = {
                 maxLength: 2000,
               },
             },
-            required: ['url', 'method'],
+            required: ['method'],
           },
         },
         rateLimit: 60,

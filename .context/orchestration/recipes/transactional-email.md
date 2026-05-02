@@ -50,35 +50,10 @@ Worked example: Postmark. Save this as the `customConfig` on the `AiAgentCapabil
   "allowedUrlPrefixes": ["https://api.postmarkapp.com/email"],
   "auth": {
     "type": "api-key",
-    "secret": "POSTMARK_SERVER_TOKEN"
+    "secret": "POSTMARK_SERVER_TOKEN",
+    "apiKeyHeaderName": "X-Postmark-Server-Token"
   },
   "forcedHeaders": {
-    "Accept": "application/json",
-    "X-Postmark-Server-Token-Auth": "ignored-postmark-uses-api-key-header"
-  },
-  "defaultResponseTransform": {
-    "type": "jmespath",
-    "expression": "{messageId: MessageID, to: To, errorCode: ErrorCode}"
-  },
-  "timeoutMs": 15000,
-  "maxResponseBytes": 32768
-}
-```
-
-Postmark uses an `X-Postmark-Server-Token` header for auth; the recipe maps `auth.type: 'api-key'` to that header by setting `forcedHeaders` to the right header name (Postmark validates the header name precisely). For providers that use `Authorization: Bearer ...` (SendGrid, Resend), use `auth.type: 'bearer'` and remove the `X-Postmark-...` line — see [Vendor variants](#8-vendor-variants).
-
-> **Note on Postmark's auth header.** Postmark uses `X-Postmark-Server-Token` rather than the generic `X-API-Key`. The HTTP module's built-in `api-key` mode sets `X-API-Key`. To match Postmark's expected header name, set the auth via `forcedHeaders: { "X-Postmark-Server-Token": "<value>" }` — but that requires putting the secret in config. **Better:** use `auth.type: 'bearer'` only when the vendor uses `Authorization: Bearer`, and for vendors with custom header names like Postmark, raise an issue / extend the HTTP module's auth options. **For Postmark specifically, the simplest correct binding is to use `forcedHeaders` with a templated value via env-var resolution at admin-binding time** — see the workaround in the next subsection.
-
-### Postmark-specific workaround
-
-Until the HTTP module supports custom-named single-secret-header auth, bind Postmark via `forcedHeaders` referencing an env-resolved value at admin save time. The simplest correct binding:
-
-```json
-{
-  "allowedUrlPrefixes": ["https://api.postmarkapp.com/email"],
-  "auth": { "type": "none" },
-  "forcedHeaders": {
-    "X-Postmark-Server-Token": "${env:POSTMARK_SERVER_TOKEN}",
     "Accept": "application/json"
   },
   "defaultResponseTransform": {
@@ -90,7 +65,7 @@ Until the HTTP module supports custom-named single-secret-header auth, bind Post
 }
 ```
 
-The `${env:VAR}` template syntax is resolved at binding-save time by the admin API, not at request time, so the resolved secret value is stored in DB. This is acceptable for Postmark because their server tokens are scoped per-server. For vendors with broader-scoped tokens (SendGrid, Resend) prefer the `auth.type: 'bearer'` path which keeps secrets out of the DB entirely.
+Postmark uses `X-Postmark-Server-Token` (rather than the generic `X-API-Key`) for authentication. The `apiKeyHeaderName` field on the auth config tells the api-key path to use that header name instead of the default — the secret stays in env vars, never in DB. For providers that use `Authorization: Bearer ...` (SendGrid, Resend), use `auth.type: 'bearer'` and remove the `apiKeyHeaderName` line — see [Vendor variants](#8-vendor-variants).
 
 ## 6. Agent prompt guidance
 

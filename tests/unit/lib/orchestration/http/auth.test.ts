@@ -60,6 +60,17 @@ describe('applyAuth', () => {
     expect(out.headers).toEqual({ 'X-API-Key': 'apikey_xyz' });
   });
 
+  it('honours custom api-key header name', () => {
+    process.env.TEST_KEY = 'apikey_xyz';
+    const out = applyAuth(
+      { type: 'api-key', secret: 'TEST_KEY', apiKeyHeaderName: 'X-Postmark-Server-Token' },
+      'https://api.example.com/x',
+      'POST',
+      '{}'
+    );
+    expect(out.headers).toEqual({ 'X-Postmark-Server-Token': 'apikey_xyz' });
+  });
+
   it('appends default query param for type "query-param"', () => {
     process.env.TEST_KEY = 'qpval';
     const out = applyAuth(

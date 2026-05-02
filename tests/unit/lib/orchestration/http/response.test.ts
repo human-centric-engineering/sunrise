@@ -17,6 +17,7 @@ import { HttpError } from '@/lib/orchestration/http/errors';
 import {
   applyResponseTransform,
   getNestedValue,
+  isBinaryResponseBody,
   isRetriableStatus,
   readResponseBody,
 } from '@/lib/orchestration/http/response';
@@ -75,6 +76,56 @@ describe('readResponseBody', () => {
       headers: { 'Content-Type': 'text/plain', 'content-length': '100' },
     });
     await expect(readResponseBody(res, 50)).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('returns base64 wrapper for application/pdf', async () => {
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]); // "%PDF-1.4"
+    const res = new Response(pdfBytes, {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf' },
+    });
+    const body = await readResponseBody(res, 1024);
+    expect(isBinaryResponseBody(body)).toBe(true);
+    if (isBinaryResponseBody(body)) {
+      expect(body.encoding).toBe('base64');
+      expect(body.contentType).toBe('application/pdf');
+      expect(Buffer.from(body.data, 'base64').toString('binary')).toBe('%PDF-1.4');
+    }
+  });
+
+  it('returns base64 wrapper for image/png', async () => {
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG magic
+    const res = new Response(pngBytes, {
+      status: 200,
+      headers: { 'Content-Type': 'image/png' },
+    });
+    const body = await readResponseBody(res, 1024);
+    expect(isBinaryResponseBody(body)).toBe(true);
+    if (isBinaryResponseBody(body)) {
+      expect(body.contentType).toBe('image/png');
+    }
+  });
+
+  it('strips charset and other parameters from binary contentType', async () => {
+    const res = new Response(new Uint8Array([0x00, 0x01, 0x02]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/octet-stream; name="x"' },
+    });
+    const body = await readResponseBody(res, 1024);
+    expect(isBinaryResponseBody(body)).toBe(true);
+    if (isBinaryResponseBody(body)) {
+      expect(body.contentType).toBe('application/octet-stream');
+    }
+  });
+
+  it('does not base64-wrap text responses just because they are 200 OK', async () => {
+    const res = new Response('hello', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+    const body = await readResponseBody(res, 1024);
+    expect(isBinaryResponseBody(body)).toBe(false);
+    expect(body).toBe('hello');
   });
 
   it('throws response_too_large when actual body exceeds cap', async () => {

@@ -72,9 +72,18 @@ afterEach(() => {
 
 describe('CallExternalApiCapability', () => {
   describe('args validation', () => {
-    it('rejects missing url', () => {
+    it('accepts missing url at the schema layer (forcedUrl in binding may supply it)', () => {
       const cap = new CallExternalApiCapability();
-      expect(() => cap.validate({ method: 'POST' })).toThrow();
+      // Zod allows it; execute() returns invalid_args if no forcedUrl either.
+      expect(() => cap.validate({ method: 'POST' })).not.toThrow();
+    });
+
+    it('returns invalid_args at execute when neither url nor forcedUrl is supplied', async () => {
+      noBinding();
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST' }, context);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
     });
 
     it('rejects missing method', () => {
@@ -166,6 +175,40 @@ describe('CallExternalApiCapability', () => {
         { url: 'https://api.allowed.com/v1/email/send', method: 'POST', body: {} },
         context
       );
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('forcedUrl', () => {
+    it('overrides args.url with the binding-pinned URL', async () => {
+      bindCustomConfig({ forcedUrl: 'https://api.allowed.com/v1/notify' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        { url: 'https://api.allowed.com/v1/anything-else', method: 'POST', body: {} },
+        context
+      );
+      const calledUrl = fetchSpy.mock.calls[0]?.[0];
+      expect(calledUrl).toBe('https://api.allowed.com/v1/notify');
+    });
+
+    it('accepts a tool call with no url when forcedUrl is set', async () => {
+      bindCustomConfig({ forcedUrl: 'https://api.allowed.com/v1/notify' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: { msg: 'hi' } }, context);
+      expect(result.success).toBe(true);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/v1/notify');
+    });
+
+    it('forcedUrl bypasses allowedUrlPrefixes (it IS the constraint)', async () => {
+      bindCustomConfig({
+        forcedUrl: 'https://api.allowed.com/v1/notify',
+        allowedUrlPrefixes: ['https://api.allowed.com/v1/something-else'],
+      });
+      mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: {} }, context);
       expect(result.success).toBe(true);
     });
   });

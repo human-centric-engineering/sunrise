@@ -34,6 +34,10 @@ export interface HttpAuthConfig {
   secret?: string;
   /** Query param name when type is 'query-param' (default: 'api_key'). */
   queryParam?: string;
+  /** Header name when type is 'api-key' (default: 'X-API-Key'). Lets vendors with
+   * non-standard header names — e.g. Postmark's `X-Postmark-Server-Token` —
+   * use the api-key path without falling back to forcedHeaders + secret-in-config. */
+  apiKeyHeaderName?: string;
   /** Header name for the HMAC signature (default: 'X-Signature'). */
   hmacHeaderName?: string;
   /** Digest algorithm for HMAC signing (default: 'sha256'). */
@@ -43,6 +47,7 @@ export interface HttpAuthConfig {
 }
 
 const DEFAULT_QUERY_PARAM = 'api_key';
+const DEFAULT_API_KEY_HEADER = 'X-API-Key';
 const DEFAULT_HMAC_HEADER = 'X-Signature';
 const DEFAULT_HMAC_ALGORITHM: 'sha256' | 'sha512' = 'sha256';
 const DEFAULT_HMAC_BODY_TEMPLATE = '{method}\n{path}\n{body}';
@@ -103,7 +108,7 @@ export function applyAuth(
       return { url, headers: { Authorization: `Bearer ${secret}` } };
 
     case 'api-key':
-      return { url, headers: { 'X-API-Key': secret } };
+      return { url, headers: { [auth.apiKeyHeaderName ?? DEFAULT_API_KEY_HEADER]: secret } };
 
     case 'basic':
       return { url, headers: { Authorization: `Basic ${encodeBasic(secret)}` } };

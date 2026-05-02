@@ -144,6 +144,9 @@ The items that disproportionately unlock the worked examples in `business-applic
 | 13  | OTEL instrumentation as opt-in plug-in                         | ⚪ Not started |
 | 14  | Inbound triggers from third-party systems (email-in, Slack-in) | ⚪ Not started |
 | 15  | Better full checkpoint recovery beyond approval pauses         | ⚪ Not started |
+| 16  | `upload_to_storage` capability (S3 / Vercel Blob)              | ⚪ Not started |
+| 17  | Multipart/form-data construction in `lib/orchestration/http/`  | ⚪ Not started |
+| 18  | Env-var resolution for binding `customConfig` at admin save    | ⚪ Not started |
 
 Brief rationale for each:
 
@@ -152,6 +155,9 @@ Brief rationale for each:
 - **13 — OTEL plug-in.** Lower-priority than its maturity-analysis P0 ranking suggests for this profile, but useful if a single customer wants to ship traces to Langfuse / Datadog. Treat as plug-in, not core requirement; prefer a Haystack-style pluggable tracer interface so it remains optional.
 - **14 — Inbound triggers.** Webhook subscriptions handle outbound; inbound from "things that happen elsewhere" is gappy. Several business-application examples (subscription-box churn outreach, mutual-aid coordination, complaints) benefit from email-in or Slack-in. Generic Postmark inbound parse covers most cases cheaply.
 - **15 — Full checkpoint recovery.** For single-tenant low-load deployments, crashes during long workflows are uncommon, and human-approval checkpointing already covers the highest-stakes pause case. Worth doing to make background execution (item 8) robust to deploys, but not urgent.
+- **16 — `upload_to_storage` capability.** The HTTP module wraps binary responses (PDFs from renderers, images from generators) as `{ encoding: 'base64', contentType, data }` — but there's nowhere useful for the agent to put base64 bytes inside a conversation. A complementary capability that takes the wrapper, uploads to S3 / Vercel Blob, and returns a public/signed URL closes the loop. Without it the document-render recipe leans on hosted-URL renderer modes (DocRaptor `async`, PDFShift `?response_type=url`); with it, any renderer that returns bytes inline becomes usable. Surfaced while writing `recipes/document-render.md`.
+- **17 — Multipart/form-data construction.** Some hosted endpoints (Gotenberg for HTML→PDF being the canonical example) require `multipart/form-data` with named file parts and field parts, not JSON. The HTTP module doesn't construct multipart bodies today, so recipes targeting these endpoints recommend a small JSON-to-multipart adapter on your own host. A first-class implementation would need a real design decision (how does the LLM emit file parts vs fields? streaming or in-memory? how big a body do we accept?). Surfaced while writing `recipes/document-render.md`.
+- **18 — Env-var resolution at admin-save.** Several recipes want to keep secrets in env vars only — never in DB columns next to per-call config. Today, fields like the chat-notification recipe's `forcedUrl` (which IS the credential) are stored inline in `customConfig`. A `${env:VAR}` substitution path that resolves at admin-binding-save time would let those values stay in env vars exclusively. Modest scope; opinionated about whether substitution happens at write time (resolved value stored) or read time (template stored, resolved per-request). Surfaced while writing `recipes/chat-notification.md` and `recipes/transactional-email.md`.
 
 ---
 

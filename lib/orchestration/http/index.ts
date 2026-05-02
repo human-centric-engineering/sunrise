@@ -28,7 +28,9 @@ export {
 export {
   applyResponseTransform,
   getNestedValue,
+  isBinaryResponseBody,
   isRetriableStatus,
   readResponseBody,
+  type BinaryResponseBody,
   type ResponseTransform,
 } from '@/lib/orchestration/http/response';

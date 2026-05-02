@@ -86,6 +86,7 @@ export async function executeExternalCall(
         type: config.authType,
         secret: config.authSecret,
         queryParam: config.authQueryParam,
+        apiKeyHeaderName: config.apiKeyHeaderName,
         hmacHeaderName: config.hmacHeaderName,
         hmacAlgorithm: config.hmacAlgorithm,
         hmacBodyTemplate: config.hmacBodyTemplate,

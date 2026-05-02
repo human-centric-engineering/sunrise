@@ -1942,6 +1942,8 @@ export const externalCallConfigSchema = stepErrorConfigSchema.extend({
   authSecret: z.string().optional(),
   /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
   authQueryParam: z.string().optional(),
+  /** Header name when authType is 'api-key' (default: 'X-API-Key'). For vendors with non-standard names, e.g. Postmark's 'X-Postmark-Server-Token'. */
+  apiKeyHeaderName: z.string().optional(),
   /** Header name for the HMAC signature when authType is 'hmac' (default: 'X-Signature'). */
   hmacHeaderName: z.string().optional(),
   /** Digest algorithm when authType is 'hmac' (default: 'sha256'). */
