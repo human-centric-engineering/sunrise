@@ -122,4 +122,36 @@ describe('MessageWithCitations', () => {
     // React's synthetic preventDefault propagates to the native event.
     expect(event.defaultPrevented).toBe(true);
   });
+
+  it('leaves bracketed digits alone when there are no citations on the turn', () => {
+    // A non-RAG response that happens to mention `[5]` must not be
+    // treated as a hallucinated marker — there is no envelope to
+    // validate against, so substitution is wrong.
+    render(<MessageWithCitations content="See paragraph [5] of the manual." />);
+    expect(screen.queryByLabelText(/citation/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Unmatched citation marker/)).not.toBeInTheDocument();
+    expect(screen.getByText('See paragraph [5] of the manual.')).toBeInTheDocument();
+  });
+
+  it('renders adjacent markers as separate references', () => {
+    const citations = [makeCitation({ marker: 1 }), makeCitation({ marker: 2, chunkId: 'c2' })];
+    render(<MessageWithCitations content="Combined [1][2]." citations={citations} />);
+    expect(screen.getByLabelText('Citation 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Citation 2')).toBeInTheDocument();
+  });
+
+  it('handles markers at the start and end of the content', () => {
+    const citations = [makeCitation({ marker: 1 }), makeCitation({ marker: 2, chunkId: 'c2' })];
+    render(<MessageWithCitations content="[1] opens, closes [2]" citations={citations} />);
+    expect(screen.getByLabelText('Citation 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Citation 2')).toBeInTheDocument();
+  });
+
+  it('omits the excerpt paragraph when the excerpt is empty', () => {
+    const citations = [makeCitation({ excerpt: '' })];
+    render(<MessageWithCitations content="See [1]" citations={citations} />);
+    // The list item still renders the document name, but no excerpt <p>.
+    expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
+    expect(screen.queryByText(/deposit must be protected/)).not.toBeInTheDocument();
+  });
 });

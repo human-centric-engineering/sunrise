@@ -187,6 +187,11 @@ export function GET(request: NextRequest): Response {
   // nodes and appends a sources panel below the bubble. Uses createElement
   // + textContent throughout so model output cannot inject HTML.
   function renderCitations(span, fullText, citations) {
+    // Defensive early-return: empty envelopes should not happen (the
+    // server only emits the citations event when length > 0) but if one
+    // arrives we must not falsely flag every [N] in fullText as
+    // hallucinated.
+    if (!citations || citations.length === 0) return;
     var validMarkers = {};
     for (var i = 0; i < citations.length; i++) {
       validMarkers[citations[i].marker] = true;
@@ -214,7 +219,6 @@ export function GET(request: NextRequest): Response {
     if (!msgDiv) return;
     var existing = msgDiv.querySelector('.citations-panel');
     if (existing) existing.remove();
-    if (citations.length === 0) return;
 
     var panel = document.createElement('div');
     panel.className = 'citations-panel';

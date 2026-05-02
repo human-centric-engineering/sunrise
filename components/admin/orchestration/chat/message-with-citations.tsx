@@ -34,7 +34,14 @@ const MARKER_TOKEN = /^\[(\d+)\]$/;
 export function MessageWithCitations({ content, citations, className }: Props) {
   const [showSources, setShowSources] = useState(true);
 
-  const validMarkers = new Set((citations ?? []).map((c) => c.marker));
+  // No citations on this turn ⇒ leave `[N]` literals alone. Substituting
+  // unconditionally would falsely flag any prose that happens to contain
+  // bracketed digits (e.g. "see paragraph [5]") as hallucinated.
+  if (!citations || citations.length === 0) {
+    return <div className={cn('whitespace-pre-wrap', className)}>{content}</div>;
+  }
+
+  const validMarkers = new Set(citations.map((c) => c.marker));
   const tokens = content.split(MARKER_SPLIT);
 
   return (
@@ -128,9 +135,11 @@ function CitationsPanel({ citations, open, onToggle }: CitationsPanelProps) {
                 </span>
                 {c.section && <span className="text-muted-foreground">· {c.section}</span>}
               </div>
-              <p className="text-muted-foreground mt-1 leading-snug whitespace-pre-wrap">
-                {c.excerpt}
-              </p>
+              {c.excerpt && (
+                <p className="text-muted-foreground mt-1 leading-snug whitespace-pre-wrap">
+                  {c.excerpt}
+                </p>
+              )}
             </li>
           ))}
         </ol>
