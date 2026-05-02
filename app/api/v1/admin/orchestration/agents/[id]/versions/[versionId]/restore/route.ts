@@ -42,6 +42,7 @@ const versionSnapshotSchema = z.object({
   visibility: z.enum(['internal', 'public', 'invite_only']).optional(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().nullable().optional(),
   retentionDays: z.number().int().nullable().optional(),
   providerConfig: z.unknown().optional(),
@@ -138,6 +139,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     if (snapshot.inputGuardMode !== undefined) updateData.inputGuardMode = snapshot.inputGuardMode;
     if (snapshot.outputGuardMode !== undefined)
       updateData.outputGuardMode = snapshot.outputGuardMode;
+    if (snapshot.citationGuardMode !== undefined)
+      updateData.citationGuardMode = snapshot.citationGuardMode;
     if (snapshot.maxHistoryTokens !== undefined)
       updateData.maxHistoryTokens = snapshot.maxHistoryTokens;
     if (snapshot.retentionDays !== undefined) updateData.retentionDays = snapshot.retentionDays;

@@ -61,6 +61,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   approvalDefaultAction: 'deny',
   inputGuardMode: 'log_only',
   outputGuardMode: 'log_only',
+  citationGuardMode: 'log_only',
   webhookRetentionDays: null,
   costLogRetentionDays: null,
   auditLogRetentionDays: null,

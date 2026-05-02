@@ -93,11 +93,16 @@ vi.mock('@/lib/orchestration/chat/context-builder', () => ({
 
 vi.mock('@/lib/orchestration/chat/output-guard', () => ({
   scanOutput: vi.fn(() => ({ flagged: false, topicMatches: [], builtInMatches: [] })),
+  scanCitations: vi.fn(() => ({ flagged: false, underCited: false, hallucinatedMarkers: [] })),
 }));
 
 vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: vi.fn(() =>
-    Promise.resolve({ inputGuardMode: 'log_only', outputGuardMode: 'log_only' })
+    Promise.resolve({
+      inputGuardMode: 'log_only',
+      outputGuardMode: 'log_only',
+      citationGuardMode: 'log_only',
+    })
   ),
 }));
 

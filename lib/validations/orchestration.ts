@@ -118,6 +118,7 @@ export const createAgentSchema = z.object({
 
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -228,6 +229,7 @@ export const updateAgentSchema = z.object({
 
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z
     .number()
     .int('Max history tokens must be an integer')
@@ -656,6 +658,7 @@ const bundledAgentSchema = z.object({
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
@@ -1730,6 +1733,7 @@ export const updateOrchestrationSettingsSchema = z
     approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+    citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     webhookRetentionDays: z
       .number()
       .int()
@@ -1776,6 +1780,7 @@ export const updateOrchestrationSettingsSchema = z
       v.approvalDefaultAction !== undefined ||
       v.inputGuardMode !== undefined ||
       v.outputGuardMode !== undefined ||
+      v.citationGuardMode !== undefined ||
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
       v.auditLogRetentionDays !== undefined ||

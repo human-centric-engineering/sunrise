@@ -42,6 +42,7 @@ export interface EscalationConfig {
 export interface OrchestrationSettings {
   inputGuardMode: string | null;
   outputGuardMode: string | null;
+  citationGuardMode: string | null;
   globalMonthlyBudgetUsd: number | null;
   defaultApprovalTimeoutMs: number | null;
   approvalDefaultAction: string | null;
@@ -77,6 +78,7 @@ const settingsFormSchema = z.object({
   // Safety
   inputGuardMode: z.enum(GUARD_MODES),
   outputGuardMode: z.enum(GUARD_MODES),
+  citationGuardMode: z.enum(GUARD_MODES),
   // Limits
   globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
   maxConversationsPerUser: nullableNumber.pipe(z.number().int().positive().max(10_000).nullable()),
@@ -159,6 +161,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     () => ({
       inputGuardMode: guardModeToForm(initialSettings.inputGuardMode),
       outputGuardMode: guardModeToForm(initialSettings.outputGuardMode),
+      citationGuardMode: guardModeToForm(initialSettings.citationGuardMode),
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       maxConversationsPerUser: toStr(initialSettings.maxConversationsPerUser),
       maxMessagesPerConversation: toStr(initialSettings.maxMessagesPerConversation),
@@ -243,6 +246,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
         body: {
           inputGuardMode: guardModeToApi(values.inputGuardMode),
           outputGuardMode: guardModeToApi(values.outputGuardMode),
+          citationGuardMode: guardModeToApi(values.citationGuardMode),
           globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
           maxConversationsPerUser: values.maxConversationsPerUser,
           maxMessagesPerConversation: values.maxMessagesPerConversation,
@@ -329,6 +333,36 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
               render={({ field }) => (
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger id="outputGuardMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None (disabled)</SelectItem>
+                    <SelectItem value="log_only">Log only</SelectItem>
+                    <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                    <SelectItem value="block">Block</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="citationGuardMode" className="flex items-center gap-1">
+              Citation guard mode
+              <FieldHelp title="Citation hygiene">
+                Validates that responses grounded in retrieved knowledge include the `[N]` markers
+                that align to the citation envelope. Flags two failure modes: under-citation (the
+                model retrieved sources but cited none of them) and hallucinated markers (the model
+                cited `[3]` but only two sources were retrieved). Agents can override this in their
+                own config.
+              </FieldHelp>
+            </Label>
+            <Controller
+              name="citationGuardMode"
+              control={control}
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger id="citationGuardMode">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

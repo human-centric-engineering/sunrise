@@ -35,7 +35,7 @@ import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
-import { scanOutput } from '@/lib/orchestration/chat/output-guard';
+import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { extractCitations } from '@/lib/orchestration/chat/citations';
 import {
@@ -493,6 +493,53 @@ export class StreamingChatHandler {
                   type: 'warning',
                   code: 'output_flagged',
                   message: 'The response was flagged for review.',
+                };
+              }
+            }
+
+            // Citation guard — only meaningful on the terminal turn,
+            // because citations accumulate across the tool loop and the
+            // model only emits `[N]` markers once it has consumed the
+            // augmented tool results. Scan is a no-op when no
+            // citations were produced this turn.
+            const citationScan = scanCitations(assistantText, citations);
+            if (citationScan.flagged) {
+              log.warn('Citation guard triggered', {
+                agentSlug: request.agentSlug,
+                conversationId: conversation.id,
+                underCited: citationScan.underCited,
+                hallucinatedMarkers: citationScan.hallucinatedMarkers,
+                citationCount: citations.length,
+              });
+
+              let citationMode: string = agent.citationGuardMode ?? 'log_only';
+              if (!agent.citationGuardMode) {
+                try {
+                  const settings = await getOrchestrationSettings();
+                  citationMode = settings.citationGuardMode ?? 'log_only';
+                } catch {
+                  logger.warn(
+                    'Failed to load orchestration settings for citation guard mode, falling back to log_only'
+                  );
+                }
+              }
+
+              if (citationMode === 'block') {
+                yield errorEvent(
+                  'citation_required',
+                  citationScan.underCited
+                    ? 'Response was blocked because it did not cite any of the retrieved sources.'
+                    : 'Response was blocked because it referenced sources that do not exist.'
+                );
+                return;
+              }
+              if (citationMode === 'warn_and_continue') {
+                yield {
+                  type: 'warning',
+                  code: citationScan.underCited ? 'citation_missing' : 'citation_hallucinated',
+                  message: citationScan.underCited
+                    ? 'The response did not cite any retrieved sources.'
+                    : `The response referenced sources that were not retrieved (${citationScan.hallucinatedMarkers.join(', ')}).`,
                 };
               }
             }

@@ -75,6 +75,7 @@ function makeDbAgent(id: string, slug: string) {
     rateLimitRpm: null,
     inputGuardMode: null,
     outputGuardMode: null,
+    citationGuardMode: null,
     maxHistoryTokens: null,
     retentionDays: null,
     visibility: 'internal',

@@ -115,6 +115,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.fallbackProviders !== undefined) data.fallbackProviders = body.fallbackProviders;
   if (body.inputGuardMode !== undefined) data.inputGuardMode = body.inputGuardMode;
   if (body.outputGuardMode !== undefined) data.outputGuardMode = body.outputGuardMode;
+  if (body.citationGuardMode !== undefined) data.citationGuardMode = body.citationGuardMode;
   if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
   if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
 
@@ -159,6 +160,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'visibility',
     'inputGuardMode',
     'outputGuardMode',
+    'citationGuardMode',
     'maxHistoryTokens',
     'retentionDays',
     'providerConfig',
@@ -198,6 +200,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           visibility: current.visibility,
           inputGuardMode: current.inputGuardMode,
           outputGuardMode: current.outputGuardMode,
+          citationGuardMode: current.citationGuardMode,
           maxHistoryTokens: current.maxHistoryTokens,
           retentionDays: current.retentionDays,
           providerConfig: current.providerConfig,

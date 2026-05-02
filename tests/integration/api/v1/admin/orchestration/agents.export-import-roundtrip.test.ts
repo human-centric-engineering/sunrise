@@ -103,6 +103,7 @@ function makeDbAgent() {
     rateLimitRpm: 30,
     inputGuardMode: 'block',
     outputGuardMode: 'warn_and_continue',
+    citationGuardMode: 'log_only',
     maxHistoryTokens: 8000,
     retentionDays: 60,
     visibility: 'invite_only',

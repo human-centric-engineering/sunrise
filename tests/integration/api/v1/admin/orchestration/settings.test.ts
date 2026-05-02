@@ -107,6 +107,7 @@ function makeSettingsRow(
     approvalDefaultAction: string | null;
     inputGuardMode: string | null;
     outputGuardMode: string | null;
+    citationGuardMode: string | null;
     webhookRetentionDays: number | null;
     costLogRetentionDays: number | null;
     auditLogRetentionDays: number | null;
@@ -130,6 +131,7 @@ function makeSettingsRow(
     approvalDefaultAction: 'deny' as string | null,
     inputGuardMode: 'log_only' as string | null,
     outputGuardMode: 'log_only' as string | null,
+    citationGuardMode: 'log_only' as string | null,
     webhookRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
     auditLogRetentionDays: null as number | null,

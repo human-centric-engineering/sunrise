@@ -588,6 +588,12 @@ export interface OrchestrationSettings {
   inputGuardMode: InputGuardMode | null;
   /** Output guard behaviour for topic boundary enforcement. `null` = disabled. */
   outputGuardMode: OutputGuardMode | null;
+  /**
+   * Citation guard behaviour. Validates that responses grounded in
+   * retrieved knowledge include `[N]` markers matching the citation
+   * envelope. `null` = inherit `log_only`.
+   */
+  citationGuardMode: OutputGuardMode | null;
   /** Days to retain webhook delivery logs, or `null` for no auto-cleanup. */
   webhookRetentionDays: number | null;
   /** Days to retain cost logs, or `null` for no auto-cleanup. */

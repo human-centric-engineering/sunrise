@@ -130,6 +130,7 @@ export const POST = withAdminAuth(async (request, session) => {
         rateLimitRpm: bundled.rateLimitRpm ?? null,
         inputGuardMode: bundled.inputGuardMode ?? null,
         outputGuardMode: bundled.outputGuardMode ?? null,
+        citationGuardMode: bundled.citationGuardMode ?? null,
         maxHistoryTokens: bundled.maxHistoryTokens ?? null,
         retentionDays: bundled.retentionDays ?? null,
         visibility: bundled.visibility ?? 'internal',

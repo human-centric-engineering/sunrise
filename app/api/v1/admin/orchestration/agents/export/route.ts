@@ -97,6 +97,7 @@ export const POST = withAdminAuth(async (request, session) => {
         rateLimitRpm: agent.rateLimitRpm,
         inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
         outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
+        citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
         maxHistoryTokens: agent.maxHistoryTokens,
         retentionDays: agent.retentionDays,
         visibility: visibilitySchema.parse(agent.visibility),

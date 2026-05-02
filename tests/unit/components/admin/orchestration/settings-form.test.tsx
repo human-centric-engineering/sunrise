@@ -46,6 +46,7 @@ vi.mock('@/lib/api/client', () => ({
 const FULL_SETTINGS: OrchestrationSettings = {
   inputGuardMode: 'log_only',
   outputGuardMode: 'warn_and_continue',
+  citationGuardMode: 'log_only',
   globalMonthlyBudgetUsd: 500,
   defaultApprovalTimeoutMs: 60000,
   approvalDefaultAction: 'deny',
@@ -60,6 +61,7 @@ const FULL_SETTINGS: OrchestrationSettings = {
 const EMPTY_SETTINGS: OrchestrationSettings = {
   inputGuardMode: null,
   outputGuardMode: null,
+  citationGuardMode: null,
   globalMonthlyBudgetUsd: null,
   defaultApprovalTimeoutMs: null,
   approvalDefaultAction: null,

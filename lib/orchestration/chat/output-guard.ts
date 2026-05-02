@@ -85,3 +85,65 @@ export function scanOutput(content: string, topicBoundaries: string[]): OutputSc
     builtInMatches,
   };
 }
+
+/**
+ * Result of {@link scanCitations}.
+ */
+export interface CitationScanResult {
+  flagged: boolean;
+  /** True when citations were available but no marker appears in the text. */
+  underCited: boolean;
+  /** Marker numbers referenced via `[N]` that have no matching citation. */
+  hallucinatedMarkers: number[];
+}
+
+/** Matches `[1]`, `[2]`, …, `[42]` etc. anywhere in the text. */
+const CITATION_MARKER_PATTERN = /\[(\d+)\]/g;
+
+/**
+ * Scan an assistant response for citation hygiene against the
+ * citations envelope produced during the turn. Two failure modes are
+ * detected:
+ *
+ * - **Under-citation**: citations exist but no `[N]` marker appears in
+ *   the text. Implies the model retrieved sources but failed to ground.
+ * - **Hallucinated marker**: a `[N]` marker appears in the text but no
+ *   citation in the envelope carries that marker.
+ *
+ * Returns `flagged: false` when there are no citations (vacuously
+ * passing — the model wasn't required to cite anything) or when at
+ * least one valid marker is referenced and no invalid markers appear.
+ *
+ * Heuristic, not exhaustive: a model can still under-cite by quoting
+ * one source but making five claims. Tighter checks (sentence-level
+ * marker density, semantic faithfulness scoring) belong in named
+ * evaluation metrics, not this regex pass.
+ */
+export function scanCitations(
+  content: string,
+  citations: ReadonlyArray<{ marker: number }>
+): CitationScanResult {
+  if (citations.length === 0) {
+    return { flagged: false, underCited: false, hallucinatedMarkers: [] };
+  }
+
+  const validMarkers = new Set(citations.map((c) => c.marker));
+  const referencedMarkers = new Set<number>();
+  const hallucinated = new Set<number>();
+
+  for (const match of content.matchAll(CITATION_MARKER_PATTERN)) {
+    const n = Number.parseInt(match[1], 10);
+    if (validMarkers.has(n)) {
+      referencedMarkers.add(n);
+    } else {
+      hallucinated.add(n);
+    }
+  }
+
+  const underCited = referencedMarkers.size === 0;
+  return {
+    flagged: underCited || hallucinated.size > 0,
+    underCited,
+    hallucinatedMarkers: [...hallucinated].sort((a, b) => a - b),
+  };
+}

@@ -39,6 +39,7 @@ import { API } from '@/lib/api/endpoints';
 const defaults = {
   inputGuardMode: null,
   outputGuardMode: null,
+  citationGuardMode: null,
   globalMonthlyBudgetUsd: null,
   defaultApprovalTimeoutMs: null,
   approvalDefaultAction: null,

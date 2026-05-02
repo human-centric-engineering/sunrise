@@ -21,6 +21,7 @@ async function getSettings(): Promise<OrchestrationSettings> {
   const defaults: OrchestrationSettings = {
     inputGuardMode: null,
     outputGuardMode: null,
+    citationGuardMode: null,
     globalMonthlyBudgetUsd: null,
     defaultApprovalTimeoutMs: null,
     approvalDefaultAction: null,
