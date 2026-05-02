@@ -834,6 +834,103 @@ describe('handleClientError', () => {
   });
 });
 
+describe('scrubSensitiveData edge cases (tested via handleClientError)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('handles context that contains null values in an array without crashing', () => {
+    // Arrange: array with null element — exercises scrubSensitiveData(null) recursion
+    const error = new Error('scrub-null-test-unique-xzq1');
+    const context = { items: [null, { name: 'safe' }] };
+
+    // Act + Assert: should not throw
+    expect(() => handleClientError(error, context)).not.toThrow();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles context with undefined values in nested objects without crashing', () => {
+    // Arrange: object with explicit undefined values — exercises the non-object arm
+    const error = new Error('scrub-undefined-test-unique-xzq2');
+    const context = { value: undefined as unknown, label: 'test' };
+
+    // Act + Assert: no crash; non-sensitive non-object values pass through
+    expect(() => handleClientError(error, context)).not.toThrow();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles metadata that is a plain string (normalizeError string case)', () => {
+    // Arrange: string error → normalizeError returns metadata: {}
+    // scrubSensitiveData({}) → {} → isRecord({}) is true → scrubbedMetadata = {}
+    // This verifies the non-crash path for primitive metadata via string error input
+    expect(() => handleClientError('plain string error unique xzq3')).not.toThrow();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles a number as the error value (primitive scrub path)', () => {
+    // Arrange: number → normalizeError returns metadata: { originalValue: 42 }
+    // scrubSensitiveData({ originalValue: 42 }) → 42 is not object → passes through unchanged
+    expect(() => handleClientError(42 as unknown)).not.toThrow();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getErrorFingerprint edge cases (tested via handleClientError deduplication)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses "unknown" in fingerprint when error has empty message', () => {
+    // Arrange: Error with empty message — `error.message || 'unknown'` yields 'unknown'
+    const error = new Error('');
+    // Act: first call should be processed
+    handleClientError(error);
+    // Second call with the same error (same fingerprint) should be deduped
+    handleClientError(error);
+    // Assert: only one log call (deduplication worked using 'unknown' fingerprint)
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses "no-stack" in fingerprint when error has no stack', () => {
+    // Arrange: Error with stack manually cleared — `error.stack || 'no-stack'` yields 'no-stack'
+    const error = new Error('no-stack-message-unique-zqw4');
+    Object.defineProperty(error, 'stack', { value: undefined, configurable: true });
+
+    // Act: first call should be processed
+    handleClientError(error);
+    // Second call — same fingerprint (no-stack path) → deduped
+    handleClientError(error);
+
+    // Assert: only one log call
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses "no-line" in fingerprint when stack has only one line', () => {
+    // Arrange: Error with a stack that has no second line — split('\n')[1] is undefined
+    const error = new Error('single-line-stack-unique-zqw5');
+    Object.defineProperty(error, 'stack', {
+      value: 'Error: single-line-stack',
+      configurable: true,
+    });
+
+    // Act: first call should be processed
+    handleClientError(error);
+    // Second call — same fingerprint (no-line path) → deduped
+    handleClientError(error);
+
+    // Assert: only one log call
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+// NOTE: L226/L228 isRecord defensive arms and L219 firstKey falsy arm are NOT tested.
+// - L226/L228: scrubSensitiveData(context) always returns a Record when called with
+//   Record<string, unknown> context (the only allowed input type). The false arm is
+//   structurally unreachable in production via the public API.
+// - L219: processedErrors.values().next().value can only be undefined if the Set is
+//   empty, but the cleanup only runs when size > MAX_PROCESSED_ERRORS (100), so the
+//   Set is guaranteed non-empty at that point. Pure defensive paranoia.
+
 describe('initGlobalErrorHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -321,4 +321,122 @@ describe('McpSessionManager', () => {
       expect(sink).not.toHaveBeenCalled();
     });
   });
+
+  describe('evictExpired (interval callback)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    afterAll(() => {
+      vi.useRealTimers();
+    });
+
+    it('removes all expired sessions when the eviction interval fires', () => {
+      // Arrange: use fake timers so we can control the 5-minute eviction interval.
+      // McpSessionManager(1000) means sessions expire after 1 second.
+      vi.useFakeTimers();
+      const evictMgr = new McpSessionManager(1000); // 1 second TTL
+
+      evictMgr.createSession(KEY_ID, 5);
+      evictMgr.createSession(KEY_ID_2, 5);
+
+      // Advance time so sessions expire (past TTL) then trigger the 5-minute
+      // eviction interval (EVICTION_INTERVAL_MS = 5 * 60 * 1000 = 300000ms)
+      vi.advanceTimersByTime(301000); // past TTL AND past eviction interval
+
+      // Assert: sessions evicted — getActiveSessions() returns empty
+      expect(evictMgr.getActiveSessions()).toHaveLength(0);
+
+      // logger.info should have been called with eviction message
+      expect(logger.info).toHaveBeenCalledWith(
+        'MCP session: evicted expired sessions',
+        expect.objectContaining({ evicted: 2 })
+      );
+
+      evictMgr.destroy();
+    });
+
+    it('only evicts expired sessions and keeps active ones', () => {
+      // Arrange: call evictExpired() directly to avoid advancing fake timers
+      // past s2's TTL. This tests the mixed-session eviction logic without
+      // timing coordination issues from the interval.
+      vi.useFakeTimers();
+      const evictMgr = new McpSessionManager(1000); // 1s TTL
+
+      const s1 = evictMgr.createSession(KEY_ID, 5);
+
+      // Advance 500ms — s1 still within TTL
+      vi.advanceTimersByTime(500);
+
+      // Create s2 at t=500ms — lastActivityAt = 500ms
+      const s2 = evictMgr.createSession(KEY_ID_2, 5);
+
+      // Advance 600ms more — total 1100ms for s1 (expired: 1100 > 1000),
+      // 600ms for s2 (active: 600 < 1000)
+      vi.advanceTimersByTime(600);
+
+      // Act: call evictExpired() directly (bypasses interval timing)
+      (evictMgr as unknown as { evictExpired: () => void }).evictExpired();
+
+      // Assert: only s1 was evicted
+      expect(evictMgr.getSession(s1!.id)).toBeNull();
+      // s2 is still retrievable (touches lastActivityAt, resetting its TTL)
+      expect(evictMgr.getSession(s2!.id)).not.toBeNull();
+
+      // getActiveSessions reflects one remaining active session
+      expect(evictMgr.getActiveSessions()).toHaveLength(1);
+      expect(evictMgr.getActiveSessions()[0].apiKeyId).toBe(KEY_ID_2);
+
+      evictMgr.destroy();
+    });
+
+    it('does not log when no sessions are evicted', () => {
+      // Arrange: no expired sessions — exercises the if(evicted > 0) false arm
+      vi.useFakeTimers();
+      vi.clearAllMocks();
+      const evictMgr = new McpSessionManager(DEFAULT_TTL_SENTINEL); // long TTL
+
+      evictMgr.createSession(KEY_ID, 5);
+
+      // Trigger eviction interval — nothing should be evicted
+      vi.advanceTimersByTime(300001);
+
+      // Assert: logger.info NOT called for eviction (no sessions expired)
+      const evictionCalls = vi
+        .mocked(logger.info)
+        .mock.calls.filter((c) => String(c[0]).includes('evicted'));
+      expect(evictionCalls).toHaveLength(0);
+
+      evictMgr.destroy();
+    });
+
+    it('calls evictExpired directly via private method — all expired, logs info', () => {
+      // Arrange: use real timers; call evictExpired via (mgr as any) to test the method directly
+      const directMgr = new McpSessionManager(1); // near-zero TTL
+      vi.clearAllMocks();
+
+      directMgr.createSession(KEY_ID, 5);
+
+      // Wait a tick for TTL to pass (real time — just 1ms TTL)
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          // Act: call evictExpired directly
+          (directMgr as unknown as { evictExpired: () => void }).evictExpired();
+
+          // Assert
+          expect(logger.info).toHaveBeenCalledWith(
+            'MCP session: evicted expired sessions',
+            expect.objectContaining({ evicted: expect.any(Number) })
+          );
+
+          directMgr.destroy();
+          resolve();
+        }, 10); // 10ms > 1ms TTL — session is expired
+      });
+    });
+  });
 });
+
+// Sentinel value: a long TTL that won't expire during the test
+// (used to test the no-eviction path without timing fragility)
+const DEFAULT_TTL_SENTINEL = 60 * 60 * 1000; // 1 hour
