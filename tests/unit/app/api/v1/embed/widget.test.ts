@@ -200,4 +200,14 @@ describe('Embed widget citation rendering', () => {
     // helper must not flag every [N] in fullText as hallucinated.
     expect(body).toContain('if (!citations || citations.length === 0) return;');
   });
+
+  it('removes any orphaned citations panel when an error event fires after citations', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // If `done` throws after citations were emitted, the error handler
+    // re-fires; the bubble's textContent is reset but the panel must
+    // also be removed so the user does not see "Something went wrong"
+    // sitting next to a hanging sources list.
+    expect(body).toContain("bubbleDiv.querySelector('.citations-panel')");
+    expect(body).toContain('orphanPanel.remove()');
+  });
 });

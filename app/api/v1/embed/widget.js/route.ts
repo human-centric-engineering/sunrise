@@ -371,6 +371,12 @@ export function GET(request: NextRequest): Response {
               renderCitations(assistantSpan, fullText, evt.data.citations);
             } else if (evt.type === 'error') {
               assistantSpan.textContent = fullText || 'Something went wrong.';
+              // Drop any citations panel that may have been appended
+              // earlier in the stream — keeping it next to a generic
+              // error bubble would mislead the user.
+              var bubbleDiv = assistantSpan.parentElement;
+              var orphanPanel = bubbleDiv && bubbleDiv.querySelector('.citations-panel');
+              if (orphanPanel) orphanPanel.remove();
               endStream();
               return;
             } else if (evt.type === 'done') {

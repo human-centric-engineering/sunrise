@@ -361,5 +361,44 @@ describe('ConversationTraceViewer', () => {
 
       expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
     });
+
+    it('degrades gracefully when persisted citations are malformed', () => {
+      // safeParse on the strict messageMetadataSchema fails for the
+      // whole metadata object when any field is the wrong shape — the
+      // trace viewer must still render the message text rather than
+      // throwing or showing a broken panel.
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Answer body.',
+              metadata: {
+                citations: [
+                  {
+                    // marker should be a number — pin a string here to
+                    // simulate a corrupt persisted entry from a future
+                    // schema migration or an out-of-band write.
+                    marker: 'one',
+                    chunkId: 'c1',
+                    documentId: 'd1',
+                    documentName: 'X',
+                    section: null,
+                    patternNumber: null,
+                    patternName: null,
+                    excerpt: 'corrupt',
+                    similarity: 0.5,
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByText('Answer body.')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+    });
   });
 });
