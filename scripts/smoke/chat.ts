@@ -169,7 +169,7 @@ async function main(): Promise<void> {
   // ── 5. Verify event shape ────────────────────────────────────────────
   const types = events.map((e) => e.type);
   console.log('\n[5] event type sequence:', types.join(' → '));
-  const expected = ['start', 'content', 'content', 'done'];
+  const expected = ['start', 'status', 'content', 'content', 'done'];
   const ok = types.length === expected.length && types.every((t, i) => t === expected[i]);
   console.log(`    ${ok ? '✓' : '✗'} matches expected sequence`);
 
