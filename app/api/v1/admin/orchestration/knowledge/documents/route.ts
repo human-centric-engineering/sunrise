@@ -33,7 +33,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB (EPUBs can be large)
 const MAX_LINE_COUNT = 100_000;
 const MAX_LINE_LENGTH = 10_000;
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'] as const;
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.csv', '.epub', '.docx', '.pdf'] as const;
 /** Extensions where the upload is a text file — line-length guards apply. */
 const TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 
@@ -167,7 +167,12 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // PDF requires preview step
   if (requiresPreview(file.name)) {
-    const preview = await previewDocument(buffer, file.name, session.user.id);
+    const extractTablesField = formData.get('extractTables');
+    const extractTables =
+      typeof extractTablesField === 'string' &&
+      ['true', '1', 'on', 'yes'].includes(extractTablesField.toLowerCase());
+
+    const preview = await previewDocument(buffer, file.name, session.user.id, { extractTables });
 
     log.info('Document preview created (PDF)', {
       documentId: preview.document.id,
@@ -175,6 +180,7 @@ export const POST = withAdminAuth(async (request, session) => {
       sizeBytes: file.size,
       extractedTextLength: preview.extractedText.length,
       warnings: preview.warnings.length,
+      extractTables,
       adminId: session.user.id,
     });
 

@@ -13,14 +13,28 @@ import { prisma } from '@/lib/db/client';
 import { executeTransaction } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
 import {
+  chunkCsvDocument,
   chunkMarkdownDocument,
   parseMetadataComments,
+  CSV_MAX_ROW_CHARS,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
-import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
+import {
+  parseDocument,
+  requiresPreview,
+  type ParseDocumentOptions,
+} from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
+
+/** A single CSV row persisted on the document for lossless re-chunking. */
+const csvSectionSchema = z.object({
+  title: z.string(),
+  content: z.string(),
+  order: z.number(),
+});
 
 /** Schema for document metadata stored as Prisma JSON field */
 const documentMetadataSchema = z
@@ -33,6 +47,13 @@ const documentMetadataSchema = z
     warnings: z.array(z.string()).optional(),
     format: z.string().optional(),
     corrected: z.boolean().optional(),
+    /**
+     * CSV-only. Persisted at upload so re-chunk can rebuild the exact same
+     * sections without round-tripping through a `\n`-joined string (which
+     * would fragment any RFC-4180 quoted cell that contains an embedded
+     * newline). See `rechunkDocument` for the consuming path.
+     */
+    csvSections: z.array(csvSectionSchema).optional(),
   })
   .passthrough()
   .nullable();
@@ -102,6 +123,26 @@ async function insertChunks(
 function extractDocumentCategory(content: string): string | null {
   const meta = parseMetadataComments(content);
   return meta['category'] || null;
+}
+
+/**
+ * Reconstruct a `ParsedDocument` from the per-row sections persisted on a CSV
+ * document's `metadata.csvSections`. Used by `rechunkDocument` so CSVs route
+ * through `chunkCsvDocument` instead of the markdown chunker, with each
+ * stored row re-emitted verbatim — including any embedded newlines that
+ * survived inside RFC-4180 quoted cells.
+ */
+function rebuildCsvParsedFromSections(
+  sections: ReadonlyArray<{ title: string; content: string; order: number }>,
+  name: string
+): ParsedDocument {
+  return {
+    title: name,
+    sections: sections.map((s) => ({ title: s.title, content: s.content, order: s.order })),
+    fullText: sections.map((s) => s.content).join('\n'),
+    metadata: { format: 'csv' },
+    warnings: [],
+  };
 }
 
 /**
@@ -249,6 +290,12 @@ export async function uploadDocumentFromBuffer(
     });
   }
 
+  // CSV uses row-level chunking via chunkCsvDocument (not the markdown
+  // chunker), so it bypasses uploadDocument and runs the full lifecycle here.
+  if (parsed.metadata.format === 'csv') {
+    return uploadCsvFromParsed(parsed, buffer, fileName, userId, category, sourceUrl);
+  }
+
   // For markdown files, use the raw text directly (the markdown chunker
   // handles structural splitting). For other formats, use the full text
   // which has been normalized to plain text.
@@ -256,6 +303,165 @@ export async function uploadDocumentFromBuffer(
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
   return uploadDocument(content, fileName, userId, category, sourceUrl);
+}
+
+/**
+ * Upload a parsed CSV through the chunk → embed → store pipeline.
+ *
+ * Mirrors `uploadDocument` but calls `chunkCsvDocument` instead of the
+ * markdown chunker so each row stays atomic for retrieval. Persists CSV
+ * structural metadata (delimiter, row/column count, header detection) on
+ * the document so downstream UIs can render it.
+ */
+async function uploadCsvFromParsed(
+  parsed: ParsedDocument,
+  buffer: Buffer,
+  fileName: string,
+  userId: string,
+  category?: string,
+  sourceUrl?: string
+): Promise<AiKnowledgeDocument> {
+  const fileHash = createHash('sha256').update(buffer).digest('hex');
+  const name = fileName.replace(/\.[^.]+$/, '');
+
+  logger.info('Uploading CSV document', { fileName, fileHash, userId });
+
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { fileHash, status: 'ready' },
+  });
+  if (existing) {
+    logger.info('CSV already uploaded, returning existing', {
+      documentId: existing.id,
+      fileHash,
+    });
+    return existing;
+  }
+
+  const document = await prisma.aiKnowledgeDocument.create({
+    data: {
+      name,
+      fileName,
+      fileHash,
+      scope: 'app',
+      category: category ?? null,
+      sourceUrl: sourceUrl ?? null,
+      status: 'processing',
+      uploadedBy: userId,
+    },
+  });
+
+  try {
+    // Drop any row whose content would blow past every embedding API's input
+    // limit (≈ 8k tokens). One bad row used to fail the whole upload with an
+    // opaque API error; now we skip it, name it in the warnings, and process
+    // the rest. This is one-way: we never split a CSV row across chunks
+    // because that would defeat row-atomic retrieval.
+    const oversize: number[] = [];
+    const acceptableSections = parsed.sections.filter((s, i) => {
+      if (s.content.length > CSV_MAX_ROW_CHARS) {
+        oversize.push(i + 1);
+        return false;
+      }
+      return true;
+    });
+    if (oversize.length > 0) {
+      const sample = oversize.slice(0, 5).join(', ');
+      const suffix = oversize.length > 5 ? `, … (${oversize.length} total)` : '';
+      const message =
+        `Skipped ${oversize.length} row(s) over the ${CSV_MAX_ROW_CHARS.toLocaleString()}-character ` +
+        `embedding limit: row${oversize.length === 1 ? '' : 's'} ${sample}${suffix}. ` +
+        `Check whether a single cell contains a binary blob or a multi-line JSON payload.`;
+      parsed.warnings.push(message);
+      logger.warn('CSV upload: skipped oversize rows', {
+        fileName,
+        skippedCount: oversize.length,
+        sampleRows: oversize.slice(0, 5),
+      });
+    }
+
+    const filteredParsed = { ...parsed, sections: acceptableSections };
+    const chunks = chunkCsvDocument(filteredParsed, name, document.id);
+
+    if (category) {
+      for (const chunk of chunks) {
+        if (!chunk.category) chunk.category = category;
+      }
+    }
+
+    // Persist the parsed sections verbatim. Re-chunking reads this back
+    // (see `rechunkDocument`) instead of `split('\n')`-ing a joined string,
+    // which would shred any RFC-4180 quoted cell containing an embedded
+    // newline. Sections carry their own ordering hint so we don't depend on
+    // array position once stored.
+    const csvSections = acceptableSections.map((s, i) => ({
+      title: s.title,
+      content: s.content,
+      order: s.order ?? i,
+    }));
+
+    if (chunks.length === 0) {
+      await prisma.aiKnowledgeDocument.update({
+        where: { id: document.id },
+        data: {
+          status: 'ready',
+          chunkCount: 0,
+          metadata: {
+            format: 'csv',
+            rawContent: parsed.fullText,
+            delimiter: parsed.metadata.delimiter,
+            rowCount: parsed.metadata.rowCount,
+            columnCount: parsed.metadata.columnCount,
+            hasHeader: parsed.metadata.hasHeader,
+            warnings: parsed.warnings,
+            csvSections,
+          },
+        },
+      });
+      return document;
+    }
+
+    const texts = chunks.map((c) => c.content);
+    const { embeddings, provenance } = await embedBatch(texts);
+
+    const updated = await executeTransaction(async (tx) => {
+      await insertChunks(tx, document.id, chunks, embeddings, provenance);
+      return await tx.aiKnowledgeDocument.update({
+        where: { id: document.id },
+        data: {
+          status: 'ready',
+          chunkCount: chunks.length,
+          metadata: {
+            format: 'csv',
+            rawContent: parsed.fullText,
+            delimiter: parsed.metadata.delimiter,
+            rowCount: parsed.metadata.rowCount,
+            columnCount: parsed.metadata.columnCount,
+            hasHeader: parsed.metadata.hasHeader,
+            warnings: parsed.warnings,
+            csvSections,
+          },
+        },
+      });
+    });
+
+    logger.info('CSV uploaded successfully', {
+      documentId: document.id,
+      chunkCount: chunks.length,
+      rowCount: parsed.metadata.rowCount,
+    });
+
+    return updated;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('CSV upload failed', { documentId: document.id, error: message });
+
+    await prisma.aiKnowledgeDocument.update({
+      where: { id: document.id },
+      data: { status: 'failed', errorMessage: message },
+    });
+
+    throw error;
+  }
 }
 
 /** Result of a document preview (parse-only, no chunking/embedding). */
@@ -283,6 +489,14 @@ export interface DocumentPreview {
  *
  * Primarily used for PDF uploads where parsing is unreliable.
  *
+ * **Dedup behaviour.** If the same user already has a pending_review row
+ * for this exact file (same SHA-256 hash), the existing row is refreshed in
+ * place with the latest parse result rather than a second row being created.
+ * This keeps the admin queue clean when an admin abandons a preview and
+ * re-uploads the same file (e.g. to retry with `extractTables`). Dedup is
+ * scoped to the uploading user so two admins independently triaging the
+ * same source material don't clobber each other.
+ *
  * @param buffer - Raw file content
  * @param fileName - Original file name
  * @param userId - ID of the uploading user
@@ -291,12 +505,64 @@ export interface DocumentPreview {
 export async function previewDocument(
   buffer: Buffer,
   fileName: string,
-  userId: string
+  userId: string,
+  opts: ParseDocumentOptions = {}
 ): Promise<DocumentPreview> {
   const fileHash = createHash('sha256').update(buffer).digest('hex');
   const name = fileName.replace(/\.[^.]+$/, '');
 
-  const parsed = await parseDocument(buffer, fileName);
+  const parsed = await parseDocument(buffer, fileName, opts);
+
+  const previewMetadata = {
+    extractedText: parsed.fullText,
+    parsedTitle: parsed.title,
+    parsedAuthor: parsed.author ?? null,
+    sectionCount: parsed.sections.length,
+    warnings: parsed.warnings,
+    pages: parsed.pageInfo
+      ? parsed.pageInfo.map((p) => ({
+          num: p.num,
+          charCount: p.charCount,
+          hasText: p.hasText,
+        }))
+      : null,
+  };
+
+  // Reuse an existing pending_review row for the same file + uploader so a
+  // re-upload (typically: admin abandoned a preview, then tried again with
+  // extractTables, or fixed a typo in the source PDF) refreshes the parse in
+  // place instead of leaving stale rows in the queue.
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { fileHash, uploadedBy: userId, status: 'pending_review' },
+  });
+
+  if (existing) {
+    const refreshed = await prisma.aiKnowledgeDocument.update({
+      where: { id: existing.id },
+      data: {
+        // The bytes match by hash, but the file may have been re-named in the
+        // OS — keep the most recent name so the admin sees what they uploaded.
+        name,
+        fileName,
+        metadata: previewMetadata,
+      },
+    });
+    logger.info('Refreshed existing PDF preview', {
+      documentId: refreshed.id,
+      fileName,
+      textLength: parsed.fullText.length,
+      sections: parsed.sections.length,
+      warnings: parsed.warnings.length,
+    });
+    return {
+      document: refreshed,
+      extractedText: parsed.fullText,
+      title: parsed.title,
+      author: parsed.author,
+      sectionCount: parsed.sections.length,
+      warnings: parsed.warnings,
+    };
+  }
 
   // Create document record in pending_review status
   const document = await prisma.aiKnowledgeDocument.create({
@@ -313,6 +579,13 @@ export async function previewDocument(
         parsedAuthor: parsed.author ?? null,
         sectionCount: parsed.sections.length,
         warnings: parsed.warnings,
+        pages: parsed.pageInfo
+          ? parsed.pageInfo.map((p) => ({
+              num: p.num,
+              charCount: p.charCount,
+              hasText: p.hasText,
+            }))
+          : null,
       },
     },
   });
@@ -410,12 +683,18 @@ export async function confirmPreview(
           status: 'ready',
           chunkCount: chunks.length,
           metadata: {
-            format: extname(document.fileName).toLowerCase(),
+            // Strip the leading dot so the value matches what parsePdf wrote
+            // ("pdf", not ".pdf") and what the search/filter UIs expect.
+            format: extname(document.fileName).toLowerCase().replace(/^\./, ''),
             rawContent: content,
             parsedTitle: metadata?.parsedTitle ?? null,
             parsedAuthor: metadata?.parsedAuthor ?? null,
             sectionCount: metadata?.sectionCount ?? null,
             warnings: metadata?.warnings ?? [],
+            // Carry forward the per-page diagnostic the parser stored at
+            // preview time, so any future page-picker UI keeps its data
+            // after the admin confirms.
+            pages: metadata?.pages ?? null,
             corrected: !!correctedContent,
           },
         },
@@ -496,8 +775,26 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
   });
 
   try {
-    // Re-chunk
-    const chunks = chunkMarkdownDocument(content, document.name, documentId);
+    // CSV rechunk has to use the row-aware chunker — chunkMarkdownDocument
+    // would mash every row into the same heading-less chunk. The per-row
+    // sections persisted at upload (`metadata.csvSections`) are the only
+    // lossless source: rebuilding from the joined `rawContent` would shred
+    // any quoted cell that contained an embedded newline.
+    const isCsv = meta?.format === 'csv';
+    if (isCsv && (!meta?.csvSections || meta.csvSections.length === 0)) {
+      throw new Error(
+        'CSV document is missing csvSections metadata — re-upload the original CSV ' +
+          'to enable re-chunking. (Older CSV uploads stored only the joined content, ' +
+          'which cannot be safely re-split when cells contain embedded newlines.)'
+      );
+    }
+    const chunks = isCsv
+      ? chunkCsvDocument(
+          rebuildCsvParsedFromSections(meta.csvSections!, document.name),
+          document.name,
+          documentId
+        )
+      : chunkMarkdownDocument(content, document.name, documentId);
 
     if (chunks.length === 0) {
       await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId } });

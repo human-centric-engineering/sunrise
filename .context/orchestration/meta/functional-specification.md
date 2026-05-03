@@ -2,7 +2,7 @@
 
 A comprehensive specification of the AI agent orchestration system built into the Sunrise platform.
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-03
 
 ---
 
@@ -268,7 +268,7 @@ Each step can define its own error handling:
 - **Validation**: DAG structure validated at save time (cycle detection, connectivity)
 - **Dry-run**: Execute with mocked LLM calls to verify flow
 - **Definition history**: Versioned workflow definitions with revert capability
-- **Templates**: 5 built-in templates as starting points
+- **Templates**: 11 built-in templates as starting points
 - **Scheduling**: Attach cron schedules for automated execution
 
 ### 5.5 Execution Management
@@ -354,23 +354,28 @@ Vacuously passes when no citations were produced, so non-RAG responses are never
 
 Multi-format document processing pipeline:
 
-- **Supported formats**: Markdown (`.md`), plain text (`.txt`), with parser architecture for extension
-- **Size limit**: 10 MB per document
-- **Lifecycle**: `pending` → `processing` → `ready` (or `failed`)
+- **Supported formats**: Markdown (`.md`), plain text (`.txt`), CSV (`.csv` — RFC 4180 with delimiter sniffing, row-level chunking), EPUB (`.epub`), DOCX (`.docx`), PDF (`.pdf` — preview/confirm flow). Parser architecture extensible to additional formats.
+- **Size limit**: 50 MB per document
+- **Lifecycle**: `pending` → `processing` → `ready` (or `failed`); PDFs use `pending_review` between parse and confirm
 - **PDF preview flow**: Upload → parse preview → confirm → ingest (unique to Sunrise)
+- **PDF preview re-upload dedup**: Re-uploading the same PDF (matched by SHA-256) refreshes the existing `pending_review` row in place rather than creating a duplicate; scoped to the uploading user so parallel triage doesn't clobber
+- **PDF diagnostics**: Per-page text-density check groups consecutive scanned pages into a single warning per range; opt-in vector-grid table extraction renders detected tables as fenced markdown pipe tables in the preview
+- **CSV row-level chunking**: One chunk per data row keeps row-atomic retrieval (a 50k-row CSV lets queries surface a single matching row); above 5,000 rows the chunker batches 10 rows per chunk to cap embedding cost. Re-chunking a CSV document re-routes through the row-level chunker (not the markdown chunker) so the row-atomic shape survives
 
 ### 7.2 Chunking & Embedding
 
 - **Semantic chunking**: Content split at natural boundaries (paragraphs, sections)
+- **CSV chunking**: Dedicated `chunkCsvDocument` emits one `csv_row` chunk per data row (or batched groups for very large files); content is the pipe-joined `Header: Value | Header: Value` rendering
 - **Vector embeddings**: Stored in `AiKnowledgeChunk` with pgvector (`vector(1536)`)
 - **Embedding providers**: Voyage AI (recommended), OpenAI, Ollama
 - **Category tagging**: Documents assigned categories for agent-scoped retrieval
 
 ### 7.3 Search
 
-- **Vector similarity**: pgvector cosine similarity search
+- **Hybrid retrieval (default)**: BM25-flavoured (`ts_rank_cd` over a generated `tsvector` column with a GIN index) blended with pgvector cosine similarity via admin-tunable `vectorWeight` × vector + `bm25Weight` × keyword weights, gated by `searchConfig.hybridEnabled`. Three-segment score breakdown surfaced through the API.
+- **Vector-only mode**: Preserved as the legacy fallback when hybrid is disabled
 - **Agent scoping**: `knowledgeCategories` on agent restricts which chunks are searchable
-- **Search configuration**: Tunable via global settings (vector weight, result count)
+- **Search configuration**: Tunable via global settings (vector weight, BM25 weight, result count, hybrid on/off)
 - **Knowledge graph**: Relationship mapping between documents and concepts
 
 ### 7.4 Knowledge API (10 routes)

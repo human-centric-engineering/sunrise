@@ -50,6 +50,8 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/orchestration/knowledge/document-manager', () => ({
   uploadDocument: vi.fn(),
+  uploadDocumentFromBuffer: vi.fn(),
+  previewDocument: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -65,7 +67,11 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { uploadDocument } from '@/lib/orchestration/knowledge/document-manager';
+import {
+  previewDocument,
+  uploadDocument,
+  uploadDocumentFromBuffer,
+} from '@/lib/orchestration/knowledge/document-manager';
 import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -279,6 +285,79 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
         'patterns.md',
         ADMIN_ID,
         undefined
+      );
+    });
+
+    it('routes .csv uploads through uploadDocumentFromBuffer', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(uploadDocumentFromBuffer).mockResolvedValue(
+        makeDocument({ fileName: 'spending.csv' }) as never
+      );
+
+      const formData = new FormData();
+      formData.append(
+        'file',
+        new File(['name,amount\nAcme,100\n'], 'spending.csv', { type: 'text/csv' })
+      );
+
+      const response = await POST(makePostRequestWithFormData(formData));
+
+      expect(response.status).toBe(201);
+      expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'spending.csv',
+        ADMIN_ID,
+        undefined
+      );
+      expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
+    });
+
+    it('forwards extractTables=true to previewDocument when the form field is set on a PDF', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(previewDocument).mockResolvedValue({
+        document: makeDocument({ fileName: 'tables.pdf', status: 'pending_review' }),
+        extractedText: 'page 1',
+        title: 'Tables',
+        author: undefined,
+        sectionCount: 1,
+        warnings: [],
+      } as never);
+
+      const formData = new FormData();
+      formData.append('file', new File(['fake-pdf'], 'tables.pdf', { type: 'application/pdf' }));
+      formData.append('extractTables', 'true');
+
+      await POST(makePostRequestWithFormData(formData));
+
+      expect(vi.mocked(previewDocument)).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'tables.pdf',
+        ADMIN_ID,
+        { extractTables: true }
+      );
+    });
+
+    it('defaults extractTables to false when the form field is omitted', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(previewDocument).mockResolvedValue({
+        document: makeDocument({ fileName: 'plain.pdf', status: 'pending_review' }),
+        extractedText: 'page 1',
+        title: 'Plain',
+        author: undefined,
+        sectionCount: 1,
+        warnings: [],
+      } as never);
+
+      const formData = new FormData();
+      formData.append('file', new File(['fake-pdf'], 'plain.pdf', { type: 'application/pdf' }));
+
+      await POST(makePostRequestWithFormData(formData));
+
+      expect(vi.mocked(previewDocument)).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'plain.pdf',
+        ADMIN_ID,
+        { extractTables: false }
       );
     });
   });

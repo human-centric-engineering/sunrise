@@ -1,12 +1,21 @@
 /**
- * Markdown Document Chunker
+ * Knowledge-Base Chunkers
  *
- * Splits markdown documents into embeddable chunks for the knowledge base.
- * Handles both pattern documents (with numbered patterns and subsections)
- * and generic markdown documents.
+ * Two chunking strategies live here, both producing the shared `Chunk` shape
+ * consumed by the embedding + insert pipeline:
+ *
+ * - `chunkMarkdownDocument` — heading-aware splitting for markdown (and the
+ *   plain-text / DOCX / EPUB / confirmed-PDF paths that all flow through it).
+ *   Splits on `##` then `###`, then merges/splits sections to land in the
+ *   50–800 token range.
+ * - `chunkCsvDocument` — row-atomic splitting for CSV. One chunk per data
+ *   row, batched into groups of 10 above 5,000 rows so embedding cost stays
+ *   bounded. Each chunk's content is the pipe-joined `Header: Value | …`
+ *   string emitted by `csv-parser.ts`.
  */
 
 import { logger } from '@/lib/logging';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Output chunk from the chunking process */
 export interface Chunk {
@@ -367,6 +376,103 @@ export function chunkMarkdownDocument(
     document: documentName,
     chunkCount: chunks.length,
     totalTokens: chunks.reduce((sum, c) => sum + c.estimatedTokens, 0),
+  });
+
+  return chunks;
+}
+
+/** CSVs above this row count switch from one-row-per-chunk to batched chunks. */
+export const CSV_ROW_BATCH_THRESHOLD = 5000;
+/** Rows per chunk when batching kicks in. */
+export const CSV_ROWS_PER_BATCH = 10;
+/**
+ * Per-row character cap. Rows above this length are dropped before embedding
+ * because every embedding provider rejects inputs over its token budget
+ * (Voyage voyage-3 ≈ 32k tokens; OpenAI text-embedding-3-small 8,191 tokens).
+ * 32,000 chars is a generous safety margin (~8,000 tokens at the standard
+ * 4-chars/token approximation) that suits every provider Sunrise ships with.
+ *
+ * Realistic CSV rows are well under this — a row that crosses it almost
+ * always means the source has a binary blob or a JSON payload stuffed into
+ * one cell, which a row-atomic CSV chunker can't usefully embed anyway.
+ */
+export const CSV_MAX_ROW_CHARS = 32_000;
+
+/**
+ * Chunk a parsed CSV document into one chunk per row (or batched rows for
+ * very large CSVs).
+ *
+ * Each chunk's content is the pipe-joined "Header: Value | Header: Value"
+ * string already produced by `parseCsv`. Row-atomic chunking lets retrieval
+ * surface a single matching row rather than a diluted multi-row window.
+ *
+ * Above {@link CSV_ROW_BATCH_THRESHOLD} rows, batches of {@link CSV_ROWS_PER_BATCH}
+ * are joined into a single chunk to cap embedding cost.
+ */
+export function chunkCsvDocument(
+  parsed: ParsedDocument,
+  documentName: string,
+  documentId?: string
+): Chunk[] {
+  const idPrefix = documentId ? documentId.slice(0, 8) : '';
+  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
+
+  const chunks: Chunk[] = [];
+  const totalRows = parsed.sections.length;
+  const shouldBatch = totalRows > CSV_ROW_BATCH_THRESHOLD;
+
+  if (shouldBatch) {
+    logger.warn('CSV exceeds row threshold — batching rows per chunk', {
+      document: documentName,
+      rowCount: totalRows,
+      threshold: CSV_ROW_BATCH_THRESHOLD,
+      rowsPerBatch: CSV_ROWS_PER_BATCH,
+    });
+  }
+
+  if (!shouldBatch) {
+    // Use the array index for the chunk ID rather than `section.order` —
+    // `order` is an optional hint from the parser; if two sections happened to
+    // share a value the chunk_key UNIQUE constraint would reject the insert.
+    for (let i = 0; i < parsed.sections.length; i++) {
+      const section = parsed.sections[i];
+      chunks.push({
+        id: `${documentSlug}-row-${i + 1}`,
+        content: section.content,
+        chunkType: 'csv_row',
+        patternNumber: null,
+        patternName: null,
+        category: null,
+        section: section.title,
+        keywords: null,
+        estimatedTokens: estimateTokens(section.content),
+      });
+    }
+  } else {
+    for (let i = 0; i < parsed.sections.length; i += CSV_ROWS_PER_BATCH) {
+      const batch = parsed.sections.slice(i, i + CSV_ROWS_PER_BATCH);
+      const start = i + 1;
+      const end = i + batch.length;
+      const content = batch.map((s) => s.content).join('\n');
+      chunks.push({
+        id: `${documentSlug}-rows-${start}-${end}`,
+        content,
+        chunkType: 'csv_row',
+        patternNumber: null,
+        patternName: null,
+        category: null,
+        section: `Rows ${start}–${end}`,
+        keywords: null,
+        estimatedTokens: estimateTokens(content),
+      });
+    }
+  }
+
+  logger.info('CSV chunked', {
+    document: documentName,
+    rowCount: totalRows,
+    chunkCount: chunks.length,
+    batched: shouldBatch,
   });
 
   return chunks;

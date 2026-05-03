@@ -63,7 +63,7 @@ const bulkUploadResponseSchema = z.object({
 });
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'];
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.csv', '.epub', '.docx', '.pdf'];
 
 /** PDF preview data returned when a PDF upload requires confirmation. */
 export interface PdfPreviewData {
@@ -89,6 +89,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [error, setError] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [category, setCategory] = useState('');
+  const [extractTables, setExtractTables] = useState(false);
   const [existingCategories, setExistingCategories] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -180,6 +181,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         if (category.trim()) {
           formData.append('category', category.trim());
         }
+        const isPdf = stagedFiles[0].name.toLowerCase().endsWith('.pdf');
+        if (isPdf && extractTables) {
+          formData.append('extractTables', 'true');
+        }
 
         const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS, {
           method: 'POST',
@@ -260,7 +265,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     } finally {
       setUploading(false);
     }
-  }, [stagedFiles, category, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, category, extractTables, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -296,11 +301,29 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         >
           <p className="text-foreground font-medium">What happens when you upload</p>
           <p>
-            Your document is <strong>chunked</strong> — split into smaller pieces of a few
-            paragraphs each (roughly 200–3,200 characters). The system splits on headings first (##
-            then ###), then by paragraph breaks. Each chunk is then <strong>embedded</strong> —
-            converted into a numerical vector that captures its meaning. When a user asks a
-            question, the system finds the chunks whose meaning is closest and feeds them to the AI.
+            Your document is <strong>split into smaller pieces</strong> the AI can search through.
+            How the split works depends on the format:
+          </p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+            <li>
+              <strong>Text files (.md / .txt) and Word / EPUB</strong> — the system splits on
+              headings (## then ###) so each piece is a few paragraphs (roughly 200–3,200
+              characters).
+            </li>
+            <li>
+              <strong>CSV / spreadsheets</strong> — each row becomes its own searchable piece, so
+              the AI can find a single line item (one supplier, one transaction, one record) rather
+              than a blurred mix of nearby rows.
+            </li>
+            <li>
+              <strong>PDFs</strong> — extracted text is shown for you to review and edit before the
+              AI ever sees it. Once confirmed, it&apos;s split the same way as a text file.
+            </li>
+          </ul>
+          <p className="mt-2">
+            Each piece is then turned into a numerical fingerprint (an <strong>embedding</strong>)
+            that captures its meaning. When someone asks a question, the system finds the pieces
+            whose meaning is closest and feeds those to the AI.
           </p>
 
           <p className="text-foreground mt-3 font-medium">Category</p>
@@ -318,10 +341,23 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 
           <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
           <p>
-            <strong>Headings matter.</strong> The chunker uses ## and ### headings as natural split
-            points. A document with clear headings produces cleaner, more targeted chunks than a
-            wall of text. Think of each heading as a label that tells the AI what that section is
-            about.
+            <strong>Headings matter</strong> for text and Word documents. The system uses ## and ###
+            headings as natural split points, so a document with clear headings produces cleaner,
+            more targeted pieces than a wall of text. Think of each heading as a label that tells
+            the AI what that section is about.
+          </p>
+          <p className="mt-2">
+            <strong>CSVs:</strong> the first row should be your column headers (Name, Date, Amount,
+            etc.). The system reads them and prepends them to each row when storing it, so a search
+            for &quot;payments to Acme in March&quot; can match the right row even if the AI never
+            sees the spreadsheet as a whole. Comma, tab, and semicolon separators are all detected
+            automatically.
+          </p>
+          <p className="mt-2">
+            <strong>PDFs:</strong> the system extracts the text and shows it to you for review
+            before any chunking happens. You can correct OCR mistakes, delete unwanted sections, or
+            paste in cleaner text from elsewhere. If pages 4–7 of a 22-page PDF were scanned images,
+            you&apos;ll see a warning naming those exact pages so you know what to fix.
           </p>
 
           <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
@@ -418,6 +454,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               <strong>.md, .markdown, .txt</strong> — text files, chunked immediately
             </li>
             <li>
+              <strong>.csv</strong> — RFC 4180 with delimiter sniffing; each row becomes its own
+              chunk for row-level retrieval
+            </li>
+            <li>
               <strong>.epub, .docx</strong> — parsed to text, then chunked automatically
             </li>
             <li>
@@ -454,7 +494,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           <Upload className="text-muted-foreground mb-2 h-8 w-8" />
           <p className="text-sm font-medium">Drop files here or click to browse</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            .md, .txt, .epub, .docx, .pdf — up to 50 MB, max 10 files
+            .md, .txt, .csv, .epub, .docx, .pdf — up to 50 MB, max 10 files
           </p>
         </div>
       ) : (
@@ -551,6 +591,52 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             )}
           </div>
 
+          {stagedFiles.length === 1 && stagedFiles[0].name.toLowerCase().endsWith('.pdf') && (
+            <div className="flex items-start gap-2">
+              <input
+                id="extract-tables"
+                type="checkbox"
+                className="border-border mt-1 h-4 w-4 rounded"
+                checked={extractTables}
+                onChange={(e) => setExtractTables(e.target.checked)}
+                disabled={uploading}
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-1">
+                  <label htmlFor="extract-tables" className="text-xs font-medium">
+                    Extract tables (experimental)
+                  </label>
+                  <FieldHelp
+                    title="PDF table extraction"
+                    ariaLabel="What does table extraction do?"
+                  >
+                    <p>
+                      Tries to recognise tables on each PDF page and pull them out as readable rows
+                      and columns. Useful when a PDF contains price lists, comparison tables, or any
+                      structured data that the AI would otherwise see as jumbled lines of text.
+                    </p>
+                    <p className="mt-2">
+                      <strong>When it works well:</strong> PDFs with clear ruled tables — invoices,
+                      financial reports, product specifications, lender criteria sheets.
+                    </p>
+                    <p className="mt-2">
+                      <strong>When it can misfire:</strong> PDFs that use lines for decoration
+                      (boxes around quotes, separators between sections, charts with axes) — the
+                      system might find &quot;tables&quot; that aren&apos;t really tables. Anything
+                      it pulls out appears in the preview text below, so you can delete the wrong
+                      bits before confirming.
+                    </p>
+                    <p className="mt-2">
+                      <strong>Why it&apos;s off by default:</strong> turning this on changes the
+                      extracted text. If you&apos;ve already uploaded similar PDFs without it,
+                      mixing both could make search results uneven across your knowledge base.
+                    </p>
+                  </FieldHelp>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Button
               variant="ghost"
@@ -558,6 +644,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               onClick={() => {
                 setStagedFiles([]);
                 setCategory('');
+                setExtractTables(false);
                 setError(null);
               }}
               disabled={uploading}
@@ -581,7 +668,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       <input
         ref={inputRef}
         type="file"
-        accept=".md,.markdown,.txt,.epub,.docx,.pdf"
+        accept=".md,.markdown,.txt,.csv,.epub,.docx,.pdf"
         multiple
         className="hidden"
         onChange={handleFileChange}

@@ -1,6 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+// SECURITY: react-markdown is intentionally used with NO plugins. Default behaviour
+// treats raw HTML in markdown source as inert text, which is what makes it safe to
+// render chunk content sourced from third-party documents (PDF table cells, CSV
+// rows, scraped pages). Adding `rehype-raw` or `allowDangerousHtml` here would
+// activate raw-HTML rendering and could turn a `<script>` inside a PDF table cell
+// into an XSS sink. If you need raw HTML, first harden `renderMarkdownTable` in
+// `lib/orchestration/knowledge/parsers/pdf-parser.ts` (and any other parser that
+// emits chunk content) to escape `<` / `>` / `&`.
 import Markdown from 'react-markdown';
 import { FileText, Search, X } from 'lucide-react';
 

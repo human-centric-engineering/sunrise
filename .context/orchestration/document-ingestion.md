@@ -4,42 +4,48 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 
 ## Supported Formats
 
-| Format      | Extension | Reliability | Parser           | Notes                                                        |
-| ----------- | --------- | ----------- | ---------------- | ------------------------------------------------------------ |
-| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting         |
-| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings     |
-| EPUB        | `.epub`   | ~85%        | `epub-parser.ts` | Best format for books. Extracts chapters via XHTML structure |
-| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split   |
-| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2               |
-| Scanned PDF | N/A       | N/A         | Not supported    | Instruct clients to provide digital-native formats           |
+| Format      | Extension | Reliability | Parser           | Notes                                                                            |
+| ----------- | --------- | ----------- | ---------------- | -------------------------------------------------------------------------------- |
+| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting                             |
+| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings                         |
+| CSV         | `.csv`    | ~95%        | `csv-parser.ts`  | RFC 4180 with delimiter sniffing; one chunk per row (batched above 5k rows)      |
+| EPUB        | `.epub`   | ~85%        | `epub-parser.ts` | Best format for books. Extracts chapters via XHTML structure                     |
+| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split                       |
+| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2                                   |
+| Scanned PDF | N/A       | N/A         | Not supported    | Use macOS Preview / Adobe Acrobat / `ocrmypdf` to OCR externally, then re-upload |
 
 ## Architecture
 
 ```
 Upload (multipart form)
   │
-  ├─ .md / .txt ──────────────► uploadDocument() ──► chunk ──► embed ──► store
+  ├─ .md / .txt ──────────────► uploadDocument() ──► chunkMarkdownDocument() ──► embed ──► store
   │
-  ├─ .epub / .docx ──────────► parseDocument() ──► uploadDocumentFromBuffer() ──► chunk ──► embed ──► store
+  ├─ .csv ────────────────────► parseDocument() ──► uploadDocumentFromBuffer()
+  │                                                  └─► uploadCsvFromParsed() ──► chunkCsvDocument() ──► embed ──► store
+  │                                                       (one chunk per row; batched above 5,000 rows)
+  │
+  ├─ .epub / .docx ──────────► parseDocument() ──► uploadDocumentFromBuffer() ──► chunkMarkdownDocument() ──► embed ──► store
   │
   └─ .pdf ────────────────────► previewDocument() ──► admin reviews text
                                                        │
-                                                       └─► confirmPreview() ──► chunk ──► embed ──► store
+                                                       └─► confirmPreview() ──► chunkMarkdownDocument() ──► embed ──► store
                                                             (optionally with corrected text)
 ```
 
 ## Key Files
 
-| File                                                 | Purpose                                                               |
-| ---------------------------------------------------- | --------------------------------------------------------------------- |
-| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                 |
-| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                 |
-| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                            |
-| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                            |
-| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                |
-| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                               |
-| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()` |
-| `lib/orchestration/knowledge/chunker.ts`             | Markdown chunking (downstream of parsers)                             |
+| File                                                 | Purpose                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                            |
+| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                            |
+| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)              |
+| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                                       |
+| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                                       |
+| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                           |
+| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                                          |
+| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()`            |
+| `lib/orchestration/knowledge/chunker.ts`             | `chunkMarkdownDocument()` (heading-aware) + `chunkCsvDocument()` (row-per-chunk) |
 
 ## API Endpoints
 
@@ -47,11 +53,12 @@ Upload (multipart form)
 
 `POST /api/v1/admin/orchestration/knowledge/documents`
 
-Multipart form upload. Now accepts `.md`, `.txt`, `.epub`, `.docx`, `.pdf` (was `.md`/`.txt` only).
+Multipart form upload. Accepts `.md`, `.markdown`, `.txt`, `.csv`, `.epub`, `.docx`, `.pdf`.
 
-- **Text files** (`.md`, `.txt`): Read as string, line-length guards apply, direct chunk+embed
-- **Binary files** (`.epub`, `.docx`): Read as buffer, parsed, then chunk+embed
-- **PDF**: Read as buffer, parsed, returns preview response with `requiresConfirmation: true`
+- **Text files** (`.md`, `.markdown`, `.txt`): Read as string, line-length guards apply, direct chunk+embed via `chunkMarkdownDocument`
+- **CSV** (`.csv`): Read as buffer, parsed via `csv-parser.ts`, chunked one row per `csv_row` chunk via `chunkCsvDocument` (batched above 5,000 rows)
+- **EPUB / DOCX** (`.epub`, `.docx`): Read as buffer, parsed, then chunk+embed via `chunkMarkdownDocument`
+- **PDF**: Read as buffer, parsed, returns preview response with `requiresConfirmation: true`. The optional `extractTables=true` form field opts into vector-grid table extraction during the preview parse
 
 Max size: 50 MB (increased from 10 MB to accommodate EPUBs).
 
@@ -142,6 +149,67 @@ Returns the created document with HTTP 201.
 
 This human-in-the-loop approach turns unreliable PDF parsing into a usable workflow.
 
+### Re-upload dedup
+
+If the same admin uploads the same PDF a second time (matched by SHA-256 of
+the bytes) while a previous `pending_review` row from that admin still exists,
+`previewDocument` refreshes that row in place rather than creating a second
+one. This keeps the queue clean for the common abandon-then-retry case (e.g.
+the admin tried once without the table-extraction checkbox and wants to retry
+with it on). Dedup is scoped to the uploading user, so two admins triaging
+the same source material don't clobber each other.
+
+### Per-page scanned diagnostic
+
+The PDF parser reads per-page text from `pdf-parse`'s `pages[]` array. When a
+page produces fewer than 50 characters of extractable text it is treated as
+scanned-suspect, and consecutive scanned pages are grouped into a single
+warning per range (e.g. `Pages 4–7 of 22 produced no extractable text — likely
+scanned`). When EVERY page is empty the legacy doc-wide warning is emitted
+instead. Per-page char counts are persisted on the preview metadata as
+`pages: [{ num, charCount, hasText }]` so a future page-picker UI can render
+without another parser change.
+
+For scanned PDFs Sunrise does not ship OCR — produce a searchable PDF
+externally first (macOS Preview, Adobe Acrobat, `ocrmypdf`) then re-upload.
+
+### Opt-in table extraction
+
+PDF uploads carry a "Extract tables (experimental)" checkbox. When checked,
+the parser runs `pdf-parse` `getTable()` per page. Each detected vector-grid
+table is rendered as a markdown pipe table and appended to that page's text
+fenced by HTML comments:
+
+```
+<!-- table-start -->
+| Header A | Header B |
+| --- | --- |
+| Row 1A | Row 1B |
+<!-- table-end -->
+```
+
+Default off — `getTable()` can produce false positives on pages with non-
+tabular vector content. The admin sees the rendered output in the preview
+textarea and can delete fenced blocks before confirming. The fence comments
+are also a forward path: a future chunker enhancement can teach
+`chunkMarkdownDocument` to keep table blocks atomic. Today, a table whose
+markdown exceeds the chunker's 800-token max may split across chunks.
+
+#### Cell sanitisation invariant
+
+`renderMarkdownTable` only escapes `|` and replaces `\n` in cell text. It
+does NOT escape `<` / `>` / `&`. This is safe today because chunk content
+is rendered downstream by `react-markdown` with no plugins — raw HTML in
+markdown source is treated as inert text, so a PDF cell containing
+`<script>` cannot execute. Storing HTML-escaped text would also surface as
+visible `&lt;` entities in the preview textarea, confusing admins.
+
+If a future change adds `rehype-raw` (or any plugin that interprets raw
+HTML) to the chunk renderer, harden `renderMarkdownTable` first to escape
+`<` / `>` / `&` on every cell. See the matching code comments in
+`lib/orchestration/knowledge/parsers/pdf-parser.ts` and
+`components/admin/orchestration/knowledge/explore-tab.tsx`.
+
 ## Document Statuses
 
 | Status           | Meaning                                                     |
@@ -168,6 +236,39 @@ interface ParsedDocument {
 
 The `fullText` field is fed into `chunkMarkdownDocument()` for splitting and embedding. Sections are informational metadata.
 
+## CSV Ingestion
+
+CSV files use a dedicated path:
+
+- **Parser** (`csv-parser.ts`) sniffs the delimiter from the first 5 non-empty
+  lines (`,` / `\t` / `;`, ties → comma), detects whether row 1 is a header
+  (heuristic: every cell non-empty, no purely numeric cells, fewer than half
+  the cells duplicate row 2), then emits one `ParsedSection` per data row
+  with content rendered as `Header1: Value1 | Header2: Value2 | ...`.
+- **Chunker** (`chunkCsvDocument` in `chunker.ts`) emits one `csv_row` chunk
+  per row so retrieval can target a single matching row rather than a
+  diluted multi-row window.
+- **Batching:** above 5,000 rows the chunker batches every 10 rows into a
+  single chunk to cap embedding cost. Constants: `CSV_ROW_BATCH_THRESHOLD`,
+  `CSV_ROWS_PER_BATCH`.
+- **Per-row size cap:** rows longer than `CSV_MAX_ROW_CHARS` (32,000 chars,
+  ≈ 8,000 tokens) are dropped before embedding because every embedding
+  provider rejects oversized inputs. The skipped row numbers are surfaced
+  on the document's `metadata.warnings`. Realistic rows are well under this
+  — anything over almost always means a binary blob or JSON payload was
+  stuffed into one cell.
+- **Re-chunking:** `rechunkDocument` detects `metadata.format === 'csv'` and
+  routes through `chunkCsvDocument` (not the markdown chunker). The
+  per-row sections are persisted verbatim at upload time on
+  `metadata.csvSections` and read back directly on rechunk, so any RFC-4180
+  quoted cell containing an embedded newline survives intact (a previous
+  implementation round-tripped through `rawContent.split('\n')` and would
+  have shredded such rows). CSV documents without `csvSections` (legacy or
+  externally-modified rows) raise a clear error pointing the admin at
+  re-upload rather than producing corrupted chunks.
+- **No preview step:** CSVs are deterministic to parse and skip the PDF-style
+  preview/confirm flow.
+
 ## Dependencies
 
 | Package     | Version | Used by     |
@@ -175,3 +276,5 @@ The `fullText` field is fed into `chunkMarkdownDocument()` for splitting and emb
 | `mammoth`   | ^1.12   | DOCX parser |
 | `epub2`     | ^3.0    | EPUB parser |
 | `pdf-parse` | ^2.4    | PDF parser  |
+
+CSV parsing is in-house (no third-party dependency).

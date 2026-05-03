@@ -38,7 +38,7 @@ A single `<script>` tag on any website creates an isolated chat interface connec
 
 ### Your agents know your domain
 
-Agents are not limited to their training data. You upload your own documents — product manuals, policy guides, knowledge articles — and the platform chunks, embeds, and indexes them for semantic search. Agents retrieve relevant content at query time, grounding their responses in your actual information rather than general knowledge. You control which categories of knowledge each agent can access, so a customer support agent and an internal operations agent draw from different document sets even though they share the same platform.
+Agents are not limited to their training data. You upload your own documents — product manuals, policy guides, knowledge articles, EPUB books, Word documents, scanned PDFs, and CSV exports (where each row becomes individually searchable) — and the platform chunks, embeds, and indexes them for semantic search. Agents retrieve relevant content at query time, grounding their responses in your actual information rather than general knowledge. You control which categories of knowledge each agent can access, so a customer support agent and an internal operations agent draw from different document sets even though they share the same platform.
 
 ### Your agents back up their answers
 
@@ -80,7 +80,7 @@ Every configuration change is logged in an immutable audit trail — who changed
 
 You configure agents in the admin dashboard — give them a persona, select an LLM model, attach the tools they can use, set a monthly budget, and load documents into their knowledge base. Those agents are immediately available through chat, the embed widget, or the API. Non-technical team members can update agent instructions, manage knowledge documents, and monitor costs through the same dashboard without touching code.
 
-For processes more complex than a conversation, you compose workflows: multi-step sequences with branching logic, parallel execution, error recovery, and human approval gates. Fifteen step types cover LLM calls, tool invocations, conditional routing, external API calls, knowledge retrieval, and more. A visual builder lets you design these as directed graphs; validation catches structural problems before you run anything. Five built-in workflow templates give you starting points for common patterns, and a dry-run mode lets you test a workflow with mocked LLM calls before committing to real provider costs.
+For processes more complex than a conversation, you compose workflows: multi-step sequences with branching logic, parallel execution, error recovery, and human approval gates. Fifteen step types cover LLM calls, tool invocations, conditional routing, external API calls, knowledge retrieval, and more. A visual builder lets you design these as directed graphs; validation catches structural problems before you run anything. Eleven built-in workflow templates give you starting points for common patterns — customer support, content pipeline, research agent, conversational learning, citation-grounded knowledge advisor, scheduled source monitoring, and more — and a dry-run mode lets you test a workflow with mocked LLM calls before committing to real provider costs.
 
 If you are not sure where to start, a built-in design patterns library covers 21 agentic patterns — routing, chaining, reflection, planning, multi-agent coordination, and more — with an interactive explorer and an advisor chatbot that recommends patterns based on your use case.
 
@@ -106,6 +106,6 @@ Sunrise is a Next.js 16 application. Clone the repository, configure environment
 
 ---
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-03
 
 For the full technical specification, see `functional-specification.md`. For competitive positioning and known gaps, see `maturity-analysis.md`. For concrete use cases and go-to-market examples, see `business-applications.md`.

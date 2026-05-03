@@ -251,6 +251,27 @@ describe('fetchDocumentFromUrl', () => {
     expect(result.fileName).toBe('book.epub');
   });
 
+  it('accepts .csv extension via text/csv content-type', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/csv' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/spending.csv');
+
+    expect(result.fileName).toBe('spending.csv');
+    expect(result.mimeType).toBe('text/csv');
+  });
+
+  it('accepts .csv extension via application/csv content-type', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'application/csv' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/data.csv');
+
+    expect(result.fileName).toBe('data.csv');
+  });
+
   // ── Null content-type ──────────────────────────────────────────────────
 
   it('throws when content-type is null and URL extension is unsupported', async () => {

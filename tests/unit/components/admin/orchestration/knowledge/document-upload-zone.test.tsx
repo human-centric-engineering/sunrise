@@ -64,7 +64,7 @@ describe('DocumentUploadZone', () => {
   it('renders accepted format text', () => {
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
-    expect(screen.getByText(/\.md, \.txt, \.epub, \.docx, \.pdf/)).toBeInTheDocument();
+    expect(screen.getByText(/\.md, \.txt, \.csv, \.epub, \.docx, \.pdf/)).toBeInTheDocument();
   });
 
   it('rejects files over 50 MB', async () => {
