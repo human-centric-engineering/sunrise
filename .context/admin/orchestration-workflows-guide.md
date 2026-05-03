@@ -4,15 +4,15 @@ Workflows are DAGs (directed acyclic graphs) of steps executed by the `Orchestra
 
 ## Quick Reference
 
-| Concept                | Detail                                                                                                                                                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Step types             | 15: `llm_call`, `tool_call`, `chain`, `route`, `parallel`, `reflect`, `plan`, `human_approval`, `rag_retrieve`, `guard`, `evaluate`, `external_call`, `agent_call`, `send_notification`, `orchestrator` |
-| Templates              | 9 built-in: Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning, Data Pipeline, Outreach Safety, Code Review, Autonomous Research                                 |
-| Error strategies       | 4: `retry`, `fallback`, `skip`, `fail` (default: `fail`)                                                                                                                                                |
-| Validator              | `validateWorkflow()` — pure function, no DB, no I/O                                                                                                                                                     |
-| Semantic validator     | `semanticValidateWorkflow()` — DB-backed checks for model overrides, capability slugs, agent slugs                                                                                                      |
-| Engine                 | `OrchestrationEngine.execute()` — returns `AsyncIterable<ExecutionEvent>`                                                                                                                               |
-| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`                                                                                                                              |
+| Concept                | Detail                                                                                                                                                                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step types             | 15: `llm_call`, `tool_call`, `chain`, `route`, `parallel`, `reflect`, `plan`, `human_approval`, `rag_retrieve`, `guard`, `evaluate`, `external_call`, `agent_call`, `send_notification`, `orchestrator`                     |
+| Templates              | 11 built-in: Customer Support, Content Pipeline, SaaS Backend, Research Agent, Conversational Learning, Data Pipeline, Outreach Safety, Code Review, Autonomous Research, Cited Knowledge Advisor, Scheduled Source Monitor |
+| Error strategies       | 4: `retry`, `fallback`, `skip`, `fail` (default: `fail`)                                                                                                                                                                    |
+| Validator              | `validateWorkflow()` — pure function, no DB, no I/O                                                                                                                                                                         |
+| Semantic validator     | `semanticValidateWorkflow()` — DB-backed checks for model overrides, capability slugs, agent slugs                                                                                                                          |
+| Engine                 | `OrchestrationEngine.execute()` — returns `AsyncIterable<ExecutionEvent>`                                                                                                                                                   |
+| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`                                                                                                                                                  |
 
 ## Workflow Definition Structure
 
@@ -142,7 +142,7 @@ Variables read from a frozen snapshot of `ExecutionContext`, so any step that co
 
 ## Built-in Templates
 
-Nine templates ship in `prisma/seeds/data/templates/`. They are loaded into the workflow builder's "Use template" dropdown and seeded as `AiWorkflow` rows with `isTemplate: true`.
+Eleven templates ship in `prisma/seeds/data/templates/`. They are loaded into the workflow builder's "Use template" dropdown and seeded as `AiWorkflow` rows with `isTemplate: true`.
 
 ### `tpl-customer-support` — Customer Support
 
@@ -193,6 +193,28 @@ Automated code review pipeline with parallel analysis, quality scoring, and stru
 ### `tpl-autonomous-research` — Autonomous Research
 
 Orchestrator-driven research workflow where the AI planner dynamically delegates to specialist agents.
+
+### `tpl-cited-knowledge-advisor` — Cited Knowledge Advisor
+
+**Patterns:** Tool Use (5), RAG (14), Guardrails (18), Human-in-the-Loop (13)
+
+```
+search_knowledge_base → draft_with_citations → citation_guard → [pass] expert_review
+                                                              → [fail] no_grounded_answer
+```
+
+Showcases the `search_knowledge_base` capability's citation pipeline as a workflow step. Targets advisor-style agents in legal, financial, medical, and regulatory domains where verifiable sourcing is non-negotiable.
+
+### `tpl-scheduled-source-monitor` — Scheduled Source Monitor
+
+**Patterns:** Routing (2), External Call (15), Evaluation & Monitoring (19)
+
+```
+fetch_source → categorise_change → route(material/minor/none) → [material] notify
+                                                              → [minor|none] record_quiet_tick
+```
+
+Showcases scheduled / asynchronous workflow execution. Targets "watch a thing, alert on change" patterns — lender criteria, regulatory updates, supply-chain advisories, council commitments. Operator wires the actual cron schedule and the real source URL on the cloned `AiWorkflow` row.
 
 ### Using templates
 
