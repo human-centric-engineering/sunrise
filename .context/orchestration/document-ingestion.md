@@ -251,9 +251,16 @@ CSV files use a dedicated path:
 - **Batching:** above 5,000 rows the chunker batches every 10 rows into a
   single chunk to cap embedding cost. Constants: `CSV_ROW_BATCH_THRESHOLD`,
   `CSV_ROWS_PER_BATCH`.
-- **Re-chunking limitation:** `rechunkDocument` joins stored chunks with
-  `\n\n---\n\n` which loses row-level granularity for CSV. Re-uploading is
-  preferred when CSV content changes.
+- **Per-row size cap:** rows longer than `CSV_MAX_ROW_CHARS` (32,000 chars,
+  ≈ 8,000 tokens) are dropped before embedding because every embedding
+  provider rejects oversized inputs. The skipped row numbers are surfaced
+  on the document's `metadata.warnings`. Realistic rows are well under this
+  — anything over almost always means a binary blob or JSON payload was
+  stuffed into one cell.
+- **Re-chunking:** `rechunkDocument` detects `metadata.format === 'csv'` and
+  routes through `chunkCsvDocument` (not the markdown chunker), rebuilding
+  per-row chunks from the stored `Header: Value | …` content so the
+  row-atomic shape survives.
 - **No preview step:** CSVs are deterministic to parse and skip the PDF-style
   preview/confirm flow.
 

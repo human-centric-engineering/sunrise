@@ -16,6 +16,7 @@ import {
   chunkCsvDocument,
   chunkMarkdownDocument,
   parseMetadataComments,
+  CSV_MAX_ROW_CHARS,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
@@ -341,7 +342,36 @@ async function uploadCsvFromParsed(
   });
 
   try {
-    const chunks = chunkCsvDocument(parsed, name, document.id);
+    // Drop any row whose content would blow past every embedding API's input
+    // limit (≈ 8k tokens). One bad row used to fail the whole upload with an
+    // opaque API error; now we skip it, name it in the warnings, and process
+    // the rest. This is one-way: we never split a CSV row across chunks
+    // because that would defeat row-atomic retrieval.
+    const oversize: number[] = [];
+    const acceptableSections = parsed.sections.filter((s, i) => {
+      if (s.content.length > CSV_MAX_ROW_CHARS) {
+        oversize.push(i + 1);
+        return false;
+      }
+      return true;
+    });
+    if (oversize.length > 0) {
+      const sample = oversize.slice(0, 5).join(', ');
+      const suffix = oversize.length > 5 ? `, … (${oversize.length} total)` : '';
+      const message =
+        `Skipped ${oversize.length} row(s) over the ${CSV_MAX_ROW_CHARS.toLocaleString()}-character ` +
+        `embedding limit: row${oversize.length === 1 ? '' : 's'} ${sample}${suffix}. ` +
+        `Check whether a single cell contains a binary blob or a multi-line JSON payload.`;
+      parsed.warnings.push(message);
+      logger.warn('CSV upload: skipped oversize rows', {
+        fileName,
+        skippedCount: oversize.length,
+        sampleRows: oversize.slice(0, 5),
+      });
+    }
+
+    const filteredParsed = { ...parsed, sections: acceptableSections };
+    const chunks = chunkCsvDocument(filteredParsed, name, document.id);
 
     if (category) {
       for (const chunk of chunks) {

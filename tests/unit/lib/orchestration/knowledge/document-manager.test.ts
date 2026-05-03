@@ -37,6 +37,10 @@ vi.mock('@/lib/orchestration/knowledge/chunker', () => ({
   chunkMarkdownDocument: vi.fn(),
   chunkCsvDocument: vi.fn(),
   parseMetadataComments: vi.fn(() => ({})),
+  // Mirror the real value so the oversize-row guard's threshold matches what
+  // the test fixtures construct (see "drops rows over the embedding-API size
+  // limit" — it builds a row at 40_000 chars expecting it to be rejected).
+  CSV_MAX_ROW_CHARS: 32_000,
 }));
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
@@ -1054,6 +1058,86 @@ describe('uploadDocumentFromBuffer — CSV row-level chunking', () => {
     await uploadDocumentFromBuffer(Buffer.from('a,b\n1,2\n'), 'data.csv', 'user-1', 'finance');
 
     expect(chunk.category).toBe('finance');
+  });
+
+  it('drops rows over the embedding-API size limit and surfaces a warning naming them', async () => {
+    // Three rows: row 1 is fine, row 2 is way over the 32k-char cap, row 3 is fine.
+    const huge = 'x'.repeat(40_000);
+    const parsed = {
+      title: 'mixed',
+      author: undefined,
+      sections: [
+        { title: 'Row 1', content: 'name: Acme | amount: 100', order: 0 },
+        { title: 'Row 2', content: `name: Big | blob: ${huge}`, order: 1 },
+        { title: 'Row 3', content: 'name: Gamma | amount: 300', order: 2 },
+      ],
+      fullText: '',
+      metadata: { format: 'csv', delimiter: ',', rowCount: '3' },
+      warnings: [],
+    };
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue(parsed);
+    // Chunker is mocked here, but we verify it received the *filtered* sections.
+    vi.mocked(chunkCsvDocument).mockReturnValue([
+      makeChunk({ id: 'r1', chunkType: 'csv_row' }),
+      makeChunk({ id: 'r3', chunkType: 'csv_row' }),
+    ]);
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
+      makeDocument({ status: 'processing' }) as never
+    );
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ status: 'ready', chunkCount: 2 }) as never
+    );
+
+    await uploadDocumentFromBuffer(Buffer.from('blob csv'), 'mixed.csv', 'user-1');
+
+    // The chunker should have been called with only the two acceptable rows.
+    const chunkerArg = vi.mocked(chunkCsvDocument).mock.calls[0][0];
+    expect(chunkerArg.sections).toHaveLength(2);
+    expect(chunkerArg.sections.map((s) => s.title)).toEqual(['Row 1', 'Row 3']);
+
+    // The persisted warning should name the offending row index.
+    const updateCall = vi.mocked(prisma.aiKnowledgeDocument.update).mock.calls[0][0];
+    const warnings = (updateCall.data.metadata as { warnings: string[] }).warnings;
+    const skipWarning = warnings.find((w) => w.includes('Skipped 1 row'));
+    expect(skipWarning).toBeDefined();
+    expect(skipWarning).toContain('row 2');
+  });
+
+  it('does not warn when every row is within the embedding limit', async () => {
+    const parsed = {
+      title: 'normal',
+      author: undefined,
+      sections: [
+        { title: 'Row 1', content: 'a: 1', order: 0 },
+        { title: 'Row 2', content: 'a: 2', order: 1 },
+      ],
+      fullText: '',
+      metadata: { format: 'csv', delimiter: ',', rowCount: '2' },
+      warnings: [],
+    };
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue(parsed);
+    vi.mocked(chunkCsvDocument).mockReturnValue([
+      makeChunk({ id: 'r1', chunkType: 'csv_row' }),
+      makeChunk({ id: 'r2', chunkType: 'csv_row' }),
+    ]);
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
+      makeDocument({ status: 'processing' }) as never
+    );
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ status: 'ready', chunkCount: 2 }) as never
+    );
+
+    await uploadDocumentFromBuffer(Buffer.from('a,b\n1,2\n3,4\n'), 'normal.csv', 'user-1');
+
+    const updateCall = vi.mocked(prisma.aiKnowledgeDocument.update).mock.calls[0][0];
+    const warnings = (updateCall.data.metadata as { warnings: string[] }).warnings;
+    expect(warnings.some((w) => w.startsWith('Skipped'))).toBe(false);
   });
 });
 

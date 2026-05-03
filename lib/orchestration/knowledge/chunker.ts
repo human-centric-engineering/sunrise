@@ -385,6 +385,18 @@ export function chunkMarkdownDocument(
 export const CSV_ROW_BATCH_THRESHOLD = 5000;
 /** Rows per chunk when batching kicks in. */
 export const CSV_ROWS_PER_BATCH = 10;
+/**
+ * Per-row character cap. Rows above this length are dropped before embedding
+ * because every embedding provider rejects inputs over its token budget
+ * (Voyage voyage-3 ≈ 32k tokens; OpenAI text-embedding-3-small 8,191 tokens).
+ * 32,000 chars is a generous safety margin (~8,000 tokens at the standard
+ * 4-chars/token approximation) that suits every provider Sunrise ships with.
+ *
+ * Realistic CSV rows are well under this — a row that crosses it almost
+ * always means the source has a binary blob or a JSON payload stuffed into
+ * one cell, which a row-atomic CSV chunker can't usefully embed anyway.
+ */
+export const CSV_MAX_ROW_CHARS = 32_000;
 
 /**
  * Chunk a parsed CSV document into one chunk per row (or batched rows for
