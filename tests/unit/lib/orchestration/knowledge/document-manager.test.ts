@@ -569,9 +569,8 @@ describe('rechunkDocument', () => {
   });
 
   it('dispatches CSV documents through chunkCsvDocument (not the markdown chunker)', async () => {
-    // A CSV document stores rawContent as the joined "Header: Value | …" lines
-    // emitted by parseCsv. Re-chunking must split those back into one chunk per
-    // row, not pass the whole blob to chunkMarkdownDocument.
+    // CSV documents persist their per-row sections directly so re-chunk can
+    // round-trip them losslessly via chunkCsvDocument.
     const doc = makeDocument({
       id: 'doc-csv-rechunk',
       name: 'spending',
@@ -579,10 +578,14 @@ describe('rechunkDocument', () => {
       status: 'ready',
       metadata: {
         format: 'csv',
-        rawContent: 'name: Acme | amount: 100\nname: Beta | amount: 200\nname: Gamma | amount: 300',
+        csvSections: [
+          { title: 'Row 1', content: 'name: Acme | amount: 100', order: 0 },
+          { title: 'Row 2', content: 'name: Beta | amount: 200', order: 1 },
+          { title: 'Row 3', content: 'name: Gamma | amount: 300', order: 2 },
+        ],
       },
     });
-    const oldChunks = [{ content: 'irrelevant — rebuilt from rawContent', chunkType: 'csv_row' }];
+    const oldChunks = [{ content: 'irrelevant — rebuilt from csvSections', chunkType: 'csv_row' }];
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
       ...doc,
       chunks: oldChunks,
@@ -602,11 +605,77 @@ describe('rechunkDocument', () => {
 
     expect(chunkCsvDocument).toHaveBeenCalledTimes(1);
     expect(chunkMarkdownDocument).not.toHaveBeenCalled();
-    // Verify the rebuilt parsed shape: 3 sections, one per non-empty line in rawContent.
+    // Sections rebuilt from csvSections, in their stored order, with content verbatim.
     const callArg = vi.mocked(chunkCsvDocument).mock.calls[0][0];
     expect(callArg.sections).toHaveLength(3);
     expect(callArg.sections[0].content).toBe('name: Acme | amount: 100');
     expect(callArg.sections[2].content).toBe('name: Gamma | amount: 300');
+  });
+
+  it('preserves rows containing embedded newlines on rechunk (regression: no row fragmentation)', async () => {
+    // RFC-4180 quoted cells can contain a literal `\n`. The previous round-trip
+    // through `rawContent.split('\n')` would shred such a row into two phantom
+    // rows. Persisting csvSections directly keeps each row atomic on rechunk.
+    const doc = makeDocument({
+      id: 'doc-csv-multiline',
+      name: 'multiline',
+      fileName: 'multiline.csv',
+      status: 'ready',
+      metadata: {
+        format: 'csv',
+        csvSections: [
+          { title: 'Row 1', content: 'note: line1\nline2', order: 0 },
+          { title: 'Row 2', content: 'note: single', order: 1 },
+        ],
+      },
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...doc,
+      chunks: [{ content: 'x', chunkType: 'csv_row' }],
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ id: 'doc-csv-multiline', status: 'ready', chunkCount: 2 }) as never
+    );
+    vi.mocked(chunkCsvDocument).mockReturnValue([
+      makeChunk({ id: 'r1', chunkType: 'csv_row' }),
+      makeChunk({ id: 'r2', chunkType: 'csv_row' }),
+    ]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+
+    await rechunkDocument('doc-csv-multiline');
+
+    const callArg = vi.mocked(chunkCsvDocument).mock.calls[0][0];
+    expect(callArg.sections).toHaveLength(2);
+    // The embedded newline survives — row 1 is NOT fragmented.
+    expect(callArg.sections[0].content).toBe('note: line1\nline2');
+    expect(callArg.sections[1].content).toBe('note: single');
+  });
+
+  it('throws a clear error when a CSV document has no csvSections to rebuild from', async () => {
+    // Older CSV uploads that predate the csvSections field can't be safely
+    // rechunked — splitting the joined rawContent on \n would corrupt any
+    // multi-line cell. Surface a clear re-upload instruction instead.
+    const doc = makeDocument({
+      id: 'doc-csv-legacy',
+      name: 'legacy',
+      fileName: 'legacy.csv',
+      status: 'ready',
+      metadata: {
+        format: 'csv',
+        rawContent: 'name: Acme | amount: 100',
+        // csvSections deliberately absent
+      },
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...doc,
+      chunks: [{ content: 'x', chunkType: 'csv_row' }],
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(doc as never);
+
+    await expect(rechunkDocument('doc-csv-legacy')).rejects.toThrow(/missing csvSections/);
+    expect(chunkCsvDocument).not.toHaveBeenCalled();
+    expect(chunkMarkdownDocument).not.toHaveBeenCalled();
   });
 });
 
@@ -991,6 +1060,16 @@ describe('uploadDocumentFromBuffer — CSV row-level chunking', () => {
         hasHeader: 'true',
       })
     );
+    // The per-row sections must also be persisted verbatim — that's what
+    // rechunkDocument uses to round-trip without splitting on `\n`.
+    const persistedSections = (updateCall.data.metadata as { csvSections: { content: string }[] })
+      .csvSections;
+    expect(persistedSections).toHaveLength(3);
+    expect(persistedSections[0]).toEqual({
+      title: 'Row 1',
+      content: 'name: Row 1 | amount: 100',
+      order: 0,
+    });
   });
 
   it('marks the document ready with chunkCount 0 when the CSV produces no rows', async () => {

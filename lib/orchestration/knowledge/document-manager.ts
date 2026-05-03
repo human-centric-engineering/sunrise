@@ -29,6 +29,13 @@ import {
 } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
+/** A single CSV row persisted on the document for lossless re-chunking. */
+const csvSectionSchema = z.object({
+  title: z.string(),
+  content: z.string(),
+  order: z.number(),
+});
+
 /** Schema for document metadata stored as Prisma JSON field */
 const documentMetadataSchema = z
   .object({
@@ -40,6 +47,13 @@ const documentMetadataSchema = z
     warnings: z.array(z.string()).optional(),
     format: z.string().optional(),
     corrected: z.boolean().optional(),
+    /**
+     * CSV-only. Persisted at upload so re-chunk can rebuild the exact same
+     * sections without round-tripping through a `\n`-joined string (which
+     * would fragment any RFC-4180 quoted cell that contains an embedded
+     * newline). See `rechunkDocument` for the consuming path.
+     */
+    csvSections: z.array(csvSectionSchema).optional(),
   })
   .passthrough()
   .nullable();
@@ -112,25 +126,20 @@ function extractDocumentCategory(content: string): string | null {
 }
 
 /**
- * Reconstruct a minimal `ParsedDocument` from the joined `Header: Value | …`
- * content stored on a CSV document's `metadata.rawContent`. Used by
- * `rechunkDocument` so CSVs round-trip through `chunkCsvDocument` rather
- * than the markdown chunker.
- *
- * Each non-empty line in `rawContent` corresponds to one original CSV row,
- * because `parseCsv` joins sections with `\n` and the row-level chunker
- * never merges them.
+ * Reconstruct a `ParsedDocument` from the per-row sections persisted on a CSV
+ * document's `metadata.csvSections`. Used by `rechunkDocument` so CSVs route
+ * through `chunkCsvDocument` instead of the markdown chunker, with each
+ * stored row re-emitted verbatim — including any embedded newlines that
+ * survived inside RFC-4180 quoted cells.
  */
-function rebuildCsvParsedFromContent(content: string, name: string): ParsedDocument {
-  const lines = content.split('\n').filter((line) => line.length > 0);
+function rebuildCsvParsedFromSections(
+  sections: ReadonlyArray<{ title: string; content: string; order: number }>,
+  name: string
+): ParsedDocument {
   return {
     title: name,
-    sections: lines.map((line, idx) => ({
-      title: `Row ${idx + 1}`,
-      content: line,
-      order: idx,
-    })),
-    fullText: content,
+    sections: sections.map((s) => ({ title: s.title, content: s.content, order: s.order })),
+    fullText: sections.map((s) => s.content).join('\n'),
     metadata: { format: 'csv' },
     warnings: [],
   };
@@ -379,6 +388,17 @@ async function uploadCsvFromParsed(
       }
     }
 
+    // Persist the parsed sections verbatim. Re-chunking reads this back
+    // (see `rechunkDocument`) instead of `split('\n')`-ing a joined string,
+    // which would shred any RFC-4180 quoted cell containing an embedded
+    // newline. Sections carry their own ordering hint so we don't depend on
+    // array position once stored.
+    const csvSections = acceptableSections.map((s, i) => ({
+      title: s.title,
+      content: s.content,
+      order: s.order ?? i,
+    }));
+
     if (chunks.length === 0) {
       await prisma.aiKnowledgeDocument.update({
         where: { id: document.id },
@@ -393,6 +413,7 @@ async function uploadCsvFromParsed(
             columnCount: parsed.metadata.columnCount,
             hasHeader: parsed.metadata.hasHeader,
             warnings: parsed.warnings,
+            csvSections,
           },
         },
       });
@@ -417,6 +438,7 @@ async function uploadCsvFromParsed(
             columnCount: parsed.metadata.columnCount,
             hasHeader: parsed.metadata.hasHeader,
             warnings: parsed.warnings,
+            csvSections,
           },
         },
       });
@@ -754,11 +776,21 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
 
   try {
     // CSV rechunk has to use the row-aware chunker — chunkMarkdownDocument
-    // would mash every row into the same heading-less chunk.
+    // would mash every row into the same heading-less chunk. The per-row
+    // sections persisted at upload (`metadata.csvSections`) are the only
+    // lossless source: rebuilding from the joined `rawContent` would shred
+    // any quoted cell that contained an embedded newline.
     const isCsv = meta?.format === 'csv';
+    if (isCsv && (!meta?.csvSections || meta.csvSections.length === 0)) {
+      throw new Error(
+        'CSV document is missing csvSections metadata — re-upload the original CSV ' +
+          'to enable re-chunking. (Older CSV uploads stored only the joined content, ' +
+          'which cannot be safely re-split when cells contain embedded newlines.)'
+      );
+    }
     const chunks = isCsv
       ? chunkCsvDocument(
-          rebuildCsvParsedFromContent(content, document.name),
+          rebuildCsvParsedFromSections(meta.csvSections!, document.name),
           document.name,
           documentId
         )

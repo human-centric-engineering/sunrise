@@ -258,9 +258,14 @@ CSV files use a dedicated path:
   — anything over almost always means a binary blob or JSON payload was
   stuffed into one cell.
 - **Re-chunking:** `rechunkDocument` detects `metadata.format === 'csv'` and
-  routes through `chunkCsvDocument` (not the markdown chunker), rebuilding
-  per-row chunks from the stored `Header: Value | …` content so the
-  row-atomic shape survives.
+  routes through `chunkCsvDocument` (not the markdown chunker). The
+  per-row sections are persisted verbatim at upload time on
+  `metadata.csvSections` and read back directly on rechunk, so any RFC-4180
+  quoted cell containing an embedded newline survives intact (a previous
+  implementation round-tripped through `rawContent.split('\n')` and would
+  have shredded such rows). CSV documents without `csvSections` (legacy or
+  externally-modified rows) raise a clear error pointing the admin at
+  re-upload rather than producing corrupted chunks.
 - **No preview step:** CSVs are deterministic to parse and skip the PDF-style
   preview/confirm flow.
 
