@@ -459,9 +459,9 @@ describe('ChatInterface', () => {
 
     // User message should still be visible, but the empty assistant message should be removed
     expect(screen.getByText('Hi')).toBeInTheDocument();
-    // There should be exactly one message bubble (the user's), not two
-    const messageBubbles = document.querySelectorAll('.rounded-lg.px-3.py-2');
-    expect(messageBubbles).toHaveLength(1);
+    // There should be exactly one message row (the user's), not two
+    const messageRows = document.querySelectorAll('.flex.font-mono');
+    expect(messageRows).toHaveLength(1);
   });
 
   it('shows rate limit error on 429 response', async () => {

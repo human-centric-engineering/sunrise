@@ -30,6 +30,7 @@ import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinkin
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
+import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 
 export interface AgentTestChatProps {
   /** Agent slug to hit via `POST /chat/stream`. Required. */
@@ -55,12 +56,13 @@ export function AgentTestChat({
   initialMessage = '',
 }: AgentTestChatProps) {
   const [message, setMessage] = useState(initialMessage);
-  const [reply, setReply] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const typing = useTypingAnimation({ chunkSize: 2 });
+  const reply = typing.displayText;
 
   useEffect(() => {
     return () => {
@@ -77,7 +79,7 @@ export function AgentTestChat({
     setError(null);
     setWarning(null);
     setStatus(null);
-    setReply('');
+    typing.reset();
     setStreaming(true);
 
     const controller = new AbortController();
@@ -130,19 +132,20 @@ export function AgentTestChat({
 
           if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
             const delta: string = parsed.data.delta;
-            setReply((prev) => prev + delta);
+            typing.appendDelta(delta);
           } else if (parsed.type === 'status' && typeof parsed.data.message === 'string') {
             setStatus(parsed.data.message);
           } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
             setWarning(parsed.data.message);
           } else if (parsed.type === 'content_reset') {
-            setReply('');
+            typing.reset();
           } else if (parsed.type === 'error') {
             const code = typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
             await ensureMinThinking();
             setError(getUserFacingError(code));
             return;
           } else if (parsed.type === 'done') {
+            typing.flush();
             return;
           }
         }
@@ -203,7 +206,7 @@ export function AgentTestChat({
       )}
 
       <div
-        className={`${minHeight} rounded-md border p-3 text-sm whitespace-pre-wrap`}
+        className={`${minHeight} rounded-md border p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap`}
         role="log"
         aria-live="polite"
         aria-label="Agent reply"
@@ -213,6 +216,11 @@ export function AgentTestChat({
         ) : reply ? (
           <>
             {reply}
+            {streaming && (
+              <span className="terminal-caret text-foreground" aria-hidden="true">
+                █
+              </span>
+            )}
             {streaming && status && (
               <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
             )}
