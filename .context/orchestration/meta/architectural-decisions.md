@@ -24,6 +24,8 @@ A plain-language record of the major technical and architectural choices behind 
 
 **Reading the alternatives tables.** A "Why not" cell is concrete (mentions latency, cost, lock-in, ops complexity, browser support, scaling cost). It is never simply "this is better" — every rejection is rooted in a property the chosen option provides.
 
+**The dependency-minimalism stance.** Several "Why not" cells say _"a fork can add this later"_ or _"the same artifact wraps in [X]"_ rather than rejecting an option outright. That phrasing is deliberate — it reflects the foundational principle in §1.6: ship the smallest sensible default, keep architectural seams narrow, and leave downstream developers free to layer in the libraries and infrastructure their use cases demand. When you read those cells, the door is open; the default is just not bundled.
+
 **Acknowledged gaps.** Section 10 collects decisions that explicitly accept a current-state limitation (in-memory state, no distributed tracing, partial checkpoint recovery). These are not omissions — they are choices, with the trade-off named.
 
 ---
@@ -107,12 +109,12 @@ These are the outermost decisions: what kind of system Sunrise is, what runtime 
 
 **Alternatives**
 
-| Option                    | Why not                                                                          |
-| ------------------------- | -------------------------------------------------------------------------------- |
-| Stick with Next.js 14/15  | Older Cache Components story; missing React 19 features we use                   |
-| Remix / TanStack Start    | Smaller streaming and Server Components story; smaller ecosystem for shadcn/ui   |
-| SvelteKit / Nuxt          | Different language ecosystem; loses TypeScript-everywhere shared types           |
-| Plain Express + React SPA | Loses streaming SSR, React Server Components, and the routing/layout abstraction |
+| Option                    | Why not                                                                                                                                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stick with Next.js 14/15  | Older Cache Components story; missing React 19 features we use                                                                                                                                                          |
+| Remix / TanStack Start    | Both are capable; Next.js 16 was the cleanest fit for the streaming SSR + RSC story we wanted. TanStack Router and TanStack Query can still be layered inside a Next.js fork if a downstream team wants them — see §1.6 |
+| SvelteKit / Nuxt          | Different language ecosystem; would lose TypeScript-everywhere shared types with the orchestration core                                                                                                                 |
+| Plain Express + React SPA | Loses streaming SSR, React Server Components, and the routing/layout abstraction                                                                                                                                        |
 
 **Why this approach**
 
@@ -130,11 +132,11 @@ These are the outermost decisions: what kind of system Sunrise is, what runtime 
 
 **Alternatives**
 
-| Option                                                | Why not                                                                                 |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Microservices (separate engine, chat, admin services) | Premature; adds operational cost without solving any problem we have                    |
-| Serverless functions per route                        | Cold starts hurt SSE streaming; budget mutex and circuit breaker need shared memory     |
-| Kubernetes-native deploy from day one                 | Overkill for the deployment patterns we want to support (single VM, single Docker host) |
+| Option                                                | Why not                                                                                                                                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Microservices (separate engine, chat, admin services) | Premature; adds operational cost without solving any problem we have                                                                                                                 |
+| Serverless functions per route                        | Cold starts hurt SSE streaming; budget mutex and circuit breaker need shared memory                                                                                                  |
+| Kubernetes-native deploy from day one                 | The same Docker artifact runs in k8s when scale demands it — k8s is a wrapper, not a fork. We default to docker-compose because the most common deployment is a single VM (see §1.6) |
 
 **Why this approach**
 
@@ -143,6 +145,56 @@ These are the outermost decisions: what kind of system Sunrise is, what runtime 
 - One artifact means one set of versions to keep in lockstep — no "the engine is on v2 but the admin UI is on v1.7" failure mode.
 
 **Where it lives:** `Dockerfile`, `docker-compose.yml`, `.context/architecture/` for deployment topology.
+
+### 1.6 Dependency minimalism — open to future architectural decisions
+
+**What is it?** Modern web stacks are deep. A typical SaaS app pulls in a global state library, a data-fetching library, a form library, a charting library, a feature-flag SDK, a monitoring SDK, an analytics SDK, an error reporter, a queue client, a search vendor, and several utility belts. Each addition is reasonable in isolation; in aggregate they're irreversible — every downstream fork inherits all of them.
+
+**What we chose:** Ship the smallest dependency set that delivers the functional spec, and design every architectural seam so that a downstream developer can layer in the libraries they actually want without rewriting the platform. Sensible default in the box; the door open behind it.
+
+**What is bundled (the lean baseline):** Next.js, React, Prisma, `better-auth`, Tailwind 4, shadcn-pattern components on Radix primitives, Zod, `cron-parser`, `lucide-react`, `@xyflow/react`. That is roughly the floor.
+
+**What is not bundled (deliberately):** state management library (no Redux/Zustand/Jotai), data-fetching library (no TanStack Query/SWR), form library (no Formik), router beyond Next.js App Router, monitoring SDK, analytics SDK, queue client (no Bull/BullMQ/Sidekiq), distributed cache, dedicated vector database, OpenTelemetry, e2e framework. Each of these can be added in a fork when the use case appears.
+
+**Alternatives**
+
+| Option                                                     | Why not                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Maximal stack from day one                                 | Forces downstream choices on every fork; doubles the surface area to keep up to date |
+| No defaults at all                                         | Pushes too much onto the downstream developer; nothing works out of the box          |
+| Vendor-coupled stack (one cloud, one observability vendor) | Couples the platform to one host; forks lose deployment flexibility                  |
+
+**Why this approach**
+
+- Every downstream fork starts from the same lean baseline; teams add what they actually need rather than removing what we forced on them.
+- Several existing decisions in this document are concrete applications of this principle: the platform-agnostic core (§1.2), the Postgres + Prisma boundary (§7.1), the auth-guard abstraction (§6.2), the in-memory caches that swap to Redis later (§7.5, §10.2), and the absence of OpenTelemetry today (§9.1).
+- **How this shows up in alternatives tables:** when a "Why not" cell says "you can add this later" or "wraps the same artifact," that's this principle. The alternative isn't wrong — it just isn't the default we ship.
+
+**Where it lives:** `package.json` (the lean dependency list), `CLAUDE.md` ("search before creating" rule). The principle is reinforced anywhere a contained boundary lives over a swappable implementation — see §1.2, §6.2, §7.1, §7.5, §10.2.
+
+### 1.7 React Server Components, Suspense, and streaming SSR
+
+**What is it?** A browser app traditionally renders one of two ways: entirely on the server (SSR — every navigation reloads HTML) or entirely on the client (SPA — JavaScript renders everything). React Server Components (RSC) is a third mode: components run on the server, return HTML directly, and never ship their JavaScript to the browser. Suspense lets parts of a page stream in independently as their data resolves. Streaming SSR puts these together — the browser receives the first byte of HTML quickly and the rest streams as the server can produce it. Cache Components (Next.js 16) layer caching primitives on top so that fragments of the page can be cached, revalidated, or streamed independently.
+
+**What we chose:** Server Components by default. `'use client'` is added only when interactivity actually demands it (form state, click handlers, browser APIs). Suspense boundaries wrap data-dependent regions. Streaming SSR is the default render path. Cache Components are configured per-route where caching helps.
+
+**Alternatives**
+
+| Option                                                                | Why not                                                                               |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| All client-rendered (SPA)                                             | Ships every component's JavaScript to the browser; slower first paint, larger bundles |
+| All server-rendered (no client islands)                               | Loses interactive admin UI affordances (drag-and-drop builder, live form validation)  |
+| Pages router instead of App Router                                    | App Router's RSC and streaming integration are the reason we picked Next.js 16 (§1.4) |
+| Add a separate streaming layer (e.g. WebSockets to push UI fragments) | Streaming SSR + SSE already covers the streaming use cases we have                    |
+
+**Why this approach**
+
+- Admin pages with large tables ship far less JavaScript when the table renders on the server.
+- Streaming SSR pairs naturally with the SSE chat handler (§2.1) — both push tokens to the browser as they're ready.
+- Suspense lets the chat conversation list and the agent list render before a slow knowledge-base query finishes.
+- Cache Components let frequently-read pages (the dashboard, the model registry view) cache fragments without giving up streaming behaviour for the rest of the page.
+
+**Where it lives:** `app/**/*.tsx` (Server Components by default; `'use client'` files explicit), `next.config.ts` (Cache Components configuration), `.context/architecture/`.
 
 ---
 
@@ -493,6 +545,29 @@ This section covers how an agent actually executes — the structure of a workfl
 
 **Where it lives:** `lib/orchestration/capabilities/built-in/user-memory.ts`, `prisma/schema.prisma` (`AiUserMemory`).
 
+### 3.9 Workflow templates and dry-run mode
+
+**What is it?** Building a workflow from a blank canvas is intimidating. New admins want a starting point — "give me a customer-support pattern," "give me a content-review pipeline." A _template_ is a pre-built workflow they can clone and adapt. A _dry-run mode_ lets them execute the workflow with mocked LLM and tool calls so they can verify the flow without spending budget.
+
+**What we chose:** Workflows and templates share one table (`AiWorkflow`). Built-in templates are workflows with `isTemplate: true, templateSource: 'builtin'` (currently 11 of them, covering routing, RAG, content review, escalation, scheduled summaries, and other common patterns). Custom user-created templates use `templateSource: 'custom'`. The list endpoint supports filtering by source and category. Every workflow exposes a dry-run endpoint that walks the DAG with stubbed step outputs so the admin can see the path, the parallelism, and the conditional branches without paying for it.
+
+**Alternatives**
+
+| Option                                 | Why not                                                                          |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| Templates as code only (in source)     | Locks the catalog to deploys; admins can't curate organisation-specific patterns |
+| Templates as JSON files in a directory | Loses the admin UX (search, filter, clone); curation requires a developer        |
+| No dry-run mode                        | Workflow authors find layout bugs only by spending real budget                   |
+| Replay a real execution to test        | Mocked dry-run is faster, free, and doesn't leave junk in the executions list    |
+
+**Why this approach**
+
+- Templates and live workflows share one table — the admin UX is the same; cloning a template is a copy.
+- Custom templates let an organisation curate its own pattern library without code changes.
+- Dry-run lets a workflow author iterate cheaply — the path is verified before any LLM call is made for real.
+
+**Where it lives:** `lib/orchestration/workflows/` (validator, semantic checker, template scanner), `app/api/v1/admin/orchestration/workflows/templates/` (list endpoint), `app/api/v1/admin/orchestration/workflows/[id]/dry-run/` (dry-run endpoint), `.context/orchestration/workflows.md`.
+
 ---
 
 ## 4. Resilience and Cost Control
@@ -669,12 +744,12 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 
 **Alternatives**
 
-| Option                                     | Why not                                                                                 |
-| ------------------------------------------ | --------------------------------------------------------------------------------------- |
-| Pinecone (managed)                         | Adds a third-party vendor and a per-vector cost; data leaves the customer's environment |
-| Weaviate / Qdrant (self-hosted)            | Adds a service to deploy, monitor, and back up                                          |
-| Elasticsearch with vector support          | Heavyweight for our scale; adds JVM ops cost                                            |
-| Build vectors into Prisma without pgvector | Loses the indexed similarity operator; queries become full-table scans                  |
+| Option                                     | Why not                                                                                                                                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pinecone (managed)                         | Adds a third-party vendor and a per-vector cost; data leaves the customer's environment                                                                                               |
+| Weaviate / Qdrant (self-hosted)            | Adds a service to deploy, monitor, and back up. A fork can introduce a dedicated vector store later when corpus size demands it; the search interface is narrow on purpose (see §1.6) |
+| Elasticsearch with vector support          | Heavyweight for our scale; adds JVM ops cost                                                                                                                                          |
+| Build vectors into Prisma without pgvector | Loses the indexed similarity operator; queries become full-table scans                                                                                                                |
 
 **Why this approach**
 
@@ -859,6 +934,30 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 - If single-deployment multi-tenancy becomes a customer requirement, the category model can be extended into a namespace tree without an incompatible schema change.
 
 **Where it lives:** `lib/orchestration/knowledge/` (search filter), `prisma/schema.prisma` (`AiKnowledgeDocument.categories`), `.context/orchestration/knowledge.md`. Documented as a deliberate scope choice in `maturity-analysis.md`.
+
+### 5.10 Embedding provider choice and the 1536-dimension ceiling
+
+**What is it?** An "embedding model" turns text into a vector. The vector's dimensions and the model are coupled — Voyage's `voyage-3` produces 1024-dim vectors natively; OpenAI's `text-embedding-3-large` produces 3072 natively but accepts a `dimensions` parameter to truncate; some Ollama models produce 768 or 1024 dims. Once a database column stores vectors of one shape, changing the shape is a migration that re-embeds every chunk in the corpus.
+
+**What we chose:** Pin the database column to `vector(1536)` (`AiKnowledgeChunk.embedding`). Support multiple embedding providers in the registry as long as the chosen model can produce 1536-dim output, either natively or via a `dimensions` / `output_dimension` parameter. Default recommended provider is Voyage AI (`voyage-3`); OpenAI `text-embedding-3-small` and `text-embedding-3-large` work via dimension truncation; Ollama models are supported for fully local deployments where data must not leave the host.
+
+**Alternatives**
+
+| Option                                                                 | Why not                                                                                 |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Native dim per provider (no truncation; one column shape per provider) | Mixing providers requires rebuilding the column; locks each corpus to one provider      |
+| Larger ceiling (3072)                                                  | Bigger storage and slower search for a marginal quality lift on the models we evaluated |
+| Smaller ceiling (768)                                                  | Sacrifices quality on most modern embedding models                                      |
+| Hard-code one provider (Voyage only)                                   | Loses the "swap to local Ollama for compliance" deployment path                         |
+
+**Why this approach**
+
+- 1536-dim is a sweet spot most modern embedding models can produce, natively or via parameter.
+- Mixing providers across documents (one corpus on Voyage, another on Ollama for compliance reasons) is a configuration choice, not a migration.
+- Customers who need a different ceiling rebuild the column once at deployment time — the rest of the platform doesn't change.
+- The provider list is open via the `AiProviderModel` registry — adding a new embedding provider is a registry entry plus a thin adapter, not a core change. (See §1.6 for the dependency-minimalism stance — we don't bundle every embedding vendor.)
+
+**Where it lives:** `lib/orchestration/llm/embedding-models.ts` (registry, dimension compatibility flags), `lib/orchestration/llm/voyage.ts`, `lib/orchestration/llm/openai-compatible.ts`, `prisma/schema.prisma` (`AiKnowledgeChunk.embedding`).
 
 ---
 
@@ -1088,6 +1187,29 @@ This section covers how untrusted input is contained, how authentication works a
 
 **Where it lives:** `lib/orchestration/http/idempotency.ts`, `lib/orchestration/engine/executors/external-call.ts`, `.context/orchestration/external-calls.md`.
 
+### 6.10 `better-auth` as the authentication substrate
+
+**What is it?** Every web application needs authentication: signup, login, sessions, role checks, password reset, email verification. The market splits into hosted services (Auth0, Clerk, Supabase Auth, Cognito) and self-hosted libraries (NextAuth.js / Auth.js, Passport, Lucia, `better-auth`). Each option trades lock-in, cost, customisation, and where user data is stored.
+
+**What we chose:** `better-auth` — a TypeScript-first, in-process, self-hosted authentication library. User and session tables live in the same Prisma database as the rest of the application. Session checks happen via `withAuth()` and `withAdminAuth()` guard helpers (§6.2), which means the rest of the codebase calls a thin abstraction rather than the auth library directly.
+
+**Alternatives**
+
+| Option                                  | Why not                                                                                                                                            |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth0 / Clerk / Supabase Auth / Cognito | Vendor lock-in; user data leaves the deployment; per-MAU costs at scale                                                                            |
+| NextAuth.js / Auth.js                   | Capable; we picked `better-auth` for ergonomics and TypeScript-first design. The guard abstraction means swapping is a contained change (see §1.6) |
+| Lucia                                   | Smaller scope; we wanted the broader feature surface (email verification, social, MFA) without writing it ourselves                                |
+| Custom auth                             | Sessions, password storage, and CSRF are easy to get wrong; not worth the maintenance burden                                                       |
+
+**Why this approach**
+
+- User data and sessions never leave the deployment — important for compliance-sensitive customers (legal, healthcare, financial).
+- The `withAuth` / `withAdminAuth` guard abstraction means swapping authentication libraries later is a contained change; most code touches the guards, not `better-auth` directly.
+- TypeScript-first design fits the project's strict-typing posture (§6.1), and `better-auth` owns its Prisma tables so migrations are part of the same workflow as the rest of the schema.
+
+**Where it lives:** `lib/auth/`, `lib/auth/guards.ts`, `prisma/schema.prisma` (User, Session, Account tables managed by `better-auth`), `.context/auth/`.
+
 ---
 
 ## 7. Persistence and Data Model
@@ -1102,12 +1224,12 @@ How long-lived state is stored, versioned, and audited.
 
 **Alternatives**
 
-| Option                                         | Why not                                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| MongoDB                                        | Loses transactions across related records; relational shape better fits the model           |
-| MySQL                                          | Similar fit, but Postgres has stronger JSON, full-text, and vector support                  |
-| Mixed datastore (Postgres + Redis + vector DB) | More services to deploy and back up; integrity across stores becomes the operator's problem |
-| Drizzle / TypeORM instead of Prisma            | Prisma's typed client and migration tooling fit the project's strict-typing posture         |
+| Option                                         | Why not                                                                                                                                                                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MongoDB                                        | Loses transactions across related records; relational shape better fits the model                                                                                                                                                        |
+| MySQL                                          | Similar fit, but Postgres has stronger JSON, full-text, and vector support                                                                                                                                                               |
+| Mixed datastore (Postgres + Redis + vector DB) | More services to deploy and back up; integrity across stores becomes the operator's problem                                                                                                                                              |
+| Drizzle / TypeORM instead of Prisma            | Both are capable; Prisma is the default for its typed-client and migration ergonomics. The Prisma surface is contained enough that a fork can swap to Drizzle if migration ergonomics matter more than the typed-client shape (see §1.6) |
 
 **Why this approach**
 
@@ -1197,11 +1319,11 @@ How long-lived state is stored, versioned, and audited.
 
 **Alternatives**
 
-| Option                               | Why not                                                                      |
-| ------------------------------------ | ---------------------------------------------------------------------------- |
-| No cache                             | DB query on every event; latency and load                                    |
-| Long TTL (10+ minutes)               | A change takes a long time to propagate                                      |
-| Distributed cache (Redis) from day 1 | Adds Redis to the deployment for a relatively minor benefit at current scale |
+| Option                               | Why not                                                                                                                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No cache                             | DB query on every event; latency and load                                                                                                                |
+| Long TTL (10+ minutes)               | A change takes a long time to propagate                                                                                                                  |
+| Distributed cache (Redis) from day 1 | Adds Redis to the deployment for a relatively minor benefit at current scale; can be swapped in later when horizontal-scale demands it (see §1.6, §10.2) |
 
 **Why this approach**
 
@@ -1305,6 +1427,57 @@ How Sunrise reaches the user — directly, embedded into other sites, and across
 
 **Where it lives:** `tsconfig.json` (path config), `.eslintrc` and `eslint.config.mjs` (the `no-restricted-imports` rule), `CLAUDE.md` (the rationale).
 
+### 8.4 `shadcn/ui` + Tailwind 4 as the component model
+
+**What is it?** Component libraries sit on a spectrum. At one end, libraries like MUI, Chakra, and Mantine ship pre-built components as an npm package — fast to install, hard to deeply customise, locked to upstream design decisions. At the other end, Radix UI ships behaviour primitives (a popover that handles focus, a dropdown with arrow-key navigation) but no visual design. `shadcn/ui` sits in between: a _recipe book_ of components that you copy-paste into your own codebase, built on Radix primitives and styled with Tailwind classes. The components live in your repo; you own them.
+
+**What we chose:** `shadcn/ui`-style components copy-pasted into `components/ui/`, built on Radix UI primitives, styled with Tailwind 4. Tailwind 4 is the styling layer; components own their CSS via Tailwind class names rather than separate stylesheets. Icons via `lucide-react` (also tree-shakable).
+
+**Alternatives**
+
+| Option                                 | Why not                                                                                                  |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| MUI / Chakra / Mantine                 | Hard to deeply customise; bundle size; design opinions not aligned with the project                      |
+| Radix primitives only (no recipes)     | Every team rewrites the same buttons and inputs; inconsistent UX                                         |
+| Pure custom components                 | More work; loses Radix's accessibility primitives (focus, keyboard, ARIA)                                |
+| CSS-in-JS (styled-components, Emotion) | Runtime overhead; doesn't compose well with Server Components (§1.7)                                     |
+| Tailwind 3                             | Tailwind 4's new syntax and config simplifies the setup; we'd be migrating soon anyway                   |
+| Pre-built component package            | Loses the "you own the components" property — a fork can't change a `Button` without forking the package |
+
+**Why this approach**
+
+- Every component is editable in place. A downstream fork can change a `Button` without forking a package.
+- Accessibility (focus management, keyboard navigation, ARIA) is inherited from Radix.
+- Tailwind class names colocate styling with component code — the intent is obvious from the JSX.
+- This is the §1.6 dependency-minimalism principle applied to the UI layer: a small set of headless primitives + utility CSS, and the consumer team owns the rest.
+
+**Where it lives:** `components/ui/` (the shadcn-pattern components), `app/globals.css` (Tailwind base layers), Radix UI primitives in `package.json`, `lucide-react` for icons.
+
+### 8.5 React Flow for the workflow visual builder
+
+**What is it?** Workflows in Sunrise are DAGs of typed steps (§3.1). The admin UI exposes them through a visual editor — drag a node onto a canvas, connect nodes with edges, configure each step's properties in a side panel. Building that canvas from scratch is significant work (pan/zoom, edge routing, node selection, undo/redo, auto-layout, accessible drag-and-drop). Several libraries solve it: React Flow (now `@xyflow/react`), Mermaid (read-only diagrams), d3-dag, yFiles (commercial), tldraw.
+
+**What we chose:** `@xyflow/react` (React Flow v12) as the canvas library. We supply the node types, the edge types, the palette, the property inspector, and the step registry; React Flow handles pan, zoom, drag, edge mechanics, selection, serialisation, and accessibility.
+
+**Alternatives**
+
+| Option                               | Why not                                                                             |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| Custom SVG canvas                    | Several months of work to match React Flow's UX; reinvents accessible drag-and-drop |
+| Mermaid                              | Read-only — wrong tool for an editor                                                |
+| yFiles or other commercial libraries | License cost; vendor lock-in for what is essentially a non-differentiating feature  |
+| Drag-and-drop list builders          | Loses the visual graph that the workflow shape demands (parallel branches, joins)   |
+| tldraw                               | More general-purpose drawing tool; less DAG-specific affordance                     |
+
+**Why this approach**
+
+- The workflow builder gets professional UX (auto-layout, smart edge routing, accessible drag) without reinventing it.
+- Step types register into the canvas via a small adapter — adding a new step type is one file.
+- React Flow's serialisation maps cleanly to the JSON we persist as the workflow definition, so the round-trip is transparent.
+- Single bundled dependency for a contained feature (the workflow builder); doesn't leak React Flow concepts into the rest of the codebase.
+
+**Where it lives:** `components/admin/orchestration/workflow-builder/`, `lib/orchestration/workflows/` (validator, step registry on the engine side), `.context/admin/workflow-builder.md`. `@xyflow/react` v12 in `package.json`.
+
 ---
 
 ## 9. Observability and Quality
@@ -1319,11 +1492,11 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 
 **Alternatives**
 
-| Option                     | Why not                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `console.log` everywhere   | No structure; can't filter; no context propagation; production parsing nightmare |
-| Pino / Winston / Bunyan    | Heavy; the project's needs are modest enough that a thin wrapper is sufficient   |
-| OpenTelemetry from day one | OTEL is the right answer eventually (Section 10) but premature for current scale |
+| Option                     | Why not                                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console.log` everywhere   | No structure; can't filter; no context propagation; production parsing nightmare                                                                                                            |
+| Pino / Winston / Bunyan    | Heavy; the project's needs are modest enough that a thin wrapper is sufficient. A fork can swap the logger module for any of these without changing call sites (see §1.6)                   |
+| OpenTelemetry from day one | OTEL is the right answer at scale (Section 10) but premature for current deployments. The thin logger interface lets a fork wire OTEL when distributed tracing becomes necessary (see §1.6) |
 
 **Why this approach**
 
@@ -1385,11 +1558,11 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 
 **Alternatives**
 
-| Option                            | Why not                                                            |
-| --------------------------------- | ------------------------------------------------------------------ |
-| Pure manual scoring               | Doesn't scale beyond a small sample                                |
-| Pure automated scoring (no human) | Misses subtle quality issues; no calibration                       |
-| Third-party eval platform         | Doesn't know about agent configuration; data leaves the deployment |
+| Option                            | Why not                                                                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pure manual scoring               | Doesn't scale beyond a small sample                                                                                                             |
+| Pure automated scoring (no human) | Misses subtle quality issues; no calibration                                                                                                    |
+| Third-party eval platform         | Default eval lives in-process so data stays in the deployment; a fork can additionally export sessions to an external platform later (see §1.6) |
 
 **Why this approach**
 
@@ -1435,11 +1608,11 @@ These three entries describe places where the current implementation deliberatel
 
 **Alternatives**
 
-| Option                               | Why not                                                                              |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| Add Redis for shared state           | Adds an external dependency; not worth it until horizontal scaling is the bottleneck |
-| Sticky sessions on the load balancer | Works for budget mutex per agent; doesn't help the circuit breaker globally          |
-| Pretend it's not a problem           | Misleads operators planning a horizontal-scale deployment                            |
+| Option                               | Why not                                                                                                                                                                                               |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add Redis for shared state           | Adds an external dependency before horizontal scaling is the bottleneck. Fork-and-add is the planned path when scale demands it — the boundary around in-memory state is narrow on purpose (see §1.6) |
+| Sticky sessions on the load balancer | Works for budget mutex per agent; doesn't help the circuit breaker globally                                                                                                                           |
+| Pretend it's not a problem           | Misleads operators planning a horizontal-scale deployment                                                                                                                                             |
 
 **Why this approach**
 
@@ -1493,73 +1666,113 @@ These three entries describe places where the current implementation deliberatel
 
 **Where it lives:** `app/api/v1/admin/orchestration/maintenance/tick/route.ts`, `.context/orchestration/scheduling.md`.
 
+### 10.5 Cron scheduling architecture
+
+**What is it?** Some workflows should run on a recurring schedule — every weekday morning, every five minutes, the first of every month. The standard expression for "when" is _cron syntax_ (`0 9 * * 1-5` reads as "9am Monday through Friday"). The architectural questions are: where do schedules live, how is the next run computed, what process actually fires them, and how is double-firing prevented when multiple application instances are running.
+
+**What we chose:**
+
+| Concern              | Choice                                                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Storage**          | `AiWorkflowSchedule` rows linked to a workflow; each row stores the cron expression, the configured timezone, and the computed `nextRunAt` timestamp              |
+| **Parsing**          | The `cron-parser` library (`CronExpressionParser.parse`) validates the expression at save time and computes the next run after each firing                        |
+| **Execution**        | The maintenance tick endpoint (§10.4) runs `processDueSchedules`, finds rows with `nextRunAt <= now`, dispatches the linked workflow, and recomputes the next run |
+| **Concurrency**      | Schedule claims use the optimistic-locking pattern from §10.1 — two instances cannot both fire the same schedule                                                  |
+| **External trigger** | The maintenance tick is HTTP — any pinger (system cron, GitHub Actions, Cloud Run cron, an uptime monitor) can drive it                                           |
+
+**Alternatives**
+
+| Option                                             | Why not                                                                                                                                                                                         |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| External job scheduler (Bull, Sidekiq, Temporal)   | Adds Redis or another broker for what fits in Postgres — `cron-parser` plus optimistic locks does the job. The boundary is small enough that a fork can introduce a job runner later (see §1.6) |
+| OS-level cron                                      | Runs outside the application; loses observability, admin UX, and the audit trail                                                                                                                |
+| In-process timers (`setInterval`)                  | Lost on restart; doesn't survive deploys; no multi-instance coordination                                                                                                                        |
+| Vendor scheduler (Vercel Cron, GCP Scheduler) only | Couples the schedule logic to a host; data and audit leave the deployment                                                                                                                       |
+
+**Why this approach**
+
+- Schedules are first-class admin objects — viewable, editable, and auditable through the same UI as the workflows they drive.
+- A single Postgres write claims a run; no external broker, no separate worker pool.
+- The cron tick is HTTP-triggered, so any external pinger works. We don't couple the scheduler to one host.
+- `cron-parser` handles every edge case of cron expressions (DST transitions, ranges, step values, list syntax) without us reimplementing it.
+
+**Where it lives:** `lib/orchestration/scheduling/scheduler.ts`, `prisma/schema.prisma` (`AiWorkflowSchedule`), `app/api/v1/admin/orchestration/maintenance/tick/`, `.context/orchestration/scheduling.md`. `cron-parser` v5 in `package.json`.
+
 ---
 
 ## Appendix: Decision Index
 
 Alphabetical index of every decision in this document, with section reference. Use this to jump straight to a concept (e.g. "What is SSE?") without scrolling.
 
-| Decision                                                   | Section |
-| ---------------------------------------------------------- | ------- |
-| Agent-scoped knowledge categories                          | 5.7     |
-| API-first design                                           | 1.3     |
-| Backup schema versioning + structured `ImportResult`       | 7.6     |
-| Budget enforcement inside the execution loop               | 4.3     |
-| Checkpoint recovery limited to `human_approval` pauses     | 10.3    |
-| Circuit breaker for LLM providers                          | 4.1     |
-| Citation envelope, `[N]` markers, and citation guard       | 5.6     |
-| Conversation similarity via message embeddings             | 5.8     |
-| Credentials only via environment variables                 | 6.4     |
-| CSV row-level chunking                                     | 5.4     |
-| Custom orchestration engine vs an external framework       | 1.1     |
-| DAG workflows + the autonomous orchestrator step           | 3.1     |
-| DB-backed experiments with traffic splitting               | 9.3     |
-| Default-allow dispatch + default-deny LLM visibility       | 3.3     |
-| Embed token + CORS origin allowlist                        | 8.2     |
-| `ExecutorError.retriable` classification                   | 4.6     |
-| Fire-and-forget for cost logging and hook dispatch         | 2.6     |
-| Frozen context snapshots for executors                     | 3.4     |
-| HMAC-SHA256 signed tokens for stateless external approvals | 2.5     |
-| HTTP idempotency-key support on external calls             | 6.9     |
-| Hybrid BM25 + vector search                                | 5.2     |
-| Immutable audit log                                        | 7.2     |
-| In-memory hook registry cache (60s TTL)                    | 7.5     |
-| In-memory state for circuit breaker and budget mutex       | 10.2    |
-| In-process event hooks alongside outbound webhooks         | 2.4     |
-| JSON-RPC 2.0 over Streamable HTTP for the MCP server       | 2.2     |
-| Knowledge namespace scope: agent, not team                 | 5.9     |
-| LLM-driven evaluation completion                           | 9.4     |
-| Maintenance tick: 202 + background-chain with watchdog     | 10.4    |
-| MCP session lifecycle and eviction                         | 2.7     |
-| Mid-stream provider failover                               | 3.6     |
-| Multi-format ingestion via parser-per-format               | 5.3     |
-| Multi-tier rate-limit topology                             | 6.7     |
-| Next.js 16 + App Router + React Server Components          | 1.4     |
-| Optimistic locking + ticket-based overlap guard            | 10.1    |
-| Outbound webhooks with retry                               | 2.3     |
-| Ownership scoping returns 404 not 403                      | 6.3     |
-| Parallel branch aggregation: wait-all only                 | 4.7     |
-| Path alias `@/` enforced via ESLint                        | 8.3     |
-| PDF preview/confirm flow                                   | 5.5     |
-| Per-agent ordered fallback chains                          | 4.2     |
-| Per-host outbound rate limiter with `Retry-After` respect  | 6.8     |
-| Per-operation cost log                                     | 9.2     |
-| Per-step timeout wrapper                                   | 4.5     |
-| pgvector vs a dedicated vector database                    | 5.1     |
-| Platform-agnostic core                                     | 1.2     |
-| PostgreSQL + Prisma 7                                      | 7.1     |
-| Provider selector task-intent heuristic                    | 3.7     |
-| Rolling summary for long conversations                     | 7.4     |
-| Server-Sent Events (SSE) for streaming                     | 2.1     |
-| Seven-stage capability dispatch pipeline                   | 3.2     |
-| Shadow DOM for the embed widget                            | 8.1     |
-| Single-artifact Docker deployment                          | 1.5     |
-| SSRF protection via host allowlist for `external_call`     | 6.5     |
-| Structured logger with request context                     | 9.1     |
-| Three-guard pipeline: input, output, citation              | 6.6     |
-| Three-mode safety guards                                   | 4.4     |
-| Token vs session authentication                            | 6.2     |
-| Tool loop with budget check before every LLM call          | 3.5     |
-| User memory: per-user-per-agent persistent facts           | 3.8     |
-| Versioning for agent configuration (two layers)            | 7.3     |
-| Zod validation at every boundary                           | 6.1     |
+| Decision                                                       | Section |
+| -------------------------------------------------------------- | ------- |
+| Agent-scoped knowledge categories                              | 5.7     |
+| API-first design                                               | 1.3     |
+| Backup schema versioning + structured `ImportResult`           | 7.6     |
+| `better-auth` as the authentication substrate                  | 6.10    |
+| Budget enforcement inside the execution loop                   | 4.3     |
+| Checkpoint recovery limited to `human_approval` pauses         | 10.3    |
+| Circuit breaker for LLM providers                              | 4.1     |
+| Citation envelope, `[N]` markers, and citation guard           | 5.6     |
+| Conversation similarity via message embeddings                 | 5.8     |
+| Credentials only via environment variables                     | 6.4     |
+| Cron scheduling architecture                                   | 10.5    |
+| CSV row-level chunking                                         | 5.4     |
+| Custom orchestration engine vs an external framework           | 1.1     |
+| DAG workflows + the autonomous orchestrator step               | 3.1     |
+| DB-backed experiments with traffic splitting                   | 9.3     |
+| Default-allow dispatch + default-deny LLM visibility           | 3.3     |
+| Dependency minimalism — open to future architectural decisions | 1.6     |
+| Embed token + CORS origin allowlist                            | 8.2     |
+| Embedding provider choice and the 1536-dimension ceiling       | 5.10    |
+| `ExecutorError.retriable` classification                       | 4.6     |
+| Fire-and-forget for cost logging and hook dispatch             | 2.6     |
+| Frozen context snapshots for executors                         | 3.4     |
+| HMAC-SHA256 signed tokens for stateless external approvals     | 2.5     |
+| HTTP idempotency-key support on external calls                 | 6.9     |
+| Hybrid BM25 + vector search                                    | 5.2     |
+| Immutable audit log                                            | 7.2     |
+| In-memory hook registry cache (60s TTL)                        | 7.5     |
+| In-memory state for circuit breaker and budget mutex           | 10.2    |
+| In-process event hooks alongside outbound webhooks             | 2.4     |
+| JSON-RPC 2.0 over Streamable HTTP for the MCP server           | 2.2     |
+| Knowledge namespace scope: agent, not team                     | 5.9     |
+| LLM-driven evaluation completion                               | 9.4     |
+| Maintenance tick: 202 + background-chain with watchdog         | 10.4    |
+| MCP session lifecycle and eviction                             | 2.7     |
+| Mid-stream provider failover                                   | 3.6     |
+| Multi-format ingestion via parser-per-format                   | 5.3     |
+| Multi-tier rate-limit topology                                 | 6.7     |
+| Next.js 16 + App Router + React Server Components              | 1.4     |
+| Optimistic locking + ticket-based overlap guard                | 10.1    |
+| Outbound webhooks with retry                                   | 2.3     |
+| Ownership scoping returns 404 not 403                          | 6.3     |
+| Parallel branch aggregation: wait-all only                     | 4.7     |
+| Path alias `@/` enforced via ESLint                            | 8.3     |
+| PDF preview/confirm flow                                       | 5.5     |
+| Per-agent ordered fallback chains                              | 4.2     |
+| Per-host outbound rate limiter with `Retry-After` respect      | 6.8     |
+| Per-operation cost log                                         | 9.2     |
+| Per-step timeout wrapper                                       | 4.5     |
+| pgvector vs a dedicated vector database                        | 5.1     |
+| Platform-agnostic core                                         | 1.2     |
+| PostgreSQL + Prisma 7                                          | 7.1     |
+| Provider selector task-intent heuristic                        | 3.7     |
+| React Flow for the workflow visual builder                     | 8.5     |
+| React Server Components, Suspense, and streaming SSR           | 1.7     |
+| Rolling summary for long conversations                         | 7.4     |
+| Server-Sent Events (SSE) for streaming                         | 2.1     |
+| Seven-stage capability dispatch pipeline                       | 3.2     |
+| `shadcn/ui` + Tailwind 4 as the component model                | 8.4     |
+| Shadow DOM for the embed widget                                | 8.1     |
+| Single-artifact Docker deployment                              | 1.5     |
+| SSRF protection via host allowlist for `external_call`         | 6.5     |
+| Structured logger with request context                         | 9.1     |
+| Three-guard pipeline: input, output, citation                  | 6.6     |
+| Three-mode safety guards                                       | 4.4     |
+| Token vs session authentication                                | 6.2     |
+| Tool loop with budget check before every LLM call              | 3.5     |
+| User memory: per-user-per-agent persistent facts               | 3.8     |
+| Versioning for agent configuration (two layers)                | 7.3     |
+| Workflow templates and dry-run mode                            | 3.9     |
+| Zod validation at every boundary                               | 6.1     |
