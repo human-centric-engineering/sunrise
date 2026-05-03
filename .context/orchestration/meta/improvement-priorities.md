@@ -98,6 +98,17 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 
 **Six `ALLOWED_EXTENSIONS` touchpoints** were updated for `.csv` in one diff (route, bulk route, url-fetcher, upload-zone allowlist + accept attr + footer text). Centralising into one source of truth is a follow-up.
 
+**Robustness fixes layered on after the core features.** Three iterative trace passes through the upload → preview → confirm → rechunk lifecycle surfaced edge cases not obvious from the feature spec — fixed in the same PR so the next person inherits a hardened pipeline:
+
+- **`rechunkDocument` CSV dispatch.** Re-chunking a CSV document used to run the rebuilt `Header: Value | …`-per-line content through the markdown chunker, mashing every row into one heading-less chunk and destroying row-level retrieval. Now detects `metadata.format === 'csv'` and rebuilds a minimal `ParsedDocument` so re-chunk routes through `chunkCsvDocument` and preserves the row-atomic shape.
+- **`previewDocument` re-upload dedup.** Used to create a new `pending_review` row on every PDF upload. Now refreshes an existing `pending_review` row in place when the same admin re-uploads the same file (matched by SHA-256), keeping the queue clean for the common abandon-then-retry case (e.g. retrying with `extractTables` ticked). Scoped to the uploading user so two admins triaging the same source can't clobber each other.
+- **`confirmPreview` metadata drift.** Was persisting `format` as `.pdf` (with a leading dot) where the parser writes `pdf`, and dropped the per-page diagnostic on confirm. Both fixed; per-page data now survives into the confirmed-document metadata as a forward path for a page-picker UI.
+- **CSV BOM + line-ending normalisation.** Excel-saved CSVs left a U+FEFF byte-order mark inside the first header cell, polluting every chunk. Classic-Mac CR-only line endings parsed the entire file as one giant row. Both normalised at the parser boundary.
+- **CSV overflow-row warning.** Rows with more cells than the header used to silently truncate; the parser now surfaces a warning naming the first offending row so admins notice a wrong delimiter or unquoted commas.
+- **`chunkCsvDocument` defensive chunk IDs.** Used `section.order` (an optional hint) for chunk IDs; switched to the array index so a future caller can't accidentally produce duplicate keys that the `chunkKey` UNIQUE constraint would reject mid-insert.
+- **PDF table-cell sanitisation invariant documented.** `renderMarkdownTable` only escapes `|` and replaces `\n` — safe today because chunk content renders through `react-markdown` with no plugins. Three signposts added (parser comment, renderer-import comment, doc section) so a future PR enabling `rehype-raw` is forced to harden the parser first. Surfaced by the security review.
+- **FieldHelp rewritten in plain language.** Original PDF table-extraction help used "vector-grid", "markdown pipe tables", "false-positive tables", "chunked cleanly". Rewritten with concrete what-it-does / when-it-works / when-it-misfires sections. Top-level upload help now covers CSV row-level chunking and the PDF preview/confirm flow, not just markdown chunking.
+
 **Critical files (for reference):** `lib/orchestration/knowledge/parsers/csv-parser.ts`, `lib/orchestration/knowledge/parsers/pdf-parser.ts`, `lib/orchestration/knowledge/chunker.ts` (`chunkCsvDocument`), `lib/orchestration/knowledge/document-manager.ts`, `components/admin/orchestration/knowledge/document-upload-zone.tsx`, `.context/orchestration/document-ingestion.md`.
 
 ---

@@ -358,8 +358,9 @@ Multi-format document processing pipeline:
 - **Size limit**: 50 MB per document
 - **Lifecycle**: `pending` → `processing` → `ready` (or `failed`); PDFs use `pending_review` between parse and confirm
 - **PDF preview flow**: Upload → parse preview → confirm → ingest (unique to Sunrise)
+- **PDF preview re-upload dedup**: Re-uploading the same PDF (matched by SHA-256) refreshes the existing `pending_review` row in place rather than creating a duplicate; scoped to the uploading user so parallel triage doesn't clobber
 - **PDF diagnostics**: Per-page text-density check groups consecutive scanned pages into a single warning per range; opt-in vector-grid table extraction renders detected tables as fenced markdown pipe tables in the preview
-- **CSV row-level chunking**: One chunk per data row keeps row-atomic retrieval (a 50k-row CSV lets queries surface a single matching row); above 5,000 rows the chunker batches 10 rows per chunk to cap embedding cost
+- **CSV row-level chunking**: One chunk per data row keeps row-atomic retrieval (a 50k-row CSV lets queries surface a single matching row); above 5,000 rows the chunker batches 10 rows per chunk to cap embedding cost. Re-chunking a CSV document re-routes through the row-level chunker (not the markdown chunker) so the row-atomic shape survives
 
 ### 7.2 Chunking & Embedding
 
