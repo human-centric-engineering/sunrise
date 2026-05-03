@@ -497,13 +497,23 @@ List, create, get, update, delete, and run experiments. Traffic splitting and re
 Structured quality assessment of agent responses:
 
 - Session creation with evaluation criteria
-- Log entries (`AiEvaluationLog`) tracking individual assessments
-- LLM-driven completion handler for automated evaluation
+- Log entries (`AiEvaluationLog`) tracking individual assessments — written by the streaming chat handler when `contextType === 'evaluation'` (user_input, ai_response, capability_call, capability_result), with citations snapshotted onto the ai_response log so the judge sees what the answerer cited
+- LLM-driven completion handler for automated evaluation: produces an AI-written summary + improvement suggestions
 - Annotation support for human review
 
-### 12.2 Evaluation API (4 routes)
+### 12.2 Named-metric scoring
 
-CRUD for sessions, log retrieval, and AI-assisted completion scoring.
+Three named LLM-as-judge metrics applied per ai_response log at completion:
+
+- **Faithfulness** — do `[N]`-marked claims map to the cited chunks? (null when no inline citations)
+- **Groundedness** — are claims traceable to retrieved evidence at all?
+- **Relevance** — does the answer address what the user asked?
+
+Per-log scores persist on `AiEvaluationLog.{faithfulnessScore,groundednessScore,relevanceScore,judgeReasoning}`; aggregate averages on `AiEvaluationSession.metricSummary`. Judge model independent of agent under test (`EVALUATION_JUDGE_PROVIDER`/`EVALUATION_JUDGE_MODEL`). Re-score endpoint re-runs scoring after a KB/prompt change with cumulative cost tracking. Per-agent trend chart on the agent detail page surfaces F/G/R averages over time. See [`evaluation-metrics.md`](../evaluation-metrics.md) for the rubric and persistence shape.
+
+### 12.3 Evaluation API (6 routes)
+
+CRUD for sessions, log retrieval, AI-assisted completion (summary + scoring), re-score on completed sessions, and per-agent evaluation-trend.
 
 ---
 
