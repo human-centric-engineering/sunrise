@@ -63,6 +63,7 @@ import {
   deserializeAnnotations,
 } from '@/lib/orchestration/evaluations/annotation-serializer';
 import { EvaluationMetricChips } from '@/components/admin/orchestration/evaluation-metric-chips';
+import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -193,6 +194,21 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
 
+  // Terminal-style typing animation for streamed assistant replies.
+  const typing = useTypingAnimation({ chunkSize: 2 });
+
+  // Sync animated text into the last assistant message.
+  useEffect(() => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (!last || last.role !== 'assistant') return prev;
+      if (last.content === typing.displayText) return prev;
+      const updated = [...prev];
+      updated[updated.length - 1] = { ...last, content: typing.displayText };
+      return updated;
+    });
+  }, [typing.displayText]);
+
   const isCompleted = currentStatus === 'completed';
   const isArchived = currentStatus === 'archived';
   const agentSlug = evaluation.agent?.slug;
@@ -269,6 +285,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
 
       setChatError(null);
       setInput('');
+      typing.reset();
       setMessages((prev) => [
         ...prev,
         { role: 'user', content: trimmed },
@@ -320,18 +337,13 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
               if (typeof cid === 'string') setConversationId(cid);
             } else if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
               const delta = parsed.data.delta;
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last?.role === 'assistant') {
-                  updated[updated.length - 1] = { ...last, content: last.content + delta };
-                }
-                return updated;
-              });
+              typing.appendDelta(delta);
             } else if (parsed.type === 'error') {
+              typing.flush();
               setChatError('The agent ran into a problem. Check the server logs for details.');
               return;
             } else if (parsed.type === 'done') {
+              typing.flush();
               return;
             }
           }
@@ -344,7 +356,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
         abortRef.current = null;
       }
     },
-    [agentSlug, conversationId, streaming, evaluation.id]
+    [agentSlug, conversationId, streaming, evaluation.id, typing]
   );
 
   const handleChatSubmit = (e: React.FormEvent) => {
@@ -786,22 +798,36 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                 Start a conversation to begin your evaluation.
               </p>
             )}
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={cn(
-                  'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
-                  msg.role === 'user'
-                    ? 'bg-primary text-primary-foreground ml-auto'
-                    : 'bg-muted mr-auto'
-                )}
-              >
-                {msg.content ||
-                  (streaming && msg.role === 'assistant' && (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-label="Streaming" />
-                  ))}
-              </div>
-            ))}
+            {messages.map((msg, i) => {
+              const isStreamingTail =
+                streaming && msg.role === 'assistant' && i === messages.length - 1 && !!msg.content;
+              const isStreamingEmpty =
+                streaming && msg.role === 'assistant' && !msg.content && i === messages.length - 1;
+              return (
+                <div key={i} className="flex font-mono text-sm leading-relaxed">
+                  <span
+                    className="text-muted-foreground shrink-0 pr-2 select-none"
+                    aria-hidden="true"
+                  >
+                    {msg.role === 'user' ? '❯' : ' '}
+                  </span>
+                  <div className="min-w-0 flex-1 whitespace-pre-wrap">
+                    {isStreamingEmpty ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-label="Streaming" />
+                    ) : (
+                      <>
+                        {msg.content}
+                        {isStreamingTail && (
+                          <span className="terminal-caret text-foreground" aria-hidden="true">
+                            █
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
 

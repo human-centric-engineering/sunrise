@@ -80,7 +80,7 @@ export interface ChatInterfaceProps {
   onCapabilityResult?: (slug: string, result: unknown) => void;
   /** Fires with the full assistant text when streaming completes. */
   onStreamComplete?: (fullText: string) => void;
-  /** Enable token-by-token typing animation. Default: false. */
+  /** Enable token-by-token typing animation. Default: true (terminal feel). */
   enableTypingAnimation?: boolean;
   /** Typing animation speed config (only used when enableTypingAnimation is true). */
   typingAnimationOptions?: { chunkSize?: number; intervalMs?: number };
@@ -108,8 +108,8 @@ export function ChatInterface({
   embedded = false,
   onCapabilityResult,
   onStreamComplete,
-  enableTypingAnimation = false,
-  typingAnimationOptions,
+  enableTypingAnimation = true,
+  typingAnimationOptions = { chunkSize: 2 },
   showClearButton = false,
   onConversationCleared,
 }: ChatInterfaceProps) {
@@ -448,31 +448,42 @@ export function ChatInterface({
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={cn(
-              'max-w-[85%] rounded-lg px-3 py-2 text-sm',
-              msg.role === 'user'
-                ? 'bg-muted text-foreground ml-auto whitespace-pre-wrap'
-                : 'mr-auto'
-            )}
-          >
-            {isLastAssistantEmpty(i, msg) ? (
-              <ThinkingIndicator message={status} />
-            ) : msg.role === 'assistant' ? (
-              <>
-                <MessageWithCitations content={msg.content} citations={msg.citations} />
-                {/* Inline status during streaming — shown below content */}
-                {streaming && msg.content && i === messages.length - 1 && status && (
-                  <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
+        {messages.map((msg, i) => {
+          const isStreamingTail =
+            streaming && msg.role === 'assistant' && i === messages.length - 1 && !!msg.content;
+          return (
+            <div key={i} className="flex font-mono text-sm leading-relaxed">
+              <span className="text-muted-foreground shrink-0 pr-2 select-none" aria-hidden="true">
+                {msg.role === 'user' ? '❯' : ' '}
+              </span>
+              <div className="min-w-0 flex-1">
+                {isLastAssistantEmpty(i, msg) ? (
+                  <ThinkingIndicator message={status} />
+                ) : msg.role === 'assistant' ? (
+                  <>
+                    <MessageWithCitations
+                      content={msg.content}
+                      citations={msg.citations}
+                      trailingInline={
+                        isStreamingTail ? (
+                          <span className="terminal-caret text-foreground" aria-hidden="true">
+                            █
+                          </span>
+                        ) : undefined
+                      }
+                    />
+                    {/* Inline status during streaming — shown below content */}
+                    {streaming && msg.content && i === messages.length - 1 && status && (
+                      <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
+                    )}
+                  </>
+                ) : (
+                  <span className="whitespace-pre-wrap">{msg.content}</span>
                 )}
-              </>
-            ) : (
-              msg.content
-            )}
-          </div>
-        ))}
+              </div>
+            </div>
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

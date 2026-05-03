@@ -67,4 +67,22 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  .terminal-caret {
+    display: inline-block;
+    margin-left: 1px;
+    animation: terminal-blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes terminal-blink {
+    to {
+      visibility: hidden;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .terminal-caret {
+      animation: none;
+    }
+  }
 }

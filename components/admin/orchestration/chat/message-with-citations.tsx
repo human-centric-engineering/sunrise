@@ -24,6 +24,12 @@ interface Props {
   citations?: Citation[];
   /** Optional class names for the outer container. */
   className?: string;
+  /**
+   * Element rendered inline after the last text token (and before the citations
+   * panel). Used to attach a streaming-tail caret to the end of the message
+   * text without breaking the inline flow.
+   */
+  trailingInline?: React.ReactNode;
 }
 
 /** Splits on `[N]` markers, retaining the markers as discrete tokens. */
@@ -31,14 +37,19 @@ const MARKER_SPLIT = /(\[\d+\])/g;
 /** Matches a single `[N]` marker token produced by `MARKER_SPLIT`. */
 const MARKER_TOKEN = /^\[(\d+)\]$/;
 
-export function MessageWithCitations({ content, citations, className }: Props) {
+export function MessageWithCitations({ content, citations, className, trailingInline }: Props) {
   const [showSources, setShowSources] = useState(true);
 
   // No citations on this turn ⇒ leave `[N]` literals alone. Substituting
   // unconditionally would falsely flag any prose that happens to contain
   // bracketed digits (e.g. "see paragraph [5]") as hallucinated.
   if (!citations || citations.length === 0) {
-    return <div className={cn('whitespace-pre-wrap', className)}>{content}</div>;
+    return (
+      <div className={cn('whitespace-pre-wrap', className)}>
+        {content}
+        {trailingInline}
+      </div>
+    );
   }
 
   const validMarkers = new Set(citations.map((c) => c.marker));
@@ -84,6 +95,7 @@ export function MessageWithCitations({ content, citations, className }: Props) {
           </a>
         );
       })}
+      {trailingInline}
 
       {citations && citations.length > 0 && (
         <CitationsPanel
