@@ -1639,6 +1639,14 @@ export const evaluationLogsQuerySchema = z.object({
  */
 export const completeEvaluationBodySchema = z.object({}).passthrough();
 
+/**
+ * Rescore evaluation body (POST /admin/orchestration/evaluations/:id/rescore).
+ *
+ * Empty body — same shape as complete. Future options (e.g. forcing a
+ * different judge model than the env-configured default) can land here.
+ */
+export const rescoreEvaluationBodySchema = z.object({}).passthrough();
+
 // ============================================================================
 // Orchestration Settings (Phase 4 Session 4.4)
 // ============================================================================
@@ -2206,6 +2214,7 @@ export type CreateEvaluationInput = z.infer<typeof createEvaluationSchema>;
 export type UpdateEvaluationInput = z.infer<typeof updateEvaluationSchema>;
 export type EvaluationLogsQuery = z.infer<typeof evaluationLogsQuerySchema>;
 export type CompleteEvaluationBodyInput = z.infer<typeof completeEvaluationBodySchema>;
+export type RescoreEvaluationBodyInput = z.infer<typeof rescoreEvaluationBodySchema>;
 export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestrationSettingsSchema>;
 
 // ---------------------------------------------------------------------------

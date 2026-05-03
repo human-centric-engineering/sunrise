@@ -184,7 +184,11 @@ export const API = {
       evaluationById: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}`,
       evaluationComplete: (id: string): string =>
         `/api/v1/admin/orchestration/evaluations/${id}/complete`,
+      evaluationRescore: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/${id}/rescore`,
       evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
+      agentEvaluationTrend: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/evaluation-trend`,
       OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',
       QUIZ_SCORES: '/api/v1/admin/orchestration/quiz-scores',
 
