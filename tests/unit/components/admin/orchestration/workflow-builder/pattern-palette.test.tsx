@@ -20,6 +20,18 @@ import userEvent from '@testing-library/user-event';
 import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
 import { STEP_REGISTRY } from '@/lib/orchestration/engine/step-registry';
 
+// Stub apiClient so PatternLearnMoreDialog's useEffect doesn't fire a real
+// fetch when we click "Learn more" in the dialog-open test below.
+vi.mock('@/lib/api/client', () => ({
+  apiClient: {
+    get: vi.fn().mockResolvedValue({
+      patternName: 'Tool Use',
+      chunks: [],
+      totalTokens: 0,
+    }),
+  },
+}));
+
 describe('PatternPalette', () => {
   it('renders one draggable block per registry entry', () => {
     render(<PatternPalette />);
@@ -141,6 +153,78 @@ describe('PatternPalette', () => {
         expect(button).not.toBeNull();
         expect(button?.textContent).toMatch(/learn more/i);
       }
+    });
+
+    it('entries with no related patterns render NO Learn more button', () => {
+      // The complement of the previous assertion: external_call and
+      // send_notification are deliberately tagged `relatedPatterns: []` (see
+      // .context/orchestration/patterns-and-steps.md — they're step
+      // primitives that don't map to any of the 21 canonical patterns).
+      // Their palette blocks must show no "Learn more" link.
+      render(<PatternPalette />);
+
+      const emptyEntries = STEP_REGISTRY.filter((e) => e.relatedPatterns.length === 0);
+      // Lock in that the empty set is exactly external_call + send_notification —
+      // adding a third unmapped step would be a design decision worth surfacing.
+      expect(new Set(emptyEntries.map((e) => e.type))).toEqual(
+        new Set(['external_call', 'send_notification'])
+      );
+
+      for (const entry of emptyEntries) {
+        const block = screen.getByTestId(`palette-block-${entry.type}`);
+        const learnMoreButton = Array.from(block.querySelectorAll('button')).find((b) =>
+          /learn more/i.test(b.textContent ?? '')
+        );
+        expect(
+          learnMoreButton,
+          `${entry.type} has empty relatedPatterns and should not render a Learn more button`
+        ).toBeUndefined();
+      }
+    });
+
+    it('clicking Learn more opens the pattern dialog with the first related pattern', async () => {
+      // Covers the onClick handler that fires onLearnMore(relatedPatterns[0])
+      // and the dialog's open state. Multi-valued steps (agent_call,
+      // orchestrator) link to the first / primary related pattern.
+      const user = userEvent.setup();
+      render(<PatternPalette />);
+
+      // tool_call has relatedPatterns: [5] — Pattern 5 is Tool Use.
+      const block = screen.getByTestId('palette-block-tool_call');
+      const learnMore = Array.from(block.querySelectorAll('button')).find((b) =>
+        /learn more/i.test(b.textContent ?? '')
+      );
+      expect(learnMore).toBeDefined();
+
+      await user.click(learnMore!);
+
+      // Dialog opens with the fallback title "Pattern #5" before the API
+      // request resolves (jsdom won't complete the fetch, which is fine —
+      // we're only asserting the click handler ran and state flipped).
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+      expect(dialog.textContent).toMatch(/Pattern #5|Tool Use/);
+    });
+
+    it('closing the pattern dialog resets the open state', async () => {
+      // Covers the onOpenChange handler that calls setLearnMorePattern(null)
+      // when the user dismisses the dialog.
+      const user = userEvent.setup();
+      render(<PatternPalette />);
+
+      const block = screen.getByTestId('palette-block-tool_call');
+      const learnMore = Array.from(block.querySelectorAll('button')).find((b) =>
+        /learn more/i.test(b.textContent ?? '')
+      );
+      await user.click(learnMore!);
+
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+
+      // Radix Dialog closes on Escape — this triggers onOpenChange(false).
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
     it('each step type relates to the canonical patterns it implements', () => {
