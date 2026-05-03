@@ -3376,4 +3376,136 @@ describe('evaluation log mirroring', () => {
       expect.objectContaining({ sessionId: 'eval-123' })
     );
   });
+
+  it('writes capability_call and capability_result for a parallel two-tool turn', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'a' } },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-b', name: 'get_weather', arguments: { city: 'LDN' } },
+        },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 30, outputTokens: 4 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) =>
+      Promise.resolve({ success: true, data: { source: slug } })
+    );
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const events = calls.map(
+      (c: unknown[]) => (c[0] as { data: { eventType: string; capabilitySlug?: string } }).data
+    );
+    // Expected order:
+    //   1 user_input
+    //   2 capability_call (tc-a)
+    //   3 capability_call (tc-b)   ← both call events fire before any result
+    //   4 capability_result (tc-a)
+    //   5 capability_result (tc-b)
+    //   6 ai_response (terminal)
+    expect(events.map((e) => e.eventType)).toEqual([
+      'user_input',
+      'capability_call',
+      'capability_call',
+      'capability_result',
+      'capability_result',
+      'ai_response',
+    ]);
+    expect(events[1].capabilitySlug).toBe('search_knowledge_base');
+    expect(events[2].capabilitySlug).toBe('get_weather');
+    expect(events[3].capabilitySlug).toBe('search_knowledge_base');
+    expect(events[4].capabilitySlug).toBe('get_weather');
+  });
+
+  it('writes capability_call and capability_result for skipped parallel tools', async () => {
+    // Trigger skipped path for the parallel branch by using two tools where
+    // one was already failing past TOOL_FAILURE_THRESHOLD before this turn.
+    // We seed three turns: two early failures so the failure counter for
+    // `broken` clears the threshold, then a third turn that calls broken
+    // alongside good_tool — broken is skipped, good_tool dispatches.
+    const provider = mockProvider([
+      // Turn 1: broken tool only — fails
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-1', name: 'broken_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: broken tool again — fails again, now at threshold
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-2', name: 'broken_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 3: parallel — broken_tool will be skipped, good_tool dispatches
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-3', name: 'broken_tool', arguments: {} },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-4', name: 'good_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 4: final answer
+      [
+        { type: 'text', content: 'Wrap.' },
+        { type: 'done', usage: { inputTokens: 8, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) => {
+      if (slug === 'broken_tool')
+        return Promise.resolve({ success: false, error: { code: 'oops', message: 'broken' } });
+      return Promise.resolve({ success: true, data: { ok: true } });
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    // The skipped-tool branch in the parallel path should still emit a
+    // call+result pair for `broken_tool` on turn 3 (so the transcript
+    // is complete) — capability_result carries the unavailable error.
+    const skippedResultRows = calls
+      .map(
+        (c: unknown[]) =>
+          c[0] as { data: { eventType: string; capabilitySlug?: string; outputData?: unknown } }
+      )
+      .filter(
+        (d) => d.data.eventType === 'capability_result' && d.data.capabilitySlug === 'broken_tool'
+      );
+    // Three turns of broken_tool: turn 1 (single-tool failure), turn 2
+    // (single-tool failure), turn 3 (parallel skipped). All three result
+    // rows must exist in the eval log.
+    expect(skippedResultRows.length).toBeGreaterThanOrEqual(3);
+
+    // The turn-3 skipped result must carry the tool_unavailable code.
+    const turn3Skip = skippedResultRows[skippedResultRows.length - 1];
+    const out = turn3Skip.data.outputData as
+      | { success: boolean; error?: { code: string } }
+      | undefined;
+    expect(out?.success).toBe(false);
+    expect(out?.error?.code).toBe('tool_unavailable');
+  });
 });
