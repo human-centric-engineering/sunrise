@@ -144,7 +144,56 @@ Read-only view showing:
 - AI-generated summary (prose block)
 - Improvement suggestions (bulleted list)
 - Token usage and cost info
-- **Conversation transcript** — loads from `/evaluations/{id}/logs` and renders as chat bubbles. Shows "No transcript available." if logs are empty or fetch fails.
+- **Quality scores card** — average faithfulness/groundedness/relevance plus the judge model and `scoredLogCount`. Shows a noisy-scores caveat below 20 messages. See "Named metric scoring" below.
+- **Re-score button** — re-runs the metric scorer (faithfulness, groundedness, relevance) over the existing transcript. Useful after a knowledge-base update or prompt change. Confirmation dialog; cumulative cost tracked on `metricSummary.totalScoringCostUsd`.
+- **Conversation transcript** — loads from `/evaluations/{id}/logs` and renders as chat bubbles. Each assistant message carries three score chips (F/G/R) with a popover showing the judge's reasoning per metric. Shows "No transcript available." if logs are empty or fetch fails.
+
+## Named metric scoring
+
+Beyond the AI-written summary, completing a session runs an LLM-as-judge over each
+`ai_response` log and produces three named scores. Spec: `.context/orchestration/evaluation-metrics.md`.
+
+- **Faithfulness** — for every `[N]`-marked claim in the answer, does citation `[N]`'s
+  excerpt actually support it? Penalises unsupported claims and hallucinated markers.
+  Returns `null` when the answer carries no inline markers.
+- **Groundedness** — beyond inline markers, are the substantive claims traceable to
+  evidence at all? Penalises free-floating assertions.
+- **Relevance** — does the answer address the user's question? 0 = entirely off-topic,
+  1 = direct.
+
+Scores live in `AiEvaluationLog.faithfulnessScore` / `groundednessScore` /
+`relevanceScore` (`Float?`, 0..1). Per-metric judge reasoning is stored in
+`AiEvaluationLog.judgeReasoning` (display-only). Aggregate averages and judge
+metadata land on `AiEvaluationSession.metricSummary` for cheap list/aggregate
+queries.
+
+### Judge model
+
+The judge model is independent of the agent under test. Two env vars (with
+fallbacks to the existing `EVALUATION_DEFAULT_PROVIDER` / `EVALUATION_DEFAULT_MODEL`):
+
+```
+EVALUATION_JUDGE_PROVIDER=anthropic       # defaults to EVALUATION_DEFAULT_PROVIDER
+EVALUATION_JUDGE_MODEL=claude-sonnet-4-6  # defaults to EVALUATION_DEFAULT_MODEL
+```
+
+Standard practice — judge ≥ subject — so a Haiku-powered agent gets judged by a
+stronger model.
+
+### Failure posture
+
+- **Per-log judge errors** are swallowed (logged at warn level). One bad turn
+  doesn't void the whole pass — `metricSummary.scoredLogCount` reflects the
+  successful subset.
+- **Wholesale scoring failure** (e.g. judge provider unavailable) leaves the
+  session `completed` with the summary intact and `metricSummary: null`. Admins
+  can hit "Re-score" later to retry once the provider is back.
+
+### Re-score
+
+`POST /api/v1/admin/orchestration/evaluations/:id/rescore` re-runs scoring over an
+already-completed session. Overwrites scores in place; `totalScoringCostUsd`
+accumulates across runs. 409 if the session isn't `completed`.
 
 ### Archived view
 
@@ -158,12 +207,14 @@ If the evaluation's agent has been deleted, the runner shows an error state expl
 
 `lib/api/endpoints.ts` provides:
 
-| Helper                   | Route                                     |
-| ------------------------ | ----------------------------------------- |
-| `EVALUATIONS`            | `/api/v1/admin/orchestration/evaluations` |
-| `evaluationById(id)`     | `.../evaluations/${id}`                   |
-| `evaluationComplete(id)` | `.../evaluations/${id}/complete`          |
-| `evaluationLogs(id)`     | `.../evaluations/${id}/logs`              |
+| Helper                     | Route                                     |
+| -------------------------- | ----------------------------------------- |
+| `EVALUATIONS`              | `/api/v1/admin/orchestration/evaluations` |
+| `evaluationById(id)`       | `.../evaluations/${id}`                   |
+| `evaluationComplete(id)`   | `.../evaluations/${id}/complete`          |
+| `evaluationRescore(id)`    | `.../evaluations/${id}/rescore`           |
+| `evaluationLogs(id)`       | `.../evaluations/${id}/logs`              |
+| `agentEvaluationTrend(id)` | `.../agents/${id}/evaluation-trend`       |
 
 ## Key implementation details
 

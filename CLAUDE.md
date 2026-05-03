@@ -318,6 +318,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Chat Interface           | `.context/admin/orchestration-chat-interface.md`       | Reusable SSE chat component, embedded mode                             |
 | Conversations (admin)    | `.context/admin/orchestration-conversations.md`        | Conversation list, trace viewer, tagging, export                       |
 | Evaluations UI           | `.context/admin/orchestration-evaluations.md`          | Evaluation runner, annotations, completion flow                        |
+| Evaluation Metrics       | `.context/orchestration/evaluation-metrics.md`         | Named-metric scoring (faithfulness, groundedness, relevance), rescore  |
 | Observability Dashboard  | `.context/admin/orchestration-observability.md`        | Dashboard metrics, trace viewers, logging audit                        |
 | Analytics (admin)        | `.context/admin/orchestration-analytics.md`            | Usage, popular topics, unanswered, feedback, gaps                      |
 | Audit Log (admin)        | `.context/admin/orchestration-audit-log.md`            | Immutable config change log, entity filters                            |

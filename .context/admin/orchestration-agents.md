@@ -92,6 +92,8 @@ Both are thin server shells that parallel-fetch the provider list and the aggreg
 
 The edit page additionally fetches the agent itself via `GET /agents/:id`. A `null` response triggers `notFound()`, which renders the stock Next.js 404 page.
 
+The edit page also prefetches the agent's evaluation-quality trend via `GET /agents/:id/evaluation-trend` and renders an `EvaluationTrendChart` (recharts `LineChart`) above the form. The chart hides itself when fewer than 2 completed evaluations exist for the agent — a single point isn't a trend. See [`evaluation-metrics.md`](../orchestration/evaluation-metrics.md) for the per-metric rubric and the noisy-scores caveat.
+
 ## Related
 
 - [Agent form](./agent-form.md) — 7-tab form walkthrough, every FieldHelp copy, test-connection, capabilities tab, version history
