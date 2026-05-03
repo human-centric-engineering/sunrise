@@ -21,6 +21,7 @@ vi.mock('@/lib/db/client', () => ({
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
+    aiEvaluationSession: { findFirst: vi.fn() },
   },
 }));
 
@@ -270,6 +271,10 @@ beforeEach(() => {
   );
   (prisma.aiEvaluationLog.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  // Default: ownership check passes for the test eval session id.
+  (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+    id: 'eval-123',
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3507,5 +3512,90 @@ describe('evaluation log mirroring', () => {
       | undefined;
     expect(out?.success).toBe(false);
     expect(out?.error?.code).toBe('tool_unavailable');
+  });
+
+  // ── Ownership enforcement (security review fix) ────────────────────────
+
+  it('refuses to write logs when the caller does not own the eval session', async () => {
+    // The ownership check uses findFirst({ id, userId }) — when the caller
+    // is not the owner, that call returns null. Simulate that here.
+    (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'denied response' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(evalRequest));
+
+    // Chat completes normally — denial must never abort the turn.
+    expect((events as Array<{ type: string }>).map((e) => e.type)).toContain('done');
+    // Zero eval log writes for this session.
+    expect(prisma.aiEvaluationLog.create).not.toHaveBeenCalled();
+    // Warn logged with sessionId + userId for incident triage.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Evaluation log write denied — session not owned by caller',
+      expect.objectContaining({ sessionId: 'eval-123', userId: 'u1' })
+    );
+  });
+
+  it('refuses to write logs when the eval session does not exist', async () => {
+    // Same code path as cross-user — findFirst returns null.
+    (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'still no logs' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...evalRequest, contextId: 'no-such-session' }));
+    expect(prisma.aiEvaluationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('caches the ownership check across many events in the same turn', async () => {
+    // A turn with several events — user_input, capability_call,
+    // capability_result, ai_response — should produce exactly one
+    // ownership-check query.
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { q: '?' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'final.' },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await collect(streamChat(evalRequest));
+
+    // Ownership lookup is cached — exactly one call per turn.
+    expect(prisma.aiEvaluationSession.findFirst).toHaveBeenCalledTimes(1);
+    // But four eval log rows were written (user_input, call, result,
+    // ai_response).
+    expect(prisma.aiEvaluationLog.create).toHaveBeenCalledTimes(4);
   });
 });

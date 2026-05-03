@@ -101,6 +101,14 @@ interface PersistMessageParams {
 interface WriteEvaluationLogParams {
   contextType?: string;
   contextId?: string;
+  /**
+   * Caller's userId — used to verify the evaluation session belongs to
+   * the calling user before any rows are written. Without this check a
+   * malicious admin could mirror chat events into another admin's
+   * evaluation session and distort their metric scores when that admin
+   * later runs `/complete` or `/rescore`.
+   */
+  userId: string;
   eventType: 'user_input' | 'ai_response' | 'capability_call' | 'capability_result';
   content?: string;
   messageId?: string;
@@ -119,8 +127,16 @@ export class StreamingChatHandler {
    * re-query MAX(sequenceNumber) on every event in a turn. One handler
    * instance handles one chat turn, so leakage between sessions is not
    * possible — but we key on sessionId defensively.
+   *
+   * `denied` is set to `true` when the ownership check fails (the session
+   * doesn't exist, or it belongs to a different user). When denied, every
+   * subsequent `writeEvaluationLog` for the same session is a no-op for
+   * the rest of the turn — without re-querying the DB on every event.
    */
-  private evaluationSequence: { sessionId: string; nextNumber: number } | null = null;
+  private evaluationSequence:
+    | { sessionId: string; nextNumber: number; denied: false }
+    | { sessionId: string; denied: true }
+    | null = null;
 
   /**
    * Run a chat turn against the given agent, yielding ChatEvents.
@@ -221,6 +237,7 @@ export class StreamingChatHandler {
       await this.writeEvaluationLog({
         contextType: request.contextType,
         contextId: request.contextId,
+        userId: request.userId,
         eventType: 'user_input',
         content: request.message,
         messageId: userMessage.id,
@@ -623,6 +640,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'ai_response',
               content: assistantText,
               messageId: assistantMsg.id,
@@ -732,6 +750,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_call',
               capabilitySlug: tc.name,
               inputData: tc.arguments,
@@ -739,6 +758,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_result',
               capabilitySlug: tc.name,
               outputData: unavailableResult,
@@ -756,6 +776,7 @@ export class StreamingChatHandler {
           await this.writeEvaluationLog({
             contextType: request.contextType,
             contextId: request.contextId,
+            userId: request.userId,
             eventType: 'capability_call',
             capabilitySlug: tc.name,
             inputData: tc.arguments,
@@ -811,6 +832,7 @@ export class StreamingChatHandler {
           await this.writeEvaluationLog({
             contextType: request.contextType,
             contextId: request.contextId,
+            userId: request.userId,
             eventType: 'capability_result',
             capabilitySlug: tc.name,
             outputData: augmentedResult,
@@ -878,6 +900,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_call',
               capabilitySlug: tc.name,
               inputData: tc.arguments,
@@ -916,6 +939,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_call',
               capabilitySlug: tc.name,
               inputData: tc.arguments,
@@ -923,6 +947,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_result',
               capabilitySlug: tc.name,
               outputData: result,
@@ -990,6 +1015,7 @@ export class StreamingChatHandler {
             await this.writeEvaluationLog({
               contextType: request.contextType,
               contextId: request.contextId,
+              userId: request.userId,
               eventType: 'capability_result',
               capabilitySlug: tc.name,
               outputData: augmentedResult,
@@ -1200,6 +1226,13 @@ export class StreamingChatHandler {
    * Failure here MUST NOT abort the chat turn — eval logs are an audit
    * surface, not part of the user-facing happy path. Errors are logged
    * at warn level and swallowed (same posture as `logCost`).
+   *
+   * Ownership: the caller's `userId` is verified against the session's
+   * `userId` on first write. A mismatch (or a missing session) marks
+   * the cache `denied` for the rest of the turn — every subsequent
+   * `writeEvaluationLog` for the same session is a silent no-op. This
+   * prevents one admin from mirroring chat events into another admin's
+   * evaluation session via the `contextId` request body field.
    */
   private async writeEvaluationLog(params: WriteEvaluationLogParams): Promise<void> {
     if (params.contextType !== 'evaluation' || !params.contextId) return;
@@ -1208,6 +1241,23 @@ export class StreamingChatHandler {
 
     try {
       if (!this.evaluationSequence || this.evaluationSequence.sessionId !== sessionId) {
+        // First write for this session: confirm it exists AND belongs to
+        // the calling user. `findFirst({ id, userId })` returns null on
+        // either miss — we don't need (or want) to distinguish the two.
+        const owned = await prisma.aiEvaluationSession.findFirst({
+          where: { id: sessionId, userId: params.userId },
+          select: { id: true },
+        });
+        if (!owned) {
+          logger.warn('Evaluation log write denied — session not owned by caller', {
+            sessionId,
+            userId: params.userId,
+            eventType: params.eventType,
+          });
+          this.evaluationSequence = { sessionId, denied: true };
+          return;
+        }
+
         const last = await prisma.aiEvaluationLog.findFirst({
           where: { sessionId },
           orderBy: { sequenceNumber: 'desc' },
@@ -1216,8 +1266,10 @@ export class StreamingChatHandler {
         this.evaluationSequence = {
           sessionId,
           nextNumber: (last?.sequenceNumber ?? 0) + 1,
+          denied: false,
         };
       }
+      if (this.evaluationSequence.denied) return;
       const sequenceNumber = this.evaluationSequence.nextNumber++;
 
       const data: Prisma.AiEvaluationLogUncheckedCreateInput = {

@@ -158,6 +158,27 @@ unlikely to flag its own hallucinations).
 | Judge provider unavailable wholesale     | Outer try/catch logs error; session still completes with `metricSummary: null` | Re-score button available later            |
 | Judge claims a real claim is unsupported | Reasoning text in the chip popover lets the admin spot it                      | Per-message chip with reasoning            |
 
+## Ownership enforcement on log writes
+
+`writeEvaluationLog` (`lib/orchestration/chat/streaming-handler.ts`) verifies
+that the evaluation session referenced by `request.contextId` belongs to
+`request.userId` before any rows are inserted. The check uses the same
+`findFirst({ where: { id, userId } })` idiom as the rest of the evaluation
+surface — null result means "not yours" (whether missing or cross-user).
+On a denial we log a warn and mark the per-handler cache `denied` so every
+subsequent event for the same session is a silent no-op for the rest of
+the turn.
+
+This closes a finding from the post-merge security review: without the
+check, an admin could submit a chat with `contextType: 'evaluation'` and
+another admin's session id, mirroring crafted Q/A turns into that
+session's logs. When the legitimate owner later ran `/complete` or
+`/rescore`, the judge would score the attacker's turns alongside theirs
+and distort the metric averages. All admin users on the same instance
+are nominally trusted, but the check is cheap (one cached query per
+turn) and prevents accidental cross-pollination as well as deliberate
+abuse.
+
 ## Tradeoffs and known limits
 
 - **Per-message scores are noisy.** Averages across ≥20 messages are
