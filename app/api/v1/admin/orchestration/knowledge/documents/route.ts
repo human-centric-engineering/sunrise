@@ -167,7 +167,12 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // PDF requires preview step
   if (requiresPreview(file.name)) {
-    const preview = await previewDocument(buffer, file.name, session.user.id);
+    const extractTablesField = formData.get('extractTables');
+    const extractTables =
+      typeof extractTablesField === 'string' &&
+      ['true', '1', 'on', 'yes'].includes(extractTablesField.toLowerCase());
+
+    const preview = await previewDocument(buffer, file.name, session.user.id, { extractTables });
 
     log.info('Document preview created (PDF)', {
       documentId: preview.document.id,
@@ -175,6 +180,7 @@ export const POST = withAdminAuth(async (request, session) => {
       sizeBytes: file.size,
       extractedTextLength: preview.extractedText.length,
       warnings: preview.warnings.length,
+      extractTables,
       adminId: session.user.id,
     });
 

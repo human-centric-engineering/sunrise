@@ -33,6 +33,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGetText = vi.fn();
 const mockGetInfo = vi.fn();
+const mockGetTable = vi.fn();
 
 // PDFParse must be a proper constructor function (not an arrow function) so
 // that `new PDFParse(...)` works at runtime.
@@ -41,6 +42,7 @@ function MockPDFParse() {
 }
 MockPDFParse.prototype.getText = mockGetText;
 MockPDFParse.prototype.getInfo = mockGetInfo;
+MockPDFParse.prototype.getTable = mockGetTable;
 
 vi.mock('pdf-parse', () => ({
   PDFParse: MockPDFParse,
@@ -94,6 +96,7 @@ describe('parsePdf', () => {
     // Default mock implementations — return minimal valid results
     mockGetText.mockResolvedValue(textResult(''));
     mockGetInfo.mockResolvedValue(infoResult());
+    mockGetTable.mockResolvedValue({ pages: [] });
   });
 
   // ---------------------------------------------------------------------------
@@ -336,6 +339,93 @@ describe('parsePdf', () => {
         { num: 2, charCount: 0, hasText: false },
         { num: 3, charCount: 80, hasText: true },
       ]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Opt-in table extraction
+  // ---------------------------------------------------------------------------
+
+  describe('Opt-in table extraction', () => {
+    it('does not call getTable when extractTables is not set', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+
+      await parsePdf(fakeBuffer(), 'no-tables.pdf');
+
+      expect(mockGetTable).not.toHaveBeenCalled();
+    });
+
+    it('appends fenced markdown tables to the matching page when extractTables is true', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+      mockGetTable.mockResolvedValue({
+        pages: [
+          {
+            num: 2,
+            tables: [
+              [
+                ['Item', 'Cost'],
+                ['Widget', '£12.50'],
+                ['Gizmo', '£8.00'],
+              ],
+            ],
+          },
+        ],
+      });
+
+      const result = await parsePdf(fakeBuffer(), 'tables.pdf', { extractTables: true });
+
+      const page2 = result.sections.find((s) => s.title === 'Page 2');
+      expect(page2).toBeDefined();
+      expect(page2?.content).toContain('<!-- table-start -->');
+      expect(page2?.content).toContain('| Item | Cost |');
+      expect(page2?.content).toContain('| Widget | £12.50 |');
+      expect(page2?.content).toContain('<!-- table-end -->');
+    });
+
+    it('escapes pipes and newlines inside cells', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(1));
+      mockGetTable.mockResolvedValue({
+        pages: [
+          {
+            num: 1,
+            tables: [[['col|with|pipe', 'multi\nline']]],
+          },
+        ],
+      });
+
+      const result = await parsePdf(fakeBuffer(), 'escapes.pdf', { extractTables: true });
+
+      expect(result.sections[0].content).toContain('col\\|with\\|pipe');
+      expect(result.sections[0].content).toContain('multi line');
+    });
+
+    it('records the rendered-table count in metadata', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+      mockGetTable.mockResolvedValue({
+        pages: [
+          { num: 1, tables: [[['a', 'b']]] },
+          { num: 2, tables: [[['c', 'd']], [['e', 'f']]] },
+        ],
+      });
+
+      const result = await parsePdf(fakeBuffer(), 'multi.pdf', { extractTables: true });
+
+      expect(result.metadata.tablesExtracted).toBe('3');
+    });
+
+    it('leaves pages untouched when getTable returns no tables', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(1));
+      mockGetTable.mockResolvedValue({ pages: [{ num: 1, tables: [] }] });
+
+      const result = await parsePdf(fakeBuffer(), 'no-detected.pdf', { extractTables: true });
+
+      expect(result.sections[0].content).not.toContain('<!-- table-start -->');
+      expect(result.metadata.tablesExtracted).toBeUndefined();
     });
   });
 });

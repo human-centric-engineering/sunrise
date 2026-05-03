@@ -762,6 +762,7 @@ describe('uploadDocumentFromBuffer', () => {
       title: 'My Doc',
       author: undefined,
       sections: [],
+      metadata: { format: 'txt' },
       warnings: [],
     });
 
@@ -794,6 +795,7 @@ describe('uploadDocumentFromBuffer', () => {
       title: 'Doc',
       author: undefined,
       sections: [],
+      metadata: { format: 'txt' },
       warnings: ['Page 3 garbled'],
     });
 
@@ -820,6 +822,7 @@ describe('uploadDocumentFromBuffer', () => {
       title: 'Doc',
       author: undefined,
       sections: [],
+      metadata: { format: 'markdown' },
       warnings: [],
     });
 

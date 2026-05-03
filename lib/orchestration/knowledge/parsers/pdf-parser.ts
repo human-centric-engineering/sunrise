@@ -24,6 +24,17 @@ const MIN_VIABLE_TEXT_LENGTH = 50;
 /** Per-page char count below which a page is treated as scanned-suspect. */
 const PAGE_SCANNED_THRESHOLD = 50;
 
+/** Options accepted by parsePdf. */
+export interface ParsePdfOptions {
+  /**
+   * When true, run pdf-parse `getTable()` per page and append detected
+   * vector-grid tables as markdown pipe tables fenced by HTML comments.
+   * Default false — `getTable()` can produce false positives on pages with
+   * non-tabular vector content.
+   */
+  extractTables?: boolean;
+}
+
 interface PageEntry {
   num: number;
   text: string;
@@ -32,6 +43,11 @@ interface PageEntry {
 interface RawPageResult {
   num?: number;
   text?: string;
+}
+
+interface RawPageTableResult {
+  num: number;
+  tables: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>;
 }
 
 /** Read per-page text from the PDF parse result, falling back to form-feed split. */
@@ -48,6 +64,66 @@ function extractPages(
   // Legacy fallback: split the joined text on form-feed.
   const split = rawText.split(/\f/);
   return split.map((text, idx) => ({ num: idx + 1, text: text.trim() }));
+}
+
+/**
+ * Render a table-array (rows of cells) as a markdown pipe table.
+ * The first row is treated as the header row (mirrors common PDF table layout).
+ * Returns the empty string for empty/degenerate tables.
+ */
+function renderMarkdownTable(table: ReadonlyArray<ReadonlyArray<string>>): string {
+  if (table.length === 0) return '';
+  const sanitize = (cell: string): string => (cell ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const widths = table[0].map((_, col) => Math.max(...table.map((row) => (row[col] ?? '').length)));
+  if (widths.length === 0) return '';
+
+  const header = table[0].map(sanitize);
+  const separator = widths.map(() => '---');
+  const body = table.slice(1).map((row) => row.map(sanitize));
+
+  const lines = [
+    `| ${header.join(' | ')} |`,
+    `| ${separator.join(' | ')} |`,
+    ...body.map((row) => `| ${row.join(' | ')} |`),
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Append fenced markdown tables to each page's text. Tables for a page are
+ * found by matching `pageTableResults[].num` to the page entry's num.
+ */
+function applyPageTables(
+  pageEntries: PageEntry[],
+  pageTableResults: ReadonlyArray<RawPageTableResult>
+): { entries: PageEntry[]; tablesRendered: number } {
+  let tablesRendered = 0;
+  const byNum = new Map<number, ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>>();
+  for (const r of pageTableResults) {
+    if (typeof r.num === 'number' && Array.isArray(r.tables)) {
+      byNum.set(r.num, r.tables);
+    }
+  }
+
+  const entries = pageEntries.map((entry) => {
+    const tables = byNum.get(entry.num);
+    if (!tables || tables.length === 0) return entry;
+
+    const blocks: string[] = [];
+    for (const table of tables) {
+      const md = renderMarkdownTable(table);
+      if (md) {
+        blocks.push(`<!-- table-start -->\n${md}\n<!-- table-end -->`);
+        tablesRendered++;
+      }
+    }
+    if (blocks.length === 0) return entry;
+
+    const merged = entry.text ? `${entry.text}\n\n${blocks.join('\n\n')}` : blocks.join('\n\n');
+    return { ...entry, text: merged };
+  });
+
+  return { entries, tablesRendered };
 }
 
 /**
@@ -88,7 +164,11 @@ function buildScannedWarnings(pageInfo: PageInfo[]): string[] {
   return warnings;
 }
 
-export async function parsePdf(buffer: Buffer, fileName: string): Promise<ParsedDocument> {
+export async function parsePdf(
+  buffer: Buffer,
+  fileName: string,
+  opts: ParsePdfOptions = {}
+): Promise<ParsedDocument> {
   const warnings: string[] = [];
 
   const parser = new PDFParse({ data: buffer });
@@ -104,10 +184,21 @@ export async function parsePdf(buffer: Buffer, fileName: string): Promise<Parsed
 
   const rawText = textResult.text?.trim() ?? '';
 
-  const pageEntries = extractPages(
+  let pageEntries = extractPages(
     textResult.pages as ReadonlyArray<RawPageResult> | undefined,
     rawText
   );
+
+  if (opts.extractTables) {
+    const tableResult = await parser.getTable();
+    const pageTableResults = (tableResult.pages ?? []) as ReadonlyArray<RawPageTableResult>;
+    const applied = applyPageTables(pageEntries, pageTableResults);
+    pageEntries = applied.entries;
+    if (applied.tablesRendered > 0) {
+      metadata.tablesExtracted = String(applied.tablesRendered);
+    }
+  }
+
   const pageInfo: PageInfo[] = pageEntries.map((p) => ({
     num: p.num,
     charCount: p.text.length,
@@ -134,9 +225,22 @@ export async function parsePdf(buffer: Buffer, fileName: string): Promise<Parsed
         order: idx,
       });
     });
+  } else if (nonEmptyPages.length === 1) {
+    sections.push({ title: '', content: nonEmptyPages[0].text, order: 0 });
   } else if (rawText.length > 0) {
     sections.push({ title: '', content: rawText, order: 0 });
   }
+
+  // Rebuild fullText from the (possibly table-augmented) page entries so the
+  // preview surface shows what the chunker sees. Falls back to rawText when no
+  // pages were extracted.
+  const fullText =
+    pageEntries.length > 0
+      ? pageEntries
+          .map((p) => p.text)
+          .join('\f')
+          .trim()
+      : rawText;
 
   const title = metadata.title || fileName.replace(/\.[^.]+$/, '');
 
@@ -144,7 +248,7 @@ export async function parsePdf(buffer: Buffer, fileName: string): Promise<Parsed
     title,
     author: metadata.author,
     sections,
-    fullText: rawText,
+    fullText,
     metadata,
     pageInfo,
     warnings,

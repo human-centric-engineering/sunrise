@@ -89,6 +89,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [error, setError] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [category, setCategory] = useState('');
+  const [extractTables, setExtractTables] = useState(false);
   const [existingCategories, setExistingCategories] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -180,6 +181,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         if (category.trim()) {
           formData.append('category', category.trim());
         }
+        const isPdf = stagedFiles[0].name.toLowerCase().endsWith('.pdf');
+        if (isPdf && extractTables) {
+          formData.append('extractTables', 'true');
+        }
 
         const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS, {
           method: 'POST',
@@ -260,7 +265,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     } finally {
       setUploading(false);
     }
-  }, [stagedFiles, category, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, category, extractTables, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -555,6 +560,41 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             )}
           </div>
 
+          {stagedFiles.length === 1 && stagedFiles[0].name.toLowerCase().endsWith('.pdf') && (
+            <div className="flex items-start gap-2">
+              <input
+                id="extract-tables"
+                type="checkbox"
+                className="border-border mt-1 h-4 w-4 rounded"
+                checked={extractTables}
+                onChange={(e) => setExtractTables(e.target.checked)}
+                disabled={uploading}
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-1">
+                  <label htmlFor="extract-tables" className="text-xs font-medium">
+                    Extract tables (experimental)
+                  </label>
+                  <FieldHelp
+                    title="PDF table extraction"
+                    ariaLabel="What does table extraction do?"
+                  >
+                    <p>
+                      Detects vector-grid tables on each page and appends them as markdown pipe
+                      tables fenced by HTML comments. Works best on PDFs with simple, ruled tables;
+                      vector-graphics-heavy pages may produce false-positive tables that you can
+                      delete in the preview before confirming.
+                    </p>
+                    <p className="mt-2">
+                      Default is off — table extraction can change the output for documents that
+                      previously chunked cleanly without it.
+                    </p>
+                  </FieldHelp>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Button
               variant="ghost"
@@ -562,6 +602,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               onClick={() => {
                 setStagedFiles([]);
                 setCategory('');
+                setExtractTables(false);
                 setError(null);
               }}
               disabled={uploading}

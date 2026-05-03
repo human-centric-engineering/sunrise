@@ -191,8 +191,22 @@ describe('parseDocument', () => {
       const buffer = toBuffer();
       const result = await parseDocument(buffer, 'whitepaper.pdf');
 
-      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'whitepaper.pdf');
+      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'whitepaper.pdf', {
+        extractTables: undefined,
+      });
       expect(result).toEqual(doc);
+    });
+
+    it('forwards extractTables when provided', async () => {
+      const doc = makeDoc({ title: 'tables', metadata: { format: 'pdf' } });
+      mockParsePdf.mockResolvedValue(doc);
+
+      const buffer = toBuffer();
+      await parseDocument(buffer, 'tables.pdf', { extractTables: true });
+
+      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'tables.pdf', {
+        extractTables: true,
+      });
     });
   });
 
@@ -232,7 +246,9 @@ describe('parseDocument', () => {
       const buffer = toBuffer();
       await parseDocument(buffer, 'DOCUMENT.PDF');
 
-      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'DOCUMENT.PDF');
+      expect(mockParsePdf).toHaveBeenCalledWith(buffer, 'DOCUMENT.PDF', {
+        extractTables: undefined,
+      });
     });
 
     it('should accept .TXT (uppercase) and route to parseTxt', async () => {

@@ -21,7 +21,11 @@ import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
-import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
+import {
+  parseDocument,
+  requiresPreview,
+  type ParseDocumentOptions,
+} from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
 /** Schema for document metadata stored as Prisma JSON field */
@@ -416,12 +420,13 @@ export interface DocumentPreview {
 export async function previewDocument(
   buffer: Buffer,
   fileName: string,
-  userId: string
+  userId: string,
+  opts: ParseDocumentOptions = {}
 ): Promise<DocumentPreview> {
   const fileHash = createHash('sha256').update(buffer).digest('hex');
   const name = fileName.replace(/\.[^.]+$/, '');
 
-  const parsed = await parseDocument(buffer, fileName);
+  const parsed = await parseDocument(buffer, fileName, opts);
 
   // Create document record in pending_review status
   const document = await prisma.aiKnowledgeDocument.create({

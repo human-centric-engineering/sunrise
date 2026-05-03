@@ -144,6 +144,42 @@ Returns the created document with HTTP 201.
 
 This human-in-the-loop approach turns unreliable PDF parsing into a usable workflow.
 
+### Per-page scanned diagnostic
+
+The PDF parser reads per-page text from `pdf-parse`'s `pages[]` array. When a
+page produces fewer than 50 characters of extractable text it is treated as
+scanned-suspect, and consecutive scanned pages are grouped into a single
+warning per range (e.g. `Pages 4–7 of 22 produced no extractable text — likely
+scanned`). When EVERY page is empty the legacy doc-wide warning is emitted
+instead. Per-page char counts are persisted on the preview metadata as
+`pages: [{ num, charCount, hasText }]` so a future page-picker UI can render
+without another parser change.
+
+For scanned PDFs Sunrise does not ship OCR — produce a searchable PDF
+externally first (macOS Preview, Adobe Acrobat, `ocrmypdf`) then re-upload.
+
+### Opt-in table extraction
+
+PDF uploads carry a "Extract tables (experimental)" checkbox. When checked,
+the parser runs `pdf-parse` `getTable()` per page. Each detected vector-grid
+table is rendered as a markdown pipe table and appended to that page's text
+fenced by HTML comments:
+
+```
+<!-- table-start -->
+| Header A | Header B |
+| --- | --- |
+| Row 1A | Row 1B |
+<!-- table-end -->
+```
+
+Default off — `getTable()` can produce false positives on pages with non-
+tabular vector content. The admin sees the rendered output in the preview
+textarea and can delete fenced blocks before confirming. The fence comments
+are also a forward path: a future chunker enhancement can teach
+`chunkMarkdownDocument` to keep table blocks atomic. Today, a table whose
+markdown exceeds the chunker's 800-token max may split across chunks.
+
 ## Document Statuses
 
 | Status           | Meaning                                                     |
