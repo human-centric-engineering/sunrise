@@ -2,9 +2,8 @@
  * Recipe 10: Provider Model Audit
  *
  * Patterns: Prompt Chaining (1) + Routing (2) + Parallelisation (3) +
- * Reflection (4) + Tool Use (5) + Agent Delegation (8) +
- * Human-in-the-Loop (13) + External Call (15) + Guardrails (18) +
- * Evaluation (19).
+ * Reflection (4) + Tool Use (5) + Multi-Agent Collaboration (7) +
+ * Human-in-the-Loop (13) + Guardrails (18) + Evaluation (19).
  *
  * This template serves a dual purpose:
  *
@@ -51,9 +50,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
     { number: 3, name: 'Parallelisation' },
     { number: 4, name: 'Reflection' },
     { number: 5, name: 'Tool Use' },
-    { number: 8, name: 'Agent Delegation' },
+    { number: 7, name: 'Multi-Agent Collaboration' },
     { number: 13, name: 'Human-in-the-Loop' },
-    { number: 15, name: 'External Call' },
     { number: 18, name: 'Guardrails' },
     { number: 19, name: 'Evaluation' },
   ],
@@ -95,7 +93,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         nextSteps: [{ targetStepId: 'search_provider_info' }],
       },
 
-      // ─── Step 2: external_call (Pattern 15 — External Call) ───────
+      // ─── Step 2: external_call ─────────────────────────────────────
       // Tests: External HTTP call with bearer auth, response
       // transformation (jmespath), per-step error strategy override.
       // Optional enrichment — gracefully skipped if BRAVE_SEARCH_API_KEY
@@ -193,7 +191,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         nextSteps: [{ targetStepId: 'validate_proposals' }],
       },
 
-      // ─── Step 5b: agent_call (Pattern 8 — Agent Delegation) ──────
+      // ─── Step 5b: agent_call (Pattern 7 — Multi-Agent Collaboration) ──
       // Tests: Agent delegation with tool access, agent slug lookup,
       // system prompt resolution, provider fallback, cost tracking
       // for delegated calls. Runs in parallel with analyse_chat and

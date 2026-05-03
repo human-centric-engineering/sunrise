@@ -1,7 +1,7 @@
 /**
  * Recipe 12: Scheduled Source Monitor
  *
- * Patterns: Routing (2) + External Call (15) + Evaluation & Monitoring (19).
+ * Patterns: Routing (2) + Goal Setting & Monitoring (11) + Evaluation & Monitoring (19).
  *
  * Flow: an External Call fetches a watched source on a schedule → an LLM
  * Call categorises the change against a brief stored description of the
@@ -26,7 +26,7 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
     'On a schedule, fetches a watched source, categorises the change against the previous snapshot, and notifies on material changes.',
   patterns: [
     { number: 2, name: 'Routing' },
-    { number: 15, name: 'External Call' },
+    { number: 11, name: 'Goal Setting & Monitoring' },
     { number: 19, name: 'Evaluation & Monitoring' },
   ],
   flowSummary:

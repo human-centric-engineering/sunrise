@@ -207,7 +207,7 @@ Showcases the `search_knowledge_base` capability's citation pipeline as a workfl
 
 ### `tpl-scheduled-source-monitor` — Scheduled Source Monitor
 
-**Patterns:** Routing (2), External Call (15), Evaluation & Monitoring (19)
+**Patterns:** Routing (2), Goal Setting & Monitoring (11), Evaluation & Monitoring (19)
 
 ```
 fetch_source → categorise_change → route(material/minor/none) → [material] notify

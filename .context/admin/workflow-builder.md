@@ -63,7 +63,7 @@ interface StepRegistryEntry {
   icon: LucideIcon;
   inputs: number; // handle count on target side
   outputs: number; // handle count on source side (route: 2, parallel: 3, rest: 1)
-  patternNumber?: number; // forward-link to /learning/patterns/:n
+  relatedPatterns: readonly number[]; // canonical patterns this step implements; [] is honest
   estimatedDuration: string; // human-readable hint, e.g. "~2-5s"
   defaultConfig: Record<string, unknown>;
 }
@@ -71,25 +71,27 @@ interface StepRegistryEntry {
 
 Each entry carries an `estimatedDuration` hint displayed in the palette below the description (e.g. `"~2-5s"`, `"varies"`, `"manual"`).
 
+`relatedPatterns` lists the canonical Agentic Design Pattern numbers (1–21) the step is most strongly associated with. The relationship is many-to-many — see `.context/orchestration/patterns-and-steps.md`. An empty array (`external_call`, `send_notification`) is the truthful answer when no canonical pattern fits, and the palette renders no "Learn more" link in that case.
+
 **Fifteen entries:**
 
-| Type                | Label             | Category      | Outputs | Pattern |
-| ------------------- | ----------------- | ------------- | ------- | ------- |
-| `llm_call`          | LLM Call          | agent         | 1       | 1       |
-| `chain`             | Chain Step        | agent         | 1       | 1       |
-| `route`             | Route             | decision      | 2       | 2       |
-| `parallel`          | Parallel          | decision      | 3       | 3       |
-| `reflect`           | Reflect           | agent         | 1       | 4       |
-| `tool_call`         | Tool Call         | input         | 1       | 5       |
-| `plan`              | Plan              | agent         | 1       | 6       |
-| `human_approval`    | Human Approval    | decision      | 1       | 13      |
-| `rag_retrieve`      | RAG Retrieve      | input         | 1       | 14      |
-| `guard`             | Guard             | decision      | 2       | 18      |
-| `evaluate`          | Evaluate          | decision      | 1       | 19      |
-| `external_call`     | External Call     | input         | 1       | 15      |
-| `agent_call`        | Agent Call        | agent         | 1       | 8       |
-| `send_notification` | Send Notification | output        | 1       | —       |
-| `orchestrator`      | Orchestrator      | orchestration | 1       | —       |
+| Type                | Label             | Category      | Outputs | Related patterns |
+| ------------------- | ----------------- | ------------- | ------- | ---------------- |
+| `llm_call`          | LLM Call          | agent         | 1       | 1                |
+| `chain`             | Chain Step        | agent         | 1       | 1                |
+| `route`             | Route             | decision      | 2       | 2                |
+| `parallel`          | Parallel          | decision      | 3       | 3                |
+| `reflect`           | Reflect           | agent         | 1       | 4                |
+| `tool_call`         | Tool Call         | input         | 1       | 5                |
+| `plan`              | Plan              | agent         | 1       | 6                |
+| `human_approval`    | Human Approval    | decision      | 1       | 13               |
+| `rag_retrieve`      | RAG Retrieve      | input         | 1       | 14               |
+| `guard`             | Guard             | decision      | 2       | 18               |
+| `evaluate`          | Evaluate          | decision      | 1       | 19               |
+| `external_call`     | External Call     | input         | 1       | —                |
+| `agent_call`        | Agent Call        | agent         | 1       | 7, 15            |
+| `send_notification` | Send Notification | output        | 1       | —                |
+| `orchestrator`      | Orchestrator      | orchestration | 1       | 6, 7             |
 
 **Adding a new step type:** append an entry to `STEP_REGISTRY`. The palette, the `PatternNode`, and any future registry-driven consumer will pick it up automatically — no new component, no new JSX.
 
@@ -264,21 +266,23 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 **Seed data** (all under `prisma/seeds/data/templates/`):
 
-| File                          | Template                                         | Patterns                                                           |
-| ----------------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
-| `types.ts`                    | `WorkflowTemplate` shape                         | —                                                                  |
-| `customer-support.ts`         | Customer Support                                 | Routing (2), Retrieval (9), Tool Use (6), HITL (7)                 |
-| `content-pipeline.ts`         | Content Pipeline                                 | Planning (5), Parallelisation (3), Reflection (1)                  |
-| `saas-backend.ts`             | SaaS Backend                                     | Routing (2), Prompt Chaining (4), Tool Use (6)                     |
-| `research-agent.ts`           | Research Agent                                   | Planning (5), Retrieval (9), Parallelisation (3), Reflection (1)   |
-| `conversational-learning.ts`  | Conversational Learning                          | Memory (8), Prompt Chaining (4), Tool Use (6), Reflection (1)      |
-| `code-review.ts`              | Code Review Agent                                | Parallelisation (3), Guard (18), Reflection (1), Evaluate (19)     |
-| `data-pipeline.ts`            | Data Pipeline + Quality Gate                     | External Call (15), Guard (18), Parallelisation (3), Evaluate (19) |
-| `outreach-safety.ts`          | Multi-Channel Outreach                           | Guard (18), Routing (2), Evaluate (19), HITL (7)                   |
-| `autonomous-research.ts`      | Autonomous Research                              | RAG Retrieve (14), Orchestrator, Guard (18), Evaluate (19)         |
-| `cited-knowledge-advisor.ts`  | Cited Knowledge Advisor                          | Tool Use (5), RAG (14), Guard (18), HITL (13)                      |
-| `scheduled-source-monitor.ts` | Scheduled Source Monitor                         | Routing (2), External Call (15), Evaluate (19)                     |
-| `index.ts`                    | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                  |
+Patterns column mirrors each template's `patterns[]` array — see `types/orchestration.ts` (`KNOWN_PATTERNS`) for the canonical 21 and `.context/orchestration/patterns-and-steps.md` for the layered model.
+
+| File                          | Template                                         | Patterns                                                                                                         |
+| ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `types.ts`                    | `WorkflowTemplate` shape                         | —                                                                                                                |
+| `customer-support.ts`         | Customer Support                                 | Routing (2), Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                  |
+| `content-pipeline.ts`         | Content Pipeline                                 | Prompt Chaining (1), Parallelisation (3), Reflection (4), Planning (6)                                           |
+| `saas-backend.ts`             | SaaS Backend                                     | Prompt Chaining (1), Routing (2), Tool Use (5), Resource-Aware Optimisation (16)                                 |
+| `research-agent.ts`           | Research Agent                                   | Parallelisation (3), Reflection (4), Planning (6), Multi-Agent (7), RAG (14)                                     |
+| `conversational-learning.ts`  | Conversational Learning                          | Prompt Chaining (1), Tool Use (5), Memory (8), Learning & Adaptation (9), Evaluation & Monitoring (19)           |
+| `code-review.ts`              | Code Review Agent                                | Prompt Chaining (1), Parallelisation (3), Reflection (4), Guardrails (18), Evaluation & Monitoring (19)          |
+| `data-pipeline.ts`            | Data Pipeline + Quality Gate                     | Parallelisation (3), Tool Use (5), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19) |
+| `outreach-safety.ts`          | Multi-Channel Outreach                           | Routing (2), HITL (13), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19)            |
+| `autonomous-research.ts`      | Autonomous Research                              | Multi-Agent Collaboration (7), RAG (14), Guardrails (18), Evaluation (19)                                        |
+| `cited-knowledge-advisor.ts`  | Cited Knowledge Advisor                          | Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                               |
+| `scheduled-source-monitor.ts` | Scheduled Source Monitor                         | Routing (2), Goal Setting & Monitoring (11), Evaluation & Monitoring (19)                                        |
+| `index.ts`                    | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                                                                |
 
 **Template shape** (seed-side `WorkflowTemplate` in `types/orchestration.ts`):
 

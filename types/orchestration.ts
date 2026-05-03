@@ -717,10 +717,73 @@ export interface WorkflowTemplateUseCase {
 
 /** A single agentic pattern referenced by a template (for display). */
 export interface WorkflowTemplatePattern {
-  /** Pattern number from the agent-architect skill (1–21). */
+  /** Pattern number from the canonical 21 agentic design patterns (1–21). */
   number: number;
-  /** Human-readable name, e.g. "Routing", "Human-in-the-Loop". */
+  /** Display name — must match the canonical name or a registered alias in `KNOWN_PATTERNS`. */
   name: string;
+}
+
+/**
+ * One of the 21 canonical Agentic Design Patterns.
+ *
+ * Sourced from `prisma/seeds/data/chunks/chunks.json` (the seed data that
+ * loads the patterns into the orchestration knowledge base) which mirrors
+ * Antonio Gullí's *Agentic Design Patterns*. The same numbering appears in
+ * `.claude/skills/orchestration-agent-architect/references/patterns-{1-to-10,11-to-21}.md`.
+ *
+ * `aliases` holds the short display names templates may use as a substitute
+ * for the canonical name (e.g. "RAG" for "Knowledge Retrieval (RAG)").
+ * Both are accepted by `isValidPatternReference()`.
+ */
+export interface KnownPattern {
+  readonly number: number;
+  readonly canonicalName: string;
+  readonly aliases: readonly string[];
+}
+
+/**
+ * The 21 canonical Agentic Design Patterns — single source of truth.
+ *
+ * A drift test in `tests/unit/types/orchestration-patterns.test.ts` asserts
+ * this constant agrees with the chunk metadata in
+ * `prisma/seeds/data/chunks/chunks.json`. If they diverge the test fails.
+ */
+export const KNOWN_PATTERNS: readonly KnownPattern[] = [
+  { number: 1, canonicalName: 'Prompt Chaining', aliases: [] },
+  { number: 2, canonicalName: 'Routing', aliases: [] },
+  { number: 3, canonicalName: 'Parallelisation', aliases: [] },
+  { number: 4, canonicalName: 'Reflection', aliases: [] },
+  { number: 5, canonicalName: 'Tool Use', aliases: [] },
+  { number: 6, canonicalName: 'Planning', aliases: [] },
+  { number: 7, canonicalName: 'Multi-Agent Collaboration', aliases: ['Multi-Agent'] },
+  { number: 8, canonicalName: 'Memory Management', aliases: ['Memory'] },
+  { number: 9, canonicalName: 'Learning & Adaptation', aliases: [] },
+  { number: 10, canonicalName: 'State Management (MCP)', aliases: ['MCP'] },
+  { number: 11, canonicalName: 'Goal Setting & Monitoring', aliases: [] },
+  { number: 12, canonicalName: 'Exception Handling & Recovery', aliases: [] },
+  { number: 13, canonicalName: 'Human-in-the-Loop', aliases: ['HITL'] },
+  { number: 14, canonicalName: 'Knowledge Retrieval (RAG)', aliases: ['RAG'] },
+  {
+    number: 15,
+    canonicalName: 'Inter-Agent Communication (A2A)',
+    aliases: ['A2A', 'Inter-Agent Communication'],
+  },
+  { number: 16, canonicalName: 'Resource-Aware Optimisation', aliases: [] },
+  { number: 17, canonicalName: 'Reasoning Techniques', aliases: [] },
+  { number: 18, canonicalName: 'Guardrails & Safety', aliases: ['Guardrails'] },
+  { number: 19, canonicalName: 'Evaluation & Monitoring', aliases: ['Evaluation'] },
+  { number: 20, canonicalName: 'Prioritisation', aliases: [] },
+  { number: 21, canonicalName: 'Exploration & Discovery', aliases: [] },
+] as const;
+
+/**
+ * Returns true iff `(number, name)` matches a `KNOWN_PATTERNS` entry's
+ * `number` and either its `canonicalName` or one of its `aliases`.
+ */
+export function isValidPatternReference(number: number, name: string): boolean {
+  const known = KNOWN_PATTERNS.find((p) => p.number === number);
+  if (!known) return false;
+  return name === known.canonicalName || known.aliases.includes(name);
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  * Recipe 9: Autonomous Research Orchestration
  *
- * Patterns: Orchestrator (21) + RAG (14) + Guardrails (18) + Evaluation (19).
+ * Patterns: Multi-Agent Collaboration (7) + RAG (14) + Guardrails (18) + Evaluation (19).
  *
  * Flow: retrieve context from the knowledge base → orchestrator step
  * dynamically delegates to available agents based on the planner's
@@ -27,10 +27,10 @@ export const AUTONOMOUS_RESEARCH_TEMPLATE: WorkflowTemplate = {
   shortDescription:
     'An AI planner dynamically coordinates your agents to produce a comprehensive report — adapting strategy based on intermediate results. Replace the placeholder agent slugs with your own.',
   patterns: [
+    { number: 7, name: 'Multi-Agent Collaboration' },
     { number: 14, name: 'RAG' },
     { number: 18, name: 'Guardrails' },
     { number: 19, name: 'Evaluation' },
-    { number: 21, name: 'Orchestrator' },
   ],
   flowSummary:
     'A RAG Retrieve step pulls relevant prior knowledge, then an Orchestrator step dynamically delegates tasks to your agents across multiple rounds — the AI planner decides which agents to invoke and adapts its strategy based on intermediate results. A Guard step validates the output for factual grounding and policy compliance, and an Evaluate step scores the final report against a quality rubric. After loading, replace the placeholder agent slugs in the Orchestrator config with your own active agents.',

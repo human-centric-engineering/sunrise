@@ -57,8 +57,19 @@ export interface StepRegistryEntry {
   outputs: number;
   /** Human-readable labels for each output handle (when outputs > 1). */
   outputLabels?: string[];
-  /** Optional pattern number for the "Learn more" forward-link. */
-  patternNumber?: number;
+  /**
+   * Canonical patterns this step is most strongly associated with.
+   *
+   * Many-to-many: a step can relate to multiple patterns; an empty array
+   * is the truthful answer for steps that don't map to any of the 21
+   * (e.g. `external_call` is generic HTTP, `send_notification` is delivery).
+   *
+   * Validated against `KNOWN_PATTERNS` by
+   * `tests/unit/types/orchestration-patterns.test.ts`.
+   *
+   * @see .context/orchestration/patterns-and-steps.md
+   */
+  relatedPatterns: readonly number[];
   /** Seed config applied when a new block is dropped on the canvas. */
   defaultConfig: Record<string, unknown>;
   /** Approximate execution time hint shown in the palette. */
@@ -74,7 +85,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Sparkles,
     inputs: 1,
     outputs: 1,
-    patternNumber: 1,
+    relatedPatterns: [1],
     defaultConfig: { prompt: '', modelOverride: '', temperature: 0.7 },
     estimatedDuration: '~2-5s',
   },
@@ -86,7 +97,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: LinkIcon,
     inputs: 1,
     outputs: 1,
-    patternNumber: 1,
+    relatedPatterns: [1],
     defaultConfig: { steps: [] },
     estimatedDuration: '~5-15s',
   },
@@ -98,7 +109,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitBranch,
     inputs: 1,
     outputs: 2,
-    patternNumber: 2,
+    relatedPatterns: [2],
     defaultConfig: { classificationPrompt: '', routes: [] },
     estimatedDuration: '~1-3s',
   },
@@ -110,7 +121,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: GitFork,
     inputs: 1,
     outputs: 3,
-    patternNumber: 3,
+    relatedPatterns: [3],
     defaultConfig: { branches: [], timeoutMs: 60000, stragglerStrategy: 'wait-all' },
     estimatedDuration: 'varies',
   },
@@ -122,7 +133,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: MessageSquareCode,
     inputs: 1,
     outputs: 1,
-    patternNumber: 4,
+    relatedPatterns: [4],
     defaultConfig: { critiquePrompt: '', maxIterations: 3 },
     estimatedDuration: '~10-30s',
   },
@@ -134,7 +145,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Wrench,
     inputs: 1,
     outputs: 1,
-    patternNumber: 5,
+    relatedPatterns: [5],
     defaultConfig: { capabilitySlug: '' },
     estimatedDuration: '~0.5-2s',
   },
@@ -146,7 +157,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: BrainCircuit,
     inputs: 1,
     outputs: 1,
-    patternNumber: 6,
+    relatedPatterns: [6],
     defaultConfig: { objective: '', maxSubSteps: 5 },
     estimatedDuration: '~5-15s',
   },
@@ -158,7 +169,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: UserCheck,
     inputs: 1,
     outputs: 1,
-    patternNumber: 13,
+    relatedPatterns: [13],
     defaultConfig: { prompt: '', timeoutMinutes: 60, notificationChannel: 'in-app' },
     estimatedDuration: 'manual',
   },
@@ -170,7 +181,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Search,
     inputs: 1,
     outputs: 1,
-    patternNumber: 14,
+    relatedPatterns: [14],
     defaultConfig: { query: '', topK: 5, similarityThreshold: 0.7 },
     estimatedDuration: '~1-3s',
   },
@@ -182,7 +193,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: ShieldCheck,
     inputs: 1,
     outputs: 2,
-    patternNumber: 18,
+    relatedPatterns: [18],
     defaultConfig: { rules: '', mode: 'llm', failAction: 'block', temperature: 0.1 },
     estimatedDuration: '~1-3s',
   },
@@ -194,7 +205,7 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: ClipboardCheck,
     inputs: 1,
     outputs: 1,
-    patternNumber: 19,
+    relatedPatterns: [19],
     defaultConfig: { rubric: '', scaleMin: 1, scaleMax: 5, threshold: 3 },
     estimatedDuration: '~2-5s',
   },
@@ -206,7 +217,10 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Globe,
     inputs: 1,
     outputs: 1,
-    patternNumber: 15,
+    // Generic outbound HTTP — not an agentic pattern. Calls Stripe, Postmark,
+    // or another agent endpoint; the latter would be A2A (15) but this step
+    // doesn't presume that. Keep empty.
+    relatedPatterns: [],
     defaultConfig: { url: '', method: 'POST', timeoutMs: 30000, authType: 'none' },
     estimatedDuration: '~1-10s',
   },
@@ -218,7 +232,9 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Bot,
     inputs: 1,
     outputs: 1,
-    patternNumber: 8,
+    // Multi-Agent Collaboration when invoking same-system agents; A2A when
+    // crossing systems. Both apply.
+    relatedPatterns: [7, 15],
     defaultConfig: { agentSlug: '', message: '{{input}}', maxToolIterations: 5 },
     estimatedDuration: '~3-15s',
   },
@@ -230,6 +246,8 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Bell,
     inputs: 1,
     outputs: 1,
+    // Delivery primitive — not an agentic pattern.
+    relatedPatterns: [],
     defaultConfig: {
       channel: 'email',
       to: '',
@@ -246,6 +264,9 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     icon: Network,
     inputs: 1,
     outputs: 1,
+    // Planning + Multi-Agent Collaboration — the orchestrator step plans a
+    // strategy and coordinates multiple agents to execute it.
+    relatedPatterns: [6, 7],
     defaultConfig: {
       plannerPrompt: '',
       availableAgentSlugs: [],

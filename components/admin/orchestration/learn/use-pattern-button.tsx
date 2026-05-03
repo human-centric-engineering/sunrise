@@ -36,7 +36,7 @@ function buildDefinitionUrl(entry: StepRegistryEntry): string {
 
 export function UsePatternButton({ patternNumber }: UsePatternButtonProps) {
   const router = useRouter();
-  const entries = STEP_REGISTRY.filter((e) => e.patternNumber === patternNumber);
+  const entries = STEP_REGISTRY.filter((e) => e.relatedPatterns.includes(patternNumber));
 
   if (entries.length === 0) return null;
 
