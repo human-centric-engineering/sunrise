@@ -438,6 +438,13 @@ export async function previewDocument(
         parsedAuthor: parsed.author ?? null,
         sectionCount: parsed.sections.length,
         warnings: parsed.warnings,
+        pages: parsed.pageInfo
+          ? parsed.pageInfo.map((p) => ({
+              num: p.num,
+              charCount: p.charCount,
+              hasText: p.hasText,
+            }))
+          : null,
       },
     },
   });

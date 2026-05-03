@@ -15,6 +15,16 @@ export interface ParsedSection {
   order?: number;
 }
 
+/** Per-page diagnostic, currently only emitted by the PDF parser. */
+export interface PageInfo {
+  /** 1-indexed page number. */
+  num: number;
+  /** Trimmed character count of the page's extracted text. */
+  charCount: number;
+  /** True when the page produced enough text to be considered non-scanned. */
+  hasText: boolean;
+}
+
 /** Result of parsing a document file. */
 export interface ParsedDocument {
   /** Document title extracted from metadata, or derived from the file name. */
@@ -27,6 +37,8 @@ export interface ParsedDocument {
   fullText: string;
   /** Format-specific metadata. */
   metadata: Record<string, string>;
+  /** Optional per-page diagnostics (PDF only today). Counts only — no text bodies. */
+  pageInfo?: PageInfo[];
   /** Warnings encountered during parsing (e.g., skipped images, encoding issues). */
   warnings: string[];
 }

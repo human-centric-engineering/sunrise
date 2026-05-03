@@ -57,6 +57,22 @@ function textResult(text: string) {
   return { text, pages: [] };
 }
 
+/**
+ * Build a TextResult with structured per-page entries.
+ * `pageTexts[i]` becomes the text for page i+1.
+ */
+function pagedResult(pageTexts: string[]) {
+  return {
+    text: pageTexts.join('\f'),
+    pages: pageTexts.map((t, i) => ({ num: i + 1, text: t })),
+  };
+}
+
+/** A page-text string of the given length (used to land above/below the 50-char threshold). */
+function longPageText(chars = 200): string {
+  return 'a'.repeat(chars);
+}
+
 /** Build an InfoResult-like object that parsePdf expects from getInfo() */
 function infoResult(total = 1, info: Record<string, unknown> = {}) {
   return { total, info };
@@ -244,6 +260,82 @@ describe('parsePdf', () => {
 
       // fullText should be the trimmed version of the raw text
       expect(result.fullText).toBe(text.trim());
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-page scanned diagnostic
+  // ---------------------------------------------------------------------------
+
+  describe('Per-page scanned-PDF diagnostic', () => {
+    it('emits a single page warning naming the scanned page when only one is empty', async () => {
+      mockGetText.mockResolvedValue(
+        pagedResult([longPageText(), '', longPageText(), longPageText()])
+      );
+      mockGetInfo.mockResolvedValue(infoResult(4));
+
+      const result = await parsePdf(fakeBuffer(), 'mostly-digital.pdf');
+
+      const ranged = result.warnings.find((w) => w.includes('Page 2 of 4'));
+      expect(ranged).toBeDefined();
+      expect(ranged).toContain('produced no extractable text');
+    });
+
+    it('groups consecutive scanned pages into a single range warning', async () => {
+      const pages = [
+        longPageText(),
+        longPageText(),
+        longPageText(),
+        '',
+        '',
+        '',
+        '',
+        longPageText(),
+        longPageText(),
+        longPageText(),
+      ];
+      mockGetText.mockResolvedValue(pagedResult(pages));
+      mockGetInfo.mockResolvedValue(infoResult(10));
+
+      const result = await parsePdf(fakeBuffer(), 'hybrid.pdf');
+
+      const ranged = result.warnings.find((w) => w.includes('Pages 4–7 of 10'));
+      expect(ranged).toBeDefined();
+      expect(ranged).toContain('likely scanned');
+    });
+
+    it('emits no scanned warnings when every page has text', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'all-digital.pdf');
+
+      expect(result.warnings.some((w) => w.includes('scanned'))).toBe(false);
+    });
+
+    it('falls back to the legacy doc-wide warning when EVERY page is empty', async () => {
+      mockGetText.mockResolvedValue(pagedResult(['', '', '']));
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'all-scanned.pdf');
+
+      const docWide = result.warnings.find((w) => w.includes('very little or no text'));
+      expect(docWide).toBeDefined();
+      // No per-range warnings when the whole document is empty.
+      expect(result.warnings.some((w) => w.match(/^Page(s)? \d/))).toBe(false);
+    });
+
+    it('populates pageInfo with per-page char counts and hasText flags', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(150), '', longPageText(80)]));
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'mixed.pdf');
+
+      expect(result.pageInfo).toEqual([
+        { num: 1, charCount: 150, hasText: true },
+        { num: 2, charCount: 0, hasText: false },
+        { num: 3, charCount: 80, hasText: true },
+      ]);
     });
   });
 });
