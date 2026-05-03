@@ -66,6 +66,11 @@ interface EvaluationListItem {
   agent?: { id: string; name: string; slug: string } | null;
   _count?: { logs: number };
   createdAt: string;
+  metricSummary?: {
+    avgFaithfulness: number | null;
+    avgGroundedness: number | null;
+    avgRelevance: number | null;
+  } | null;
 }
 
 interface AgentOption {
@@ -102,6 +107,24 @@ function statusBadgeVariant(status: string): 'default' | 'secondary' | 'outline'
 
 function formatStatus(status: string): string {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Render the per-session avg F · G · R, or em-dash when not yet scored. */
+function formatQuality(
+  summary:
+    | {
+        avgFaithfulness: number | null;
+        avgGroundedness: number | null;
+        avgRelevance: number | null;
+      }
+    | null
+    | undefined
+): string {
+  if (!summary) return '—';
+  const fmt = (v: number | null) => (v === null ? 'n/a' : v.toFixed(2));
+  return `${fmt(summary.avgFaithfulness)} · ${fmt(summary.avgGroundedness)} · ${fmt(
+    summary.avgRelevance
+  )}`;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -291,6 +314,11 @@ export function EvaluationsTable({
                 </Tip>
               </TableHead>
               <TableHead>
+                <Tip label="Average judge scores: F faithfulness · G groundedness · R relevance. Em-dash until the session is completed.">
+                  <span>Quality</span>
+                </Tip>
+              </TableHead>
+              <TableHead>
                 <Tip label="When this evaluation session was created">
                   <span>Created</span>
                 </Tip>
@@ -301,7 +329,7 @@ export function EvaluationsTable({
           <TableBody>
             {evaluations.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
+                <TableCell colSpan={7} className="text-muted-foreground h-24 text-center">
                   {isLoading ? 'Loading…' : 'No evaluations found.'}
                 </TableCell>
               </TableRow>
@@ -321,6 +349,9 @@ export function EvaluationsTable({
                     <Badge variant={statusBadgeVariant(ev.status)}>{formatStatus(ev.status)}</Badge>
                   </TableCell>
                   <TableCell className="text-right">{ev._count?.logs ?? 0}</TableCell>
+                  <TableCell className="text-muted-foreground tabular-nums">
+                    {formatQuality(ev.metricSummary)}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(ev.createdAt).toLocaleDateString()}
                   </TableCell>

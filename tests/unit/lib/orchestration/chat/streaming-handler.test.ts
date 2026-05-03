@@ -20,6 +20,8 @@ vi.mock('@/lib/db/client', () => ({
     aiMessage: { findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
+    aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
+    aiEvaluationSession: { findFirst: vi.fn() },
   },
 }));
 
@@ -267,6 +269,12 @@ beforeEach(() => {
     async ({ data }: { data: Record<string, unknown> }) =>
       makeMessage({ ...data, id: `m_${Math.random()}` })
   );
+  (prisma.aiEvaluationLog.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  // Default: ownership check passes for the test eval session id.
+  (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+    id: 'eval-123',
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3162,5 +3170,432 @@ describe('history summarization — existing summary reuse', () => {
         'summary' in ((c[0] as Record<string, unknown>).data as object)
     );
     expect(summaryUpdateCall).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Evaluation log mirroring (Phase 1 of named-metrics work)
+//
+// When `contextType === 'evaluation'` and a contextId is present, the
+// streaming handler writes `AiEvaluationLog` rows alongside `AiMessage`
+// rows. No-op for any other contextType. Failures must not abort the
+// chat turn.
+// ---------------------------------------------------------------------------
+
+describe('evaluation log mirroring', () => {
+  const evalRequest = {
+    ...baseRequest,
+    contextType: 'evaluation' as const,
+    contextId: 'eval-123',
+  };
+
+  it('writes user_input and ai_response logs on a no-tool turn', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi there.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 3 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const events = calls.map((c: unknown[]) => (c[0] as { data: Record<string, unknown> }).data);
+
+    expect(events.map((d) => (d as { eventType: string }).eventType)).toEqual([
+      'user_input',
+      'ai_response',
+    ]);
+    expect(events.every((d) => (d as { sessionId: string }).sessionId === 'eval-123')).toBe(true);
+    expect(events.map((d) => (d as { sequenceNumber: number }).sequenceNumber)).toEqual([1, 2]);
+    expect((events[0] as { content: string }).content).toBe('Hello there');
+    expect((events[1] as { content: string }).content).toBe('Hi there.');
+    expect((events[1] as { tokenUsage: unknown }).tokenUsage).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 3,
+    });
+  });
+
+  it('continues monotonic sequenceNumber when the session already has logs', async () => {
+    (prisma.aiEvaluationLog.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      sequenceNumber: 7,
+    });
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Sure.' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const seqs = calls.map(
+      (c: unknown[]) => (c[0] as { data: { sequenceNumber: number } }).data.sequenceNumber
+    );
+    expect(seqs).toEqual([8, 9]);
+    // findFirst is cached after first lookup within a turn.
+    expect(prisma.aiEvaluationLog.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('snapshots citations onto the ai_response log metadata', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { query: 'q' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'Answer with [1].' },
+        { type: 'done', usage: { inputTokens: 30, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
+        results: [
+          {
+            chunkId: 'c1',
+            documentId: 'd1',
+            documentName: 'Doc',
+            content: 'Body.',
+            patternNumber: null,
+            patternName: null,
+            section: 'Page 1',
+            similarity: 0.9,
+          },
+        ],
+      },
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const aiResponseCall = calls.find(
+      (c: unknown[]) => (c[0] as { data: { eventType: string } }).data.eventType === 'ai_response'
+    );
+    expect(aiResponseCall).toBeDefined();
+    const meta = (aiResponseCall as unknown[])[0] as {
+      data: { metadata?: { citations?: Array<{ marker: number; chunkId: string }> } };
+    };
+    expect(meta.data.metadata?.citations).toHaveLength(1);
+    expect(meta.data.metadata?.citations?.[0]).toMatchObject({ marker: 1, chunkId: 'c1' });
+  });
+
+  it('writes capability_call and capability_result for a single-tool turn', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { query: 'q' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const types = calls.map(
+      (c: unknown[]) => (c[0] as { data: { eventType: string } }).data.eventType
+    );
+    expect(types).toEqual(['user_input', 'capability_call', 'capability_result', 'ai_response']);
+
+    const callRow = calls[1][0] as {
+      data: { capabilitySlug: string; inputData: { query: string } };
+    };
+    expect(callRow.data.capabilitySlug).toBe('search_knowledge_base');
+    expect(callRow.data.inputData).toEqual({ query: 'q' });
+
+    const resultRow = calls[2][0] as {
+      data: { capabilitySlug: string; outputData: unknown; executionTimeMs: number };
+    };
+    expect(resultRow.data.capabilitySlug).toBe('search_knowledge_base');
+    expect(resultRow.data.executionTimeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not write evaluation logs when contextType is not "evaluation"', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi.' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, contextType: 'pattern', contextId: '5' }));
+
+    expect(prisma.aiEvaluationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('does not abort the chat turn when an evaluation log write throws', async () => {
+    (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('db down')
+    );
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Still works.' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(evalRequest));
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+    expect(types).toContain('done');
+    expect(types).not.toContain('error');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Failed to write evaluation log (non-fatal)',
+      expect.objectContaining({ sessionId: 'eval-123' })
+    );
+  });
+
+  it('writes capability_call and capability_result for a parallel two-tool turn', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-a', name: 'search_knowledge_base', arguments: { query: 'a' } },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-b', name: 'get_weather', arguments: { city: 'LDN' } },
+        },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 30, outputTokens: 4 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) =>
+      Promise.resolve({ success: true, data: { source: slug } })
+    );
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    const events = calls.map(
+      (c: unknown[]) => (c[0] as { data: { eventType: string; capabilitySlug?: string } }).data
+    );
+    // Expected order:
+    //   1 user_input
+    //   2 capability_call (tc-a)
+    //   3 capability_call (tc-b)   ← both call events fire before any result
+    //   4 capability_result (tc-a)
+    //   5 capability_result (tc-b)
+    //   6 ai_response (terminal)
+    expect(events.map((e) => e.eventType)).toEqual([
+      'user_input',
+      'capability_call',
+      'capability_call',
+      'capability_result',
+      'capability_result',
+      'ai_response',
+    ]);
+    expect(events[1].capabilitySlug).toBe('search_knowledge_base');
+    expect(events[2].capabilitySlug).toBe('get_weather');
+    expect(events[3].capabilitySlug).toBe('search_knowledge_base');
+    expect(events[4].capabilitySlug).toBe('get_weather');
+  });
+
+  it('writes capability_call and capability_result for skipped parallel tools', async () => {
+    // Trigger skipped path for the parallel branch by using two tools where
+    // one was already failing past TOOL_FAILURE_THRESHOLD before this turn.
+    // We seed three turns: two early failures so the failure counter for
+    // `broken` clears the threshold, then a third turn that calls broken
+    // alongside good_tool — broken is skipped, good_tool dispatches.
+    const provider = mockProvider([
+      // Turn 1: broken tool only — fails
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-1', name: 'broken_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 2: broken tool again — fails again, now at threshold
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-2', name: 'broken_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 3: parallel — broken_tool will be skipped, good_tool dispatches
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-3', name: 'broken_tool', arguments: {} },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-4', name: 'good_tool', arguments: {} },
+        },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      // Turn 4: final answer
+      [
+        { type: 'text', content: 'Wrap.' },
+        { type: 'done', usage: { inputTokens: 8, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) => {
+      if (slug === 'broken_tool')
+        return Promise.resolve({ success: false, error: { code: 'oops', message: 'broken' } });
+      return Promise.resolve({ success: true, data: { ok: true } });
+    });
+
+    await collect(streamChat(evalRequest));
+
+    const calls = (prisma.aiEvaluationLog.create as ReturnType<typeof vi.fn>).mock.calls;
+    // The skipped-tool branch in the parallel path should still emit a
+    // call+result pair for `broken_tool` on turn 3 (so the transcript
+    // is complete) — capability_result carries the unavailable error.
+    const skippedResultRows = calls
+      .map(
+        (c: unknown[]) =>
+          c[0] as { data: { eventType: string; capabilitySlug?: string; outputData?: unknown } }
+      )
+      .filter(
+        (d) => d.data.eventType === 'capability_result' && d.data.capabilitySlug === 'broken_tool'
+      );
+    // Three turns of broken_tool: turn 1 (single-tool failure), turn 2
+    // (single-tool failure), turn 3 (parallel skipped). All three result
+    // rows must exist in the eval log.
+    expect(skippedResultRows.length).toBeGreaterThanOrEqual(3);
+
+    // The turn-3 skipped result must carry the tool_unavailable code.
+    const turn3Skip = skippedResultRows[skippedResultRows.length - 1];
+    const out = turn3Skip.data.outputData as
+      | { success: boolean; error?: { code: string } }
+      | undefined;
+    expect(out?.success).toBe(false);
+    expect(out?.error?.code).toBe('tool_unavailable');
+  });
+
+  // ── Ownership enforcement (security review fix) ────────────────────────
+
+  it('refuses to write logs when the caller does not own the eval session', async () => {
+    // The ownership check uses findFirst({ id, userId }) — when the caller
+    // is not the owner, that call returns null. Simulate that here.
+    (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'denied response' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(evalRequest));
+
+    // Chat completes normally — denial must never abort the turn.
+    expect((events as Array<{ type: string }>).map((e) => e.type)).toContain('done');
+    // Zero eval log writes for this session.
+    expect(prisma.aiEvaluationLog.create).not.toHaveBeenCalled();
+    // Warn logged with sessionId + userId for incident triage.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Evaluation log write denied — session not owned by caller',
+      expect.objectContaining({ sessionId: 'eval-123', userId: 'u1' })
+    );
+  });
+
+  it('refuses to write logs when the eval session does not exist', async () => {
+    // Same code path as cross-user — findFirst returns null.
+    (prisma.aiEvaluationSession.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'still no logs' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...evalRequest, contextId: 'no-such-session' }));
+    expect(prisma.aiEvaluationLog.create).not.toHaveBeenCalled();
+  });
+
+  it('caches the ownership check across many events in the same turn', async () => {
+    // A turn with several events — user_input, capability_call,
+    // capability_result, ai_response — should produce exactly one
+    // ownership-check query.
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { q: '?' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 0 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'final.' },
+        { type: 'done', usage: { inputTokens: 12, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await collect(streamChat(evalRequest));
+
+    // Ownership lookup is cached — exactly one call per turn.
+    expect(prisma.aiEvaluationSession.findFirst).toHaveBeenCalledTimes(1);
+    // But four eval log rows were written (user_input, call, result,
+    // ai_response).
+    expect(prisma.aiEvaluationLog.create).toHaveBeenCalledTimes(4);
   });
 });

@@ -98,7 +98,46 @@ interface PersistMessageParams {
   metadata?: MessageMetadata;
 }
 
+interface WriteEvaluationLogParams {
+  contextType?: string;
+  contextId?: string;
+  /**
+   * Caller's userId — used to verify the evaluation session belongs to
+   * the calling user before any rows are written. Without this check a
+   * malicious admin could mirror chat events into another admin's
+   * evaluation session and distort their metric scores when that admin
+   * later runs `/complete` or `/rescore`.
+   */
+  userId: string;
+  eventType: 'user_input' | 'ai_response' | 'capability_call' | 'capability_result';
+  content?: string;
+  messageId?: string;
+  capabilitySlug?: string;
+  inputData?: unknown;
+  outputData?: unknown;
+  executionTimeMs?: number;
+  tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
+  metadata?: { citations?: Citation[] };
+}
+
 export class StreamingChatHandler {
+  /**
+   * Per-instance sequence cache for AiEvaluationLog writes. Set lazily on
+   * first write for a given session, then incremented locally so we don't
+   * re-query MAX(sequenceNumber) on every event in a turn. One handler
+   * instance handles one chat turn, so leakage between sessions is not
+   * possible — but we key on sessionId defensively.
+   *
+   * `denied` is set to `true` when the ownership check fails (the session
+   * doesn't exist, or it belongs to a different user). When denied, every
+   * subsequent `writeEvaluationLog` for the same session is a no-op for
+   * the rest of the turn — without re-querying the DB on every event.
+   */
+  private evaluationSequence:
+    | { sessionId: string; nextNumber: number; denied: false }
+    | { sessionId: string; denied: true }
+    | null = null;
+
   /**
    * Run a chat turn against the given agent, yielding ChatEvents.
    *
@@ -191,6 +230,17 @@ export class StreamingChatHandler {
         conversationId: conversation.id,
         role: 'user',
         content: request.message,
+      });
+
+      // Mirror to the evaluation log when this chat turn is running
+      // inside an evaluation session. No-op otherwise.
+      await this.writeEvaluationLog({
+        contextType: request.contextType,
+        contextId: request.contextId,
+        userId: request.userId,
+        eventType: 'user_input',
+        content: request.message,
+        messageId: userMessage.id,
       });
 
       yield { type: 'start', conversationId: conversation.id, messageId: userMessage.id };
@@ -581,6 +631,31 @@ export class StreamingChatHandler {
             userId: request.userId,
             role: 'assistant',
           });
+
+          // Mirror to evaluation log only on the terminal turn — interim
+          // tool-call turns are stage directions, not the final answer.
+          // Citations are snapshotted onto the log's metadata so the
+          // judge sees what the answerer cited at this point in time.
+          if (isTerminalTurn) {
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'ai_response',
+              content: assistantText,
+              messageId: assistantMsg.id,
+              ...(usage
+                ? {
+                    tokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens,
+                      totalTokens: usage.inputTokens + usage.outputTokens,
+                    },
+                  }
+                : {}),
+              ...(citations.length > 0 ? { metadata: { citations } } : {}),
+            });
+          }
         }
 
         if (toolCalls.size === 0) {
@@ -670,6 +745,24 @@ export class StreamingChatHandler {
                 result: unavailableResult,
               },
             });
+            // Mirror to evaluation log — record the call the LLM tried to make
+            // and the unavailable error it received, so the transcript is whole.
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_call',
+              capabilitySlug: tc.name,
+              inputData: tc.arguments,
+            });
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_result',
+              capabilitySlug: tc.name,
+              outputData: unavailableResult,
+            });
             messages = [
               ...messages,
               { role: 'assistant', content: assistantText, toolCalls: [tc] },
@@ -680,6 +773,16 @@ export class StreamingChatHandler {
 
           yield { type: 'status', message: `Executing ${tc.name}` };
 
+          await this.writeEvaluationLog({
+            contextType: request.contextType,
+            contextId: request.contextId,
+            userId: request.userId,
+            eventType: 'capability_call',
+            capabilitySlug: tc.name,
+            inputData: tc.arguments,
+          });
+
+          const dispatchStart = Date.now();
           let result: Awaited<ReturnType<typeof capabilityDispatcher.dispatch>>;
           try {
             result = await withToolTimeout(
@@ -724,6 +827,16 @@ export class StreamingChatHandler {
               toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
               result: augmentedResult,
             },
+          });
+
+          await this.writeEvaluationLog({
+            contextType: request.contextType,
+            contextId: request.contextId,
+            userId: request.userId,
+            eventType: 'capability_result',
+            capabilitySlug: tc.name,
+            outputData: augmentedResult,
+            executionTimeMs: Date.now() - dispatchStart,
           });
 
           if (request.contextType && request.contextId) {
@@ -781,6 +894,20 @@ export class StreamingChatHandler {
           if (skippedCount > 0) statusParts.push(`(${skippedCount} skipped)`);
           yield { type: 'status', message: statusParts.join(' ') };
 
+          // Mirror capability_call events for the parallel batch (eval log).
+          // Skipped tools also get a capability_call/result pair below.
+          for (const tc of dispatchable) {
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_call',
+              capabilitySlug: tc.name,
+              inputData: tc.arguments,
+            });
+          }
+
+          const parallelDispatchStart = Date.now();
           const settled = await Promise.allSettled(
             dispatchable.map((tc) =>
               withToolTimeout(
@@ -790,6 +917,7 @@ export class StreamingChatHandler {
               )
             )
           );
+          const parallelDispatchEndMs = Date.now() - parallelDispatchStart;
 
           const results: Array<{ capabilitySlug: string; result: unknown }> = [];
           const toolResultMessages: LlmMessage[] = [];
@@ -805,6 +933,24 @@ export class StreamingChatHandler {
               capabilitySlug: tc.name,
               toolCallId: tc.id,
               metadata: { toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments }, result },
+            });
+            // Mirror to eval log: the LLM did request these, so record the
+            // call + the unavailable result.
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_call',
+              capabilitySlug: tc.name,
+              inputData: tc.arguments,
+            });
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_result',
+              capabilitySlug: tc.name,
+              outputData: result,
             });
             toolResultMessages.push({
               role: 'tool',
@@ -861,6 +1007,19 @@ export class StreamingChatHandler {
                 toolCall: { id: tc.id, name: tc.name, arguments: tc.arguments },
                 result: augmentedResult,
               },
+            });
+
+            // Per-tool wall-clock isn't observable inside Promise.allSettled,
+            // so we record the batch end-to-end time on every result. Useful
+            // signal for "tool batch was slow"; not useful for per-tool perf.
+            await this.writeEvaluationLog({
+              contextType: request.contextType,
+              contextId: request.contextId,
+              userId: request.userId,
+              eventType: 'capability_result',
+              capabilitySlug: tc.name,
+              outputData: augmentedResult,
+              executionTimeMs: parallelDispatchEndMs,
             });
 
             toolResultMessages.push({
@@ -1058,6 +1217,86 @@ export class StreamingChatHandler {
       data.metadata = params.metadata as Prisma.InputJsonValue;
     }
     return prisma.aiMessage.create({ data });
+  }
+
+  /**
+   * Write an `AiEvaluationLog` row when the chat turn is running inside
+   * an evaluation context. No-op for any other contextType.
+   *
+   * Failure here MUST NOT abort the chat turn — eval logs are an audit
+   * surface, not part of the user-facing happy path. Errors are logged
+   * at warn level and swallowed (same posture as `logCost`).
+   *
+   * Ownership: the caller's `userId` is verified against the session's
+   * `userId` on first write. A mismatch (or a missing session) marks
+   * the cache `denied` for the rest of the turn — every subsequent
+   * `writeEvaluationLog` for the same session is a silent no-op. This
+   * prevents one admin from mirroring chat events into another admin's
+   * evaluation session via the `contextId` request body field.
+   */
+  private async writeEvaluationLog(params: WriteEvaluationLogParams): Promise<void> {
+    if (params.contextType !== 'evaluation' || !params.contextId) return;
+
+    const sessionId = params.contextId;
+
+    try {
+      if (!this.evaluationSequence || this.evaluationSequence.sessionId !== sessionId) {
+        // First write for this session: confirm it exists AND belongs to
+        // the calling user. `findFirst({ id, userId })` returns null on
+        // either miss — we don't need (or want) to distinguish the two.
+        const owned = await prisma.aiEvaluationSession.findFirst({
+          where: { id: sessionId, userId: params.userId },
+          select: { id: true },
+        });
+        if (!owned) {
+          logger.warn('Evaluation log write denied — session not owned by caller', {
+            sessionId,
+            userId: params.userId,
+            eventType: params.eventType,
+          });
+          this.evaluationSequence = { sessionId, denied: true };
+          return;
+        }
+
+        const last = await prisma.aiEvaluationLog.findFirst({
+          where: { sessionId },
+          orderBy: { sequenceNumber: 'desc' },
+          select: { sequenceNumber: true },
+        });
+        this.evaluationSequence = {
+          sessionId,
+          nextNumber: (last?.sequenceNumber ?? 0) + 1,
+          denied: false,
+        };
+      }
+      if (this.evaluationSequence.denied) return;
+      const sequenceNumber = this.evaluationSequence.nextNumber++;
+
+      const data: Prisma.AiEvaluationLogUncheckedCreateInput = {
+        sessionId,
+        sequenceNumber,
+        eventType: params.eventType,
+      };
+      if (params.content !== undefined) data.content = params.content;
+      if (params.messageId !== undefined) data.messageId = params.messageId;
+      if (params.capabilitySlug !== undefined) data.capabilitySlug = params.capabilitySlug;
+      if (params.inputData !== undefined)
+        data.inputData = params.inputData as Prisma.InputJsonValue;
+      if (params.outputData !== undefined)
+        data.outputData = params.outputData as Prisma.InputJsonValue;
+      if (params.executionTimeMs !== undefined) data.executionTimeMs = params.executionTimeMs;
+      if (params.tokenUsage !== undefined)
+        data.tokenUsage = params.tokenUsage as Prisma.InputJsonValue;
+      if (params.metadata !== undefined) data.metadata = params.metadata as Prisma.InputJsonValue;
+
+      await prisma.aiEvaluationLog.create({ data });
+    } catch (err) {
+      logger.warn('Failed to write evaluation log (non-fatal)', {
+        sessionId,
+        eventType: params.eventType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 

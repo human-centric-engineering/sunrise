@@ -50,7 +50,7 @@ Each user gets a persistent memory that their agent can read and write to across
 
 ### Test, measure, and improve
 
-You can clone any agent and run A/B experiments — compare two models, two sets of instructions, or two temperature settings against each other with traffic splitting. Built-in analytics show you which topics are most popular, which questions your agents could not answer well, and where your knowledge base has gaps. Evaluation sessions let you assess response quality systematically, with both human review and automated scoring. You are not guessing whether your agents are good enough — you have data.
+You can clone any agent and run A/B experiments — compare two models, two sets of instructions, or two temperature settings against each other with traffic splitting. Built-in analytics show you which topics are most popular, which questions your agents could not answer well, and where your knowledge base has gaps. Evaluation sessions let you assess response quality systematically. Each completed session is scored by a separate judge model on three named metrics — faithfulness (do cited claims actually follow from the cited sources), groundedness (are claims traceable to retrieved evidence), and relevance (does the answer address the question) — with the per-message reasoning shown alongside each score so a domain expert can judge whether the judge itself was right. After a knowledge-base update or prompt change, re-score a past session to see whether quality moved. A per-agent quality trend chart visualises the three metrics over time. You are not guessing whether your agents are good enough — you have data.
 
 ### Connect to your existing systems
 

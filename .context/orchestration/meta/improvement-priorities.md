@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-03 (item 6 shipped)
 
 ---
 
@@ -117,19 +117,37 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 
 | #   | Improvement                                                      | Value         | Effort       | Status            |
 | --- | ---------------------------------------------------------------- | ------------- | ------------ | ----------------- |
-| 6   | Named evaluation metrics (faithfulness, groundedness, relevance) | High          | Moderate     | ⚪ Not started    |
+| 6   | Named evaluation metrics (faithfulness, groundedness, relevance) | High          | Moderate     | ✅ Done (this PR) |
 | 7   | Embed-widget customisation and theming                           | High          | Moderate     | ⚪ Not started    |
 | 8   | Background / async execution model for long workflows            | Moderate–High | Moderate     | ✅ Done (PR #140) |
 | 9   | Exact per-provider tokenisation                                  | Moderate–High | Low–Moderate | ⚪ Not started    |
 | 10  | Built-in trace viewer / latency attribution improvements         | Moderate      | Moderate     | ⚪ Not started    |
 
-### 6. Named evaluation metrics (faithfulness, groundedness, relevance)
+### 6. Named evaluation metrics (faithfulness, groundedness, relevance) — ✅ Done
 
-**Why.** Every venture-studio play in `business-applications.md` requires a domain expert to validate output before launch. Today's LLM-completion handler is a single opaque score. Haystack-style named metrics — faithfulness (does the answer follow from cited chunks), groundedness (are claims supported), relevance (does the answer address the question) — give domain experts a rubric and produce repeatable regression checks across knowledge-base updates.
+**Why it mattered.** Every venture-studio play in `business-applications.md` requires a domain expert to validate output before launch. The pre-existing LLM-completion handler produced a single opaque AI summary — fine for direction, useless as a defensible sign-off artefact or as a regression signal across KB / prompt / model changes.
 
-**Approach.** Wraps existing evaluation session machinery; mostly prompt and scoring engineering.
+**What changed in scoping.** Investigation surfaced a wiring gap: `AiEvaluationLog` rows were never written by any production code path (only by smoke tests). The runner UI sent `contextType: 'evaluation'` to the chat-stream endpoint, but the streaming handler only stored `contextType` on `AiConversation` — it never inserted log rows. So in production, completing a session hit `ValidationError: 'Evaluation session has no logs to analyse'`. The doc at `.context/admin/orchestration-evaluations.md:147` already documented the visible symptom (_"No transcript available."_). Item #6 had to fold in fixing that wiring — judge scoring needs something to score.
 
-**Critical files:** `lib/orchestration/evaluations/`, `app/admin/orchestration/evaluations/`.
+**What shipped (this PR).**
+
+- **Eval-log mirroring.** When the chat handler runs in evaluation context, it now writes `AiEvaluationLog` rows alongside `AiMessage` rows: `user_input`, `ai_response`, `capability_call`, `capability_result`. Citations are snapshotted onto the `ai_response` log's `metadata.citations` so the judge sees what the answerer cited, frozen with the turn. Failures to write are logged at warn level and never abort the chat turn (same fire-and-forget posture as `logCost`).
+- **Three named metrics.** `scoreResponse` calls a judge LLM once per `ai_response` log returning all three scores in a single structured-JSON response (cheaper than three calls, and the judge can reason about all three rubrics together). Faithfulness can be `null` when the answer carries no inline `[N]` markers; groundedness and relevance always produce a number in `[0, 1]`.
+- **Schema.** Four nullable columns on `AiEvaluationLog` (`faithfulnessScore`, `groundednessScore`, `relevanceScore`, `judgeReasoning`) plus a `metricSummary` JSON column on `AiEvaluationSession`. Real columns for the scores so SQL aggregation across logs is cheap; reasoning lives in JSON because it's display-only. Migration is additive — no backfill.
+- **Independent judge model.** `EVALUATION_JUDGE_PROVIDER` / `EVALUATION_JUDGE_MODEL` env vars (defaulting to `EVALUATION_DEFAULT_*`) so a Haiku-powered agent gets judged by a stronger model. Standard practice — judge ≥ subject.
+- **Re-score endpoint.** `POST /evaluations/:id/rescore` lets admins re-run scoring after a KB update, prompt change, or judge swap. Overwrites scores in place; `metricSummary.totalScoringCostUsd` accumulates across runs. Gated on `status === 'completed'`.
+- **Per-agent trend.** New `GET /agents/:id/evaluation-trend` returns sorted points (one per completed session). Powers a `recharts` `LineChart` on the agent detail page (mirrors the cost-trend-chart pattern; no new chart dependency).
+- **UI surfaces (4).** Per-message F/G/R chips with colour scaling and a popover showing the judge's reasoning per metric. A "Quality" column on the evaluations list table (`F · G · R` per session, em-dash before scoring). A "Re-score" button on the completed view with confirmation dialog. A trend chart on the agent detail page (hidden when fewer than 2 completed evaluations).
+- **Refactor opportunity taken.** Extracted `runStructuredCompletion` + `tryParseJson` from `complete-session.ts` into a shared `parse-structured.ts` helper, then used it from both call sites. Both the summary and the metric scorer now share one retry policy: temperature drops to 0 on retry, the malformed prior response is never included in the retry prompt, and tokens are summed across both attempts for accurate cost accounting.
+- **Cost split without a new enum.** Both the summary and scoring calls log under `CostOperation.EVALUATION` but with `metadata.phase` set to `'summary'` or `'scoring'`. Analytics can split spend without a new enum value.
+
+**Critical files (for reference):** `lib/orchestration/evaluations/score-response.ts`, `lib/orchestration/evaluations/parse-structured.ts`, `lib/orchestration/evaluations/complete-session.ts`, `lib/orchestration/chat/streaming-handler.ts` (the `writeEvaluationLog` private method), `prisma/migrations/20260503160012_evaluation_metrics/`, `app/api/v1/admin/orchestration/evaluations/[id]/rescore/`, `app/api/v1/admin/orchestration/agents/[id]/evaluation-trend/`, `components/admin/orchestration/evaluation-metric-chips.tsx`, `components/admin/orchestration/evaluation-trend-chart.tsx`, `.context/orchestration/evaluation-metrics.md` (canonical spec).
+
+**Tradeoffs surfaced in the work.**
+
+- Per-message scores are noisy below ~20 messages — interpret averages, not individual values. The runner UI surfaces this caveat; the trend chart caption repeats it.
+- Re-score overwrites in place. No score history is retained. Versioned scoring is an additive future change if needed.
+- Judge can itself be wrong. Reasoning text is always shown alongside the number so admins can spot judge errors. Standard mitigation; not solved by this PR.
 
 ### 7. Embed-widget customisation and theming
 
@@ -218,7 +236,7 @@ A pragmatic order for the next sprints, optimised for "shortest path to a sellab
 | ------ | ----------------------- | -------------------------------------------------------------------- |
 | 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅ |
 | 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅   |
-| 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                     |
+| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, 7 (widget customisation)              |
 | 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)     |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.

@@ -198,6 +198,73 @@ describe('EvaluationsTable', () => {
     });
   });
 
+  // ── Quality column (Phase 5 of named-metrics) ────────────────────────────
+
+  describe('Quality column', () => {
+    it('renders em-dash when metricSummary is missing', () => {
+      render(
+        <EvaluationsTable
+          initialEvaluations={MOCK_EVALUATIONS}
+          initialMeta={MOCK_META}
+          agents={MOCK_AGENTS}
+        />
+      );
+      // Two rows × 1 em-dash each = 2 em-dashes in the Quality column.
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('renders avg F · G · R for sessions with metricSummary', () => {
+      const scoredEval = {
+        id: 'ev-3',
+        title: 'Cited Advisor Eval',
+        status: 'completed' as const,
+        agent: { id: 'a1', name: 'Bot A', slug: 'bot-a' },
+        _count: { logs: 6 },
+        createdAt: '2026-04-15T00:00:00.000Z',
+        metricSummary: {
+          avgFaithfulness: 0.92,
+          avgGroundedness: 0.85,
+          avgRelevance: 0.97,
+        },
+      };
+      render(
+        <EvaluationsTable
+          initialEvaluations={[scoredEval]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+      expect(screen.getByText('0.92 · 0.85 · 0.97')).toBeInTheDocument();
+    });
+
+    it('renders "n/a" placeholders for null score components', () => {
+      // Faithfulness can legitimately be null when no inline citations
+      // were emitted. The other two should still render numbers.
+      const partialEval = {
+        id: 'ev-4',
+        title: 'No-citation Eval',
+        status: 'completed' as const,
+        agent: { id: 'a1', name: 'Bot A', slug: 'bot-a' },
+        _count: { logs: 4 },
+        createdAt: '2026-04-15T00:00:00.000Z',
+        metricSummary: {
+          avgFaithfulness: null,
+          avgGroundedness: 0.7,
+          avgRelevance: 0.9,
+        },
+      };
+      render(
+        <EvaluationsTable
+          initialEvaluations={[partialEval]}
+          initialMeta={{ ...MOCK_META, total: 1 }}
+          agents={MOCK_AGENTS}
+        />
+      );
+      expect(screen.getByText('n/a · 0.70 · 0.90')).toBeInTheDocument();
+    });
+  });
+
   // ── Search / debounce ──────────────────────────────────────────────────────
 
   describe('search with debounce', () => {

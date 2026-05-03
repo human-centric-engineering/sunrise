@@ -6,11 +6,11 @@ Competitive assessment of Sunrise's agent orchestration against production-ready
 
 ## TL;DR
 
-Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, and knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026). It **trails** on observability (no OTEL), multi-agent coordination patterns, horizontal scaling (3 in-memory stores), and evaluation tooling.
+Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026), and named-metric evaluation (faithfulness/groundedness/relevance, also May 2026). It **trails** on observability (no OTEL), multi-agent coordination patterns, and horizontal scaling (3 in-memory stores).
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), and document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies) shipped May 2026.
+3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies), and named-metric evaluation (Tier 2 #6 — faithfulness/groundedness/relevance scoring with re-score and per-agent trend) shipped May 2026.
 
 ---
 
@@ -149,12 +149,12 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | Datadog / external APM       | None     | Strong   | None      | Adequate        | None     | Adequate |
 | Built-in trace UI            | Adequate | Adequate | Strong    | None            | Strong   | Adequate |
 | Per-step latency attribution | Weak     | Strong   | Strong    | None            | Strong   | Adequate |
-| Named evaluation metrics     | Weak     | Strong   | Strong    | None            | Adequate | None     |
-| Regression testing           | None     | Strong   | Strong    | None            | None     | None     |
+| Named evaluation metrics     | Adequate | Strong   | Strong    | None            | Adequate | None     |
+| Regression testing           | Adequate | Strong   | Strong    | None            | None     | None     |
 | Cost attribution per step    | Strong   | Adequate | Weak      | None            | Adequate | Weak     |
 | Audit log (config changes)   | Strong   | None     | None      | None            | Adequate | None     |
 
-**This is Sunrise's weakest area.** No OTEL instrumentation, no integration with any external tracing platform, no named evaluation metrics beyond the LLM-driven completion handler. Haystack is the benchmark here — 5+ backend integrations, 8 named evaluators, and pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
+**Observability remains Sunrise's weakest area.** No OTEL instrumentation, no integration with any external tracing platform. Evaluation tooling improved materially in May 2026 with the named-metric scoring shipping (faithfulness, groundedness, relevance — three metrics graded Adequate against Haystack's eight; per-message scores persisted and surfaced through the runner UI; re-score after KB/prompt change gives basic regression coverage; per-agent trend chart visualises drift). Haystack is still the benchmark — 5+ backend integrations, 8 named evaluators, pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
 
 ### Knowledge Base
 

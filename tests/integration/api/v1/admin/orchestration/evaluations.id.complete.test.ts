@@ -81,6 +81,16 @@ function makeCompleteResult() {
     improvementSuggestions: ['Consider edge cases', 'Improve response time'],
     tokenUsage: { input: 1000, output: 500 },
     costUsd: 0.05,
+    metricSummary: {
+      avgFaithfulness: 0.92,
+      avgGroundedness: 0.88,
+      avgRelevance: 0.95,
+      scoredLogCount: 4,
+      judgeProvider: 'anthropic',
+      judgeModel: 'claude-sonnet-4-6',
+      scoredAt: '2026-05-03T16:00:00.000Z',
+      totalScoringCostUsd: 0.012,
+    },
   };
 }
 

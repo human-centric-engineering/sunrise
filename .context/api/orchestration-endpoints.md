@@ -82,10 +82,12 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/costs/alerts`                           | GET                | Agents ≥ 80% of their budget                            | 3.4     |
 | `/settings`                               | GET, PATCH         | Task-type defaults + global monthly budget cap          | 4.4     |
 | `/agents/:id/budget`                      | GET                | Read-only budget status                                 | 3.4     |
+| `/agents/:id/evaluation-trend`            | GET                | Per-agent F/G/R quality trend across completed sessions | 7.6     |
 | `/evaluations`                            | GET, POST          | List caller's sessions / create                         | 3.4     |
 | `/evaluations/:id`                        | GET, PATCH         | Read / update                                           | 3.4     |
 | `/evaluations/:id/logs`                   | GET                | Read log events                                         | 3.4     |
-| `/evaluations/:id/complete`               | POST               | Run AI analysis and flip to `completed`                 | 3.4     |
+| `/evaluations/:id/complete`               | POST               | Run AI analysis + named-metric scoring                  | 3.4     |
+| `/evaluations/:id/rescore`                | POST               | Re-run named-metric scoring on a completed session      | 7.6     |
 | `/quiz-scores`                            | GET, POST          | List / save quiz scores (stored as evaluation sessions) | 6       |
 | `/webhooks`                               | GET, POST          | List / create webhook subscriptions                     | 5.1     |
 | `/webhooks/:id`                           | GET, PATCH, DELETE | Get / update / delete webhook subscription              | 5.1     |
@@ -793,12 +795,17 @@ Cursor pagination. Query (`evaluationLogsQuerySchema`): `limit` (1..500, default
 
 ### `POST /evaluations/:id/complete`
 
-**Synchronous POST**, not SSE. Runs an AI analysis of the session logs, updates the session to `completed`, and logs a cost row with `operation: 'evaluation'`.
+**Synchronous POST**, not SSE. Runs an AI analysis of the session logs, scores every `ai_response` log against three named metrics (faithfulness, groundedness, relevance), updates the session to `completed`, and logs cost rows with `operation: 'evaluation'`.
 
-- Logs are capped at **50** events for the analysis prompt.
-- The LLM call is bounded at `temperature: 0.2`, `maxTokens: 1500`, `10 000 ms` timeout.
-- Deleted agent (`agentId: null`) → fall back to `EVALUATION_DEFAULT_PROVIDER` / `EVALUATION_DEFAULT_MODEL` env vars (default `anthropic` / `claude-sonnet-4-6`).
-- Malformed JSON from the model → one retry with a stricter prompt. Second failure → sanitized `500` error. **Raw LLM output is never forwarded.**
+- Logs are capped at **50** events for the analysis prompt and the scoring loop.
+- Summary call: bounded at `temperature: 0.2`, `maxTokens: 1500`, `10 000 ms` timeout.
+- Scoring call: independent judge model, configured via `EVALUATION_JUDGE_PROVIDER` / `EVALUATION_JUDGE_MODEL` (default to `EVALUATION_DEFAULT_PROVIDER` / `EVALUATION_DEFAULT_MODEL`, which default to `anthropic` / `claude-sonnet-4-6`).
+- Deleted agent (`agentId: null`) → summary call falls back to `EVALUATION_DEFAULT_*`.
+- Malformed JSON from the summary or judge → one retry with a stricter prompt. Second failure on the summary → sanitized `500`; second failure on the judge for a single log → that log is skipped (logged at warn) and the loop continues. **Raw LLM output is never forwarded.**
+- Per-log judge errors are swallowed at warn — `metricSummary.scoredLogCount` reflects the successful subset.
+- Wholesale scoring failure (e.g. judge provider unavailable) leaves the session `completed` with `metricSummary: null`.
+- Two `AiCostLog` rows per completion: `metadata: { phase: 'summary' }` and `metadata: { phase: 'scoring', logsScored: N }`.
+- See [`../orchestration/evaluation-metrics.md`](../orchestration/evaluation-metrics.md) for the rubric, persistence shape, and noisy-scores caveat below ~20 messages.
 
 Response:
 
@@ -813,10 +820,22 @@ Response:
       "improvementSuggestions": ["..."],
       "tokenUsage": { "input": 120, "output": 55 },
       "costUsd": 0,
+      "metricSummary": {
+        "avgFaithfulness": 0.92,
+        "avgGroundedness": 0.85,
+        "avgRelevance": 0.95,
+        "scoredLogCount": 4,
+        "judgeProvider": "anthropic",
+        "judgeModel": "claude-sonnet-4-6",
+        "scoredAt": "2026-05-03T16:00:00.000Z",
+        "totalScoringCostUsd": 0.012,
+      },
     },
   },
 }
 ```
+
+`metricSummary` is `null` when scoring failed wholesale or the session had no `ai_response` logs.
 
 Error mapping:
 
@@ -827,6 +846,56 @@ Error mapping:
 | 400    | Session has no logs                         |
 | 500    | Sanitized — raw provider/LLM errors dropped |
 | 429    | Rate limit (`adminLimiter`)                 |
+
+### `POST /evaluations/:id/rescore`
+
+Re-runs the named-metric scorer over an already-completed session. Useful after a knowledge-base update, prompt tweak, or judge-model swap.
+
+- Gated on `status === 'completed'` — non-completed → `409 ConflictError`.
+- Per-log scores overwrite in place; `metricSummary.scoredAt` advances; `totalScoringCostUsd` accumulates across runs.
+- Same per-log error swallowing as `/complete` — one bad turn doesn't void the pass.
+- Synchronous POST. Response shape: `{ session: { sessionId, metricSummary } }` — no summary regeneration.
+- Rate-limited (`adminLimiter`).
+
+Error mapping mirrors `/complete` except `409` here means "not completed yet" (rather than "already completed"):
+
+| Status | When                                                                  |
+| ------ | --------------------------------------------------------------------- |
+| 404    | Session missing or cross-user                                         |
+| 409    | Session is not `completed` (only completed sessions can be re-scored) |
+| 400    | Session has no logs                                                   |
+| 500    | Sanitized — raw provider/LLM errors dropped                           |
+| 429    | Rate limit (`adminLimiter`)                                           |
+
+### `GET /agents/:id/evaluation-trend`
+
+Returns one trend point per completed evaluation session for the agent, scoped to the caller's user, sorted by `completedAt` ascending. Powers the per-agent quality chart on `/admin/orchestration/agents/[id]`.
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "points": [
+      {
+        "sessionId": "cmj...",
+        "title": "Q1 sample",
+        "completedAt": "2026-04-15T10:00:00.000Z",
+        "avgFaithfulness": 0.92,
+        "avgGroundedness": 0.85,
+        "avgRelevance": 0.95,
+        "scoredLogCount": 5,
+      },
+    ],
+  },
+}
+```
+
+Sessions whose `metricSummary` is `null` (scoring failed wholesale) are excluded. Returns an empty `points` array when the agent has no completed scored sessions.
+
+| Status | When          |
+| ------ | ------------- |
+| 404    | Agent missing |
+| 400    | Invalid CUID  |
 
 ---
 

@@ -1023,4 +1023,193 @@ describe('EvaluationRunner', () => {
       expect(submitBtn).not.toBeDisabled();
     });
   });
+
+  // ── Named-metric scoring UI (Phase 5 of named-metrics) ────────────────────
+
+  describe('quality scores card and re-score button (completed view)', () => {
+    const SCORED_EVAL = {
+      ...COMPLETED_EVAL,
+      id: 'ev-scored',
+      metricSummary: {
+        avgFaithfulness: 0.92,
+        avgGroundedness: 0.85,
+        avgRelevance: 0.95,
+        scoredLogCount: 4,
+        judgeProvider: 'anthropic',
+        judgeModel: 'claude-sonnet-4-6',
+        scoredAt: '2026-04-15T10:00:00Z',
+        totalScoringCostUsd: 0.018,
+      },
+    };
+
+    it('does not render the quality card when metricSummary is missing', () => {
+      mockFetch.mockResolvedValue(logsResponse([]));
+      render(<EvaluationRunner evaluation={COMPLETED_EVAL} />);
+      expect(screen.queryByText('Quality scores')).not.toBeInTheDocument();
+    });
+
+    it('renders the quality card with averages and judge model when metricSummary is present', () => {
+      render(<EvaluationRunner evaluation={SCORED_EVAL} />);
+      expect(screen.getByText('Quality scores')).toBeInTheDocument();
+      expect(screen.getByText('0.92')).toBeInTheDocument();
+      expect(screen.getByText('0.85')).toBeInTheDocument();
+      expect(screen.getByText('0.95')).toBeInTheDocument();
+      expect(screen.getByText(/4 responses scored.*claude-sonnet-4-6/)).toBeInTheDocument();
+    });
+
+    it('shows the noisy-scores caveat when scoredLogCount is below 20', () => {
+      render(<EvaluationRunner evaluation={SCORED_EVAL} />);
+      expect(screen.getByText(/noisy below ~20 messages/i)).toBeInTheDocument();
+    });
+
+    it('hides the noisy-scores caveat when scoredLogCount is 20 or more', () => {
+      const wellScored = {
+        ...SCORED_EVAL,
+        metricSummary: { ...SCORED_EVAL.metricSummary, scoredLogCount: 25 },
+      };
+      render(<EvaluationRunner evaluation={wellScored} />);
+      expect(screen.queryByText(/noisy below ~20 messages/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the Re-score button on the completed view', () => {
+      render(<EvaluationRunner evaluation={SCORED_EVAL} />);
+      expect(screen.getByRole('button', { name: /re-score/i })).toBeInTheDocument();
+    });
+
+    it('calls /rescore on confirm and updates the displayed averages', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url, init) => {
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+        if (init?.method === 'POST' && u.includes('/rescore')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: true,
+                data: {
+                  session: {
+                    sessionId: SCORED_EVAL.id,
+                    metricSummary: {
+                      avgFaithfulness: 0.5,
+                      avgGroundedness: 0.55,
+                      avgRelevance: 0.6,
+                      scoredLogCount: 4,
+                      judgeProvider: 'anthropic',
+                      judgeModel: 'claude-sonnet-4-6',
+                      scoredAt: '2026-05-01T10:00:00Z',
+                      totalScoringCostUsd: 0.036,
+                    },
+                  },
+                },
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(logsResponse([]));
+      });
+
+      render(<EvaluationRunner evaluation={SCORED_EVAL} />);
+      expect(screen.getByText('0.92')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /re-score/i }));
+      const buttons = await screen.findAllByRole('button', { name: /re-score/i });
+      await user.click(buttons[buttons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.getByText('0.50')).toBeInTheDocument();
+        expect(screen.getByText('0.55')).toBeInTheDocument();
+        expect(screen.getByText('0.60')).toBeInTheDocument();
+      });
+
+      const rescoreCalls = mockFetch.mock.calls.filter((c) => {
+        const url = c[0];
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+        return u.includes('/rescore') && c[1]?.method === 'POST';
+      });
+      expect(rescoreCalls.length).toBe(1);
+    });
+
+    it('surfaces an error message when /rescore returns a non-OK response', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation((url, init) => {
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+        if (init?.method === 'POST' && u.includes('/rescore')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                success: false,
+                error: { code: 'CONFLICT', message: 'session already running' },
+              }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(logsResponse([]));
+      });
+
+      render(<EvaluationRunner evaluation={SCORED_EVAL} />);
+      await user.click(screen.getByRole('button', { name: /re-score/i }));
+      const buttons = await screen.findAllByRole('button', { name: /re-score/i });
+      await user.click(buttons[buttons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.getByText(/session already running/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('per-message score chips in the completed transcript', () => {
+    it('renders score chips next to assistant messages that carry scores', async () => {
+      mockFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              logs: [
+                { sequenceNumber: 1, eventType: 'user_input', content: 'Q?' },
+                {
+                  sequenceNumber: 2,
+                  eventType: 'ai_response',
+                  content: 'A.',
+                  faithfulnessScore: 0.91,
+                  groundednessScore: 0.83,
+                  relevanceScore: 0.97,
+                  judgeReasoning: {
+                    faithfulness: { reasoning: 'All marked claims supported.' },
+                    groundedness: { reasoning: 'Mostly grounded.' },
+                    relevance: { reasoning: 'Direct.' },
+                  },
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      render(<EvaluationRunner evaluation={COMPLETED_EVAL} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Faithfulness score: 0.91')).toBeInTheDocument();
+        expect(screen.getByLabelText('Groundedness score: 0.83')).toBeInTheDocument();
+        expect(screen.getByLabelText('Relevance score: 0.97')).toBeInTheDocument();
+      });
+    });
+
+    it('does not render chips for assistant messages without scores', async () => {
+      mockFetch.mockResolvedValue(
+        logsResponse([
+          { sequenceNumber: 1, eventType: 'user_input', content: 'Q?' },
+          { sequenceNumber: 2, eventType: 'ai_response', content: 'A.' },
+        ])
+      );
+
+      render(<EvaluationRunner evaluation={COMPLETED_EVAL} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('A.')).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/Faithfulness score/)).not.toBeInTheDocument();
+    });
+  });
 });

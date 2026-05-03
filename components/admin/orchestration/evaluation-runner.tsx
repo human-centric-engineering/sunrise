@@ -31,6 +31,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  RefreshCw,
   Save,
   Send,
 } from 'lucide-react';
@@ -61,6 +62,7 @@ import {
   serializeAnnotations,
   deserializeAnnotations,
 } from '@/lib/orchestration/evaluations/annotation-serializer';
+import { EvaluationMetricChips } from '@/components/admin/orchestration/evaluation-metric-chips';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -82,15 +84,41 @@ interface EvaluationSession {
   createdAt: string;
   completedAt?: string | null;
   metadata?: Record<string, unknown> | null;
+  /** Aggregate metric summary populated when the session has been scored. */
+  metricSummary?: MetricSummary | null;
 }
 
 export interface EvaluationRunnerProps {
   evaluation: EvaluationSession;
 }
 
+interface JudgeReasoning {
+  faithfulness?: { reasoning: string };
+  groundedness?: { reasoning: string };
+  relevance?: { reasoning: string };
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** Set on assistant messages restored from completed/scored logs. */
+  scores?: {
+    faithfulness: number | null;
+    groundedness: number | null;
+    relevance: number | null;
+    reasoning?: JudgeReasoning;
+  };
+}
+
+interface MetricSummary {
+  avgFaithfulness: number | null;
+  avgGroundedness: number | null;
+  avgRelevance: number | null;
+  scoredLogCount: number;
+  judgeProvider: string;
+  judgeModel: string;
+  scoredAt: string;
+  totalScoringCostUsd: number;
 }
 
 interface CompletionResult {
@@ -98,12 +126,17 @@ interface CompletionResult {
   improvementSuggestions: string[];
   tokenUsage?: { input: number; output: number };
   costUsd?: number;
+  metricSummary?: MetricSummary | null;
 }
 
 interface LogEntry {
   sequenceNumber: number;
   eventType: string;
   content: string | null;
+  faithfulnessScore?: number | null;
+  groundednessScore?: number | null;
+  relevanceScore?: number | null;
+  judgeReasoning?: JudgeReasoning | null;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -138,10 +171,13 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
       ? {
           summary: evaluation.summary,
           improvementSuggestions: evaluation.improvementSuggestions ?? [],
+          metricSummary: evaluation.metricSummary ?? null,
         }
       : null
   );
   const [completionError, setCompletionError] = useState<string | null>(null);
+  const [isRescoring, setIsRescoring] = useState(false);
+  const [rescoreError, setRescoreError] = useState<string | null>(null);
 
   // Status
   const [currentStatus, setCurrentStatus] = useState(evaluation.status);
@@ -415,6 +451,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
             improvementSuggestions?: string[];
             tokenUsage?: { input: number; output: number };
             costUsd?: number;
+            metricSummary?: MetricSummary | null;
           };
         };
       };
@@ -425,6 +462,7 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
           improvementSuggestions: session.improvementSuggestions ?? [],
           tokenUsage: session.tokenUsage,
           costUsd: session.costUsd,
+          metricSummary: session.metricSummary ?? null,
         });
         setCurrentStatus('completed');
       }
@@ -433,6 +471,42 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     } finally {
       setIsCompleting(false);
     }
+  }, [evaluation.id]);
+
+  // ─── Re-score (completed sessions only) ────────────────────────────────
+
+  const handleRescore = useCallback(async () => {
+    setRescoreError(null);
+    setIsRescoring(true);
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.evaluationRescore(evaluation.id), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        setRescoreError(body?.error?.message ?? 'Re-score failed. Please try again.');
+        return;
+      }
+      const body = (await res.json()) as {
+        data?: { session?: { metricSummary?: MetricSummary } };
+      };
+      const next = body?.data?.session?.metricSummary;
+      if (next) {
+        setCompletionResult((prev) => (prev ? { ...prev, metricSummary: next } : prev));
+        // Refresh the transcript so per-message score chips pick up the new scores.
+        await loadTranscript();
+      }
+    } catch {
+      setRescoreError('Re-score failed. Please try again.');
+    } finally {
+      setIsRescoring(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evaluation.id]);
 
   // ─── Load logs for completed view ──────────────────────────────────────
@@ -472,9 +546,9 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   if (isCompleted && completionResult) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <CheckCircle2 className="h-6 w-6 text-green-600" />
-          <div>
+        <div className="flex items-start gap-3">
+          <CheckCircle2 className="h-6 w-6 shrink-0 text-green-600" />
+          <div className="flex-1">
             <h2 className="text-lg font-semibold">Evaluation Complete</h2>
             <p className="text-muted-foreground text-sm">
               {evaluation.agent?.name ?? 'Agent'} · Completed{' '}
@@ -483,7 +557,72 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                 : 'just now'}
             </p>
           </div>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={isRescoring}>
+                {isRescoring ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                Re-score
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Re-run metric scoring?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Re-runs the judge across every AI response in this session and overwrites the
+                  existing scores in place. Useful after a knowledge-base update or prompt change.
+                  Running cost will be added to this session&apos;s scoring total.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isRescoring}>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void handleRescore()} disabled={isRescoring}>
+                  Re-score
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
+
+        {rescoreError && (
+          <div className="bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-sm">
+            {rescoreError}
+          </div>
+        )}
+
+        {/* Metric summary card */}
+        {completionResult.metricSummary && (
+          <div className="rounded-md border p-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium">Quality scores</h3>
+              <span className="text-muted-foreground text-xs">
+                {completionResult.metricSummary.scoredLogCount} response
+                {completionResult.metricSummary.scoredLogCount === 1 ? '' : 's'} scored ·{' '}
+                {completionResult.metricSummary.judgeModel}
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+              <ScoreStat
+                label="Faithfulness"
+                value={completionResult.metricSummary.avgFaithfulness}
+              />
+              <ScoreStat
+                label="Groundedness"
+                value={completionResult.metricSummary.avgGroundedness}
+              />
+              <ScoreStat label="Relevance" value={completionResult.metricSummary.avgRelevance} />
+            </div>
+            {completionResult.metricSummary.scoredLogCount < 20 && (
+              <p className="text-muted-foreground mt-3 text-xs">
+                Per-message scores are noisy below ~20 messages — interpret averages, not individual
+                values.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Summary */}
         <div className="space-y-2">
@@ -532,13 +671,34 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                 <div
                   key={i}
                   className={cn(
-                    'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
-                    msg.role === 'user'
-                      ? 'bg-primary text-primary-foreground ml-auto'
-                      : 'bg-muted mr-auto'
+                    'flex flex-col gap-1.5',
+                    msg.role === 'user' ? 'items-end' : 'items-start'
                   )}
                 >
-                  {msg.content}
+                  <div
+                    className={cn(
+                      'max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap',
+                      msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                    )}
+                  >
+                    {msg.content}
+                  </div>
+                  {msg.role === 'assistant' && msg.scores && (
+                    <EvaluationMetricChips
+                      faithfulnessScore={msg.scores.faithfulness}
+                      groundednessScore={msg.scores.groundedness}
+                      relevanceScore={msg.scores.relevance}
+                      reasoning={
+                        msg.scores.reasoning
+                          ? {
+                              faithfulness: msg.scores.reasoning.faithfulness?.reasoning,
+                              groundedness: msg.scores.reasoning.groundedness?.reasoning,
+                              relevance: msg.scores.reasoning.relevance?.reasoning,
+                            }
+                          : undefined
+                      }
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -859,6 +1019,18 @@ function formatStatus(status: string): string {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Small "label · score" stat used in the metric summary card. */
+function ScoreStat({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div>
+      <p className="text-muted-foreground text-xs tracking-wide uppercase">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums">
+        {value === null ? <span className="text-muted-foreground">n/a</span> : value.toFixed(2)}
+      </p>
+    </div>
+  );
+}
+
 /** Convert evaluation log entries to chat messages for display. */
 function logsToMessages(logs: LogEntry[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
@@ -866,7 +1038,20 @@ function logsToMessages(logs: LogEntry[]): ChatMessage[] {
     if (log.eventType === 'user_input' && log.content) {
       messages.push({ role: 'user', content: log.content });
     } else if (log.eventType === 'ai_response' && log.content) {
-      messages.push({ role: 'assistant', content: log.content });
+      const hasScores =
+        log.faithfulnessScore != null ||
+        log.groundednessScore != null ||
+        log.relevanceScore != null;
+      const message: ChatMessage = { role: 'assistant', content: log.content };
+      if (hasScores) {
+        message.scores = {
+          faithfulness: log.faithfulnessScore ?? null,
+          groundedness: log.groundednessScore ?? null,
+          relevance: log.relevanceScore ?? null,
+          reasoning: log.judgeReasoning ?? undefined,
+        };
+      }
+      messages.push(message);
     }
   }
   return messages;
