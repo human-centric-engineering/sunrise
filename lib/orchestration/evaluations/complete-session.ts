@@ -28,13 +28,17 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
-import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import type {
   CompleteEvaluationParams,
   CompleteEvaluationResult,
 } from '@/lib/orchestration/evaluations/types';
+import {
+  runStructuredCompletion,
+  tryParseJson,
+} from '@/lib/orchestration/evaluations/parse-structured';
 
 /** Maximum number of log events included in the analysis prompt. */
 const MAX_LOGS_IN_PROMPT = 50;
@@ -163,64 +167,24 @@ async function runAnalysis(
   messages: LlmMessage[],
   model: string
 ): Promise<AnalysisResult> {
-  const signal = AbortSignal.timeout(ANALYSIS_TIMEOUT_MS);
-
-  const first = await provider.chat(messages, {
+  const result = await runStructuredCompletion<EvaluationAnalysis>({
+    provider,
     model,
+    messages,
+    parse: parseAnalysis,
+    retryUserMessage:
+      'Your previous response was not valid JSON. Respond ONLY with a JSON object of the form ' +
+      '{"summary": "...", "improvementSuggestions": ["...", "..."]}. No prose, no code fences.',
     temperature: ANALYSIS_TEMPERATURE,
     maxTokens: ANALYSIS_MAX_TOKENS,
-    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    onFinalFailure: () => new Error('Analysis response was not valid JSON after retry'),
   });
-
-  const parsed = safeParseAnalysis(first.content);
-  if (parsed) {
-    const inputTokens = first.usage.inputTokens;
-    const outputTokens = first.usage.outputTokens;
-    return {
-      summary: parsed.summary,
-      improvementSuggestions: parsed.improvementSuggestions,
-      tokenUsage: { input: inputTokens, output: outputTokens },
-      costUsd: calculateCost(model, inputTokens, outputTokens).totalCostUsd,
-    };
-  }
-
-  // Retry once with a stricter prompt. We do NOT include the malformed
-  // prior response in the retry prompt (never trust model output as
-  // part of a subsequent prompt when it just misbehaved).
-  const retrySignal = AbortSignal.timeout(ANALYSIS_TIMEOUT_MS);
-  const retry = await provider.chat(
-    [
-      ...messages,
-      {
-        role: 'user',
-        content:
-          'Your previous response was not valid JSON. Respond ONLY with a JSON object of the form ' +
-          '{"summary": "...", "improvementSuggestions": ["...", "..."]}. No prose, no code fences.',
-      },
-    ],
-    {
-      model,
-      temperature: 0,
-      maxTokens: ANALYSIS_MAX_TOKENS,
-      signal: retrySignal,
-    }
-  );
-
-  const reparsed = safeParseAnalysis(retry.content);
-  if (!reparsed) {
-    throw new Error('Analysis response was not valid JSON after retry');
-  }
-
-  const totalInputTokens = first.usage.inputTokens + retry.usage.inputTokens;
-  const totalOutputTokens = first.usage.outputTokens + retry.usage.outputTokens;
   return {
-    summary: reparsed.summary,
-    improvementSuggestions: reparsed.improvementSuggestions,
-    tokenUsage: {
-      input: totalInputTokens,
-      output: totalOutputTokens,
-    },
-    costUsd: calculateCost(model, totalInputTokens, totalOutputTokens).totalCostUsd,
+    summary: result.value.summary,
+    improvementSuggestions: result.value.improvementSuggestions,
+    tokenUsage: result.tokenUsage,
+    costUsd: result.costUsd,
   };
 }
 
@@ -275,35 +239,20 @@ function truncate(input: string, max: number): string {
   return `${input.slice(0, max)}…`;
 }
 
-function safeParseAnalysis(raw: string): EvaluationAnalysis | null {
-  // The model may include surrounding whitespace or a stray code fence
-  // even when asked not to. Try the raw string first, then strip common
-  // wrappers.
-  const candidates = [raw.trim(), stripCodeFence(raw.trim())];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof (parsed as { summary?: unknown }).summary === 'string' &&
-        Array.isArray((parsed as { improvementSuggestions?: unknown }).improvementSuggestions) &&
-        (parsed as { improvementSuggestions: unknown[] }).improvementSuggestions.every(
-          (s) => typeof s === 'string'
-        )
-      ) {
-        const obj = parsed as EvaluationAnalysis;
-        return { summary: obj.summary, improvementSuggestions: obj.improvementSuggestions };
-      }
-    } catch {
-      // fall through
+function parseAnalysis(raw: string): EvaluationAnalysis | null {
+  return tryParseJson<EvaluationAnalysis>(raw, (parsed) => {
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as { summary?: unknown }).summary === 'string' &&
+      Array.isArray((parsed as { improvementSuggestions?: unknown }).improvementSuggestions) &&
+      (parsed as { improvementSuggestions: unknown[] }).improvementSuggestions.every(
+        (s) => typeof s === 'string'
+      )
+    ) {
+      const obj = parsed as EvaluationAnalysis;
+      return { summary: obj.summary, improvementSuggestions: obj.improvementSuggestions };
     }
-  }
-  return null;
-}
-
-function stripCodeFence(input: string): string {
-  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/;
-  const match = input.match(fence);
-  return match ? match[1] : input;
+    return null;
+  });
 }
