@@ -499,6 +499,25 @@ describe('API Endpoints', () => {
       expect(API.ADMIN.ORCHESTRATION.agentCapabilityById(id, 'cap-1')).toBe(
         '/api/v1/admin/orchestration/agents/agent-abc/capabilities/cap-1'
       );
+      expect(API.ADMIN.ORCHESTRATION.agentEvaluationTrend(id)).toBe(
+        '/api/v1/admin/orchestration/agents/agent-abc/evaluation-trend'
+      );
+    });
+
+    it('should generate correct dynamic evaluation paths', () => {
+      const id = 'ev-789';
+      expect(API.ADMIN.ORCHESTRATION.evaluationById(id)).toBe(
+        '/api/v1/admin/orchestration/evaluations/ev-789'
+      );
+      expect(API.ADMIN.ORCHESTRATION.evaluationComplete(id)).toBe(
+        '/api/v1/admin/orchestration/evaluations/ev-789/complete'
+      );
+      expect(API.ADMIN.ORCHESTRATION.evaluationRescore(id)).toBe(
+        '/api/v1/admin/orchestration/evaluations/ev-789/rescore'
+      );
+      expect(API.ADMIN.ORCHESTRATION.evaluationLogs(id)).toBe(
+        '/api/v1/admin/orchestration/evaluations/ev-789/logs'
+      );
     });
 
     it('should generate correct dynamic provider paths', () => {

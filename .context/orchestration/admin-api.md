@@ -76,10 +76,12 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/costs/alerts`                           | GET                | Agents at or above 80% of their monthly budget                                            |
 | `/api/v1/admin/orchestration/settings`                               | GET, PATCH         | Singleton: model defaults, global cap, search config                                      |
 | `/api/v1/admin/orchestration/agents/:id/budget`                      | GET                | Read-only budget status (use PATCH agent to mutate)                                       |
+| `/api/v1/admin/orchestration/agents/:id/evaluation-trend`            | GET                | Per-agent F/G/R quality trend across the caller's completed sessions                      |
 | `/api/v1/admin/orchestration/evaluations`                            | GET, POST          | List the caller's evaluation sessions / create one                                        |
 | `/api/v1/admin/orchestration/evaluations/:id`                        | GET, PATCH         | Read / update an evaluation session                                                       |
 | `/api/v1/admin/orchestration/evaluations/:id/logs`                   | GET                | Read log events for one of the caller's sessions                                          |
-| `/api/v1/admin/orchestration/evaluations/:id/complete`               | POST               | Run the AI analysis pass and flip to `completed`                                          |
+| `/api/v1/admin/orchestration/evaluations/:id/complete`               | POST               | Run the AI analysis pass + named-metric scoring and flip to `completed`                   |
+| `/api/v1/admin/orchestration/evaluations/:id/rescore`                | POST               | Re-run named-metric scoring on a completed session (overwrites scores in place)           |
 | `/api/v1/admin/orchestration/quiz-scores`                            | GET, POST          | List / save quiz scores                                                                   |
 | `/api/v1/admin/orchestration/agents/:id/versions`                    | GET                | List agent config version history                                                         |
 | `/api/v1/admin/orchestration/agents/:id/versions/:versionId`         | GET, POST          | Get version / restore to this version                                                     |
@@ -1242,7 +1244,9 @@ Evaluation sessions drive the "review an agent's performance" flow. Each session
 
 **Ownership:** every evaluation endpoint is scoped to `session.user.id`. Cross-user access returns **404, not 403** — matching the conversations convention. Do not "fix" this.
 
-The handler layer lives in `lib/orchestration/evaluations/` — platform-agnostic, no `next/*` imports. Validation schemas live in `lib/validations/orchestration.ts` (`createEvaluationSchema`, `updateEvaluationSchema`, `listEvaluationsQuerySchema`, `evaluationLogsQuerySchema`, `completeEvaluationBodySchema`).
+The handler layer lives in `lib/orchestration/evaluations/` — platform-agnostic, no `next/*` imports. Validation schemas live in `lib/validations/orchestration.ts` (`createEvaluationSchema`, `updateEvaluationSchema`, `listEvaluationsQuerySchema`, `evaluationLogsQuerySchema`, `completeEvaluationBodySchema`, `rescoreEvaluationBodySchema`).
+
+`/complete` and `/rescore` both run a named-metric scoring pass alongside the AI summary — see [`evaluation-metrics.md`](./evaluation-metrics.md) for the rubric (faithfulness, groundedness, relevance), the persistence shape, and the judge-model env vars.
 
 ### List evaluations
 
@@ -1302,8 +1306,9 @@ curl -X POST /api/v1/admin/orchestration/evaluations/<id>/complete
 5. Resolve the provider via `getProvider(session.agent.provider)`. If the agent has been deleted (`session.agentId === null`), fall back to `process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic'` with `EVALUATION_DEFAULT_MODEL ?? 'claude-sonnet-4-6'`.
 6. Issue a single non-streaming `provider.chat()` call capped at `temperature: 0.2`, `maxTokens: 1500`, and a `10_000 ms` `AbortSignal.timeout`.
 7. Parse the response as `{ summary: string, improvementSuggestions: string[] }`. Code fences (` ```json `) are stripped. On malformed JSON, retry once with a stricter "respond only with JSON" prompt; on a second failure, throw a sanitized `Error('Failed to generate evaluation analysis')` — **the raw LLM output is never forwarded**.
-8. Fire-and-forget `logCost({ operation: CostOperation.EVALUATION, ... })`. A Prisma failure here is logged but does not abort completion.
-9. Update the session: `status='completed'`, `summary`, `improvementSuggestions`, `completedAt = new Date()`.
+8. Fire-and-forget `logCost({ operation: CostOperation.EVALUATION, metadata: { phase: 'summary' } })`. A Prisma failure here is logged but does not abort completion.
+9. Score every `ai_response` log against the three named metrics via the judge model (`EVALUATION_JUDGE_MODEL`). Per-log scores persist on `AiEvaluationLog.{faithfulnessScore,groundednessScore,relevanceScore,judgeReasoning}`. Aggregate averages persist on `AiEvaluationSession.metricSummary`. Per-log judge errors are swallowed at warn level — `metricSummary.scoredLogCount` reflects the successful subset. Wholesale scoring failure leaves the session `completed` with `metricSummary: null`. Scoring spend is logged separately as `metadata: { phase: 'scoring', logsScored: N }`.
+10. Update the session: `status='completed'`, `summary`, `improvementSuggestions`, `metricSummary`, `completedAt = new Date()`.
 
 Response:
 
@@ -1317,11 +1322,23 @@ Response:
       "summary": "...",
       "improvementSuggestions": ["...", "..."],
       "tokenUsage": { "input": 120, "output": 55 },
-      "costUsd": 0
+      "costUsd": 0,
+      "metricSummary": {
+        "avgFaithfulness": 0.92,
+        "avgGroundedness": 0.85,
+        "avgRelevance": 0.95,
+        "scoredLogCount": 4,
+        "judgeProvider": "anthropic",
+        "judgeModel": "claude-sonnet-4-6",
+        "scoredAt": "2026-05-03T16:00:00.000Z",
+        "totalScoringCostUsd": 0.012
+      }
     }
   }
 }
 ```
+
+`metricSummary` is `null` when scoring failed wholesale or the session had no `ai_response` logs. See [`evaluation-metrics.md`](./evaluation-metrics.md) for the per-metric rubric and the noisy-scores caveat below ~20 messages.
 
 Error mapping:
 
@@ -1333,6 +1350,51 @@ Error mapping:
 | Any other `Error` | 500  | Sanitized message — raw LLM/provider text dropped |
 
 The route is rate-limited (`adminLimiter`) because completion is both a mutation and an LLM call — the most expensive endpoint in the evaluation surface.
+
+### Re-score evaluation
+
+```bash
+curl -X POST /api/v1/admin/orchestration/evaluations/<id>/rescore
+```
+
+Re-runs the named-metric scorer over an already-completed session. Useful after a knowledge-base update, prompt tweak, or judge-model swap.
+
+- Gated on `status === 'completed'` — non-completed sessions throw `ConflictError` (`409`).
+- Per-log scores overwrite in place; `metricSummary.scoredAt` advances; `totalScoringCostUsd` accumulates across runs (this run's spend is added to whatever the previous summary held).
+- Same per-log error swallowing as `/complete` — one bad turn doesn't void the pass.
+- Synchronous POST. Response body shape: `{ session: { sessionId, metricSummary } }` — no summary regeneration.
+- Rate-limited (`adminLimiter`).
+
+Error mapping mirrors `/complete` (NotFoundError → 404, ConflictError → 409 when not yet completed, ValidationError → 400 when logs are empty).
+
+### Per-agent evaluation trend
+
+```
+GET /api/v1/admin/orchestration/agents/<id>/evaluation-trend
+```
+
+Returns one trend point per completed evaluation session for the agent, scoped to the caller's user, sorted by `completedAt` ascending. Powers the per-agent quality chart on `/admin/orchestration/agents/[id]`.
+
+```json
+{
+  "success": true,
+  "data": {
+    "points": [
+      {
+        "sessionId": "cmj...",
+        "title": "Q1 sample",
+        "completedAt": "2026-04-15T10:00:00.000Z",
+        "avgFaithfulness": 0.92,
+        "avgGroundedness": 0.85,
+        "avgRelevance": 0.95,
+        "scoredLogCount": 5
+      }
+    ]
+  }
+}
+```
+
+Sessions whose `metricSummary` is `null` (e.g. scoring failed wholesale) are excluded.
 
 ## Smoke testing
 
