@@ -111,6 +111,31 @@ function extractDocumentCategory(content: string): string | null {
 }
 
 /**
+ * Reconstruct a minimal `ParsedDocument` from the joined `Header: Value | …`
+ * content stored on a CSV document's `metadata.rawContent`. Used by
+ * `rechunkDocument` so CSVs round-trip through `chunkCsvDocument` rather
+ * than the markdown chunker.
+ *
+ * Each non-empty line in `rawContent` corresponds to one original CSV row,
+ * because `parseCsv` joins sections with `\n` and the row-level chunker
+ * never merges them.
+ */
+function rebuildCsvParsedFromContent(content: string, name: string): ParsedDocument {
+  const lines = content.split('\n').filter((line) => line.length > 0);
+  return {
+    title: name,
+    sections: lines.map((line, idx) => ({
+      title: `Row ${idx + 1}`,
+      content: line,
+      order: idx,
+    })),
+    fullText: content,
+    metadata: { format: 'csv' },
+    warnings: [],
+  };
+}
+
+/**
  * Upload a document to the knowledge base.
  *
  * Full pipeline: create document record → chunk content → embed chunks
@@ -639,8 +664,16 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
   });
 
   try {
-    // Re-chunk
-    const chunks = chunkMarkdownDocument(content, document.name, documentId);
+    // CSV rechunk has to use the row-aware chunker — chunkMarkdownDocument
+    // would mash every row into the same heading-less chunk.
+    const isCsv = meta?.format === 'csv';
+    const chunks = isCsv
+      ? chunkCsvDocument(
+          rebuildCsvParsedFromContent(content, document.name),
+          document.name,
+          documentId
+        )
+      : chunkMarkdownDocument(content, document.name, documentId);
 
     if (chunks.length === 0) {
       await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId } });

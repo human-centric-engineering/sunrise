@@ -157,6 +157,34 @@ describe('parseCsv', () => {
       expect(result.sections[0].content).toBe('name: Acme | amount: 100');
       expect(result.sections[1].content).toBe('name: Beta | amount: 200');
     });
+
+    it('handles legacy CR-only line endings (classic Mac)', () => {
+      const csv = 'name,amount\rAcme,100\rBeta,200\r';
+      const result = parseCsv(buf(csv), 'cr-only.csv');
+      // Without normalisation the whole file would parse as one giant row.
+      expect(result.sections).toHaveLength(2);
+      expect(result.sections[0].content).toBe('name: Acme | amount: 100');
+      expect(result.sections[1].content).toBe('name: Beta | amount: 200');
+    });
+  });
+
+  describe('Row-shape mismatch warnings', () => {
+    it('warns and identifies the first row whose cell count exceeds the header', () => {
+      // The header has 2 columns but row 2 has 4 — extra cells are silently
+      // dropped today, so we surface a warning so the admin spots a wrong
+      // delimiter or unquoted commas in the source.
+      const csv = 'name,amount\nAcme,100\nBeta,200,extra,more\nGamma,300\n';
+      const result = parseCsv(buf(csv), 'overflow.csv');
+      const warning = result.warnings.find((w) => w.startsWith('Row 2 has 4 cells'));
+      expect(warning).toBeDefined();
+      expect(warning).toContain('header has 2');
+    });
+
+    it('does not warn when every row matches or is shorter than the header', () => {
+      const csv = 'a,b,c\n1,2,3\n4,5\n6,7,8\n';
+      const result = parseCsv(buf(csv), 'normal.csv');
+      expect(result.warnings.some((w) => w.includes('cells but the header has'))).toBe(false);
+    });
   });
 
   describe('Edge cases', () => {

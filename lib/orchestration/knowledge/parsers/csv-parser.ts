@@ -174,7 +174,12 @@ export function parseCsv(buffer: Buffer, fileName: string): ParsedDocument {
   // Excel and other spreadsheet apps frequently save UTF-8 CSVs with a leading
   // byte-order mark (U+FEFF). Strip it once at the boundary so it never ends
   // up inside the first header cell (which would pollute every chunk's content).
-  const content = buffer.toString('utf-8').replace(/^\uFEFF/, '');
+  // Also normalise legacy CR-only line endings (classic-Mac-era spreadsheet
+  // exports) to LF so the tokenizer's `\n` row break fires on every line.
+  const content = buffer
+    .toString('utf-8')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n');
 
   if (content.trim().length === 0) {
     return {
@@ -208,6 +213,19 @@ export function parseCsv(buffer: Buffer, fileName: string): ParsedDocument {
   warnings.push(`Detected header row: ${hasHeader ? 'yes' : 'no'}`);
   if (columnCount > VERY_WIDE_ROW_THRESHOLD) {
     warnings.push(`Wide CSV detected: ${columnCount} columns — retrieval may suffer`);
+  }
+
+  // Detect rows with more cells than the header. We only render the first
+  // `columnCount` cells (extras are silently dropped) so the admin should know
+  // their data isn't fully captured. We report the first offending row only —
+  // the rest almost always have the same shape.
+  const overflow = dataRows.findIndex((row) => row.length > columnCount);
+  if (overflow !== -1) {
+    const offending = dataRows[overflow];
+    warnings.push(
+      `Row ${overflow + 1} has ${offending.length} cells but the header has ${columnCount}; ` +
+        `extra cells are not stored. Check that the file uses the right delimiter or quoting.`
+    );
   }
 
   const sections: ParsedSection[] = dataRows.map((row, idx) => {

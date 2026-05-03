@@ -563,6 +563,47 @@ describe('rechunkDocument', () => {
       data: { status: 'failed', errorMessage: 'Unknown error' },
     });
   });
+
+  it('dispatches CSV documents through chunkCsvDocument (not the markdown chunker)', async () => {
+    // A CSV document stores rawContent as the joined "Header: Value | …" lines
+    // emitted by parseCsv. Re-chunking must split those back into one chunk per
+    // row, not pass the whole blob to chunkMarkdownDocument.
+    const doc = makeDocument({
+      id: 'doc-csv-rechunk',
+      name: 'spending',
+      fileName: 'spending.csv',
+      status: 'ready',
+      metadata: {
+        format: 'csv',
+        rawContent: 'name: Acme | amount: 100\nname: Beta | amount: 200\nname: Gamma | amount: 300',
+      },
+    });
+    const oldChunks = [{ content: 'irrelevant — rebuilt from rawContent', chunkType: 'csv_row' }];
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...doc,
+      chunks: oldChunks,
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ id: 'doc-csv-rechunk', status: 'ready', chunkCount: 3 }) as never
+    );
+    vi.mocked(chunkCsvDocument).mockReturnValue([
+      makeChunk({ id: 'r1', chunkType: 'csv_row' }),
+      makeChunk({ id: 'r2', chunkType: 'csv_row' }),
+      makeChunk({ id: 'r3', chunkType: 'csv_row' }),
+    ]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2], [0.3]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+
+    await rechunkDocument('doc-csv-rechunk');
+
+    expect(chunkCsvDocument).toHaveBeenCalledTimes(1);
+    expect(chunkMarkdownDocument).not.toHaveBeenCalled();
+    // Verify the rebuilt parsed shape: 3 sections, one per non-empty line in rawContent.
+    const callArg = vi.mocked(chunkCsvDocument).mock.calls[0][0];
+    expect(callArg.sections).toHaveLength(3);
+    expect(callArg.sections[0].content).toBe('name: Acme | amount: 100');
+    expect(callArg.sections[2].content).toBe('name: Gamma | amount: 300');
+  });
 });
 
 describe('listDocuments', () => {

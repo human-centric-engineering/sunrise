@@ -419,10 +419,13 @@ export function chunkCsvDocument(
   }
 
   if (!shouldBatch) {
-    for (const section of parsed.sections) {
-      const order = section.order ?? 0;
+    // Use the array index for the chunk ID rather than `section.order` —
+    // `order` is an optional hint from the parser; if two sections happened to
+    // share a value the chunk_key UNIQUE constraint would reject the insert.
+    for (let i = 0; i < parsed.sections.length; i++) {
+      const section = parsed.sections[i];
       chunks.push({
-        id: `${documentSlug}-row-${order + 1}`,
+        id: `${documentSlug}-row-${i + 1}`,
         content: section.content,
         chunkType: 'csv_row',
         patternNumber: null,

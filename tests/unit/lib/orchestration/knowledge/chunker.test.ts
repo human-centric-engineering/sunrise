@@ -658,4 +658,27 @@ describe('chunkCsvDocument', () => {
     };
     expect(chunkCsvDocument(parsed, 'empty')).toEqual([]);
   });
+
+  it('uses the array index for chunk IDs even when sections share the same order value', () => {
+    // Defends against a future caller that constructs ParsedDocument without
+    // setting per-section `order` (or sets them all to 0). Without using the
+    // array index the chunk_key UNIQUE constraint would fire on insert.
+    const parsed: ParsedDocument = {
+      title: 'shared-order',
+      sections: [
+        { title: 'Row 1', content: 'a: 1', order: 0 },
+        { title: 'Row 2', content: 'a: 2', order: 0 },
+        { title: 'Row 3', content: 'a: 3', order: 0 },
+      ],
+      fullText: '',
+      metadata: { format: 'csv' },
+      warnings: [],
+    };
+    const chunks = chunkCsvDocument(parsed, 'doc');
+    const ids = chunks.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids[0]).toContain('-row-1');
+    expect(ids[1]).toContain('-row-2');
+    expect(ids[2]).toContain('-row-3');
+  });
 });
