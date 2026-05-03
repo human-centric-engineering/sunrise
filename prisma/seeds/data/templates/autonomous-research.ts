@@ -1,7 +1,7 @@
 /**
  * Recipe 9: Autonomous Research Orchestration
  *
- * Patterns: Orchestrator (21) + RAG (14) + Guardrails (18) + Evaluation (19).
+ * Patterns: Multi-Agent Collaboration (7) + RAG (14) + Guardrails (18) + Evaluation (19).
  *
  * Flow: retrieve context from the knowledge base → orchestrator step
  * dynamically delegates to available agents based on the planner's

@@ -1,7 +1,7 @@
 /**
  * Recipe 12: Scheduled Source Monitor
  *
- * Patterns: Routing (2) + External Call (15) + Evaluation & Monitoring (19).
+ * Patterns: Routing (2) + Goal Setting & Monitoring (11) + Evaluation & Monitoring (19).
  *
  * Flow: an External Call fetches a watched source on a schedule → an LLM
  * Call categorises the change against a brief stored description of the
