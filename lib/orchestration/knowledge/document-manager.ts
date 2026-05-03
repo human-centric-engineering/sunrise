@@ -13,10 +13,12 @@ import { prisma } from '@/lib/db/client';
 import { executeTransaction } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
 import {
+  chunkCsvDocument,
   chunkMarkdownDocument,
   parseMetadataComments,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
@@ -249,6 +251,12 @@ export async function uploadDocumentFromBuffer(
     });
   }
 
+  // CSV uses row-level chunking via chunkCsvDocument (not the markdown
+  // chunker), so it bypasses uploadDocument and runs the full lifecycle here.
+  if (parsed.metadata.format === 'csv') {
+    return uploadCsvFromParsed(parsed, buffer, fileName, userId, category, sourceUrl);
+  }
+
   // For markdown files, use the raw text directly (the markdown chunker
   // handles structural splitting). For other formats, use the full text
   // which has been normalized to plain text.
@@ -256,6 +264,123 @@ export async function uploadDocumentFromBuffer(
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
   return uploadDocument(content, fileName, userId, category, sourceUrl);
+}
+
+/**
+ * Upload a parsed CSV through the chunk → embed → store pipeline.
+ *
+ * Mirrors `uploadDocument` but calls `chunkCsvDocument` instead of the
+ * markdown chunker so each row stays atomic for retrieval. Persists CSV
+ * structural metadata (delimiter, row/column count, header detection) on
+ * the document so downstream UIs can render it.
+ */
+async function uploadCsvFromParsed(
+  parsed: ParsedDocument,
+  buffer: Buffer,
+  fileName: string,
+  userId: string,
+  category?: string,
+  sourceUrl?: string
+): Promise<AiKnowledgeDocument> {
+  const fileHash = createHash('sha256').update(buffer).digest('hex');
+  const name = fileName.replace(/\.[^.]+$/, '');
+
+  logger.info('Uploading CSV document', { fileName, fileHash, userId });
+
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { fileHash, status: 'ready' },
+  });
+  if (existing) {
+    logger.info('CSV already uploaded, returning existing', {
+      documentId: existing.id,
+      fileHash,
+    });
+    return existing;
+  }
+
+  const document = await prisma.aiKnowledgeDocument.create({
+    data: {
+      name,
+      fileName,
+      fileHash,
+      scope: 'app',
+      category: category ?? null,
+      sourceUrl: sourceUrl ?? null,
+      status: 'processing',
+      uploadedBy: userId,
+    },
+  });
+
+  try {
+    const chunks = chunkCsvDocument(parsed, name, document.id);
+
+    if (category) {
+      for (const chunk of chunks) {
+        if (!chunk.category) chunk.category = category;
+      }
+    }
+
+    if (chunks.length === 0) {
+      await prisma.aiKnowledgeDocument.update({
+        where: { id: document.id },
+        data: {
+          status: 'ready',
+          chunkCount: 0,
+          metadata: {
+            format: 'csv',
+            rawContent: parsed.fullText,
+            delimiter: parsed.metadata.delimiter,
+            rowCount: parsed.metadata.rowCount,
+            columnCount: parsed.metadata.columnCount,
+            hasHeader: parsed.metadata.hasHeader,
+            warnings: parsed.warnings,
+          },
+        },
+      });
+      return document;
+    }
+
+    const texts = chunks.map((c) => c.content);
+    const { embeddings, provenance } = await embedBatch(texts);
+
+    const updated = await executeTransaction(async (tx) => {
+      await insertChunks(tx, document.id, chunks, embeddings, provenance);
+      return await tx.aiKnowledgeDocument.update({
+        where: { id: document.id },
+        data: {
+          status: 'ready',
+          chunkCount: chunks.length,
+          metadata: {
+            format: 'csv',
+            rawContent: parsed.fullText,
+            delimiter: parsed.metadata.delimiter,
+            rowCount: parsed.metadata.rowCount,
+            columnCount: parsed.metadata.columnCount,
+            hasHeader: parsed.metadata.hasHeader,
+            warnings: parsed.warnings,
+          },
+        },
+      });
+    });
+
+    logger.info('CSV uploaded successfully', {
+      documentId: document.id,
+      chunkCount: chunks.length,
+      rowCount: parsed.metadata.rowCount,
+    });
+
+    return updated;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('CSV upload failed', { documentId: document.id, error: message });
+
+    await prisma.aiKnowledgeDocument.update({
+      where: { id: document.id },
+      data: { status: 'failed', errorMessage: message },
+    });
+
+    throw error;
+  }
 }
 
 /** Result of a document preview (parse-only, no chunking/embedding). */

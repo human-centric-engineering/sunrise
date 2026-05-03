@@ -8,6 +8,7 @@
  * Supported formats:
  *   - .txt  — plain text, ~90% reliability
  *   - .md   — markdown (passed through as-is to existing chunker)
+ *   - .csv  — RFC 4180 with delimiter sniffing, row-level chunking
  *   - .epub — EPUB ebooks, ~85% reliability (best for books)
  *   - .docx — Word documents via mammoth, ~80% reliability
  *   - .pdf  — PDF via pdf-parse, 40-70% reliability (requires preview step)
@@ -17,6 +18,7 @@ import { extname } from 'path';
 import { logger } from '@/lib/logging';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { parseTxt } from '@/lib/orchestration/knowledge/parsers/txt-parser';
+import { parseCsv } from '@/lib/orchestration/knowledge/parsers/csv-parser';
 import { parseDocx } from '@/lib/orchestration/knowledge/parsers/docx-parser';
 import { parseEpub } from '@/lib/orchestration/knowledge/parsers/epub-parser';
 import { parsePdf } from '@/lib/orchestration/knowledge/parsers/pdf-parser';
@@ -27,7 +29,7 @@ export type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledg
 export const PREVIEW_REQUIRED_EXTENSIONS = new Set(['.pdf']);
 
 /** Formats that are directly chunkable without preview. */
-export const DIRECT_CHUNK_EXTENSIONS = new Set(['.md', '.txt', '.epub', '.docx']);
+export const DIRECT_CHUNK_EXTENSIONS = new Set(['.md', '.txt', '.csv', '.epub', '.docx']);
 
 /**
  * Parse a document buffer into structured text content.
@@ -47,6 +49,9 @@ export async function parseDocument(buffer: Buffer, fileName: string): Promise<P
   switch (ext) {
     case '.txt':
       result = parseTxt(buffer, fileName);
+      break;
+    case '.csv':
+      result = parseCsv(buffer, fileName);
       break;
     case '.md': {
       // Markdown is passed through as a single section — the existing

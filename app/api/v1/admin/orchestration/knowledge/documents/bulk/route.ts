@@ -26,7 +26,7 @@ import { logger } from '@/lib/logging';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
 const MAX_FILES_PER_BATCH = 10;
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.pdf', '.docx', '.epub'];
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.csv', '.pdf', '.docx', '.epub'];
 const MAX_TEXT_LINES = 100_000;
 const MAX_LINE_LENGTH = 10_000;
 

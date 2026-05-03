@@ -63,7 +63,7 @@ const bulkUploadResponseSchema = z.object({
 });
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.epub', '.docx', '.pdf'];
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.csv', '.epub', '.docx', '.pdf'];
 
 /** PDF preview data returned when a PDF upload requires confirmation. */
 export interface PdfPreviewData {
@@ -418,6 +418,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               <strong>.md, .markdown, .txt</strong> — text files, chunked immediately
             </li>
             <li>
+              <strong>.csv</strong> — RFC 4180 with delimiter sniffing; each row becomes its own
+              chunk for row-level retrieval
+            </li>
+            <li>
               <strong>.epub, .docx</strong> — parsed to text, then chunked automatically
             </li>
             <li>
@@ -454,7 +458,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           <Upload className="text-muted-foreground mb-2 h-8 w-8" />
           <p className="text-sm font-medium">Drop files here or click to browse</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            .md, .txt, .epub, .docx, .pdf — up to 50 MB, max 10 files
+            .md, .txt, .csv, .epub, .docx, .pdf — up to 50 MB, max 10 files
           </p>
         </div>
       ) : (
@@ -581,7 +585,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       <input
         ref={inputRef}
         type="file"
-        accept=".md,.markdown,.txt,.epub,.docx,.pdf"
+        accept=".md,.markdown,.txt,.csv,.epub,.docx,.pdf"
         multiple
         className="hidden"
         onChange={handleFileChange}

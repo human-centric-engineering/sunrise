@@ -16,12 +16,14 @@ const FETCH_TIMEOUT_MS = 30_000;
 const CONTENT_TYPE_TO_EXT: Record<string, string> = {
   'text/plain': '.txt',
   'text/markdown': '.md',
+  'text/csv': '.csv',
+  'application/csv': '.csv',
   'application/pdf': '.pdf',
   'application/epub+zip': '.epub',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
 };
 
-const ALLOWED_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.pdf', '.docx', '.epub']);
+const ALLOWED_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.csv', '.pdf', '.docx', '.epub']);
 
 export interface FetchedDocument {
   content: Buffer;

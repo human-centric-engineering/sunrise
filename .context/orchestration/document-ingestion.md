@@ -4,14 +4,15 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 
 ## Supported Formats
 
-| Format      | Extension | Reliability | Parser           | Notes                                                        |
-| ----------- | --------- | ----------- | ---------------- | ------------------------------------------------------------ |
-| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting         |
-| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings     |
-| EPUB        | `.epub`   | ~85%        | `epub-parser.ts` | Best format for books. Extracts chapters via XHTML structure |
-| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split   |
-| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2               |
-| Scanned PDF | N/A       | N/A         | Not supported    | Instruct clients to provide digital-native formats           |
+| Format      | Extension | Reliability | Parser           | Notes                                                                            |
+| ----------- | --------- | ----------- | ---------------- | -------------------------------------------------------------------------------- |
+| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting                             |
+| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings                         |
+| CSV         | `.csv`    | ~95%        | `csv-parser.ts`  | RFC 4180 with delimiter sniffing; one chunk per row (batched above 5k rows)      |
+| EPUB        | `.epub`   | ~85%        | `epub-parser.ts` | Best format for books. Extracts chapters via XHTML structure                     |
+| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split                       |
+| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2                                   |
+| Scanned PDF | N/A       | N/A         | Not supported    | Use macOS Preview / Adobe Acrobat / `ocrmypdf` to OCR externally, then re-upload |
 
 ## Architecture
 
@@ -34,6 +35,7 @@ Upload (multipart form)
 | ---------------------------------------------------- | --------------------------------------------------------------------- |
 | `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                 |
 | `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                 |
+| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)   |
 | `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                            |
 | `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                            |
 | `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                |
@@ -168,6 +170,27 @@ interface ParsedDocument {
 
 The `fullText` field is fed into `chunkMarkdownDocument()` for splitting and embedding. Sections are informational metadata.
 
+## CSV Ingestion
+
+CSV files use a dedicated path:
+
+- **Parser** (`csv-parser.ts`) sniffs the delimiter from the first 5 non-empty
+  lines (`,` / `\t` / `;`, ties → comma), detects whether row 1 is a header
+  (heuristic: every cell non-empty, no purely numeric cells, fewer than half
+  the cells duplicate row 2), then emits one `ParsedSection` per data row
+  with content rendered as `Header1: Value1 | Header2: Value2 | ...`.
+- **Chunker** (`chunkCsvDocument` in `chunker.ts`) emits one `csv_row` chunk
+  per row so retrieval can target a single matching row rather than a
+  diluted multi-row window.
+- **Batching:** above 5,000 rows the chunker batches every 10 rows into a
+  single chunk to cap embedding cost. Constants: `CSV_ROW_BATCH_THRESHOLD`,
+  `CSV_ROWS_PER_BATCH`.
+- **Re-chunking limitation:** `rechunkDocument` joins stored chunks with
+  `\n\n---\n\n` which loses row-level granularity for CSV. Re-uploading is
+  preferred when CSV content changes.
+- **No preview step:** CSVs are deterministic to parse and skip the PDF-style
+  preview/confirm flow.
+
 ## Dependencies
 
 | Package     | Version | Used by     |
@@ -175,3 +198,5 @@ The `fullText` field is fed into `chunkMarkdownDocument()` for splitting and emb
 | `mammoth`   | ^1.12   | DOCX parser |
 | `epub2`     | ^3.0    | EPUB parser |
 | `pdf-parse` | ^2.4    | PDF parser  |
+
+CSV parsing is in-house (no third-party dependency).

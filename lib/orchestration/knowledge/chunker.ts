@@ -7,6 +7,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Output chunk from the chunking process */
 export interface Chunk {
@@ -367,6 +368,88 @@ export function chunkMarkdownDocument(
     document: documentName,
     chunkCount: chunks.length,
     totalTokens: chunks.reduce((sum, c) => sum + c.estimatedTokens, 0),
+  });
+
+  return chunks;
+}
+
+/** CSVs above this row count switch from one-row-per-chunk to batched chunks. */
+export const CSV_ROW_BATCH_THRESHOLD = 5000;
+/** Rows per chunk when batching kicks in. */
+export const CSV_ROWS_PER_BATCH = 10;
+
+/**
+ * Chunk a parsed CSV document into one chunk per row (or batched rows for
+ * very large CSVs).
+ *
+ * Each chunk's content is the pipe-joined "Header: Value | Header: Value"
+ * string already produced by `parseCsv`. Row-atomic chunking lets retrieval
+ * surface a single matching row rather than a diluted multi-row window.
+ *
+ * Above {@link CSV_ROW_BATCH_THRESHOLD} rows, batches of {@link CSV_ROWS_PER_BATCH}
+ * are joined into a single chunk to cap embedding cost.
+ */
+export function chunkCsvDocument(
+  parsed: ParsedDocument,
+  documentName: string,
+  documentId?: string
+): Chunk[] {
+  const idPrefix = documentId ? documentId.slice(0, 8) : '';
+  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
+
+  const chunks: Chunk[] = [];
+  const totalRows = parsed.sections.length;
+  const shouldBatch = totalRows > CSV_ROW_BATCH_THRESHOLD;
+
+  if (shouldBatch) {
+    logger.warn('CSV exceeds row threshold — batching rows per chunk', {
+      document: documentName,
+      rowCount: totalRows,
+      threshold: CSV_ROW_BATCH_THRESHOLD,
+      rowsPerBatch: CSV_ROWS_PER_BATCH,
+    });
+  }
+
+  if (!shouldBatch) {
+    for (const section of parsed.sections) {
+      const order = section.order ?? 0;
+      chunks.push({
+        id: `${documentSlug}-row-${order + 1}`,
+        content: section.content,
+        chunkType: 'csv_row',
+        patternNumber: null,
+        patternName: null,
+        category: null,
+        section: section.title,
+        keywords: null,
+        estimatedTokens: estimateTokens(section.content),
+      });
+    }
+  } else {
+    for (let i = 0; i < parsed.sections.length; i += CSV_ROWS_PER_BATCH) {
+      const batch = parsed.sections.slice(i, i + CSV_ROWS_PER_BATCH);
+      const start = i + 1;
+      const end = i + batch.length;
+      const content = batch.map((s) => s.content).join('\n');
+      chunks.push({
+        id: `${documentSlug}-rows-${start}-${end}`,
+        content,
+        chunkType: 'csv_row',
+        patternNumber: null,
+        patternName: null,
+        category: null,
+        section: `Rows ${start}–${end}`,
+        keywords: null,
+        estimatedTokens: estimateTokens(content),
+      });
+    }
+  }
+
+  logger.info('CSV chunked', {
+    document: documentName,
+    rowCount: totalRows,
+    chunkCount: chunks.length,
+    batched: shouldBatch,
   });
 
   return chunks;

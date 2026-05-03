@@ -17,7 +17,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { chunkMarkdownDocument } from '@/lib/orchestration/knowledge/chunker';
+import {
+  chunkCsvDocument,
+  chunkMarkdownDocument,
+  CSV_ROWS_PER_BATCH,
+  CSV_ROW_BATCH_THRESHOLD,
+} from '@/lib/orchestration/knowledge/chunker';
+import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 
 // ── Mock logger so the info() call at the end of chunkMarkdownDocument is a no-op
 vi.mock('@/lib/logging', () => ({
@@ -578,5 +584,78 @@ ABCDEFGHIJKLMNOP
       // Allow for minor difference between combinedContent (used for estimate) and stripped content
       expect(chunk.estimatedTokens).toBeGreaterThanOrEqual(expectedTokens);
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// chunkCsvDocument
+// ────────────────────────────────────────────────────────────────────────────
+
+function csvParsed(rowCount: number): ParsedDocument {
+  return {
+    title: 'spending',
+    sections: Array.from({ length: rowCount }, (_, i) => ({
+      title: `Row ${i + 1}`,
+      content: `name: Row ${i + 1} | amount: ${(i + 1) * 100}`,
+      order: i,
+    })),
+    fullText: '',
+    metadata: { format: 'csv', delimiter: ',', rowCount: String(rowCount) },
+    warnings: [],
+  };
+}
+
+describe('chunkCsvDocument', () => {
+  it('emits one chunk per row when row count is at or below the batch threshold', () => {
+    const parsed = csvParsed(50);
+    const chunks = chunkCsvDocument(parsed, 'spending', 'docid1234567890');
+    expect(chunks).toHaveLength(50);
+    expect(chunks.every((c) => c.chunkType === 'csv_row')).toBe(true);
+    expect(chunks[0].section).toBe('Row 1');
+    expect(chunks[0].id).toContain('-row-1');
+  });
+
+  it('preserves the per-row content verbatim from the parsed sections', () => {
+    const parsed = csvParsed(3);
+    const chunks = chunkCsvDocument(parsed, 'spending');
+    expect(chunks[0].content).toBe('name: Row 1 | amount: 100');
+    expect(chunks[2].content).toBe('name: Row 3 | amount: 300');
+  });
+
+  it('batches rows when the row count exceeds the batch threshold', () => {
+    const rowCount = CSV_ROW_BATCH_THRESHOLD + CSV_ROWS_PER_BATCH * 3;
+    const parsed = csvParsed(rowCount);
+    const chunks = chunkCsvDocument(parsed, 'large');
+    const expectedChunks = Math.ceil(rowCount / CSV_ROWS_PER_BATCH);
+    expect(chunks).toHaveLength(expectedChunks);
+    expect(chunks[0].section).toBe(`Rows 1–${CSV_ROWS_PER_BATCH}`);
+    expect(chunks[0].id).toContain(`-rows-1-${CSV_ROWS_PER_BATCH}`);
+    expect(chunks[0].chunkType).toBe('csv_row');
+  });
+
+  it('joins batched rows with newlines in the chunk content', () => {
+    const parsed = csvParsed(CSV_ROW_BATCH_THRESHOLD + 5);
+    const chunks = chunkCsvDocument(parsed, 'large');
+    const lines = chunks[0].content.split('\n');
+    expect(lines).toHaveLength(CSV_ROWS_PER_BATCH);
+    expect(lines[0]).toBe('name: Row 1 | amount: 100');
+  });
+
+  it('sets category and keywords to null on every chunk', () => {
+    const parsed = csvParsed(10);
+    const chunks = chunkCsvDocument(parsed, 'x');
+    expect(chunks.every((c) => c.category === null)).toBe(true);
+    expect(chunks.every((c) => c.keywords === null)).toBe(true);
+  });
+
+  it('returns no chunks for an empty CSV', () => {
+    const parsed: ParsedDocument = {
+      title: 'empty',
+      sections: [],
+      fullText: '',
+      metadata: { format: 'csv' },
+      warnings: ['CSV is empty'],
+    };
+    expect(chunkCsvDocument(parsed, 'empty')).toEqual([]);
   });
 });
