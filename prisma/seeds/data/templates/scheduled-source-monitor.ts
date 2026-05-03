@@ -26,7 +26,7 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
     'On a schedule, fetches a watched source, categorises the change against the previous snapshot, and notifies on material changes.',
   patterns: [
     { number: 2, name: 'Routing' },
-    { number: 15, name: 'External Call' },
+    { number: 11, name: 'Goal Setting & Monitoring' },
     { number: 19, name: 'Evaluation & Monitoring' },
   ],
   flowSummary:

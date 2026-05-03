@@ -17,11 +17,11 @@
  *     "External Call", "Orchestrator" — display names that aren't canonical
  *     patterns at all but were accidentally listed as such.
  *
- *  3. Step-registry pattern references are valid — every `patternNumber`
- *     declared in `STEP_REGISTRY` is one of the known canonical numbers
- *     (1–21). Phase C of the cohesion branch renames this field to
- *     `relatedPatterns: number[]`; this test will be updated to iterate the
- *     array at the same time.
+ *  3. Step-registry pattern references are valid — every entry in every
+ *     `STEP_REGISTRY[i].relatedPatterns` array is one of the known
+ *     canonical numbers (1–21). Steps with no related canonical pattern
+ *     (e.g. `external_call`, `send_notification`) carry `[]` and are
+ *     trivially valid.
  *
  * @see types/orchestration.ts — KNOWN_PATTERNS, isValidPatternReference()
  * @see prisma/seeds/data/chunks/chunks.json — canonical seed data
