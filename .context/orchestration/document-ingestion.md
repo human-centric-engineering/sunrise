@@ -19,29 +19,33 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 ```
 Upload (multipart form)
   │
-  ├─ .md / .txt ──────────────► uploadDocument() ──► chunk ──► embed ──► store
+  ├─ .md / .txt ──────────────► uploadDocument() ──► chunkMarkdownDocument() ──► embed ──► store
   │
-  ├─ .epub / .docx ──────────► parseDocument() ──► uploadDocumentFromBuffer() ──► chunk ──► embed ──► store
+  ├─ .csv ────────────────────► parseDocument() ──► uploadDocumentFromBuffer()
+  │                                                  └─► uploadCsvFromParsed() ──► chunkCsvDocument() ──► embed ──► store
+  │                                                       (one chunk per row; batched above 5,000 rows)
+  │
+  ├─ .epub / .docx ──────────► parseDocument() ──► uploadDocumentFromBuffer() ──► chunkMarkdownDocument() ──► embed ──► store
   │
   └─ .pdf ────────────────────► previewDocument() ──► admin reviews text
                                                        │
-                                                       └─► confirmPreview() ──► chunk ──► embed ──► store
+                                                       └─► confirmPreview() ──► chunkMarkdownDocument() ──► embed ──► store
                                                             (optionally with corrected text)
 ```
 
 ## Key Files
 
-| File                                                 | Purpose                                                               |
-| ---------------------------------------------------- | --------------------------------------------------------------------- |
-| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                 |
-| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                 |
-| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)   |
-| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                            |
-| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                            |
-| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                |
-| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                               |
-| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()` |
-| `lib/orchestration/knowledge/chunker.ts`             | Markdown chunking (downstream of parsers)                             |
+| File                                                 | Purpose                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                            |
+| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                            |
+| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)              |
+| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                                       |
+| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                                       |
+| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                           |
+| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                                          |
+| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()`            |
+| `lib/orchestration/knowledge/chunker.ts`             | `chunkMarkdownDocument()` (heading-aware) + `chunkCsvDocument()` (row-per-chunk) |
 
 ## API Endpoints
 
@@ -49,11 +53,12 @@ Upload (multipart form)
 
 `POST /api/v1/admin/orchestration/knowledge/documents`
 
-Multipart form upload. Now accepts `.md`, `.txt`, `.epub`, `.docx`, `.pdf` (was `.md`/`.txt` only).
+Multipart form upload. Accepts `.md`, `.markdown`, `.txt`, `.csv`, `.epub`, `.docx`, `.pdf`.
 
-- **Text files** (`.md`, `.txt`): Read as string, line-length guards apply, direct chunk+embed
-- **Binary files** (`.epub`, `.docx`): Read as buffer, parsed, then chunk+embed
-- **PDF**: Read as buffer, parsed, returns preview response with `requiresConfirmation: true`
+- **Text files** (`.md`, `.markdown`, `.txt`): Read as string, line-length guards apply, direct chunk+embed via `chunkMarkdownDocument`
+- **CSV** (`.csv`): Read as buffer, parsed via `csv-parser.ts`, chunked one row per `csv_row` chunk via `chunkCsvDocument` (batched above 5,000 rows)
+- **EPUB / DOCX** (`.epub`, `.docx`): Read as buffer, parsed, then chunk+embed via `chunkMarkdownDocument`
+- **PDF**: Read as buffer, parsed, returns preview response with `requiresConfirmation: true`. The optional `extractTables=true` form field opts into vector-grid table extraction during the preview parse
 
 Max size: 50 MB (increased from 10 MB to accommodate EPUBs).
 

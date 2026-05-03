@@ -301,11 +301,29 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         >
           <p className="text-foreground font-medium">What happens when you upload</p>
           <p>
-            Your document is <strong>chunked</strong> — split into smaller pieces of a few
-            paragraphs each (roughly 200–3,200 characters). The system splits on headings first (##
-            then ###), then by paragraph breaks. Each chunk is then <strong>embedded</strong> —
-            converted into a numerical vector that captures its meaning. When a user asks a
-            question, the system finds the chunks whose meaning is closest and feeds them to the AI.
+            Your document is <strong>split into smaller pieces</strong> the AI can search through.
+            How the split works depends on the format:
+          </p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+            <li>
+              <strong>Text files (.md / .txt) and Word / EPUB</strong> — the system splits on
+              headings (## then ###) so each piece is a few paragraphs (roughly 200–3,200
+              characters).
+            </li>
+            <li>
+              <strong>CSV / spreadsheets</strong> — each row becomes its own searchable piece, so
+              the AI can find a single line item (one supplier, one transaction, one record) rather
+              than a blurred mix of nearby rows.
+            </li>
+            <li>
+              <strong>PDFs</strong> — extracted text is shown for you to review and edit before the
+              AI ever sees it. Once confirmed, it&apos;s split the same way as a text file.
+            </li>
+          </ul>
+          <p className="mt-2">
+            Each piece is then turned into a numerical fingerprint (an <strong>embedding</strong>)
+            that captures its meaning. When someone asks a question, the system finds the pieces
+            whose meaning is closest and feeds those to the AI.
           </p>
 
           <p className="text-foreground mt-3 font-medium">Category</p>
@@ -323,10 +341,23 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 
           <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
           <p>
-            <strong>Headings matter.</strong> The chunker uses ## and ### headings as natural split
-            points. A document with clear headings produces cleaner, more targeted chunks than a
-            wall of text. Think of each heading as a label that tells the AI what that section is
-            about.
+            <strong>Headings matter</strong> for text and Word documents. The system uses ## and ###
+            headings as natural split points, so a document with clear headings produces cleaner,
+            more targeted pieces than a wall of text. Think of each heading as a label that tells
+            the AI what that section is about.
+          </p>
+          <p className="mt-2">
+            <strong>CSVs:</strong> the first row should be your column headers (Name, Date, Amount,
+            etc.). The system reads them and prepends them to each row when storing it, so a search
+            for &quot;payments to Acme in March&quot; can match the right row even if the AI never
+            sees the spreadsheet as a whole. Comma, tab, and semicolon separators are all detected
+            automatically.
+          </p>
+          <p className="mt-2">
+            <strong>PDFs:</strong> the system extracts the text and shows it to you for review
+            before any chunking happens. You can correct OCR mistakes, delete unwanted sections, or
+            paste in cleaner text from elsewhere. If pages 4–7 of a 22-page PDF were scanned images,
+            you&apos;ll see a warning naming those exact pages so you know what to fix.
           </p>
 
           <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
@@ -580,14 +611,25 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
                     ariaLabel="What does table extraction do?"
                   >
                     <p>
-                      Detects vector-grid tables on each page and appends them as markdown pipe
-                      tables fenced by HTML comments. Works best on PDFs with simple, ruled tables;
-                      vector-graphics-heavy pages may produce false-positive tables that you can
-                      delete in the preview before confirming.
+                      Tries to recognise tables on each PDF page and pull them out as readable rows
+                      and columns. Useful when a PDF contains price lists, comparison tables, or any
+                      structured data that the AI would otherwise see as jumbled lines of text.
                     </p>
                     <p className="mt-2">
-                      Default is off — table extraction can change the output for documents that
-                      previously chunked cleanly without it.
+                      <strong>When it works well:</strong> PDFs with clear ruled tables — invoices,
+                      financial reports, product specifications, lender criteria sheets.
+                    </p>
+                    <p className="mt-2">
+                      <strong>When it can misfire:</strong> PDFs that use lines for decoration
+                      (boxes around quotes, separators between sections, charts with axes) — the
+                      system might find &quot;tables&quot; that aren&apos;t really tables. Anything
+                      it pulls out appears in the preview text below, so you can delete the wrong
+                      bits before confirming.
+                    </p>
+                    <p className="mt-2">
+                      <strong>Why it&apos;s off by default:</strong> turning this on changes the
+                      extracted text. If you&apos;ve already uploaded similar PDFs without it,
+                      mixing both could make search results uneven across your knowledge base.
                     </p>
                   </FieldHelp>
                 </div>

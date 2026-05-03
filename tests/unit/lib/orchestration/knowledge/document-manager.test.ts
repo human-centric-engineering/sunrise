@@ -1190,4 +1190,45 @@ describe('confirmPreview', () => {
     expect(embedBatch).not.toHaveBeenCalled();
     expect(result.chunkCount).toBe(0);
   });
+
+  it("persists format as 'pdf' (no leading dot) and carries pages metadata forward", async () => {
+    const pages = [
+      { num: 1, charCount: 200, hasText: true },
+      { num: 2, charCount: 0, hasText: false },
+    ];
+    const doc = makeDocument({
+      id: 'doc-meta',
+      name: 'manual',
+      fileName: 'manual.pdf',
+      status: 'pending_review',
+      metadata: {
+        extractedText: 'Some content to chunk.',
+        parsedTitle: 'Manual',
+        parsedAuthor: 'Author',
+        sectionCount: 2,
+        warnings: ['Page 2 of 2 produced no extractable text'],
+        pages,
+      },
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ id: 'doc-meta', status: 'ready', chunkCount: 1 }) as never
+    );
+    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+
+    await confirmPreview('doc-meta', 'user-1');
+
+    const finalUpdate = vi
+      .mocked(prisma.aiKnowledgeDocument.update)
+      .mock.calls.find((c) => c[0].data.status === 'ready');
+    expect(finalUpdate).toBeDefined();
+    const md = finalUpdate![0].data.metadata as {
+      format: string;
+      pages: Array<{ num: number; charCount: number; hasText: boolean }> | null;
+    };
+    expect(md.format).toBe('pdf');
+    expect(md.pages).toEqual(pages);
+  });
 });

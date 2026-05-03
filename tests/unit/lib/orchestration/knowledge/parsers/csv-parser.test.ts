@@ -140,6 +140,25 @@ describe('parseCsv', () => {
   // Edge cases & warnings
   // ---------------------------------------------------------------------------
 
+  describe('UTF-8 BOM handling', () => {
+    it('strips a leading BOM so it does not contaminate the first header cell', () => {
+      const csv = '\uFEFFname,amount\nAcme,100\n';
+      const result = parseCsv(buf(csv), 'spending.csv');
+      expect(result.metadata.hasHeader).toBe('true');
+      // The first chunk should render with a clean "name:" header, not "BOM-name:".
+      expect(result.sections[0].content).toBe('name: Acme | amount: 100');
+      expect(result.sections[0].content.charCodeAt(0)).not.toBe(0xfeff);
+    });
+
+    it('handles CRLF line endings without leaking \\r into cells', () => {
+      const csv = 'name,amount\r\nAcme,100\r\nBeta,200\r\n';
+      const result = parseCsv(buf(csv), 'crlf.csv');
+      expect(result.sections).toHaveLength(2);
+      expect(result.sections[0].content).toBe('name: Acme | amount: 100');
+      expect(result.sections[1].content).toBe('name: Beta | amount: 200');
+    });
+  });
+
   describe('Edge cases', () => {
     it('returns empty result with warning for empty input', () => {
       const result = parseCsv(buf(''), 'empty.csv');

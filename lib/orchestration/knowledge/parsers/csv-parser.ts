@@ -171,7 +171,10 @@ function detectHeader(rows: string[][]): boolean {
 
 export function parseCsv(buffer: Buffer, fileName: string): ParsedDocument {
   const warnings: string[] = [];
-  const content = buffer.toString('utf-8');
+  // Excel and other spreadsheet apps frequently save UTF-8 CSVs with a leading
+  // byte-order mark (U+FEFF). Strip it once at the boundary so it never ends
+  // up inside the first header cell (which would pollute every chunk's content).
+  const content = buffer.toString('utf-8').replace(/^\uFEFF/, '');
 
   if (content.trim().length === 0) {
     return {

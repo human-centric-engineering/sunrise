@@ -1,9 +1,17 @@
 /**
- * Markdown Document Chunker
+ * Knowledge-Base Chunkers
  *
- * Splits markdown documents into embeddable chunks for the knowledge base.
- * Handles both pattern documents (with numbered patterns and subsections)
- * and generic markdown documents.
+ * Two chunking strategies live here, both producing the shared `Chunk` shape
+ * consumed by the embedding + insert pipeline:
+ *
+ * - `chunkMarkdownDocument` — heading-aware splitting for markdown (and the
+ *   plain-text / DOCX / EPUB / confirmed-PDF paths that all flow through it).
+ *   Splits on `##` then `###`, then merges/splits sections to land in the
+ *   50–800 token range.
+ * - `chunkCsvDocument` — row-atomic splitting for CSV. One chunk per data
+ *   row, batched into groups of 10 above 5,000 rows so embedding cost stays
+ *   bounded. Each chunk's content is the pipe-joined `Header: Value | …`
+ *   string emitted by `csv-parser.ts`.
  */
 
 import { logger } from '@/lib/logging';

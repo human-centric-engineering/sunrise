@@ -547,12 +547,18 @@ export async function confirmPreview(
           status: 'ready',
           chunkCount: chunks.length,
           metadata: {
-            format: extname(document.fileName).toLowerCase(),
+            // Strip the leading dot so the value matches what parsePdf wrote
+            // ("pdf", not ".pdf") and what the search/filter UIs expect.
+            format: extname(document.fileName).toLowerCase().replace(/^\./, ''),
             rawContent: content,
             parsedTitle: metadata?.parsedTitle ?? null,
             parsedAuthor: metadata?.parsedAuthor ?? null,
             sectionCount: metadata?.sectionCount ?? null,
             warnings: metadata?.warnings ?? [],
+            // Carry forward the per-page diagnostic the parser stored at
+            // preview time, so any future page-picker UI keeps its data
+            // after the admin confirms.
+            pages: metadata?.pages ?? null,
             corrected: !!correctedContent,
           },
         },
