@@ -91,7 +91,7 @@ A template's `patterns[]` array tells learners **which canonical patterns the te
 
 ### I'm adding a new step type — how do I set `relatedPatterns`?
 
-`StepRegistryEntry.relatedPatterns?: number[]` lists the canonical patterns the step most strongly enables.
+`StepRegistryEntry.relatedPatterns: readonly number[]` lists the canonical patterns the step most strongly enables.
 
 - **Single value** is fine when the step is a faithful primitive of one pattern (`reflect` → `[4]`, `rag_retrieve` → `[14]`).
 - **Multi-value** is fine and often more truthful (`agent_call` → `[7, 15]`, `orchestrator` → `[6, 7]`).
