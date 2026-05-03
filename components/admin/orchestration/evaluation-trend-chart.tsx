@@ -61,7 +61,7 @@ export function EvaluationTrendChart({
 }: EvaluationTrendChartProps): React.ReactElement | null {
   const data = React.useMemo(
     () =>
-      points.map((p) => ({
+      (points ?? []).map((p) => ({
         date: formatDateShort(p.completedAt),
         title: p.title,
         faithfulness: p.avgFaithfulness,
@@ -71,7 +71,7 @@ export function EvaluationTrendChart({
     [points]
   );
 
-  if (points.length < 2) {
+  if (!points || points.length < 2) {
     return null;
   }
 

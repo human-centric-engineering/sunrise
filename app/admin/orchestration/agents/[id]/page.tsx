@@ -52,7 +52,8 @@ async function getEvaluationTrend(id: string): Promise<EvaluationTrendPoint[]> {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentEvaluationTrend(id));
     if (!res.ok) return [];
     const body = await parseApiResponse<{ points: EvaluationTrendPoint[] }>(res);
-    return body.success ? body.data.points : [];
+    if (!body.success) return [];
+    return Array.isArray(body.data?.points) ? body.data.points : [];
   } catch (err) {
     logger.error('edit agent page: evaluation trend fetch failed', err, { id });
     return [];
