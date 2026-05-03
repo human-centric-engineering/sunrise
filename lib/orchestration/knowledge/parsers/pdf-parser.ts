@@ -70,6 +70,23 @@ function extractPages(
  * Render a table-array (rows of cells) as a markdown pipe table.
  * The first row is treated as the header row (mirrors common PDF table layout).
  * Returns the empty string for empty/degenerate tables.
+ *
+ * SECURITY INVARIANT — cell sanitisation only escapes pipes and replaces
+ * newlines. It deliberately does NOT escape `<` / `>` / `&`, because:
+ *
+ *  1. Chunk content is rendered downstream by `react-markdown` with no
+ *     plugins (see `components/admin/orchestration/knowledge/explore-tab.tsx`
+ *     and `components/admin/orchestration/knowledge/document-chunks-modal.tsx`)
+ *     — by default raw HTML in markdown source is treated as inert text,
+ *     so a PDF cell containing `<script>` cannot execute.
+ *  2. Storing HTML-escaped text would surface as visible `&lt;` entities in
+ *     the PDF preview textarea, confusing admins who actually expect to see
+ *     the literal extracted text before confirming.
+ *
+ * If a future change adds `rehype-raw` (or any plugin that interprets raw
+ * HTML) to the chunk renderer, harden this function to also escape `<`,
+ * `>`, and `&` before re-enabling that plugin. See the matching warning
+ * in `explore-tab.tsx`.
  */
 function renderMarkdownTable(table: ReadonlyArray<ReadonlyArray<string>>): string {
   if (table.length === 0) return '';

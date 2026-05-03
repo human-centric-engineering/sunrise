@@ -180,6 +180,21 @@ are also a forward path: a future chunker enhancement can teach
 `chunkMarkdownDocument` to keep table blocks atomic. Today, a table whose
 markdown exceeds the chunker's 800-token max may split across chunks.
 
+#### Cell sanitisation invariant
+
+`renderMarkdownTable` only escapes `|` and replaces `\n` in cell text. It
+does NOT escape `<` / `>` / `&`. This is safe today because chunk content
+is rendered downstream by `react-markdown` with no plugins — raw HTML in
+markdown source is treated as inert text, so a PDF cell containing
+`<script>` cannot execute. Storing HTML-escaped text would also surface as
+visible `&lt;` entities in the preview textarea, confusing admins.
+
+If a future change adds `rehype-raw` (or any plugin that interprets raw
+HTML) to the chunk renderer, harden `renderMarkdownTable` first to escape
+`<` / `>` / `&` on every cell. See the matching code comments in
+`lib/orchestration/knowledge/parsers/pdf-parser.ts` and
+`components/admin/orchestration/knowledge/explore-tab.tsx`.
+
 ## Document Statuses
 
 | Status           | Meaning                                                     |
