@@ -427,5 +427,96 @@ describe('parsePdf', () => {
       expect(result.sections[0].content).not.toContain('<!-- table-start -->');
       expect(result.metadata.tablesExtracted).toBeUndefined();
     });
+
+    it('skips malformed page-table entries without a numeric num', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+      mockGetTable.mockResolvedValue({
+        pages: [
+          { tables: [[['x', 'y']]] }, // missing `num`
+          { num: 2, tables: [[['real', 'row']]] },
+        ],
+      });
+
+      const result = await parsePdf(fakeBuffer(), 'mixed.pdf', { extractTables: true });
+
+      const page1 = result.sections.find((s) => s.title === 'Page 1');
+      const page2 = result.sections.find((s) => s.title === 'Page 2');
+      expect(page1?.content).not.toContain('<!-- table-start -->');
+      expect(page2?.content).toContain('<!-- table-start -->');
+      expect(result.metadata.tablesExtracted).toBe('1');
+    });
+
+    it('skips empty tables that render to no markdown', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(1));
+      mockGetTable.mockResolvedValue({
+        pages: [{ num: 1, tables: [[]] }],
+      });
+
+      const result = await parsePdf(fakeBuffer(), 'empty-table.pdf', { extractTables: true });
+
+      expect(result.sections[0].content).not.toContain('<!-- table-start -->');
+      expect(result.metadata.tablesExtracted).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Edge cases for per-page diagnostic ranges
+  // ---------------------------------------------------------------------------
+
+  describe('Per-page diagnostic edge cases', () => {
+    it('warns when a leading page (page 1) is scanned', async () => {
+      mockGetText.mockResolvedValue(pagedResult(['', longPageText(), longPageText()]));
+      mockGetInfo.mockResolvedValue(infoResult(3));
+
+      const result = await parsePdf(fakeBuffer(), 'leading.pdf');
+
+      const warning = result.warnings.find((w) => w.includes('Page 1 of 3'));
+      expect(warning).toBeDefined();
+    });
+
+    it('warns when trailing pages are scanned (range flushes after the loop)', async () => {
+      mockGetText.mockResolvedValue(pagedResult([longPageText(), longPageText(), '', '']));
+      mockGetInfo.mockResolvedValue(infoResult(4));
+
+      const result = await parsePdf(fakeBuffer(), 'trailing.pdf');
+
+      const warning = result.warnings.find((w) => w.includes('Pages 3–4 of 4'));
+      expect(warning).toBeDefined();
+    });
+
+    it('uses pages[].num when present rather than the array index', async () => {
+      // Simulate pdf-parse returning explicit page numbers (e.g. partial parse).
+      mockGetText.mockResolvedValue({
+        text: `${longPageText()}\f${longPageText()}`,
+        pages: [
+          { num: 5, text: longPageText() },
+          { num: 6, text: longPageText() },
+        ],
+      });
+      mockGetInfo.mockResolvedValue(infoResult(10));
+
+      const result = await parsePdf(fakeBuffer(), 'partial.pdf');
+
+      expect(result.sections.map((s) => s.title)).toEqual(['Page 5', 'Page 6']);
+      expect(result.pageInfo?.[0].num).toBe(5);
+    });
+
+    it('treats undefined page text as an empty page', async () => {
+      mockGetText.mockResolvedValue({
+        text: longPageText(),
+        pages: [
+          { num: 1, text: undefined as unknown as string },
+          { num: 2, text: longPageText() },
+        ],
+      });
+      mockGetInfo.mockResolvedValue(infoResult(2));
+
+      const result = await parsePdf(fakeBuffer(), 'undef.pdf');
+
+      expect(result.pageInfo?.[0].hasText).toBe(false);
+      expect(result.pageInfo?.[1].hasText).toBe(true);
+    });
   });
 });

@@ -385,6 +385,31 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/bulk', () => {
       expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalled();
       expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
     });
+
+    it('calls uploadDocumentFromBuffer for .csv files', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(uploadDocumentFromBuffer).mockResolvedValue(
+        makeDocument({ id: 'doc-csv', fileName: 'spending.csv' }) as never
+      );
+      const fd = makeFormDataWithFiles([
+        new File(['name,amount\nAcme,100\n'], 'spending.csv', { type: 'text/csv' }),
+      ]);
+
+      const response = await POST(makePostRequest(fd));
+
+      expect(response.status).toBe(201);
+      const data = await parseJson<{
+        data: { results: Array<{ status: string; documentId?: string }> };
+      }>(response);
+      expect(data.data.results[0].status).toBe('success');
+      expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'spending.csv',
+        ADMIN_ID,
+        undefined
+      );
+      expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Category parameter', () => {

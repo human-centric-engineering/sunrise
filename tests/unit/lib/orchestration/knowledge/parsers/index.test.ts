@@ -46,6 +46,10 @@ vi.mock('@/lib/orchestration/knowledge/parsers/txt-parser', () => ({
   parseTxt: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/knowledge/parsers/csv-parser', () => ({
+  parseCsv: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/knowledge/parsers/docx-parser', () => ({
   parseDocx: vi.fn(),
 }));
@@ -61,11 +65,13 @@ vi.mock('@/lib/orchestration/knowledge/parsers/epub-parser', () => ({
 // Import the module under test AFTER the mocks are in place
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers/index';
 import { parseTxt } from '@/lib/orchestration/knowledge/parsers/txt-parser';
+import { parseCsv } from '@/lib/orchestration/knowledge/parsers/csv-parser';
 import { parseDocx } from '@/lib/orchestration/knowledge/parsers/docx-parser';
 import { parsePdf } from '@/lib/orchestration/knowledge/parsers/pdf-parser';
 import type { Mock } from 'vitest';
 
 const mockParseTxt = parseTxt as Mock;
+const mockParseCsv = parseCsv as Mock;
 const mockParseDocx = parseDocx as Mock;
 const mockParsePdf = parsePdf as Mock;
 
@@ -165,6 +171,29 @@ describe('parseDocument', () => {
   // ---------------------------------------------------------------------------
   // .docx routing
   // ---------------------------------------------------------------------------
+
+  describe('.csv files', () => {
+    it('should call parseCsv and return its result', async () => {
+      const doc = makeDoc({ title: 'spending', metadata: { format: 'csv' } });
+      mockParseCsv.mockReturnValue(doc);
+
+      const buffer = toBuffer('a,b\n1,2\n');
+      const result = await parseDocument(buffer, 'spending.csv');
+
+      expect(mockParseCsv).toHaveBeenCalledWith(buffer, 'spending.csv');
+      expect(mockParsePdf).not.toHaveBeenCalled();
+      expect(result).toEqual(doc);
+    });
+
+    it('ignores opts.extractTables for non-PDF formats', async () => {
+      mockParseCsv.mockReturnValue(makeDoc());
+
+      await parseDocument(toBuffer(), 'data.csv', { extractTables: true });
+
+      expect(mockParseCsv).toHaveBeenCalledWith(expect.any(Buffer), 'data.csv');
+      expect(mockParsePdf).not.toHaveBeenCalled();
+    });
+  });
 
   describe('.docx files', () => {
     it('should call parseDocx and return its result', async () => {
