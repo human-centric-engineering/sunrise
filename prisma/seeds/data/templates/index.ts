@@ -12,6 +12,7 @@
  */
 
 import { AUTONOMOUS_RESEARCH_TEMPLATE } from '@/prisma/seeds/data/templates/autonomous-research';
+import { CITED_KNOWLEDGE_ADVISOR_TEMPLATE } from '@/prisma/seeds/data/templates/cited-knowledge-advisor';
 import { CODE_REVIEW_TEMPLATE } from '@/prisma/seeds/data/templates/code-review';
 import { CONTENT_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/content-pipeline';
 import { CONVERSATIONAL_LEARNING_TEMPLATE } from '@/prisma/seeds/data/templates/conversational-learning';
@@ -20,6 +21,7 @@ import { DATA_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/data-pipel
 import { OUTREACH_SAFETY_TEMPLATE } from '@/prisma/seeds/data/templates/outreach-safety';
 import { RESEARCH_AGENT_TEMPLATE } from '@/prisma/seeds/data/templates/research-agent';
 import { SAAS_BACKEND_TEMPLATE } from '@/prisma/seeds/data/templates/saas-backend';
+import { SCHEDULED_SOURCE_MONITOR_TEMPLATE } from '@/prisma/seeds/data/templates/scheduled-source-monitor';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 export type {
@@ -38,4 +40,6 @@ export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   OUTREACH_SAFETY_TEMPLATE,
   CODE_REVIEW_TEMPLATE,
   AUTONOMOUS_RESEARCH_TEMPLATE,
+  CITED_KNOWLEDGE_ADVISOR_TEMPLATE,
+  SCHEDULED_SOURCE_MONITOR_TEMPLATE,
 ];
