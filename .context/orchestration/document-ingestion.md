@@ -149,6 +149,16 @@ Returns the created document with HTTP 201.
 
 This human-in-the-loop approach turns unreliable PDF parsing into a usable workflow.
 
+### Re-upload dedup
+
+If the same admin uploads the same PDF a second time (matched by SHA-256 of
+the bytes) while a previous `pending_review` row from that admin still exists,
+`previewDocument` refreshes that row in place rather than creating a second
+one. This keeps the queue clean for the common abandon-then-retry case (e.g.
+the admin tried once without the table-extraction checkbox and wants to retry
+with it on). Dedup is scoped to the uploading user, so two admins triaging
+the same source material don't clobber each other.
+
 ### Per-page scanned diagnostic
 
 The PDF parser reads per-page text from `pdf-parse`'s `pages[]` array. When a

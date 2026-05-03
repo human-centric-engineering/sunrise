@@ -437,6 +437,14 @@ export interface DocumentPreview {
  *
  * Primarily used for PDF uploads where parsing is unreliable.
  *
+ * **Dedup behaviour.** If the same user already has a pending_review row
+ * for this exact file (same SHA-256 hash), the existing row is refreshed in
+ * place with the latest parse result rather than a second row being created.
+ * This keeps the admin queue clean when an admin abandons a preview and
+ * re-uploads the same file (e.g. to retry with `extractTables`). Dedup is
+ * scoped to the uploading user so two admins independently triaging the
+ * same source material don't clobber each other.
+ *
  * @param buffer - Raw file content
  * @param fileName - Original file name
  * @param userId - ID of the uploading user
@@ -452,6 +460,57 @@ export async function previewDocument(
   const name = fileName.replace(/\.[^.]+$/, '');
 
   const parsed = await parseDocument(buffer, fileName, opts);
+
+  const previewMetadata = {
+    extractedText: parsed.fullText,
+    parsedTitle: parsed.title,
+    parsedAuthor: parsed.author ?? null,
+    sectionCount: parsed.sections.length,
+    warnings: parsed.warnings,
+    pages: parsed.pageInfo
+      ? parsed.pageInfo.map((p) => ({
+          num: p.num,
+          charCount: p.charCount,
+          hasText: p.hasText,
+        }))
+      : null,
+  };
+
+  // Reuse an existing pending_review row for the same file + uploader so a
+  // re-upload (typically: admin abandoned a preview, then tried again with
+  // extractTables, or fixed a typo in the source PDF) refreshes the parse in
+  // place instead of leaving stale rows in the queue.
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { fileHash, uploadedBy: userId, status: 'pending_review' },
+  });
+
+  if (existing) {
+    const refreshed = await prisma.aiKnowledgeDocument.update({
+      where: { id: existing.id },
+      data: {
+        // The bytes match by hash, but the file may have been re-named in the
+        // OS — keep the most recent name so the admin sees what they uploaded.
+        name,
+        fileName,
+        metadata: previewMetadata,
+      },
+    });
+    logger.info('Refreshed existing PDF preview', {
+      documentId: refreshed.id,
+      fileName,
+      textLength: parsed.fullText.length,
+      sections: parsed.sections.length,
+      warnings: parsed.warnings.length,
+    });
+    return {
+      document: refreshed,
+      extractedText: parsed.fullText,
+      title: parsed.title,
+      author: parsed.author,
+      sectionCount: parsed.sections.length,
+      warnings: parsed.warnings,
+    };
+  }
 
   // Create document record in pending_review status
   const document = await prisma.aiKnowledgeDocument.create({

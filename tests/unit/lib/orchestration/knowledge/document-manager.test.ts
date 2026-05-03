@@ -1117,6 +1117,82 @@ describe('previewDocument', () => {
     // No document record should have been created
     expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
   });
+
+  it('refreshes the existing pending_review row in place when the same user re-uploads the same file', async () => {
+    // The bytes match by hash (same SHA-256), so the second upload should
+    // update the existing row rather than create a second pending_review.
+    const buffer = Buffer.from('some pdf bytes');
+    const existing = makeDocument({
+      id: 'doc-existing',
+      fileName: 'old-name.pdf',
+      status: 'pending_review',
+      metadata: { extractedText: 'previous (no tables)', warnings: [] },
+    });
+    const refreshed = makeDocument({
+      id: 'doc-existing',
+      fileName: 'spec-v2.pdf',
+      status: 'pending_review',
+    });
+
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'fresh text with tables',
+      title: 'Spec',
+      author: undefined,
+      sections: [{ title: 'Page 1', content: '...', order: 0 }],
+      metadata: { format: 'pdf' },
+      pageInfo: [{ num: 1, charCount: 200, hasText: true }],
+      warnings: [],
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(existing as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(refreshed as never);
+
+    const result = await previewDocument(buffer, 'spec-v2.pdf', 'user-1', {
+      extractTables: true,
+    });
+
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith({
+      where: { id: 'doc-existing' },
+      data: expect.objectContaining({
+        fileName: 'spec-v2.pdf',
+        name: 'spec-v2',
+        metadata: expect.objectContaining({
+          extractedText: 'fresh text with tables',
+          pages: [{ num: 1, charCount: 200, hasText: true }],
+        }),
+      }),
+    });
+    expect(result.document.id).toBe('doc-existing');
+    expect(result.extractedText).toBe('fresh text with tables');
+  });
+
+  it('scopes pending_review dedup to the uploading user', async () => {
+    // Same fileHash but different user — must look only for rows uploaded by
+    // the calling user, otherwise admin A would clobber admin B's preview.
+    const buffer = Buffer.from('shared pdf');
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'text',
+      title: 'Doc',
+      author: undefined,
+      sections: [],
+      metadata: { format: 'pdf' },
+      warnings: [],
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
+      makeDocument({ id: 'new-doc', status: 'pending_review' }) as never
+    );
+
+    await previewDocument(buffer, 'shared.pdf', 'user-2');
+
+    expect(prisma.aiKnowledgeDocument.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        uploadedBy: 'user-2',
+        status: 'pending_review',
+      }),
+    });
+    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalled();
+  });
 });
 
 // ─── confirmPreview ───────────────────────────────────────────────────────────
