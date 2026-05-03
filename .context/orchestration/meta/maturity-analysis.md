@@ -2,7 +2,7 @@
 
 Competitive assessment of Sunrise's agent orchestration against production-ready platforms. Covers functional capabilities, architectural gaps, and prioritised improvements.
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-03
 
 ## TL;DR
 
@@ -10,7 +10,7 @@ Sunrise is a **full-stack agent orchestration platform** embedded in a productio
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8) and citation/source attribution (previously P1 #2 in `improvement-priorities.md`) shipped May 2026.
+3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), and document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies) shipped May 2026.
 
 ---
 
@@ -162,15 +162,18 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | --------------------------------------- | ------- | -------- | -------- | --------- | -------- |
 | Multi-format ingestion                  | Strong  | Strong   | Strong   | None      | Strong   |
 | Semantic chunking                       | Strong  | Strong   | Strong   | None      | Adequate |
+| CSV row-level retrieval                 | Strong  | Adequate | Adequate | None      | Adequate |
 | Vector search (pgvector)                | Strong  | Strong   | Strong   | None      | Strong   |
 | Hybrid search (BM25-flavoured + vector) | Strong  | Adequate | Strong   | None      | Adequate |
 | Inline citation envelope to UI / API    | Strong  | None     | None     | None      | Adequate |
 | Document lifecycle management           | Strong  | Strong   | Adequate | None      | Adequate |
 | PDF preview/confirm flow                | Strong  | None     | None     | None      | None     |
+| Per-page scanned-PDF diagnostics        | Strong  | None     | None     | None      | None     |
+| PDF table extraction (opt-in)           | Strong  | Adequate | Strong   | None      | Strong   |
 | Namespace/team isolation                | None    | Adequate | Adequate | None      | Adequate |
 | Incremental document updates            | None    | Adequate | Adequate | None      | Adequate |
 
-**Sunrise advantages:** PDF preview/confirm workflow is unique. Document lifecycle (pending → processing → ready) is well-designed. Hybrid search (PR #139, May 2026) and the citation envelope (this PR, May 2026) close two prior gaps and pull RAG quality and trustworthiness ahead of all evaluated peers. **Key gaps:** No per-team scoping, no incremental document updates.
+**Sunrise advantages:** PDF preview/confirm workflow is unique. Document lifecycle (pending → processing → ready) is well-designed. Hybrid search (PR #139, May 2026) and the citation envelope (May 2026) close two prior gaps and pull RAG quality and trustworthiness ahead of all evaluated peers. Document-ingestion robustness (this PR, May 2026) adds CSV row-level chunking (a 50k-row CSV lets queries surface a single matching row), per-page scanned-PDF diagnostics that pinpoint which page ranges need external OCR, and an opt-in vector-grid table extraction — all delivered without bundling a new third-party dependency. **Key gaps:** No per-team scoping, no incremental document updates, no bundled OCR (deliberate — external workflow documented).
 
 ### Production Deployment & Scaling
 
@@ -304,6 +307,8 @@ Forward-looking improvements that would establish competitive advantages.
 **Token estimation heuristic.** The 3.5 chars/token heuristic is a known source of context window violations. Models have different tokenisers, and code-heavy or non-English content can diverge 20–30% from the estimate. This affects history truncation decisions — the wrong call here causes either wasted context (truncating too early) or API errors (truncating too late).
 
 **No streaming for background workflows.** Chat has full SSE streaming. Interactive workflow execution has SSE. But cron/webhook-triggered workflows run synchronously — the caller blocks until completion or timeout. For workflows exceeding 60 seconds, this is a reliability problem. The fix is a background execution model with async result polling.
+
+> **Resolved:** Background workflow execution (Tier 2 #8 in `improvement-priorities.md`) — shipped May 2026 (PR #140). Non-blocking maintenance tick, lightweight execution status endpoint, live-poll status from the admin UI, `workflow.execution.failed` hook with engine-crash repair, sanitised hook payloads, liveness watchdog and token ownership on the maintenance tick.
 
 ### Design Decisions Worth Preserving
 

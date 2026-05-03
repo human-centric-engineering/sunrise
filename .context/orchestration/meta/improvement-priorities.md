@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-03
 
 ---
 
@@ -37,7 +37,7 @@ The items that disproportionately unlock the worked examples in `business-applic
 | 2   | Citation / source attribution surfaced in agent responses        | Very high | Low–Moderate | ✅ Done (this PR)                 |
 | 3   | Sharpened HTTP fetcher + dependency-free recipes cookbook        | Very high | Moderate     | ✅ Done (this PR)                 |
 | 4   | More workflow templates aligned to business-application patterns | High      | Low          | ✅ Done (this PR, narrowed scope) |
-| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate     | ⚪ Not started                    |
+| 5   | Document-ingestion robustness for real-world inputs              | High      | Moderate     | ✅ Done (this PR)                 |
 
 ### 1. Hybrid search (BM25-flavoured + vector re-ranking) — ✅ Done
 
@@ -82,13 +82,23 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 
 **Why the catalogue should not grow further.** Each additional template adds maintenance load (seed `hashInputs` drift, test churn, possibility-space confusion in the picker) for diminishing returns. The 11-template catalogue now covers all seven recurring shapes; future custom workflows belong to the AI builder skills, not the seed catalogue.
 
-### 5. Document-ingestion robustness for real-world inputs
+### 5. Document-ingestion robustness for real-world inputs — ✅ Done
 
-**Why.** PDF / DOCX / EPUB parsing exists, but the realistic input distribution in the business-applications (council planning PDFs, NHS guidance, RHS books, lender criteria sheets, Hansard transcripts, council spending CSVs) includes scanned PDFs, table-heavy layouts, and OCR-required content. A fragile parser silently degrades RAG quality.
+**Why it mattered.** PDF / DOCX / EPUB parsing existed, but the realistic input distribution in `business-applications.md` (council planning PDFs, NHS guidance, RHS books, lender criteria sheets, Hansard transcripts, council spending CSVs) includes scanned PDFs, table-heavy layouts, and CSV exports. A fragile parser silently degrades RAG quality. Council-spending CSV at `business-applications.md:777` was the most concrete missing wedge — there was no CSV path at all.
 
-**Approach.** Add OCR fallback (Tesseract or hosted), table-extraction in PDF parser, CSV ingestion path with column-aware chunking.
+**What changed in scoping.** The original framing proposed three pieces: OCR fallback (Tesseract or hosted), PDF table extraction, CSV ingestion. The user constraint here was no new third-party runtime dependencies — bundled Tesseract.js (~30 MB WASM + language packs) and hosted OCR (vendor SDKs) are both out of scope at this stage. The remaining two are achievable with what we already ship: `pdf-parse` v2 already exposes per-page `getText().pages[]`, `getTable()`, and `getImage()` — the parser was only using `getText()` and `getInfo()`. CSV is in-house RFC 4180 (~150 lines of TypeScript).
 
-**Critical files:** `lib/orchestration/knowledge/parsers/`.
+**What shipped (this PR).**
+
+- **CSV parser** (`lib/orchestration/knowledge/parsers/csv-parser.ts`) — pure-TS RFC 4180 reader with delimiter sniffing (`,` / `\t` / `;`), header-row detection, RFC quoting (escaped quotes, embedded commas, embedded newlines), unbalanced-quote recovery. Each data row becomes its own `ParsedSection` rendered as `Header1: Val1 | Header2: Val2 | ...`.
+- **Row-level chunking** (`chunkCsvDocument` in `chunker.ts`) — emits one `csv_row` chunk per row so retrieval surfaces the matching row directly rather than a diluted multi-row window. Above 5,000 rows, batches 10 rows per chunk to cap embedding cost. CSV uploads bypass `chunkMarkdownDocument` and run through a dedicated `uploadCsvFromParsed` lifecycle.
+- **Per-page scanned-PDF diagnostic** — refactored `pdf-parser.ts` to consume `textResult.pages[]` instead of splitting the joined text on form-feed. Consecutive pages with `< 50` chars of extractable text group into a single warning per range (`Pages 4–7 of 22 produced no extractable text — likely scanned`). Per-page char counts are persisted on the preview metadata as a forward path for a page-picker UI; the existing amber-warning rendering picks up the new strings without UI changes. Falls back to form-feed split when `pages[]` is missing.
+- **Opt-in PDF table extraction** — checkbox in the upload zone (default off, only shown for PDF). When enabled, `getTable()` runs per page and detected vector-grid tables are rendered as markdown pipe tables fenced by `<!-- table-start -->` / `<!-- table-end -->` HTML comments. Default-off keeps existing PDF behaviour intact; admin sees the rendered tables in the preview textarea and can delete fenced blocks before confirming. Fence comments are a forward path for the chunker to keep table blocks atomic.
+- **No OCR.** Documented external workflow (macOS Preview / Adobe Acrobat / `ocrmypdf`) for scanned PDFs. Hosted OCR remains an explicit future opt-in via `call_external_api` — the recipes-cookbook pattern from item #3.
+
+**Six `ALLOWED_EXTENSIONS` touchpoints** were updated for `.csv` in one diff (route, bulk route, url-fetcher, upload-zone allowlist + accept attr + footer text). Centralising into one source of truth is a follow-up.
+
+**Critical files (for reference):** `lib/orchestration/knowledge/parsers/csv-parser.ts`, `lib/orchestration/knowledge/parsers/pdf-parser.ts`, `lib/orchestration/knowledge/chunker.ts` (`chunkCsvDocument`), `lib/orchestration/knowledge/document-manager.ts`, `components/admin/orchestration/knowledge/document-upload-zone.tsx`, `.context/orchestration/document-ingestion.md`.
 
 ---
 
@@ -193,12 +203,12 @@ These were P0–P2 in `maturity-analysis.md` but lose value or relevance under s
 
 A pragmatic order for the next sprints, optimised for "shortest path to a sellable wedge."
 
-| Sprint | Theme                   | Items                                                              |
-| ------ | ----------------------- | ------------------------------------------------------------------ |
-| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, 5 (ingestion)      |
-| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅ |
-| 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                   |
-| 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)   |
+| Sprint | Theme                   | Items                                                                |
+| ------ | ----------------------- | -------------------------------------------------------------------- |
+| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅ |
+| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅   |
+| 3      | Validation + polish     | 6 (named eval metrics), 7 (widget customisation)                     |
+| 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)     |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.
 
