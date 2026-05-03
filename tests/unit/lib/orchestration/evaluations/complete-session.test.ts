@@ -22,6 +22,7 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiEvaluationLog: {
       findMany: vi.fn(),
+      update: vi.fn(),
     },
   },
 }));
@@ -46,13 +47,14 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 const { prisma } = await import('@/lib/db/client');
 const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
-const { completeEvaluationSession } =
+const { completeEvaluationSession, rescoreEvaluationSession } =
   await import('@/lib/orchestration/evaluations/complete-session');
 const { NotFoundError, ConflictError, ValidationError } = await import('@/lib/api/errors');
 
 const findFirst = prisma.aiEvaluationSession.findFirst as unknown as ReturnType<typeof vi.fn>;
 const update = prisma.aiEvaluationSession.update as unknown as ReturnType<typeof vi.fn>;
 const findLogs = prisma.aiEvaluationLog.findMany as unknown as ReturnType<typeof vi.fn>;
+const updateLog = prisma.aiEvaluationLog.update as unknown as ReturnType<typeof vi.fn>;
 const mockedGetProvider = getProvider as unknown as ReturnType<typeof vi.fn>;
 const mockedLogCost = logCost as unknown as ReturnType<typeof vi.fn>;
 
@@ -375,5 +377,199 @@ describe('completeEvaluationSession', () => {
     expect(result.status).toBe('completed');
     // Give the microtask queue a tick so the .catch runs.
     await new Promise((resolve) => setImmediate(resolve));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-turn metric scoring (Phase 3 of named-metrics work)
+// ---------------------------------------------------------------------------
+
+const VALID_JUDGE_RESPONSE = {
+  content: JSON.stringify({
+    faithfulness: { score: 0.9, reasoning: 'Marked claims supported.' },
+    groundedness: { score: 0.85, reasoning: 'Mostly grounded.' },
+    relevance: { score: 0.95, reasoning: 'Direct.' },
+  }),
+  usage: { inputTokens: 80, outputTokens: 40 },
+  model: 'claude-sonnet-4-6',
+  finishReason: 'stop' as const,
+};
+
+describe('per-turn metric scoring', () => {
+  it('scores ai_response logs after the summary, persists per-log scores, and returns metricSummary', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Question?' }),
+      makeLog(2, {
+        eventType: 'ai_response',
+        content: 'Answer with [1].',
+        metadata: { citations: [{ marker: 1, chunkId: 'c1', excerpt: 'Body.' }] },
+      }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Per-log scores were persisted via aiEvaluationLog.update
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    const logUpdate = updateLog.mock.calls[0][0];
+    expect(logUpdate.where.id).toBe('log-2');
+    expect(logUpdate.data).toMatchObject({
+      faithfulnessScore: 0.9,
+      groundednessScore: 0.85,
+      relevanceScore: 0.95,
+    });
+    expect(logUpdate.data.judgeReasoning.faithfulness.reasoning).toBe('Marked claims supported.');
+
+    // Aggregate written to the session metadata
+    const sessionUpdateData = update.mock.calls[0][0].data;
+    expect(sessionUpdateData.metricSummary).toMatchObject({
+      avgFaithfulness: 0.9,
+      avgGroundedness: 0.85,
+      avgRelevance: 0.95,
+      scoredLogCount: 1,
+    });
+
+    // Result includes metricSummary
+    expect(result.metricSummary).toMatchObject({
+      avgFaithfulness: 0.9,
+      scoredLogCount: 1,
+    });
+
+    // Two logCost calls — summary phase + scoring phase
+    expect(mockedLogCost).toHaveBeenCalledTimes(2);
+    const phases = mockedLogCost.mock.calls.map((c) => c[0].metadata?.phase);
+    expect(phases).toEqual(['summary', 'scoring']);
+  });
+
+  it('swallows per-log judge errors and continues scoring later logs', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q1?' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A1.' }),
+      makeLog(3, { eventType: 'user_input', content: 'Q2?' }),
+      makeLog(4, { eventType: 'ai_response', content: 'A2.' }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('judge blew up')) // fails for log-2
+      .mockResolvedValueOnce(VALID_JUDGE_RESPONSE); // succeeds for log-4
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Only the successful log was persisted
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    expect(updateLog.mock.calls[0][0].where.id).toBe('log-4');
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+  });
+
+  it('completes the session even when wholesale scoring fails (judge provider unavailable)', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A' }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockRejectedValueOnce(new Error('no judge configured'));
+
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    expect(result.status).toBe('completed');
+    expect(result.metricSummary).toBeNull();
+    // No per-log update, no scoring cost log
+    expect(updateLog).not.toHaveBeenCalled();
+    expect(mockedLogCost).toHaveBeenCalledTimes(1); // summary only
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rescoreEvaluationSession
+// ---------------------------------------------------------------------------
+
+describe('rescoreEvaluationSession', () => {
+  it('throws NotFoundError on missing or cross-user session', async () => {
+    findFirst.mockResolvedValueOnce(null);
+    await expect(
+      rescoreEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('throws ConflictError on a non-completed session', async () => {
+    findFirst.mockResolvedValueOnce({
+      id: 'sess-1',
+      status: 'in_progress',
+      agentId: 'agent-1',
+      metricSummary: null,
+    });
+    await expect(
+      rescoreEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(mockedGetProvider).not.toHaveBeenCalled();
+  });
+
+  it('throws ValidationError when the completed session has no logs', async () => {
+    findFirst.mockResolvedValueOnce({
+      id: 'sess-1',
+      status: 'completed',
+      agentId: 'agent-1',
+      metricSummary: null,
+    });
+    findLogs.mockResolvedValueOnce([]);
+    await expect(
+      rescoreEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('overwrites scores in place and accumulates totalScoringCostUsd from prior runs', async () => {
+    findFirst.mockResolvedValueOnce({
+      id: 'sess-1',
+      status: 'completed',
+      agentId: 'agent-1',
+      metricSummary: { totalScoringCostUsd: 0.025 },
+    });
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A [1].', metadata: { citations: [] } }),
+    ]);
+
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(judgeChat));
+    updateLog.mockResolvedValue({});
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    const result = await rescoreEvaluationSession({
+      sessionId: 'sess-1',
+      userId: 'user-1',
+    });
+
+    // Per-log score persisted in place
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    expect(updateLog.mock.calls[0][0].where.id).toBe('log-2');
+
+    // metricSummary refreshed and cost accumulated. calculateCost mock returns 0.003 per call.
+    expect(result.metricSummary.totalScoringCostUsd).toBeCloseTo(0.025 + 0.003);
+    expect(result.metricSummary.scoredLogCount).toBe(1);
+    expect(result.metricSummary.scoredAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 });

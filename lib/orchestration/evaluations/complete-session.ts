@@ -24,21 +24,26 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import type { Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
-import { CostOperation } from '@/types/orchestration';
+import { CostOperation, type Citation } from '@/types/orchestration';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import type {
   CompleteEvaluationParams,
   CompleteEvaluationResult,
+  EvaluationMetricSummary,
+  RescoreEvaluationParams,
+  RescoreEvaluationResult,
 } from '@/lib/orchestration/evaluations/types';
 import {
   runStructuredCompletion,
   tryParseJson,
 } from '@/lib/orchestration/evaluations/parse-structured';
+import { scoreResponse } from '@/lib/orchestration/evaluations/score-response';
 
 /** Maximum number of log events included in the analysis prompt. */
 const MAX_LOGS_IN_PROMPT = 50;
@@ -49,6 +54,16 @@ const ANALYSIS_TEMPERATURE = 0.2;
 
 const DEFAULT_PROVIDER = process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic';
 const DEFAULT_MODEL = process.env.EVALUATION_DEFAULT_MODEL ?? 'claude-sonnet-4-6';
+
+/**
+ * Judge model used for the per-turn metric scorer (faithfulness,
+ * groundedness, relevance). Independent of the agent under test so a
+ * Haiku-powered agent can be judged by a stronger model. Falls through
+ * to `EVALUATION_DEFAULT_PROVIDER` / `EVALUATION_DEFAULT_MODEL` when
+ * the dedicated env vars aren't set.
+ */
+const JUDGE_PROVIDER = process.env.EVALUATION_JUDGE_PROVIDER ?? DEFAULT_PROVIDER;
+const JUDGE_MODEL = process.env.EVALUATION_JUDGE_MODEL ?? DEFAULT_MODEL;
 
 interface EvaluationAnalysis {
   summary: string;
@@ -124,6 +139,7 @@ export async function completeEvaluationSession(
     inputTokens: analysis.tokenUsage.input,
     outputTokens: analysis.tokenUsage.output,
     operation: CostOperation.EVALUATION,
+    metadata: { phase: 'summary' },
   };
   if (session.agentId) costParams.agentId = session.agentId;
   void logCost(costParams).catch((err) => {
@@ -133,6 +149,27 @@ export async function completeEvaluationSession(
     });
   });
 
+  // Score per-turn metrics. Wrap so a wholesale scoring failure still
+  // lets the session complete with the summary; partial successes are
+  // already persisted per-log inside scoreEvaluationLogs.
+  let metricSummary: EvaluationMetricSummary | null = null;
+  try {
+    metricSummary = await scoreEvaluationLogs({
+      sessionId: session.id,
+      logs,
+      agentId: session.agentId,
+      previousScoringCostUsd: 0,
+    });
+  } catch (err) {
+    logger.error('Evaluation metric scoring failed wholesale (completion continues)', {
+      sessionId: session.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const metricSummaryJson: Prisma.InputJsonValue | undefined = metricSummary
+    ? (metricSummary as unknown as Prisma.InputJsonValue)
+    : undefined;
   const updated = await prisma.aiEvaluationSession.update({
     where: { id: session.id },
     data: {
@@ -140,6 +177,7 @@ export async function completeEvaluationSession(
       summary: analysis.summary,
       improvementSuggestions: analysis.improvementSuggestions,
       completedAt: new Date(),
+      ...(metricSummaryJson !== undefined ? { metricSummary: metricSummaryJson } : {}),
     },
   });
 
@@ -150,7 +188,59 @@ export async function completeEvaluationSession(
     improvementSuggestions: analysis.improvementSuggestions,
     tokenUsage: analysis.tokenUsage,
     costUsd: analysis.costUsd,
+    metricSummary,
   };
+}
+
+/**
+ * Re-run the metric scorer for an already-completed evaluation session.
+ * Overwrites scores in place, refreshes `metricSummary.scoredAt`, and
+ * accumulates `totalScoringCostUsd` across runs. Useful after a
+ * knowledge-base update, prompt tweak, or model swap.
+ */
+export async function rescoreEvaluationSession(
+  params: RescoreEvaluationParams
+): Promise<RescoreEvaluationResult> {
+  const session = await prisma.aiEvaluationSession.findFirst({
+    where: { id: params.sessionId, userId: params.userId },
+    select: {
+      id: true,
+      status: true,
+      agentId: true,
+      metricSummary: true,
+    },
+  });
+
+  if (!session) throw new NotFoundError('Evaluation session not found');
+  if (session.status !== 'completed') {
+    throw new ConflictError('Only completed evaluation sessions can be re-scored');
+  }
+
+  const logs = await prisma.aiEvaluationLog.findMany({
+    where: { sessionId: session.id },
+    orderBy: { sequenceNumber: 'asc' },
+    take: MAX_LOGS_IN_PROMPT,
+  });
+  if (logs.length === 0) {
+    throw new ValidationError('Evaluation session has no logs to score');
+  }
+
+  const previous = session.metricSummary as EvaluationMetricSummary | null;
+  const previousCost = previous?.totalScoringCostUsd ?? 0;
+
+  const metricSummary = await scoreEvaluationLogs({
+    sessionId: session.id,
+    logs,
+    agentId: session.agentId,
+    previousScoringCostUsd: previousCost,
+  });
+
+  await prisma.aiEvaluationSession.update({
+    where: { id: session.id },
+    data: { metricSummary: metricSummary as unknown as Prisma.InputJsonValue },
+  });
+
+  return { sessionId: session.id, metricSummary };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,4 +345,135 @@ function parseAnalysis(raw: string): EvaluationAnalysis | null {
     }
     return null;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn metric scoring (named-metrics work)
+// ---------------------------------------------------------------------------
+
+interface ScoreLogsOptions {
+  sessionId: string;
+  logs: Array<{
+    id: string;
+    sequenceNumber: number;
+    eventType: string;
+    content: string | null;
+    metadata: unknown;
+  }>;
+  agentId: string | null;
+  /** USD already spent on prior scoring runs for this session — added to the new run's spend on rescore. */
+  previousScoringCostUsd: number;
+}
+
+/**
+ * Walk the log array, score every `ai_response` log against the immediately
+ * prior `user_input` log, persist scores per log, and return the aggregate
+ * summary. Per-log judge errors are swallowed (logged at warn level) so a
+ * single bad turn doesn't void the whole pass.
+ */
+async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMetricSummary> {
+  const judgeProvider = await getProvider(JUDGE_PROVIDER);
+
+  const faithfulnessScores: number[] = [];
+  const groundednessScores: number[] = [];
+  const relevanceScores: number[] = [];
+  let scoredCount = 0;
+  let totalRunCostUsd = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  let lastUserContent: string | null = null;
+  for (const log of opts.logs) {
+    if (log.eventType === 'user_input') {
+      lastUserContent = log.content;
+      continue;
+    }
+    if (log.eventType !== 'ai_response') continue;
+    if (!lastUserContent) continue; // ai_response without a preceding question — skip.
+
+    const citations = extractLogCitations(log.metadata);
+    try {
+      const result = await scoreResponse({
+        userQuestion: lastUserContent,
+        aiResponse: log.content ?? '',
+        citations,
+        judgeProvider,
+        judgeModel: JUDGE_MODEL,
+      });
+      const { faithfulness, groundedness, relevance } = result.scores;
+
+      const judgeReasoning: Prisma.InputJsonValue = {
+        faithfulness: { reasoning: faithfulness.reasoning },
+        groundedness: { reasoning: groundedness.reasoning },
+        relevance: { reasoning: relevance.reasoning },
+      };
+      await prisma.aiEvaluationLog.update({
+        where: { id: log.id },
+        data: {
+          faithfulnessScore: faithfulness.score,
+          groundednessScore: groundedness.score,
+          relevanceScore: relevance.score,
+          judgeReasoning,
+        },
+      });
+
+      if (faithfulness.score !== null) faithfulnessScores.push(faithfulness.score);
+      if (groundedness.score !== null) groundednessScores.push(groundedness.score);
+      if (relevance.score !== null) relevanceScores.push(relevance.score);
+      scoredCount++;
+      totalRunCostUsd += result.costUsd;
+      totalInputTokens += result.tokenUsage.input;
+      totalOutputTokens += result.tokenUsage.output;
+    } catch (err) {
+      logger.warn('Per-turn metric scoring failed (run continues)', {
+        sessionId: opts.sessionId,
+        logId: log.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Aggregate cost into a single AiCostLog row tagged phase=scoring so
+  // analytics can split summary spend from scoring spend without a new
+  // CostOperation enum value.
+  if (scoredCount > 0) {
+    const costParams: Parameters<typeof logCost>[0] = {
+      model: JUDGE_MODEL,
+      provider: JUDGE_PROVIDER,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      operation: CostOperation.EVALUATION,
+      metadata: { phase: 'scoring', logsScored: scoredCount },
+    };
+    if (opts.agentId) costParams.agentId = opts.agentId;
+    void logCost(costParams).catch((err) => {
+      logger.error('Failed to log evaluation scoring cost', {
+        sessionId: opts.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  return {
+    avgFaithfulness: average(faithfulnessScores),
+    avgGroundedness: average(groundednessScores),
+    avgRelevance: average(relevanceScores),
+    scoredLogCount: scoredCount,
+    judgeProvider: JUDGE_PROVIDER,
+    judgeModel: JUDGE_MODEL,
+    scoredAt: new Date().toISOString(),
+    totalScoringCostUsd: opts.previousScoringCostUsd + totalRunCostUsd,
+  };
+}
+
+function extractLogCitations(metadata: unknown): Citation[] {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const citations = (metadata as { citations?: unknown }).citations;
+  if (!Array.isArray(citations)) return [];
+  return citations as Citation[];
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
