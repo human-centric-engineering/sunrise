@@ -135,17 +135,13 @@ describe('Workflow templates — patterns[] entries are canonical', () => {
 // Step-registry pattern references are valid
 // ---------------------------------------------------------------------------
 
-describe('STEP_REGISTRY — patternNumber references a canonical pattern', () => {
-  // Phase C of the cohesion branch renames `patternNumber` to
-  // `relatedPatterns: number[]`. When that lands, swap the iteration to flat
-  // every entry's array.
+describe('STEP_REGISTRY — relatedPatterns reference canonical patterns', () => {
   const knownNumbers = new Set(KNOWN_PATTERNS.map((p) => p.number));
 
-  it.each(
-    STEP_REGISTRY.filter((e) => e.patternNumber !== undefined).map(
-      (e) => [e.type, e.patternNumber as number] as const
-    )
-  )('step "%s" patternNumber=%d is one of the canonical 21', (_type, num) => {
-    expect(knownNumbers.has(num), `${num} is not in KNOWN_PATTERNS`).toBe(true);
-  });
+  it.each(STEP_REGISTRY.flatMap((e) => e.relatedPatterns.map((n) => [e.type, n] as const)))(
+    'step "%s" relatedPatterns includes %d which is one of the canonical 21',
+    (_type, num) => {
+      expect(knownNumbers.has(num), `${num} is not in KNOWN_PATTERNS`).toBe(true);
+    }
+  );
 });

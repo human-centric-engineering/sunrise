@@ -120,20 +120,20 @@ describe('PatternPalette', () => {
   });
 
   describe('Learn more buttons', () => {
-    it('renders a "Learn more" button for each entry that has a patternNumber', () => {
+    it('renders a "Learn more" button for each entry that has at least one related pattern', () => {
       render(<PatternPalette />);
 
-      const entriesWithPattern = STEP_REGISTRY.filter((e) => e.patternNumber !== undefined);
+      const entriesWithPattern = STEP_REGISTRY.filter((e) => e.relatedPatterns.length > 0);
       const learnMoreButtons = screen.getAllByRole('button', { name: /learn more/i });
 
       expect(learnMoreButtons.length).toBe(entriesWithPattern.length);
     });
 
-    it('each entry with a patternNumber has a Learn more button in its block', () => {
+    it('each entry with at least one related pattern has a Learn more button in its block', () => {
       render(<PatternPalette />);
 
       for (const entry of STEP_REGISTRY) {
-        if (!entry.patternNumber) continue;
+        if (entry.relatedPatterns.length === 0) continue;
 
         const block = screen.getByTestId(`palette-block-${entry.type}`);
         const button = block.querySelector('button');
@@ -143,32 +143,37 @@ describe('PatternPalette', () => {
       }
     });
 
-    it('each step type maps to the correct design pattern number', () => {
-      // Canonical mapping: step type → knowledge base pattern number.
-      // If this test fails, someone changed a patternNumber in the
-      // registry without verifying it still points to the right pattern.
-      const expectedMapping: Record<string, number> = {
-        llm_call: 1, // Prompt Chaining
-        chain: 1, // Prompt Chaining
-        route: 2, // Routing
-        parallel: 3, // Parallelisation
-        reflect: 4, // Reflection
-        tool_call: 5, // Tool Use
-        plan: 6, // Planning
-        human_approval: 13, // Human-in-the-Loop
-        rag_retrieve: 14, // Knowledge Retrieval (RAG)
-        guard: 18, // Guardrails & Safety
-        evaluate: 19, // Evaluation & Monitoring
-        external_call: 15, // Inter-Agent Communication (A2A)
-        agent_call: 8, // Orchestrator-Workers
+    it('each step type relates to the canonical patterns it implements', () => {
+      // Canonical step → patterns mapping. See
+      // .context/orchestration/patterns-and-steps.md for the rationale.
+      // Patterns and steps are different abstraction layers: the relationship
+      // is many-to-many; some steps don't map to any of the 21 (external_call
+      // is generic HTTP, send_notification is delivery).
+      const expectedMapping: Record<string, readonly number[]> = {
+        llm_call: [1], // Prompt Chaining
+        chain: [1], // Prompt Chaining
+        route: [2], // Routing
+        parallel: [3], // Parallelisation
+        reflect: [4], // Reflection
+        tool_call: [5], // Tool Use
+        plan: [6], // Planning
+        human_approval: [13], // Human-in-the-Loop
+        rag_retrieve: [14], // Knowledge Retrieval (RAG)
+        guard: [18], // Guardrails & Safety
+        evaluate: [19], // Evaluation & Monitoring
+        external_call: [], // generic HTTP — not an agentic pattern
+        agent_call: [7, 15], // Multi-Agent Collaboration + A2A
+        send_notification: [], // delivery — not an agentic pattern
+        orchestrator: [6, 7], // Planning + Multi-Agent Collaboration
       };
 
       for (const entry of STEP_REGISTRY) {
-        if (entry.patternNumber === undefined) continue;
+        const expected = expectedMapping[entry.type];
+        expect(expected, `no expected mapping for step ${entry.type}`).toBeDefined();
         expect(
-          entry.patternNumber,
-          `${entry.type} should link to pattern ${expectedMapping[entry.type]}`
-        ).toBe(expectedMapping[entry.type]);
+          [...entry.relatedPatterns],
+          `${entry.type} should relate to patterns [${expected.join(', ')}]`
+        ).toEqual([...expected]);
       }
     });
   });

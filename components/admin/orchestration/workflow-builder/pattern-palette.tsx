@@ -91,13 +91,16 @@ function PaletteBlock({
       </div>
       <p className="text-muted-foreground mt-1 line-clamp-2 text-[11px]">{entry.description}</p>
       <span className="text-muted-foreground/60 mt-0.5 text-[10px]">{entry.estimatedDuration}</span>
-      {entry.patternNumber && onLearnMore && (
+      {entry.relatedPatterns.length > 0 && onLearnMore && (
         <button
           type="button"
           className="mt-1 inline-block text-[11px] underline opacity-0 transition-opacity group-hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
-            onLearnMore(entry.patternNumber!);
+            // Multi-valued steps (agent_call, orchestrator) link to the
+            // first / primary related pattern. Steps with no related
+            // pattern (external_call, send_notification) hide the link.
+            onLearnMore(entry.relatedPatterns[0]);
           }}
         >
           Learn more
