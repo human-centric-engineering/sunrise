@@ -288,6 +288,28 @@ A short primer first: HTTP is request/response — the client asks, the server a
 
 **Where it lives:** `lib/orchestration/llm/` (cost logging), `lib/orchestration/hooks/` (hook dispatch), `lib/orchestration/webhooks/` (webhook dispatch).
 
+### 2.7 MCP session lifecycle and eviction
+
+**What is it?** When an MCP client connects to Sunrise, the server tracks a session in memory for that client — notification queue, active subscriptions, last-seen timestamp. Letting sessions accumulate forever leaks memory; expiring them too aggressively breaks long-running clients that are simply idle between tool calls.
+
+**What we chose:** A 1-hour idle TTL on every session, plus a `maxSessionsPerKey` cap that rejects new sessions for an API key already at the limit. Sessions are reaped on creation attempts (the manager prunes expired entries before counting toward the cap).
+
+**Alternatives**
+
+| Option                        | Why not                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| Unlimited sessions            | A noisy client leaks memory until the process is restarted              |
+| Per-IP cap only               | Misses the real attribution unit — multiple keys behind one IP          |
+| Persistent session store (DB) | Adds DB load to every notification; sessions are inherently per-process |
+
+**Why this approach**
+
+- Idle sessions reclaim within an hour; active clients refresh their TTL on every interaction.
+- The per-key cap fails closed — a runaway client cannot exhaust the server by opening sessions.
+- State is in-memory and per-process; the multi-instance trade-off is covered in Section 10.2.
+
+**Where it lives:** `lib/orchestration/mcp/session-manager.ts`, `.context/orchestration/mcp.md`.
+
 ---
 
 ## 3. The Agent Engine
@@ -427,6 +449,50 @@ This section covers how an agent actually executes — the structure of a workfl
 
 **Where it lives:** `lib/orchestration/chat/` (handler), `lib/orchestration/llm/provider-manager.ts` (`getProviderWithFallbacks()`), `lib/orchestration/llm/circuit-breaker.ts`, `.context/orchestration/resilience.md`.
 
+### 3.7 Provider selector task-intent heuristic
+
+**What is it?** An agent can be wired to a single hard-coded model, or it can pick a model at runtime based on the task at hand — "be fast", "think hard", "must run privately", "embed this". The latter needs a "selector": a function that takes a task intent and returns the best-fit model from the configured catalog.
+
+**What we chose:** A task-based selector that maps intents (`thinking`, `doing`, `fast_looping`, `high_reliability`, `private`, `embedding`) to tier-roles, with secondary scoring on reasoning, cost, latency, and reliability. Selections are cached for 60 seconds.
+
+**Alternatives**
+
+| Option                     | Why not                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| One pinned model per agent | Loses cost/quality flexibility; admin must re-wire every agent on a model launch |
+| Round-robin / load balance | Ignores fitness — a cheap fast model gets reasoning tasks                        |
+| LLM-driven model selection | Adds an LLM call per turn; cost and latency penalty                              |
+
+**Why this approach**
+
+- Admins describe what they want ("private high-reliability") rather than which specific model.
+- Models added to the registry are picked up by intent automatically — no agent re-wiring on a launch day.
+- The 60-second cache prevents per-call DB lookups without holding stale routes long enough to surprise an admin who just changed the catalog.
+
+**Where it lives:** `lib/orchestration/llm/provider-selector.ts`, `.context/orchestration/provider-selection-matrix.md`.
+
+### 3.8 User memory: per-user-per-agent persistent facts
+
+**What is it?** Conversations end and start; the same user often returns days later. "User memory" is a key-value store that lets an agent remember things across conversations — a user's name, their preferences, the topic they care about — without including every prior conversation in the prompt.
+
+**What we chose:** `AiUserMemory` rows keyed on the `(userId, agentId, key)` tuple. Two separate capabilities — `read_user_memory` and `write_user_memory` — let the agent retrieve and persist facts. Reads are bounded to the 50 most-recent memories per call.
+
+**Alternatives**
+
+| Option                                   | Why not                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| Single global memory store across agents | Leaks identities across separate agent contexts                                 |
+| Memory only per conversation             | Defeats the point — facts evaporate at the end of every chat                    |
+| Vector-search over message history       | Captures facts mentioned in passing; misses facts the agent decided to remember |
+
+**Why this approach**
+
+- The (userId, agentId, key) tuple isolates one agent's memory from another's, even for the same user.
+- Read and write are separate capabilities, so an agent can be granted read-only memory access.
+- The 50-row read cap prevents unbounded prompt growth on power users.
+
+**Where it lives:** `lib/orchestration/capabilities/built-in/user-memory.ts`, `prisma/schema.prisma` (`AiUserMemory`).
+
 ---
 
 ## 4. Resilience and Cost Control
@@ -520,6 +586,72 @@ These four decisions are the operational backbone: keeping a working system work
 - Guard hits are logged into the audit trail regardless of mode, so even `log_only` produces visibility.
 
 **Where it lives:** `lib/orchestration/chat/input-guard.ts`, `lib/orchestration/chat/output-guard.ts` (and citation guard), `.context/orchestration/output-guard.md`.
+
+### 4.5 Per-step timeout wrapper
+
+**What is it?** An LLM call, an external API call, or a long-running tool can hang. Without a timeout, a single misbehaving step holds the whole workflow hostage. A "timeout wrapper" gives every step a deadline; if it doesn't finish in time, the engine cancels it and applies the configured error strategy (retry, fallback, skip, fail).
+
+**What we chose:** Every workflow step is wrapped in an `AbortController` with a configured `timeoutMs`. The wrapper covers the entire step including its retries, so a chain of slow retries cannot run past the deadline. `external_call` defaults to a tighter bound than other step types.
+
+**Alternatives**
+
+| Option                            | Why not                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| No timeout                        | A hung step blocks the workflow indefinitely                                                 |
+| Timeout per retry, not per step   | Three retries plus the original can run far past the apparent budget                         |
+| Global request-level timeout only | Doesn't differentiate fast and slow step types; a fast step can starve while a slow one runs |
+
+**Why this approach**
+
+- Per-step deadlines give different step types appropriate budgets without one global cap.
+- `AbortController` is the platform-native cancellation primitive; downstream `fetch`, LLM clients, and DB drivers honour it.
+- The wrapper composes naturally with the error-classification layer (Section 4.6) — a timeout is treated as a retriable failure unless the step says otherwise.
+
+**Where it lives:** `lib/orchestration/engine/orchestration-engine.ts` (`runStepWithStrategy`), `.context/orchestration/engine.md`.
+
+### 4.6 `ExecutorError.retriable` classification
+
+**What is it?** Some failures are worth retrying — a transient 503, a connection reset, an LLM rate limit. Others aren't — a 401 won't fix itself, and a malformed JSON response from a provider is permanent. Retrying the latter wastes budget and latency. A classification flag tells the engine which is which.
+
+**What we chose:** A custom `ExecutorError` class carries a `retriable: boolean` field (default `true`). Step executors throw with an explicit classification; the engine's retry strategy consults the flag before scheduling another attempt.
+
+**Alternatives**
+
+| Option                           | Why not                                                  |
+| -------------------------------- | -------------------------------------------------------- |
+| Retry every error                | Burns budget and latency on permanent failures           |
+| Retry only specific status codes | Doesn't generalise across LLM, HTTP, DB, and tool errors |
+| LLM-driven retry decision        | Far too slow and expensive for an inner-loop concern     |
+
+**Why this approach**
+
+- Each executor knows its domain best — the LLM executor knows a token-budget error isn't retriable; the HTTP executor knows 503 is.
+- The engine remains generic — it asks "is this retriable?" without needing to know the executor's domain.
+- The default-true posture means a forgotten classification fails open (retries), which is usually safer than silently dropping a transient error.
+
+**Where it lives:** `lib/orchestration/engine/errors.ts`, `lib/orchestration/engine/orchestration-engine.ts`.
+
+### 4.7 Parallel branch aggregation: wait-all only
+
+**What is it?** A workflow with parallel branches can wait for _all_ branches to finish, or stop as soon as the _first_ one succeeds, or wait for the first _N_. Each strategy fits different problems: wait-all for "do these three independent things"; first-success for "ask three providers and use whichever answers first"; first-N for "we need three opinions out of five".
+
+**What we chose:** Wait-all is the only implemented mode. The parallel step config accepts a `stragglerStrategy` field that currently honours `wait-all`; `first-success` is named in the executor docstring as a future mode.
+
+**Alternatives**
+
+| Option                                    | Why not                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------- |
+| Build all three modes from day one        | Premature; we don't yet have a workflow that needs first-success          |
+| Block parallel steps entirely             | Loses the most common case (independent fan-out)                          |
+| Hard-code `wait-all` with no config field | Creates a backwards-incompatible step the day someone needs first-success |
+
+**Why this approach**
+
+- The most common parallel pattern (independent work) is supported now.
+- The config field is forward-compatible — adding first-success is an executor change, not a schema change.
+- Unimplemented modes are explicitly named in the executor docstring, so a workflow author cannot silently use them and get unexpected behaviour.
+
+**Where it lives:** `lib/orchestration/engine/executors/parallel.ts`, `.context/orchestration/workflows.md`. This is an explicit acknowledged gap — see also `improvement-priorities.md` and `maturity-analysis.md` for competitive context.
 
 ---
 
@@ -684,6 +816,50 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 
 **Where it lives:** `lib/orchestration/knowledge/` (search filter), `prisma/schema.prisma` (`AiAgent.knowledgeCategories`, `AiKnowledgeDocument.categories`), `.context/orchestration/knowledge.md`.
 
+### 5.8 Conversation similarity via message embeddings
+
+**What is it?** Embedding messages (Section 5.1) lets the platform answer "find me past conversations that touched on this topic" — useful for analytics, deduplication, surfacing prior context, and detecting unanswered-question patterns. The decision is whether to embed every message and where the embeddings live relative to the knowledge-base index.
+
+**What we chose:** A separate `AiMessageEmbedding` table stores per-message embeddings used for conversation-level similarity. Embeddings are written asynchronously after the message is persisted, so they never block the chat response.
+
+**Alternatives**
+
+| Option                              | Why not                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------ |
+| Embed nothing                       | Loses "find similar past conversations" and topic-frequency analytics                |
+| Embed inline with the chat response | Adds embedding-call latency to the user-facing response                              |
+| Reuse the knowledge-chunk index     | Conflates two corpora with very different governance, lifecycle, and retention rules |
+
+**Why this approach**
+
+- The chat response stays fast; embedding happens in the background.
+- A separate table keeps message embeddings independent of knowledge chunks — different access controls, different retention, different lifecycle.
+- Topic clustering, popular-topics analytics, and unanswered-question detection all draw from this index.
+
+**Where it lives:** `lib/orchestration/chat/`, `prisma/schema.prisma` (`AiMessageEmbedding`), `.context/orchestration/analytics.md`.
+
+### 5.9 Knowledge namespace scope: agent, not team
+
+**What is it?** Knowledge categories (Section 5.7) scope what a single agent can retrieve. Multi-tenant deployments raise a different question: whether teams or organisations have their own knowledge namespaces, isolated from each other. Some platforms (LlamaIndex, Pinecone) ship per-namespace isolation as a first-class feature.
+
+**What we chose:** Knowledge is shared across the deployment, scoped by category — not by team. Multi-tenant isolation is achieved by running separate Sunrise deployments, not by partitioning a single one.
+
+**Alternatives**
+
+| Option                                | Why not                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| Per-team namespaces in one deployment | Adds a permission layer to every search; complicates document upload and curation      |
+| Per-user namespaces                   | Defeats the shared-knowledge use case (most teams want one curated corpus)             |
+| Row-level ACLs at query time          | Heavyweight; few customers actually need it, and SQL-side filters cost on every search |
+
+**Why this approach**
+
+- The current customer base runs single-tenant deployments; agent-scoped categories are sufficient.
+- Multi-tenant deployments are served by separate Docker instances, which is operationally simpler than a built-in namespace boundary.
+- If single-deployment multi-tenancy becomes a customer requirement, the category model can be extended into a namespace tree without an incompatible schema change.
+
+**Where it lives:** `lib/orchestration/knowledge/` (search filter), `prisma/schema.prisma` (`AiKnowledgeDocument.categories`), `.context/orchestration/knowledge.md`. Documented as a deliberate scope choice in `maturity-analysis.md`.
+
 ---
 
 ## 6. Security and Trust
@@ -833,6 +1009,85 @@ This section covers how untrusted input is contained, how authentication works a
 
 **Where it lives:** `lib/orchestration/chat/input-guard.ts`, `lib/orchestration/chat/output-guard.ts`, citation guard inside the same module, `.context/orchestration/output-guard.md`.
 
+### 6.7 Multi-tier rate-limit topology
+
+**What is it?** "Rate limiting" prevents a single client from overwhelming a server. The naïve design has one global limit. A multi-tier design has different limits keyed on different identifiers — IP for unauthenticated traffic, user ID for authenticated, API key for programmatic access, agent or capability for orchestration-internal calls — each with its own window.
+
+**What we chose:** A set of pre-configured limiters in `lib/security/rate-limit.ts`, each created from the same sliding-window primitive but with different windows and identifiers.
+
+| Limiter                                            | Default           | Keyed on            |
+| -------------------------------------------------- | ----------------- | ------------------- |
+| `authLimiter`                                      | tight, anti-brute | IP                  |
+| `apiLimiter`                                       | 100 / min         | IP                  |
+| `adminLimiter`                                     | 30 / min          | IP                  |
+| `chatLimiter` (admin chat)                         | 20 / min          | user ID             |
+| `consumerChatLimiter`                              | 10 / min          | user ID             |
+| `embedChatLimiter`                                 | 10 / min          | embed token + IP    |
+| `uploadLimiter`                                    | 10 / 15 min       | IP                  |
+| `acceptInviteLimiter`                              | 5 / 15 min        | IP                  |
+| `passwordResetLimiter`, `verificationEmailLimiter` | 3 / 15 min        | IP                  |
+| Per-capability sliding window                      | configurable      | (agent, capability) |
+
+**Alternatives**
+
+| Option                     | Why not                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| Single global limit        | Either too tight for chat or too loose for password-reset                    |
+| Per-route ad-hoc limits    | Inconsistent; hard to audit and reason about                                 |
+| Cloud-edge rate limit only | Misses logical units (per agent, per capability) the application knows about |
+
+**Why this approach**
+
+- Each axis of abuse — brute-force login, runaway chat, capability flood — has its own bound.
+- All limiters share one sliding-window primitive, so behaviour and observability are consistent.
+- Constants live in one place (`SECURITY_CONSTANTS.RATE_LIMIT.LIMITS`), so retuning is a single-file change.
+
+**Where it lives:** `lib/security/rate-limit.ts`, `lib/orchestration/capabilities/` (per-capability limiter), `.context/security/`.
+
+### 6.8 Per-host outbound rate limiter with `Retry-After` respect
+
+**What is it?** When a workflow calls an external API (`call_external_api`, `external_call`), the platform must not hammer that external service. RFC 7231 defines `Retry-After`, a response header an upstream service uses to say "please don't retry until this time". Most platforms ignore it and back off blindly.
+
+**What we chose:** A per-host sliding-window outbound rate limiter (default 60 requests per minute per hostname). It records `Retry-After` directives from upstream responses (both seconds and HTTP-date formats) and refuses to send another request to that host until the deadline passes.
+
+**Alternatives**
+
+| Option                         | Why not                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| No outbound limiter            | A workflow loop becomes a DDoS source against an integration partner                   |
+| Single global outbound limiter | One slow integration starves all the others                                            |
+| Ignore `Retry-After`           | Defeats the upstream's polite back-pressure signal; risks the platform IP being banned |
+
+**Why this approach**
+
+- An integration partner asking us to back off is honoured automatically.
+- Per-host scoping ensures one slow integration doesn't choke unrelated calls.
+- Back-off decisions are logged, so operators can see when a host is constraining the platform.
+
+**Where it lives:** `lib/orchestration/engine/outbound-rate-limiter.ts`, `.context/orchestration/external-calls.md`.
+
+### 6.9 HTTP idempotency-key support on external calls
+
+**What is it?** Some external APIs (Stripe is the canonical example) accept an "idempotency key" header. If a request with the same key is replayed, the upstream returns the original response instead of performing the action again. This makes safe retry possible — without it, retrying a `POST /charges` could double-bill a customer.
+
+**What we chose:** The `external_call` step type and `call_external_api` capability support an `idempotencyKey` option. The platform either accepts an explicit key from the workflow or auto-generates a UUID and injects it as a header (configurable header name; defaults to `Idempotency-Key`).
+
+**Alternatives**
+
+| Option                               | Why not                                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| No idempotency support               | Retries on transactional endpoints can double-execute                                    |
+| Always auto-generate                 | Doesn't help when the workflow author wants a deterministic key tied to a business event |
+| Idempotency at the engine level only | Misses upstream-supplied de-duplication where the upstream is the actual source of truth |
+
+**Why this approach**
+
+- Safe retry is opt-in but easy to enable.
+- The header name is configurable to match the upstream's convention (`Idempotency-Key`, `X-Idempotency-Key`, vendor-specific names).
+- A deterministic key derived from a business event ID makes the agent's behaviour idempotent at the workflow level too — a re-run of the same step against the same event produces the same upstream side-effect once.
+
+**Where it lives:** `lib/orchestration/http/idempotency.ts`, `lib/orchestration/engine/executors/external-call.ts`, `.context/orchestration/external-calls.md`.
+
 ---
 
 ## 7. Persistence and Data Model
@@ -884,27 +1139,33 @@ How long-lived state is stored, versioned, and audited.
 
 **Where it lives:** `lib/orchestration/audit/`, `prisma/schema.prisma` (`AiAdminAuditLog`), `.context/admin/orchestration-audit-log.md`.
 
-### 7.3 Versioning for agent instructions
+### 7.3 Versioning for agent configuration (two layers)
 
-**What is it?** An "agent" in Sunrise is a configured AI persona — its system instructions are the prompt that shapes its behaviour. Iterating on the prompt is one of the most common admin activities, and "the version that worked yesterday" is often the right answer when today's version regresses.
+**What is it?** An "agent" in Sunrise is a configured AI persona — its system instructions are the prompt that shapes its behaviour, and the rest of its configuration (model, temperature, attached capabilities, knowledge categories, fallback chain) shapes how it runs. Iterating on these is one of the most common admin activities, and "the version that worked yesterday" is often the right answer when today's version regresses.
 
-**What we chose:** Every change to system instructions creates an `AiAgentVersion` row with the full prior text, the change author, and a timestamp. The admin UI surfaces a diff view and a one-click revert.
+**What we chose:** Two complementary versioning layers, each tuned to a different use case.
+
+| Layer                               | Storage                                         | Purpose                                                                                                                                                 |
+| ----------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AiAgent.systemInstructionsHistory` | Inline JSON array on the agent record           | Lightweight diff of instruction-only changes; powers the agent edit UI's "what did I change?" view                                                      |
+| `AiAgentVersion`                    | Separate table with monotonic `version` numbers | Full agent-config snapshots; referenced by experiments via `AiExperimentVariant.agentVersionId` for traffic-splitting between historical configurations |
 
 **Alternatives**
 
-| Option                                | Why not                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| Overwrite without versioning          | "I made it worse, can I undo?" has no answer                              |
-| Versioning of the entire agent record | Heavy; most fields don't need it; instructions are the field that matters |
-| External git-style versioning         | Adds another tool to the loop; non-developer admins won't use it          |
+| Option                        | Why not                                                                                       |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| Overwrite without versioning  | "I made it worse, can I undo?" has no answer                                                  |
+| Inline JSON only              | Doesn't capture model, temperature, or capability bindings; experiments have no stable handle |
+| Separate table only           | Heavy for the common "what just changed in the prompt?" UI affordance                         |
+| External git-style versioning | Adds another tool to the loop; non-developer admins won't use it                              |
 
 **Why this approach**
 
-- Prompt regressions can be reverted in seconds.
-- Audit trails for instruction changes are intrinsic, not bolted on.
-- A/B comparison between historical versions is straightforward.
+- The inline JSON history is cheap to read and powers the admin UI's instruction diff without a join.
+- The full-snapshot `AiAgentVersion` table holds everything an experiment variant needs to reproduce an old agent exactly — instructions plus model, temperature, and capability set.
+- Reverting an instruction change is a one-row update against the inline history; reverting a full configuration is a snapshot restore from `AiAgentVersion`.
 
-**Where it lives:** `prisma/schema.prisma` (`AiAgentVersion`), `app/admin/orchestration/agents/` (diff view).
+**Where it lives:** `prisma/schema.prisma` (`AiAgent.systemInstructionsHistory`, `AiAgentVersion`, `AiExperimentVariant.agentVersionId`), `app/admin/orchestration/agents/` (diff view).
 
 ### 7.4 Rolling summary for long conversations
 
@@ -949,6 +1210,28 @@ How long-lived state is stored, versioned, and audited.
 - Section 10.2 covers what changes when this needs to be coordinated across multiple instances.
 
 **Where it lives:** `lib/orchestration/hooks/` (registry, cache), `.context/orchestration/hooks.md`.
+
+### 7.6 Backup schema versioning + structured `ImportResult`
+
+**What is it?** "Backup and restore" lets admins export a Sunrise configuration as JSON and import it elsewhere — for migration, environment promotion, or sharing between deployments. The format will evolve; old exports must remain importable into newer Sunrise versions. A "schema version" on the backup payload makes this explicit.
+
+**What we chose:** Every backup carries a `schemaVersion` field (currently `1`). Imports check the version against the importer's supported range and adapt or reject as needed. The result of an import is a structured `ImportResult` listing per-entity created/updated counts and a `warnings` array.
+
+**Alternatives**
+
+| Option                             | Why not                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| No version field                   | Older exports break silently as the format changes                         |
+| Just a Sunrise application version | Couples the backup format to the whole app version; complicates downgrades |
+| Boolean success/failure            | Doesn't surface partial successes (5 of 6 agents imported, 1 conflict)     |
+
+**Why this approach**
+
+- The version field decouples the backup format from the application version.
+- Per-entity counts and warnings let the admin UI show "imported 4 agents, 12 capabilities, 2 workflows; 1 warning: provider key not found" instead of an opaque success/failure.
+- Forward and backward compatibility is bounded — the importer states which versions it supports, so a customer can plan upgrade or downgrade work deliberately.
+
+**Where it lives:** `lib/orchestration/backup/schema.ts`, `lib/orchestration/backup/importer.ts`, `.context/orchestration/backup.md`.
 
 ---
 
@@ -1188,6 +1471,28 @@ These three entries describe places where the current implementation deliberatel
 
 **Where it lives:** `lib/orchestration/engine/`, `.context/orchestration/engine.md`, `improvement-priorities.md`.
 
+### 10.4 Maintenance tick: 202 + background-chain with watchdog
+
+**What is it?** The "maintenance tick" is a periodic endpoint that an external scheduler (cron, GitHub Action, an external pinger) calls to drive Sunrise's background work — processing due cron schedules, retrying failed webhook and hook deliveries, reaping stale executions, generating embeddings, applying retention policies, and resuming pending executions. The naïve design runs everything synchronously and returns when done — but a single tick can take minutes, well past most schedulers' HTTP timeout.
+
+**What we chose:** The endpoint runs the time-critical step (`processDueSchedules`) synchronously, then fires the rest as a `Promise.allSettled()` background chain with a 5-minute watchdog, and returns HTTP 202 immediately. Long-running tasks finish after the response is already on the wire.
+
+**Alternatives**
+
+| Option                                  | Why not                                                     |
+| --------------------------------------- | ----------------------------------------------------------- |
+| Run everything synchronously            | Caller's HTTP client times out; partial work is invisible   |
+| External worker queue                   | Adds Redis or SQS for what is fundamentally a periodic task |
+| Spawn background tasks with no watchdog | A stuck task pins memory forever                            |
+
+**Why this approach**
+
+- Schedulers see a fast 202 and don't retry on timeout.
+- The schedule-processing step still finishes before the response — so the caller knows whether the cron "succeeded" in the sense it cares about.
+- The 5-minute watchdog bounds the worst case for a stuck task without requiring an external job runner.
+
+**Where it lives:** `app/api/v1/admin/orchestration/maintenance/tick/route.ts`, `.context/orchestration/scheduling.md`.
+
 ---
 
 ## Appendix: Decision Index
@@ -1198,10 +1503,12 @@ Alphabetical index of every decision in this document, with section reference. U
 | ---------------------------------------------------------- | ------- |
 | Agent-scoped knowledge categories                          | 5.7     |
 | API-first design                                           | 1.3     |
+| Backup schema versioning + structured `ImportResult`       | 7.6     |
 | Budget enforcement inside the execution loop               | 4.3     |
 | Checkpoint recovery limited to `human_approval` pauses     | 10.3    |
 | Circuit breaker for LLM providers                          | 4.1     |
 | Citation envelope, `[N]` markers, and citation guard       | 5.6     |
+| Conversation similarity via message embeddings             | 5.8     |
 | Credentials only via environment variables                 | 6.4     |
 | CSV row-level chunking                                     | 5.4     |
 | Custom orchestration engine vs an external framework       | 1.1     |
@@ -1209,29 +1516,39 @@ Alphabetical index of every decision in this document, with section reference. U
 | DB-backed experiments with traffic splitting               | 9.3     |
 | Default-allow dispatch + default-deny LLM visibility       | 3.3     |
 | Embed token + CORS origin allowlist                        | 8.2     |
+| `ExecutorError.retriable` classification                   | 4.6     |
 | Fire-and-forget for cost logging and hook dispatch         | 2.6     |
 | Frozen context snapshots for executors                     | 3.4     |
 | HMAC-SHA256 signed tokens for stateless external approvals | 2.5     |
+| HTTP idempotency-key support on external calls             | 6.9     |
 | Hybrid BM25 + vector search                                | 5.2     |
 | Immutable audit log                                        | 7.2     |
 | In-memory hook registry cache (60s TTL)                    | 7.5     |
 | In-memory state for circuit breaker and budget mutex       | 10.2    |
 | In-process event hooks alongside outbound webhooks         | 2.4     |
 | JSON-RPC 2.0 over Streamable HTTP for the MCP server       | 2.2     |
+| Knowledge namespace scope: agent, not team                 | 5.9     |
 | LLM-driven evaluation completion                           | 9.4     |
+| Maintenance tick: 202 + background-chain with watchdog     | 10.4    |
+| MCP session lifecycle and eviction                         | 2.7     |
 | Mid-stream provider failover                               | 3.6     |
 | Multi-format ingestion via parser-per-format               | 5.3     |
+| Multi-tier rate-limit topology                             | 6.7     |
 | Next.js 16 + App Router + React Server Components          | 1.4     |
 | Optimistic locking + ticket-based overlap guard            | 10.1    |
 | Outbound webhooks with retry                               | 2.3     |
 | Ownership scoping returns 404 not 403                      | 6.3     |
+| Parallel branch aggregation: wait-all only                 | 4.7     |
 | Path alias `@/` enforced via ESLint                        | 8.3     |
 | PDF preview/confirm flow                                   | 5.5     |
 | Per-agent ordered fallback chains                          | 4.2     |
+| Per-host outbound rate limiter with `Retry-After` respect  | 6.8     |
 | Per-operation cost log                                     | 9.2     |
+| Per-step timeout wrapper                                   | 4.5     |
 | pgvector vs a dedicated vector database                    | 5.1     |
 | Platform-agnostic core                                     | 1.2     |
 | PostgreSQL + Prisma 7                                      | 7.1     |
+| Provider selector task-intent heuristic                    | 3.7     |
 | Rolling summary for long conversations                     | 7.4     |
 | Server-Sent Events (SSE) for streaming                     | 2.1     |
 | Seven-stage capability dispatch pipeline                   | 3.2     |
@@ -1243,5 +1560,6 @@ Alphabetical index of every decision in this document, with section reference. U
 | Three-mode safety guards                                   | 4.4     |
 | Token vs session authentication                            | 6.2     |
 | Tool loop with budget check before every LLM call          | 3.5     |
-| Versioning for agent instructions                          | 7.3     |
+| User memory: per-user-per-agent persistent facts           | 3.8     |
+| Versioning for agent configuration (two layers)            | 7.3     |
 | Zod validation at every boundary                           | 6.1     |
