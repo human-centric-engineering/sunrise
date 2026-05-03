@@ -501,6 +501,69 @@ describe('per-turn metric scoring', () => {
     expect(updateLog).not.toHaveBeenCalled();
     expect(mockedLogCost).toHaveBeenCalledTimes(1); // summary only
   });
+
+  it('filters malformed citations out of log metadata before passing to the judge', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q' }),
+      makeLog(2, {
+        eventType: 'ai_response',
+        content: 'A [1].',
+        metadata: {
+          citations: [
+            // Valid — should be passed through.
+            {
+              marker: 1,
+              chunkId: 'c1',
+              documentId: 'd1',
+              documentName: 'Doc',
+              section: 'Page 1',
+              patternNumber: null,
+              patternName: null,
+              excerpt: 'Body.',
+              similarity: 0.9,
+            },
+            // Missing excerpt — would throw inside truncate(undefined, …).
+            {
+              marker: 2,
+              chunkId: 'c2',
+              documentId: 'd2',
+              documentName: 'Doc 2',
+              section: null,
+              similarity: 0.8,
+            },
+            // Wrong shape entirely.
+            'not-an-object',
+            null,
+          ],
+        },
+      }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Score persisted — i.e. the judge call did NOT crash from the malformed
+    // entries; only the valid citation was sent.
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+
+    // Verify the judge prompt only contains the valid marker.
+    const userMsg = (judgeChat.mock.calls[0][0] as Array<{ role: string; content: string }>).find(
+      (m) => m.role === 'user'
+    );
+    expect(userMsg).toBeDefined();
+    const markerMatches = userMsg!.content.match(/"marker":\s*\d+/g) ?? [];
+    expect(markerMatches).toHaveLength(1);
+    expect(userMsg!.content).toContain('"marker": 1');
+  });
 });
 
 // ---------------------------------------------------------------------------

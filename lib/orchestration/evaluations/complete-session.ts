@@ -466,11 +466,33 @@ async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMe
   };
 }
 
+/**
+ * Read citations from an `AiEvaluationLog.metadata` JSON blob and filter
+ * out anything that doesn't match the `Citation` shape needed by the
+ * judge prompt builder (`marker`, `excerpt`, plus the strings/nulls the
+ * prompt renders). Defensive against future schema drift, hand-edited
+ * rows, and partial writes — without this, a single malformed entry
+ * would throw `undefined.length` inside `truncate(c.excerpt, ...)`.
+ */
 function extractLogCitations(metadata: unknown): Citation[] {
   if (!metadata || typeof metadata !== 'object') return [];
   const citations = (metadata as { citations?: unknown }).citations;
   if (!Array.isArray(citations)) return [];
-  return citations as Citation[];
+  return citations.filter(isValidCitation);
+}
+
+function isValidCitation(value: unknown): value is Citation {
+  if (!value || typeof value !== 'object') return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.marker === 'number' &&
+    typeof c.chunkId === 'string' &&
+    typeof c.documentId === 'string' &&
+    typeof c.excerpt === 'string' &&
+    typeof c.similarity === 'number' &&
+    (c.documentName === null || typeof c.documentName === 'string') &&
+    (c.section === null || typeof c.section === 'string')
+  );
 }
 
 function average(values: number[]): number | null {
