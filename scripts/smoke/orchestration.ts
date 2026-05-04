@@ -488,6 +488,88 @@ async function main(): Promise<void> {
     });
     checkRes('PATCH /agents/:id returns 200', patchAgentRes, 200);
 
+    // ── 4b. Widget config (item 7) — admin read/write + public roundtrip ─
+    // Real-DB coverage for the JSONB column. Catches the things mocked
+    // unit tests can't: column-name drift, Prisma type-gen mismatch,
+    // CORS+auth on the public endpoint via X-Embed-Token.
+    console.log('\n=== 4b. widget config + public /widget-config endpoint ===');
+
+    const widgetGetDefaults = await api<
+      Envelope<{ config: { primaryColor: string; headerTitle: string } }>
+    >('GET', `/api/v1/admin/orchestration/agents/${agentId}/widget-config`);
+    checkRes('GET /agents/:id/widget-config returns 200', widgetGetDefaults, 200);
+    check(
+      'GET /widget-config returns DEFAULT_WIDGET_CONFIG when stored value is null',
+      widgetGetDefaults.body?.data?.config?.primaryColor === '#2563eb' &&
+        widgetGetDefaults.body?.data?.config?.headerTitle === 'Chat'
+    );
+
+    const widgetPatchRes = await api<Envelope<{ config: { primaryColor: string } }>>(
+      'PATCH',
+      `/api/v1/admin/orchestration/agents/${agentId}/widget-config`,
+      {
+        body: {
+          primaryColor: '#16a34a',
+          headerTitle: 'Smoke council planning',
+          conversationStarters: ['How do I apply?', 'What are the fees?'],
+        },
+      }
+    );
+    checkRes('PATCH /agents/:id/widget-config returns 200', widgetPatchRes, 200);
+    check(
+      'PATCH /widget-config returns merged config (custom + defaults)',
+      widgetPatchRes.body?.data?.config?.primaryColor === '#16a34a'
+    );
+
+    // Verify it round-trips through Prisma JSONB by re-reading
+    const widgetGetCustom = await api<
+      Envelope<{
+        config: { primaryColor: string; headerTitle: string; conversationStarters: string[] };
+      }>
+    >('GET', `/api/v1/admin/orchestration/agents/${agentId}/widget-config`);
+    check(
+      'Re-read /widget-config sees the persisted custom values',
+      widgetGetCustom.body?.data?.config?.primaryColor === '#16a34a' &&
+        widgetGetCustom.body?.data?.config?.headerTitle === 'Smoke council planning' &&
+        widgetGetCustom.body?.data?.config?.conversationStarters?.length === 2
+    );
+
+    // Validation: bad hex must be rejected before reaching the DB
+    const widgetBadHex = await api(
+      'PATCH',
+      `/api/v1/admin/orchestration/agents/${agentId}/widget-config`,
+      { body: { primaryColor: 'not-a-colour' } }
+    );
+    checkRes('PATCH /widget-config rejects bad hex with 400', widgetBadHex, 400);
+
+    // Public /widget-config — needs an embed token so we mint one first.
+    const tokenCreateRes = await api<Envelope<{ token: string }>>(
+      'POST',
+      `/api/v1/admin/orchestration/agents/${agentId}/embed-tokens`,
+      { body: { label: 'smoke', allowedOrigins: [] } }
+    );
+    checkRes('POST /agents/:id/embed-tokens returns 201', tokenCreateRes, 201);
+    const embedToken = tokenCreateRes.body?.data?.token ?? '';
+
+    const publicWidgetConfigRes = await fetch(`${BASE_URL}/api/v1/embed/widget-config`, {
+      headers: { 'X-Embed-Token': embedToken },
+    });
+    const publicWidgetConfigBody = (await publicWidgetConfigRes.json()) as Envelope<{
+      config: { primaryColor: string; headerTitle: string };
+    }>;
+    check(
+      'GET /api/v1/embed/widget-config (X-Embed-Token) returns 200',
+      publicWidgetConfigRes.status === 200
+    );
+    check(
+      'Public /widget-config exposes the same persisted custom values',
+      publicWidgetConfigBody.data?.config?.primaryColor === '#16a34a' &&
+        publicWidgetConfigBody.data?.config?.headerTitle === 'Smoke council planning'
+    );
+
+    const publicWidgetNoTokenRes = await fetch(`${BASE_URL}/api/v1/embed/widget-config`);
+    check('Public /widget-config without token returns 401', publicWidgetNoTokenRes.status === 401);
+
     // ── 5. Capability CRUD + attach ────────────────────────────────────
     section(5, 'capabilities CRUD + pivot attach');
     const createCapRes = await api<Envelope<{ id: string }>>(
