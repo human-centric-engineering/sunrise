@@ -47,6 +47,7 @@ const agentRow = {
   knowledgeCategories: [],
   topicBoundaries: [],
   brandVoiceInstructions: null,
+  widgetConfig: null,
 };
 
 const capabilityRow = {

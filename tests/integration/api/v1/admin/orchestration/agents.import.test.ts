@@ -353,6 +353,31 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       expect(tx.aiAgentCapability.createMany).toHaveBeenCalled();
     });
 
+    it('writes the imported widgetConfig through to the agent row (overwrite branch)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
+      const tx = getTxMock();
+      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+
+      const stored = { primaryColor: '#16a34a', headerTitle: 'Council' };
+      const bundledWithWidget = {
+        ...makeBundledAgent('existing-agent'),
+        widgetConfig: stored,
+      };
+      await POST(
+        makeRequest({
+          bundle: makeBundle([bundledWithWidget as ReturnType<typeof makeBundledAgent>]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      expect(tx.aiAgent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ widgetConfig: stored }),
+        })
+      );
+    });
+
     it('skips system agents with a warning instead of overwriting', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const systemAgent = { ...makeDbAgent(AGENT_ID, 'system-agent'), isSystem: true };

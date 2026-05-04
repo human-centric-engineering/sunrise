@@ -71,6 +71,7 @@ export async function importOrchestrationConfig(
             maxHistoryTokens: agent.maxHistoryTokens,
             retentionDays: agent.retentionDays,
             providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
         });
         result.agents.updated++;
@@ -80,6 +81,7 @@ export async function importOrchestrationConfig(
             ...agent,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             createdBy: userId,
           },
         });

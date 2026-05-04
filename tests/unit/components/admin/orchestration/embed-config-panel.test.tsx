@@ -31,7 +31,30 @@ const mockDelete = vi.fn();
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
-    get: (...args: unknown[]) => mockGet(...args),
+    // EmbedConfigPanel renders both the appearance section (fetches
+    // /widget-config) and the tokens card (fetches /embed-tokens).
+    // Dispatch widget-config calls to a fixed defaults response so this
+    // suite stays focused on the tokens UI; mockGet remains the
+    // tokens-only mock for backwards compatibility.
+    get: (endpoint: string, ...rest: unknown[]) => {
+      if (typeof endpoint === 'string' && endpoint.includes('/widget-config')) {
+        return Promise.resolve({
+          config: {
+            primaryColor: '#2563eb',
+            surfaceColor: '#ffffff',
+            textColor: '#111827',
+            fontFamily: 'system-ui, sans-serif',
+            headerTitle: 'Chat',
+            headerSubtitle: '',
+            inputPlaceholder: 'Type a message…',
+            sendLabel: 'Send',
+            conversationStarters: [],
+            footerText: '',
+          },
+        });
+      }
+      return mockGet(endpoint, ...rest);
+    },
     post: (...args: unknown[]) => mockPost(...args),
     patch: (...args: unknown[]) => mockPatch(...args),
     delete: (...args: unknown[]) => mockDelete(...args),

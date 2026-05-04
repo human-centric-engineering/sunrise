@@ -100,6 +100,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             knowledgeCategories: source.knowledgeCategories,
             topicBoundaries: source.topicBoundaries,
             brandVoiceInstructions: source.brandVoiceInstructions,
+            widgetConfig: (source.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             createdBy: session.user.id,
           },
         });

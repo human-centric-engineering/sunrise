@@ -97,6 +97,7 @@ function makeSourceAgent() {
     monthlyBudgetUsd: null,
     fallbackProviders: [],
     metadata: null,
+    widgetConfig: { primaryColor: '#16a34a', headerTitle: 'Council' },
     isActive: true,
     isSystem: false,
     createdBy: 'user_abc',

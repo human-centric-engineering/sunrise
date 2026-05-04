@@ -85,6 +85,8 @@ export const API = {
         `/api/v1/admin/orchestration/agents/${id}/embed-tokens`,
       agentEmbedTokenById: (id: string, tokenId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/embed-tokens/${tokenId}`,
+      agentWidgetConfig: (id: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/widget-config`,
       CAPABILITIES: '/api/v1/admin/orchestration/capabilities',
       capabilityById: (id: string): string => `/api/v1/admin/orchestration/capabilities/${id}`,
       capabilityAgents: (id: string): string =>

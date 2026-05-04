@@ -137,6 +137,7 @@ export const POST = withAdminAuth(async (request, session) => {
         knowledgeCategories: bundled.knowledgeCategories ?? [],
         topicBoundaries: bundled.topicBoundaries ?? [],
         brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
+        widgetConfig: (bundled.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
       };
 
       if (existing) {

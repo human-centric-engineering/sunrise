@@ -211,3 +211,79 @@ describe('Embed widget citation rendering', () => {
     expect(body).toContain('orphanPanel.remove()');
   });
 });
+
+describe('Embed widget per-agent config (Phase 2)', () => {
+  it('fetches /widget-config on boot before mounting', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Loader posts X-Embed-Token to /widget-config and waits for the
+    // response before calling mount(). Without this the widget would
+    // ignore admin-configured colours and copy.
+    expect(body).toContain("fetch(apiBase + '/widget-config'");
+    expect(body).toContain("'X-Embed-Token': token");
+    expect(body).toContain('mount(cfg)');
+  });
+
+  it('falls back to DEFAULTS when /widget-config fetch fails', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // .catch on the fetch chain returns null; mount is still called
+    // with DEFAULTS so the widget never silently fails to render.
+    expect(body).toContain('var DEFAULTS = {');
+    expect(body).toContain('.catch(function () { return null; })');
+    expect(body).toContain('cfg = DEFAULTS;');
+  });
+
+  it('applies CSS custom properties on the host element', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The Shadow DOM inherits these from the host. Inline <style> uses
+    // var(--sw-*) so a single property assignment cascades through the
+    // tree without re-templating CSS strings per agent.
+    expect(body).toContain("host.style.setProperty('--sw-primary', cfg.primaryColor)");
+    expect(body).toContain("host.style.setProperty('--sw-surface', cfg.surfaceColor)");
+    expect(body).toContain("host.style.setProperty('--sw-text', cfg.textColor)");
+    expect(body).toContain("host.style.setProperty('--sw-font', cfg.fontFamily)");
+    expect(body).toContain('var(--sw-primary)');
+    expect(body).toContain('var(--sw-surface)');
+  });
+
+  it('substitutes copy strings via textContent / setAttribute (no innerHTML for user copy)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('titleEl.textContent = cfg.headerTitle');
+    expect(body).toContain('subtitleEl.textContent = cfg.headerSubtitle');
+    expect(body).toContain("input.setAttribute('placeholder', cfg.inputPlaceholder)");
+    expect(body).toContain('sendBtn.textContent = cfg.sendLabel');
+    expect(body).toContain('footerEl.textContent = cfg.footerText');
+  });
+
+  it('hides subtitle and footer rows when their config strings are empty', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("subtitleEl.style.display = 'none'");
+    // footer is hidden by default markup; only un-hidden when text is set.
+    expect(body).toContain('class="footer" style="display:none;"');
+  });
+
+  it('declares a renderStarters helper that paints chips before the first message', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('function renderStarters()');
+    // Auto-hides once any message exists.
+    expect(body).toContain('messagesEl.children.length > 0');
+    // Click on a chip drops the text into the input and fires send().
+    expect(body).toContain('input.value = text');
+    expect(body).toContain('send();');
+  });
+
+  it('hides starters as soon as the first message is added', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // addMsg() always sets startersEl.style.display = 'none' so the
+    // chip row vanishes the moment the conversation begins (whether
+    // the user typed or clicked a starter).
+    expect(body).toContain("startersEl.style.display = 'none'");
+  });
+
+  it('cite-marker chip background derives from --sw-primary via color-mix', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The chip used to be hardcoded blue rgba; once admins customise
+    // primary to (say) green, the chip would have looked off. Tint
+    // now follows whatever --sw-primary the loader assigned.
+    expect(body).toContain('color-mix(in srgb, var(--sw-primary)');
+  });
+});

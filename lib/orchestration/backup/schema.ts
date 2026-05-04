@@ -31,6 +31,9 @@ const agentBackupSchema = z.object({
   maxHistoryTokens: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),
   providerConfig: z.unknown().nullable().optional().default(null),
+  // widgetConfig (item 7). Opaque on the wire — resolveWidgetConfig
+  // validates the shape on read. Older backups omit the field.
+  widgetConfig: z.unknown().nullable().optional().default(null),
 });
 
 const capabilityBackupSchema = z.object({

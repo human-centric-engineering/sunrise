@@ -177,6 +177,7 @@ describe('AgentForm — General tab', () => {
         visibility: 'internal',
         deletedAt: null,
         fallbackProviders: [],
+        widgetConfig: null,
       };
 
       // Act

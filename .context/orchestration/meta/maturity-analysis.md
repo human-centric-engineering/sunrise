@@ -10,7 +10,7 @@ Sunrise is a **full-stack agent orchestration platform** embedded in a productio
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies), and named-metric evaluation (Tier 2 #6 — faithfulness/groundedness/relevance scoring with re-score and per-agent trend) shipped May 2026.
+3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies), named-metric evaluation (Tier 2 #6 — faithfulness/groundedness/relevance scoring with re-score and per-agent trend), and widget customisation (Tier 2 #7 — per-agent colours, fonts, header/footer copy, conversation starters, exposed via a public `/widget-config` endpoint and a CSS-custom-property-driven Shadow DOM theme layer; bumps widget customisation from "Adequate" to "Strong" against Dify/Flowise) shipped May 2026.
 
 ---
 
@@ -452,17 +452,19 @@ Sunrise has a consumer-facing deployment path:
 
 ### Embed Comparison Matrix
 
-| Capability                  | Sunrise  | Dify     | Flowise  | n8n  | LangGraph | CrewAI | Haystack |
-| --------------------------- | -------- | -------- | -------- | ---- | --------- | ------ | -------- |
-| Embeddable chat widget      | Strong   | Strong   | Strong   | None | None      | None   | None     |
-| Shadow DOM isolation        | Strong   | None     | None     | N/A  | N/A       | N/A    | N/A      |
-| Iframe embed                | None     | Strong   | Adequate | None | None      | None   | None     |
-| Token-based auth            | Strong   | Adequate | Adequate | N/A  | N/A       | N/A    | N/A      |
-| Embed proxy (hide API host) | None     | None     | Strong   | N/A  | N/A       | N/A    | N/A      |
-| Widget customisation        | Adequate | Strong   | Strong   | N/A  | N/A       | N/A    | N/A      |
-| Agent visibility modes      | Strong   | Adequate | Weak     | N/A  | N/A       | N/A    | N/A      |
+| Capability                  | Sunrise | Dify     | Flowise  | n8n  | LangGraph | CrewAI | Haystack |
+| --------------------------- | ------- | -------- | -------- | ---- | --------- | ------ | -------- |
+| Embeddable chat widget      | Strong  | Strong   | Strong   | None | None      | None   | None     |
+| Shadow DOM isolation        | Strong  | None     | None     | N/A  | N/A       | N/A    | N/A      |
+| Iframe embed                | None    | Strong   | Adequate | None | None      | None   | None     |
+| Token-based auth            | Strong  | Adequate | Adequate | N/A  | N/A       | N/A    | N/A      |
+| Embed proxy (hide API host) | None    | None     | Strong   | N/A  | N/A       | N/A    | N/A      |
+| Widget customisation        | Strong  | Strong   | Strong   | N/A  | N/A       | N/A    | N/A      |
+| Agent visibility modes      | Strong  | Adequate | Weak     | N/A  | N/A       | N/A    | N/A      |
 
 **Sunrise position:** The embed widget with Shadow DOM isolation is architecturally clean — prevents CSS/JS conflicts that iframe-based embeds avoid but at the cost of cross-origin complexity. The 3 visibility modes (internal/public/invite_only) with invite tokens is more granular than Dify's or Flowise's approach. Code-first frameworks (LangGraph, CrewAI, Haystack, AutoGen) don't ship embed widgets — they are libraries, not platforms.
+
+> **Resolved:** Widget customisation (Tier 2 #7 in `improvement-priorities.md`) — shipped May 2026. Per-agent `widgetConfig` JSONB column (colours, fonts, header copy, conversation starters, footer caption) loaded by the widget on boot via a new public `/api/v1/embed/widget-config` endpoint. Inline `<style>` references CSS custom properties (`--sw-primary`, `--sw-surface`, `--sw-text`, `--sw-font`, …) so a single property write cascades through the Shadow DOM tree per partner site. Copy fields rendered via `textContent` / `setAttribute` (XSS-safe). Admin form's Embed tab gains a live preview pane and a soft WCAG AA contrast warning. Roundtrips through the per-agent export bundle, clone route, and full system backup.
 
 **Key gap:** No iframe embed option (Dify offers both). No embed proxy server (Flowise's proxy hides the API host and chatflow ID from client exposure).
 

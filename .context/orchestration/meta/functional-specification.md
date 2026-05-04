@@ -545,12 +545,19 @@ Configuration import with conflict resolution:
 - **JavaScript loader**: Served as API route (`/api/v1/embed/widget.js`)
 - **Shadow DOM isolation**: Prevents CSS/JS conflicts with host page
 - **Streaming**: SSE chat via `/api/v1/embed/chat/`
-- **Authentication**: Embed tokens with CORS origin restrictions
-- **Visibility modes**: Respect agent visibility settings
+- **Per-agent appearance**: Resolved on boot via `/api/v1/embed/widget-config` (token-authenticated). Returns merged `WidgetConfig` (colours, fonts, header/subtitle/footer copy, send-button label, input placeholder, up to four conversation-starter chips) so the same loader serves distinct branded surfaces per partner site.
+- **CSS custom properties**: Inline `<style>` references `var(--sw-primary)`, `var(--sw-surface)`, `var(--sw-text)`, `var(--sw-font)`, etc. — assigned on the host element after config merge so a single property write cascades through the Shadow DOM tree.
+- **XSS-safe copy**: All admin-saved text rendered via `textContent` / `setAttribute('placeholder', …)`. Colour fields validated as 6-digit hex; font-family validated against an allowlist that blocks `{ } ; ( )` so a stored value cannot escape its CSS declaration.
+- **Authentication**: Embed tokens with CORS origin restrictions (shared with the chat-stream endpoint).
+- **Visibility modes**: Respect agent visibility settings.
 
 ### 14.2 Deployment Model
 
 A single `<script>` tag on any website creates an isolated chat interface connected to a configured agent. No iframe — the widget runs in the host page's context but within Shadow DOM for style isolation.
+
+### 14.3 Admin surface
+
+The agent form's Embed tab stacks two cards: **Appearance & copy** (per-agent `widgetConfig`, with three colour pickers, font stack, header/footer copy, conversation-starter list editor, soft WCAG AA contrast warning, and a static live-preview pane on desktop widths) and **Tokens** (existing token CRUD). Appearance saves immediately via `PATCH /api/v1/admin/orchestration/agents/:id/widget-config` and writes a `agent.widget_config.update` audit row with per-field from/to deltas. The `widgetConfig` JSONB column roundtrips through the per-agent export bundle, the clone route, and the full system backup.
 
 ---
 

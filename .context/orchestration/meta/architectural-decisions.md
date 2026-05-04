@@ -1478,6 +1478,31 @@ How Sunrise reaches the user — directly, embedded into other sites, and across
 
 **Where it lives:** `components/admin/orchestration/workflow-builder/`, `lib/orchestration/workflows/` (validator, step registry on the engine side), `.context/admin/workflow-builder.md`. `@xyflow/react` v12 in `package.json`.
 
+### 8.6 Per-agent widget customisation: scope and locale strategy
+
+**What is it?** Every Sunrise widget that ships into a partner site (housing-association tenant portal, broker microsite, council planning page, B&B concierge, tattoo-studio enquiry form) needs to look like it belongs there. Branding requires colours, fonts, header/footer copy, conversation starters, and — for non-English deployments — a way to localise the chrome. The implementation question is _where_ that configuration lives (per-agent vs per-token), and _how_ localisation works (full i18n framework vs admin-typed copy overrides).
+
+**What we chose:** A single nullable `widgetConfig` JSON column on `AiAgent`. Every embed token for that agent inherits the same skin. Localisation is handled by admin-typed copy overrides — header, subtitle, placeholder, send-button label, conversation starters, footer caption — plus the agent's system instructions for response language. No `locale` field, no translation tables, no i18n framework.
+
+**Alternatives**
+
+| Option                                    | Why not                                                                                                                                |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `widgetConfig` per-token                  | Adds a JSON column on `AiAgentEmbedToken`, more admin churn (configure tokens twice), and a flexibility most pilots never exercise     |
+| Real i18n framework (translation tables)  | Bigger surface than the actual problem; only the widget chrome needs localisation, and copy fields already give admins direct control  |
+| `locale` field passed to chat as a prompt | Two places to localise (UI fields + system prompt) instead of one; admins can already say "respond in Spanish" via system instructions |
+| Hardcoded design tokens                   | Original Phase 1 — lost partner sign-off because every deployment looked identical to the same blue chat bubble                        |
+
+**Why this approach**
+
+- Per-agent matches the venture-studio worked examples — narrow-audience, single-instance pilots where two partner sites sharing one agent is a future problem, not a v1 problem. The schema is forward-compatible: a per-token override layer can be added later that defaults through to the agent column.
+- Admin-typed copy is more direct than a translation framework. The same field that says "Type a message…" can become "Escribe un mensaje…" without introducing locale negotiation, fallback chains, or pluralisation rules.
+- One JSON column keeps validation centralised: `widgetConfigSchema` (Zod) plus `resolveWidgetConfig(stored)` for defensive read-time merge with `DEFAULT_WIDGET_CONFIG`. Invalid stored data degrades to defaults; the widget never crashes a partner page.
+- The widget loader assigns CSS custom properties on the Shadow DOM host (`--sw-primary`, `--sw-surface`, `--sw-text`, `--sw-font`, …) so a single property write cascades through the inline `<style>` block via `var()` — admins paint once, the cascade does the rest.
+- All copy is rendered via `textContent` / `setAttribute('placeholder', …)`. Hex colours are regex-validated; font-family is allowlist-validated to block `{ } ; ( )` so a stored font value cannot escape its CSS declaration. Defence-in-depth at both the schema and DOM-API layers.
+
+**Where it lives:** `prisma/schema.prisma` (`AiAgent.widgetConfig`), `lib/validations/orchestration.ts` (`widgetConfigSchema`, `DEFAULT_WIDGET_CONFIG`, `resolveWidgetConfig`), `app/api/v1/embed/widget-config/route.ts` (public, token-authed), `app/api/v1/admin/orchestration/agents/[id]/widget-config/route.ts` (admin GET/PATCH), `app/api/v1/embed/widget.js/route.ts` (loader + CSS-var assignment), `components/admin/orchestration/agents/widget-appearance-section.tsx` (admin form), `.context/orchestration/embed.md` (Widget customisation section).
+
 ---
 
 ## 9. Observability and Quality
@@ -1751,6 +1776,7 @@ Alphabetical index of every decision in this document, with section reference. U
 | Path alias `@/` enforced via ESLint                            | 8.3     |
 | PDF preview/confirm flow                                       | 5.5     |
 | Per-agent ordered fallback chains                              | 4.2     |
+| Per-agent widget customisation: scope and locale strategy      | 8.6     |
 | Per-host outbound rate limiter with `Retry-After` respect      | 6.8     |
 | Per-operation cost log                                         | 9.2     |
 | Per-step timeout wrapper                                       | 4.5     |

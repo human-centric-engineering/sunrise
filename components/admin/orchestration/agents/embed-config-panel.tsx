@@ -3,8 +3,11 @@
 /**
  * EmbedConfigPanel
  *
- * Admin panel for managing embed tokens for an agent.
- * Allows creating tokens, copying embed snippets, and toggling active state.
+ * Admin panel for the agent form's Embed tab. Composes two sections:
+ *   1. WidgetAppearanceSection — colours, copy, conversation starters
+ *      (per-agent widgetConfig)
+ *   2. TokensCard — token CRUD (create / toggle / delete) and copy
+ *      <script> snippet for partner sites
  */
 
 import * as React from 'react';
@@ -18,6 +21,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { WidgetAppearanceSection } from '@/components/admin/orchestration/agents/widget-appearance-section';
 
 interface EmbedToken {
   id: string;
@@ -35,6 +39,15 @@ interface EmbedConfigPanelProps {
 }
 
 export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElement {
+  return (
+    <div className="space-y-6">
+      <WidgetAppearanceSection agentId={agentId} />
+      <TokensCard agentId={agentId} appUrl={appUrl} />
+    </div>
+  );
+}
+
+function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElement {
   const [tokens, setTokens] = React.useState<EmbedToken[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);

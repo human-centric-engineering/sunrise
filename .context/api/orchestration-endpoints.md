@@ -110,6 +110,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/agents/:id/versions/:versionId/restore` | POST               | Restore agent from a version snapshot                   | 5.1     |
 | `/agents/:id/embed-tokens`                | GET, POST          | List / create embed tokens for widget auth              | 5.1     |
 | `/agents/:id/embed-tokens/:tokenId`       | PATCH, DELETE      | Update / delete an embed token                          | 5.1     |
+| `/agents/:id/widget-config`               | GET, PATCH         | Read / update per-agent widget appearance + copy        | 5.1     |
 | `/workflows/templates`                    | GET                | List workflow templates (builtin + custom)              | 5.1     |
 | `/workflows/:id/save-as-template`         | POST               | Save a workflow as a reusable template                  | 5.1     |
 | `/workflows/:id/schedules`                | GET, POST          | List / create cron schedules for a workflow             | 5.1     |
