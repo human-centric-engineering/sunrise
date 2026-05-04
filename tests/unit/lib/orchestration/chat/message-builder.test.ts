@@ -503,6 +503,61 @@ describe('buildMessages', () => {
     expect(userMsg.content).toBe('Just text');
   });
 
+  // ── per-provider tokeniser integration (item #9) ───────────────────────────
+
+  it('honours modelId in token-aware truncation — Anthropic drops at least as many as OpenAI', () => {
+    // The chat handler resolves the agent's model and threads it into
+    // buildMessages so that pre-call truncation runs through the right
+    // provider tokeniser. We stage a history with non-English content
+    // (the headline divergence case for the heuristic) and a budget
+    // tight enough to force truncation, then prove that the same
+    // input produces equal-or-greater drops under Anthropic's
+    // calibrated approximator than under OpenAI's exact tokeniser.
+    const history = Array.from({ length: 8 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: `Turn ${i}: ${'pad '.repeat(15)}¿Cómo estás? Estoy bien, gracias por preguntar.`,
+    }));
+
+    const baseArgs = {
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'next turn',
+      contextWindowTokens: 250,
+      reserveTokens: 50,
+    } as const;
+
+    const openai = buildMessages({ ...baseArgs, modelId: 'gpt-4o-mini' });
+    const anthropic = buildMessages({ ...baseArgs, modelId: 'claude-haiku-4-5' });
+
+    // Count how many of the original history rows survived in each.
+    const surviving = (built: ReturnType<typeof buildMessages>) =>
+      built.filter((m) => typeof m.content === 'string' && m.content.startsWith('Turn ')).length;
+
+    const openaiSurvived = surviving(openai);
+    const anthropicSurvived = surviving(anthropic);
+
+    // Anthropic's higher per-token estimate => fewer messages fit.
+    expect(anthropicSurvived).toBeLessThanOrEqual(openaiSurvived);
+    // Sanity: at least one was truncated under each provider.
+    expect(openaiSurvived).toBeLessThan(history.length);
+  });
+
+  it('omits modelId without crashing — falls back to the heuristic path', () => {
+    // Back-compat: a caller (or an old test, or a workflow tool path)
+    // that doesn't pass modelId still gets a working buildMessages
+    // call routing through the chars/3.5 heuristic.
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [{ role: 'user', content: 'old' }],
+      newUserMessage: 'new',
+      contextWindowTokens: 200,
+      reserveTokens: 50,
+    });
+    expect(messages[messages.length - 1]).toEqual({ role: 'user', content: 'new' });
+  });
+
   it('injects memories before history messages', () => {
     const messages = buildMessages({
       systemInstructions: 'sys',

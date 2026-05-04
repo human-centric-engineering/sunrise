@@ -89,6 +89,7 @@
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "epub2": "^3.0.2",
+    "gpt-tokenizer": "^3.4.0",
     "jmespath": "^0.16.0",
     "lru-cache": "^11.2.6",
     "lucide-react": "^0.563.0",

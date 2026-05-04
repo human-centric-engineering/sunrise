@@ -189,6 +189,70 @@ if (!budget.withinBudget) {
 }
 ```
 
+## Tokenisation
+
+LLMs split text into tokens, not characters. The mapping is dense for English prose (~4 chars/token), much denser for code, and much sparser for non-English / CJK text (~1–2 chars/token). Each provider family ships its own tokeniser; the same string yields different counts on OpenAI vs. Anthropic vs. Google.
+
+Sunrise resolves the right tokeniser per model **before** an LLM call, so context-window truncation drops the right amount of history (no silent provider-side rejections, no over-aggressive trimming). Cost accounting is unaffected — providers report exact `usage.inputTokens` after the call.
+
+### Public surface
+
+```typescript
+import { tokeniserForModel, type Tokeniser } from '@/lib/orchestration/llm';
+
+const t = tokeniserForModel('claude-haiku-4-5');
+t.id; // 'anthropic-approx'
+t.exact; // false  — calibrated approximator
+t.count('Hello world'); // synchronous, no network
+```
+
+### Strategy per family
+
+| Family                                           | Strategy                                  | Source             |
+| ------------------------------------------------ | ----------------------------------------- | ------------------ |
+| OpenAI gpt-4o, o1, o3, o4, gpt-4.1               | Exact via `o200k_base`                    | `gpt-tokenizer`    |
+| OpenAI gpt-4 / gpt-3.5 / davinci (legacy)        | Exact via `cl100k_base`                   | `gpt-tokenizer`    |
+| Anthropic (Claude)                               | `o200k_base` × **1.10** calibration       | local approximator |
+| Google Gemini                                    | `o200k_base` × **1.10** calibration       | local approximator |
+| Llama-family (Together, Fireworks, Groq, Ollama) | `o200k_base` × **1.05** calibration       | local approximator |
+| Unknown model id                                 | Llama-family approximator (defensive)     | local approximator |
+| Missing / null modelId                           | `chars / 3.5` heuristic (legacy fallback) | none               |
+
+The multipliers are **conservative on purpose** — over-counting drops history slightly early; under-counting overflows the context window. Anthropic publishes that Claude tokenisers run roughly 10% denser than OpenAI's modern tokeniser for English; the multiplier captures that without a network call.
+
+### Routing layers
+
+`tokeniserForModel(modelId)` resolves the right tokeniser through three layers, in priority order:
+
+1. **Registry by `provider`** — if `getModel(modelId)` returns a model whose `provider` field matches a known family (`openai`, `anthropic`, `google` / `gemini`, `together` / `fireworks` / `groq` / `ollama` / `lmstudio` / `vllm` / `meta-llama`), route by that. This is the default path in production.
+2. **Model-id pattern** — if the registry is missing the entry (brand-new id, refresh in flight) or the provider field is a custom human-readable label (e.g. a provider config named "OpenAI Production"), infer the family from the id itself: `claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI, `gemini-*` → Gemini, `llama` / `mistral` / `qwen` substring → Llama-family. Defensive net.
+3. **Llama-family approximator** — final default for any modern BPE model not caught by the first two layers; under-counts by at most a few percent versus the truth, which is far better than the chars-only heuristic.
+
+The heuristic tokeniser is only returned when the caller passes a missing / empty model id — production callers should always supply one.
+
+### Why local-only
+
+Anthropic exposes a network `count_tokens` endpoint and Google's SDK has `countTokens()`. Both add 200–500 ms per chat turn — unacceptable on a streaming hot path. Sunrise's tokeniser layer is **synchronous and local** by contract; if a future feature wants exact pre-flight counts (e.g. budget enforcement before a long generation), it can opt in to the network path independently.
+
+### Where it's used
+
+| Caller                                        | What it does                                           |
+| --------------------------------------------- | ------------------------------------------------------ |
+| `lib/orchestration/chat/token-estimator.ts`   | Estimates token counts for individual strings / arrays |
+| `lib/orchestration/chat/message-builder.ts`   | Drops oldest history rows that don't fit before send   |
+| `lib/orchestration/chat/streaming-handler.ts` | Threads the agent's `model` in as `modelId`            |
+
+The chunker (`lib/orchestration/knowledge/chunker.ts`) keeps a separate, simpler `chars / 4` heuristic — embedding-time chunk sizing tolerates more slack and the embedding tokenisers differ from chat tokenisers.
+
+### Re-calibrating the multipliers
+
+Multipliers ship as constants in `lib/orchestration/llm/tokeniser.ts`. To re-measure:
+
+1. Pick a corpus of representative strings (English prose, code, non-English, CJK).
+2. For each provider, send each string with `max_tokens: 1` and read back `usage.inputTokens`.
+3. Compute the ratio against `encodeO200k(text).length` from `gpt-tokenizer`.
+4. Round up and bump the constant. Treat the change as a forward-only adjustment — old conversations have already been accounted for via the `usage.inputTokens` provider report.
+
 ## Error Handling & Resilience
 
 Uniform across every provider via `withRetry` + `fetchWithTimeout` (internal helpers):

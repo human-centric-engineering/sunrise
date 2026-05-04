@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-04 (item 7 shipped)
+**Last updated:** 2026-05-04 (item 9 shipped)
 
 ---
 
@@ -120,7 +120,7 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 | 6   | Named evaluation metrics (faithfulness, groundedness, relevance) | High          | Moderate     | ✅ Done           |
 | 7   | Embed-widget customisation and theming                           | High          | Moderate     | ✅ Done (this PR) |
 | 8   | Background / async execution model for long workflows            | Moderate–High | Moderate     | ✅ Done (PR #140) |
-| 9   | Exact per-provider tokenisation                                  | Moderate–High | Low–Moderate | ⚪ Not started    |
+| 9   | Exact per-provider tokenisation                                  | Moderate–High | Low–Moderate | ✅ Done (this PR) |
 | 10  | Built-in trace viewer / latency attribution improvements         | Moderate      | Moderate     | ⚪ Not started    |
 
 ### 6. Named evaluation metrics (faithfulness, groundedness, relevance) — ✅ Done
@@ -186,13 +186,29 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 
 **Critical files (for reference):** `lib/orchestration/engine/`, `lib/orchestration/scheduling/`, `app/api/v1/orchestration/maintenance/tick/`, `.context/orchestration/scheduling.md`.
 
-### 9. Exact per-provider tokenisation
+### 9. Exact per-provider tokenisation — ✅ Done
 
-**Why.** The 3.5-chars-per-token heuristic is a real source of context-window violations and budget surprises, particularly for code-heavy / non-English content (which several business-applications need: SEND advocacy, immigration support, crypto/regulatory).
+**Why it mattered.** The 3.5-chars-per-token heuristic was load-bearing in two pre-flight decisions: (1) deciding what conversation history to drop before each chat turn so the request fits the model's context window, and (2) sizing chunks at knowledge upload time. The heuristic is fine for English prose but breaks badly on **code** (denser tokenisation than the heuristic predicts) and **non-English / CJK text** (much sparser characters-per-token than English). Multiple business-applications need this corrected — SEND advocacy, immigration support, crypto/regulatory whitepapers, council Hansard transcripts. Cost accounting was already accurate (providers report exact `usage.inputTokens` after the call) so this work scoped to the **pre-flight** path only.
 
-**Approach.** `tiktoken` for OpenAI, Anthropic's counter API, Gemini SDK for Google. Central tokeniser abstraction already exists in `lib/orchestration/llm/`.
+**What changed in scoping.** The original framing proposed `tiktoken` (WASM) for OpenAI plus Anthropic's `count_tokens` API and Gemini's `countTokens()` SDK call. On review, the network-call options were rejected outright — adding 200–500 ms to every chat turn on the streaming hot path was unacceptable. WASM was rejected for adding bundler/CSP complexity without measurable speed wins at our string sizes. The scope simplified to: **synchronous and local tokenisers only**, exact for OpenAI (where a pure-JS encoder is free) and **calibrated approximations** for Anthropic / Gemini / Llama using `o200k_base` as the most non-English-friendly OpenAI encoding. The chunker's `chars / 4` heuristic stayed as-is — embedding-time chunk sizing tolerates more slack and embedding tokenisers differ from chat tokenisers.
 
-**Critical files:** `lib/orchestration/llm/` (tokeniser layer, cost calculator).
+**What shipped (this PR).**
+
+- **`Tokeniser` interface + per-family variants.** `lib/orchestration/llm/tokeniser.ts` exports a synchronous `Tokeniser` contract with `id`, `exact`, and `count(text)`. Five concrete implementations: `OpenAiModernTokeniser` (o200k_base, exact), `OpenAiLegacyTokeniser` (cl100k_base, exact, used for `gpt-4` / `gpt-3.5` / `davinci`), `CalibratedTokeniser` (o200k_base × multiplier, used for Anthropic at 1.10, Gemini at 1.10, and Llama-family at 1.05), and `HeuristicTokeniser` (chars / 3.5 fallback).
+- **`tokeniserForModel(modelId)` lookup with three-layer routing.** Layer 1 reads `provider` from the model registry and routes per family. Layer 2 falls back to model-id pattern matching (`claude-*` → Anthropic, `gpt-*` / `o1-*` / `o3-*` / `o4-*` → OpenAI, `gemini-*` → Gemini, `llama` / `mistral` / `qwen` substring → Llama-family) — covers two real cases the registry can't: brand-new ids the registry hasn't seen yet, and custom human-readable provider names like "OpenAI Production" whose lowercase form misses the `'openai'` enum. Layer 3 is the Llama-family approximator as a final default. Missing/null `modelId` falls back to the chars-only heuristic so legacy callers don't crash.
+- **`gpt-tokenizer` dependency.** Pure JS, no WASM, ships both `o200k_base` and `cl100k_base` encoders. Sub-millisecond for typical chat history sizes.
+- **`modelId` threaded through pre-flight truncation.** `estimateTokens(text, modelId?)`, `estimateMessagesTokens(messages, modelId?)`, and `truncateToTokenBudget(history, maxTokens, modelId?)` all gained an optional `modelId`. `BuildMessagesArgs` gained a `modelId` field. The streaming handler now passes `agent.model` in. With no model id supplied, every function still works via the heuristic — back-compat is total.
+- **Honest precision.** Only OpenAI gets exact counts. The docs (`.context/orchestration/llm-providers.md`, "Tokenisation" section) call this out explicitly: Anthropic / Gemini / Llama are calibrated approximations, intentionally over-estimating so the failure mode is "drop a little more history than necessary" rather than "context-window overflow."
+- **FieldHelp on the agent form.** The `Max history tokens` field on the agent advanced tab now explains that token counts are provider-tokeniser-aware, with a one-line note that exact counts apply only to OpenAI models.
+- **48 tests.** 16 unit tests for the tokeniser module (routing, golden-string counts for o200k, calibration-multiplier ordering, fallback safety, all three layers including pattern matching for `claude-*` / `gpt-*` / `o1`–`o4` / `gemini-*` / Llama-family), 10 new cases on the token-estimator (modelId overload, CJK divergence, Anthropic >= OpenAI), 2 integration cases on `buildMessages` proving truncation behaviour differs across providers under the same budget.
+
+**Critical files (for reference):** `lib/orchestration/llm/tokeniser.ts`, `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`, `lib/orchestration/chat/streaming-handler.ts`, `tests/unit/lib/orchestration/llm/tokeniser.test.ts`, `tests/unit/lib/orchestration/chat/token-estimator.test.ts`, `tests/unit/lib/orchestration/chat/message-builder.test.ts`, `.context/orchestration/llm-providers.md` (Tokenisation section).
+
+**Tradeoffs surfaced in the work.**
+
+- **Calibration drift.** Multipliers are constants in `tokeniser.ts`, dated implicitly by their commit. Provider tokenisers do shift — Anthropic released a tokeniser update in 2024 that changed densities by single-digit percent. Recheck approach is documented inline in the tokeniser file and in `llm-providers.md`. A drift of ±10% is still ~5× better than the heuristic for non-English content.
+- **No exact-pre-flight path for non-OpenAI.** A future feature wanting exact pre-call counts (e.g. budget enforcement before a long generation) can opt in to the network path independently — the abstraction supports adding async tokenisers later without changing the truncation hot path.
+- **Chunker still uses the simple heuristic.** Documented as out of scope; embedding tokenisers don't match chat tokenisers and the chunker's failure mode is benign chunk-size drift rather than provider rejection.
 
 ### 10. Built-in trace viewer / latency attribution improvements
 
@@ -253,12 +269,12 @@ These were P0–P2 in `maturity-analysis.md` but lose value or relevance under s
 
 A pragmatic order for the next sprints, optimised for "shortest path to a sellable wedge."
 
-| Sprint | Theme                   | Items                                                                |
-| ------ | ----------------------- | -------------------------------------------------------------------- |
-| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅ |
-| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅   |
-| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, ~~7 (widget customisation)~~ ✅       |
-| 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)     |
+| Sprint | Theme                   | Items                                                                   |
+| ------ | ----------------------- | ----------------------------------------------------------------------- |
+| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅    |
+| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅      |
+| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, ~~7 (widget customisation)~~ ✅          |
+| 4+     | Depth                   | ~~8 (background execution)~~ ✅, ~~9 (tokenisation)~~ ✅, 10 (trace UI) |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.
 

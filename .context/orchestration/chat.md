@@ -248,12 +248,12 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 - **Never throws.** Any failure (provider down, LLM error, empty response) returns `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` so the chat turn keeps moving.
 - Prompt is a fixed system message telling the model to produce a third-person summary covering the original problem, key decisions, facts/constraints, and current state.
 
-### `token-estimator.ts` — context window heuristic
+### `token-estimator.ts` — context window sizing
 
-- `estimateTokens(text)` — character-based approximation: `ceil(len / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS` where `CHARS_PER_TOKEN = 3.5` and the per-message overhead is 4 tokens for role markers and delimiters.
-- `estimateMessagesTokens(messages)` — sum of `estimateTokens` across every message's extracted text content.
-- `truncateToTokenBudget(history, maxTokens)` — drops messages from the **front** of the array (oldest first) until the remainder fits. Always keeps at least one entry. Returns `{ messages, droppedCount }`.
-- The heuristic is deliberately **over-estimating** — better to truncate early than blow past the provider's context window. Not a real tokenizer; no tiktoken/sentencepiece dependency.
+- `estimateTokens(text, modelId?)` — when `modelId` is supplied (production path), delegates to `tokeniserForModel(modelId)` from `lib/orchestration/llm/tokeniser.ts` — exact for OpenAI, calibrated approximators for Anthropic / Gemini / Llama. Without `modelId`, falls back to a `chars / 3.5 + 4` heuristic.
+- `estimateMessagesTokens(messages, modelId?)` — sum of `estimateTokens` across every message's extracted text content.
+- `truncateToTokenBudget(history, maxTokens, modelId?)` — drops messages from the **front** of the array (oldest first) until the remainder fits. Always keeps at least one entry. Returns `{ messages, droppedCount }`.
+- Estimates are deliberately **conservative** — better to truncate early than blow past the provider's context window. Per-provider routing and calibration multipliers are documented in [`llm-providers.md` → Tokenisation](./llm-providers.md#tokenisation).
 
 ### `message-embedder.ts` — async embedding for semantic search
 
@@ -390,7 +390,7 @@ The message builder supports token-aware truncation to prevent exceeding model c
 3. `truncateToTokenBudget()` drops the oldest history messages until the remaining messages fit the budget
 4. At least one history message is always kept
 
-Token estimation uses a character-based heuristic (`1 token ≈ 3.5 chars` + 4 tokens overhead per message) from `lib/orchestration/chat/token-estimator.ts`. This is intentionally conservative — it slightly over-estimates, truncating earlier rather than exceeding the context window.
+Token estimation is **per-provider tokeniser-aware** — the streaming handler passes the agent's `model` into `buildMessages()`, which routes to `tokeniserForModel(modelId)`. OpenAI models get exact counts via `gpt-tokenizer` (`o200k_base` / `cl100k_base`); Anthropic, Gemini, and Llama-family get calibrated approximators that overestimate by 5–10% for safety. See [`llm-providers.md` → Tokenisation](./llm-providers.md#tokenisation).
 
 When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 50` limit.
 
