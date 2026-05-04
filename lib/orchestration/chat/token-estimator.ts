@@ -1,31 +1,47 @@
 /**
  * Token estimation utility
  *
- * Provides fast, approximate token counts for context window management.
- * Uses a character-based heuristic (1 token ≈ 4 characters for English
- * text) which is accurate enough for truncation decisions without
- * requiring a tokenizer dependency.
+ * Provides token counts for context-window management. When a `modelId`
+ * is supplied, we delegate to a per-provider tokeniser
+ * (`tokeniserForModel`) — exact for OpenAI, calibrated approximations
+ * for everyone else. Without a model id we fall back to a coarse
+ * `chars / 3.5` heuristic; that path exists only as a defensive
+ * fallback for legacy callers — production paths now thread the
+ * `modelId` through.
  *
- * The heuristic is intentionally conservative — it slightly overestimates
- * token counts, which means we'll truncate a bit earlier than necessary
+ * The estimates are intentionally conservative — they slightly
+ * over-count, which means we'll truncate a bit earlier than necessary
  * rather than exceeding the context window.
+ *
+ * See `lib/orchestration/llm/tokeniser.ts` for the per-provider
+ * routing and calibration multipliers.
  */
 
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
+import { tokeniserForModel } from '@/lib/orchestration/llm/tokeniser';
 
-/** Average characters per token — conservative estimate for English text. */
-const CHARS_PER_TOKEN = 3.5;
+/** Heuristic: average characters per token for English prose. */
+const HEURISTIC_CHARS_PER_TOKEN = 3.5;
 
 /** Overhead tokens per message for role markers, delimiters, etc. */
 const MESSAGE_OVERHEAD_TOKENS = 4;
 
 /**
  * Estimate the token count of a single string.
+ *
+ * @param text The text to count.
+ * @param modelId Optional model id — when supplied, the count is
+ *   produced by that model's tokeniser (exact for OpenAI, calibrated
+ *   for Anthropic / Google / Llama). Without it, falls back to the
+ *   `chars / 3.5` heuristic.
  */
-export function estimateTokens(text: string): number {
+export function estimateTokens(text: string, modelId?: string): number {
   if (!text) return 0;
-  return Math.ceil(text.length / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS;
+  if (modelId) {
+    return tokeniserForModel(modelId).count(text) + MESSAGE_OVERHEAD_TOKENS;
+  }
+  return Math.ceil(text.length / HEURISTIC_CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS;
 }
 
 /**
@@ -36,11 +52,11 @@ export function estimateTokens(text: string): number {
  * messages, callers should add `ATTACHMENT_OVERHEAD_TOKENS` per
  * attachment separately (see `message-builder.ts`).
  */
-export function estimateMessagesTokens(messages: LlmMessage[]): number {
+export function estimateMessagesTokens(messages: LlmMessage[], modelId?: string): number {
   let total = 0;
   for (const msg of messages) {
     const text = getTextContent(msg.content);
-    total += estimateTokens(text);
+    total += estimateTokens(text, modelId);
   }
   return total;
 }
@@ -57,12 +73,13 @@ export function estimateMessagesTokens(messages: LlmMessage[]): number {
  */
 export function truncateToTokenBudget(
   history: LlmMessage[],
-  maxTokens: number
+  maxTokens: number,
+  modelId?: string
 ): { messages: LlmMessage[]; droppedCount: number } {
   if (history.length === 0) return { messages: [], droppedCount: 0 };
 
   // Fast path: everything fits
-  const totalTokens = estimateMessagesTokens(history);
+  const totalTokens = estimateMessagesTokens(history, modelId);
   if (totalTokens <= maxTokens) {
     return { messages: history, droppedCount: 0 };
   }
@@ -72,7 +89,7 @@ export function truncateToTokenBudget(
   let dropIndex = 0;
   while (dropIndex < history.length - 1 && current > maxTokens) {
     const text = getTextContent(history[dropIndex].content);
-    current -= estimateTokens(text);
+    current -= estimateTokens(text, modelId);
     dropIndex++;
   }
 

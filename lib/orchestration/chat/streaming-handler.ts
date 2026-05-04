@@ -353,6 +353,7 @@ export class StreamingChatHandler {
         brandVoiceInstructions: agent.brandVoiceInstructions,
         contextWindowTokens,
         reserveTokens: agent.maxTokens ?? undefined,
+        modelId: agent.model,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);

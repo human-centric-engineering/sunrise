@@ -23,3 +23,4 @@ export {
   type ModelRecommendation,
   type RecommendOptions,
 } from '@/lib/orchestration/llm/provider-selector';
+export { tokeniserForModel, type Tokeniser } from '@/lib/orchestration/llm/tokeniser';

@@ -61,6 +61,12 @@ export interface BuildMessagesArgs {
   contextWindowTokens?: number;
   /** Tokens to reserve for the model's response (default: 4096). */
   reserveTokens?: number;
+  /**
+   * Target model id — selects the per-provider tokeniser used by the
+   * truncation logic. Without it we fall back to the legacy
+   * chars / 3.5 heuristic.
+   */
+  modelId?: string;
 }
 
 /**
@@ -100,8 +106,11 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
   // system messages, the new user message, and the response reserve.
   if (args.contextWindowTokens && args.contextWindowTokens > 0) {
     const reserveTokens = args.reserveTokens ?? 4096;
-    const systemTokens = estimateMessagesTokens(messages);
-    const userTokens = estimateMessagesTokens([{ role: 'user', content: args.newUserMessage }]);
+    const systemTokens = estimateMessagesTokens(messages, args.modelId);
+    const userTokens = estimateMessagesTokens(
+      [{ role: 'user', content: args.newUserMessage }],
+      args.modelId
+    );
     const attachmentTokens = (args.attachments?.length ?? 0) * ATTACHMENT_OVERHEAD_TOKENS;
     const historyBudget =
       args.contextWindowTokens - reserveTokens - systemTokens - userTokens - attachmentTokens;
@@ -112,7 +121,11 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
         content: row.content,
         ...(row.toolCallId ? { toolCallId: row.toolCallId } : {}),
       }));
-      const { droppedCount: tokenDropped } = truncateToTokenBudget(historyMessages, historyBudget);
+      const { droppedCount: tokenDropped } = truncateToTokenBudget(
+        historyMessages,
+        historyBudget,
+        args.modelId
+      );
       if (tokenDropped > 0) {
         droppedCount += tokenDropped;
         truncated = truncated.slice(tokenDropped);

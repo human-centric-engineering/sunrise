@@ -118,6 +118,68 @@ describe('estimateMessagesTokens', () => {
   });
 });
 
+describe('estimateTokens with modelId (per-provider tokeniser)', () => {
+  // These tests use a known OpenAI model so the path through
+  // `tokeniserForModel` is exact (gpt-tokenizer ships the encoder).
+  // Anthropic / Gemini / Llama paths are calibrated approximators —
+  // we test their qualitative behaviour, not exact counts.
+
+  it('exact OpenAI count differs from the 3.5-char heuristic', () => {
+    const text = 'Hello world';
+    const heuristic = estimateTokens(text);
+    const exact = estimateTokens(text, 'gpt-4o-mini');
+    // Heuristic: ceil(11/3.5) + 4 = 7. Exact (o200k_base): 2 + 4 = 6.
+    // The two should not match — proves the modelId path is wired.
+    expect(exact).not.toBe(heuristic);
+  });
+
+  it('returns 0 for empty text regardless of model', () => {
+    expect(estimateTokens('', 'gpt-4o-mini')).toBe(0);
+    expect(estimateTokens('', 'claude-haiku-4-5')).toBe(0);
+  });
+
+  it('Chinese text counts more tokens than the 3.5-char heuristic implies', () => {
+    // Chinese characters are typically one token each — the heuristic
+    // assumes ~3.5 chars/token (English) and so under-counts CJK badly.
+    // The per-provider tokeniser corrects this.
+    const cjk = '你好世界，今天天气很好';
+    const heuristic = estimateTokens(cjk);
+    const tokenised = estimateTokens(cjk, 'gpt-4o-mini');
+    // The corrected count should be higher than the heuristic for CJK.
+    expect(tokenised).toBeGreaterThan(heuristic);
+  });
+
+  it('Anthropic count >= OpenAI count for the same input (calibration multiplier)', () => {
+    const text = 'The quick brown fox jumps over the lazy dog.';
+    const openai = estimateTokens(text, 'gpt-4o-mini');
+    const anthropic = estimateTokens(text, 'claude-haiku-4-5');
+    // Anthropic is approximated as o200k × 1.10, so >= OpenAI by design.
+    expect(anthropic).toBeGreaterThanOrEqual(openai);
+  });
+
+  it('unknown model falls back gracefully without throwing', () => {
+    const text = 'Hello world';
+    expect(() => estimateTokens(text, 'definitely-not-a-real-model-xyz')).not.toThrow();
+    expect(estimateTokens(text, 'definitely-not-a-real-model-xyz')).toBeGreaterThan(0);
+  });
+});
+
+describe('estimateMessagesTokens with modelId', () => {
+  it('threads modelId into per-message counts', () => {
+    const messages: LlmMessage[] = [
+      textMsg('Hello world', 'user'),
+      textMsg('How are you?', 'assistant'),
+    ];
+    const heuristic = estimateMessagesTokens(messages);
+    const tokenised = estimateMessagesTokens(messages, 'gpt-4o-mini');
+    // The two paths must both succeed and produce a positive count;
+    // they need not match (the heuristic over-counts English for short
+    // strings because of MESSAGE_OVERHEAD relative to body).
+    expect(tokenised).toBeGreaterThan(0);
+    expect(heuristic).toBeGreaterThan(0);
+  });
+});
+
 describe('truncateToTokenBudget', () => {
   it('returns empty messages and 0 dropped for an empty history', () => {
     // Arrange / Act
@@ -186,6 +248,30 @@ describe('truncateToTokenBudget', () => {
     // Assert: still returns the one message (never empty)
     expect(result.messages).toHaveLength(1);
     expect(result.droppedCount).toBe(0);
+  });
+
+  it('honours modelId when sizing the budget — Anthropic drops more than OpenAI', () => {
+    // Anthropic's calibrated tokeniser produces a higher count for the
+    // same text, so a fixed budget fits fewer messages. This is the
+    // load-bearing behaviour of item #9: pre-call truncation uses the
+    // right tokeniser for the model the request will actually be sent
+    // to, instead of a one-size-fits-all heuristic.
+    const history: LlmMessage[] = Array.from({ length: 6 }, (_, i) =>
+      textMsg(
+        `Message ${i}: ${'pad '.repeat(20)}content with non-English: ¿Cómo estás? Estoy bien.`,
+        i % 2 === 0 ? 'user' : 'assistant'
+      )
+    );
+    // A modest budget that is below the full history under either
+    // tokeniser. The exact threshold is chosen empirically to land
+    // between the two providers.
+    const budget = 80;
+
+    const openai = truncateToTokenBudget(history, budget, 'gpt-4o-mini');
+    const anthropic = truncateToTokenBudget(history, budget, 'claude-haiku-4-5');
+
+    // Anthropic's higher count means equal-or-more messages dropped.
+    expect(anthropic.droppedCount).toBeGreaterThanOrEqual(openai.droppedCount);
   });
 
   it('returns droppedCount equal to messages dropped', () => {

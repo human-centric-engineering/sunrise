@@ -719,6 +719,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 much conversation history as possible after reserving space for instructions and the
                 current message. Lower values reduce cost; higher values let the agent remember
                 more. Leave blank to use the model&apos;s full context window.
+                <br />
+                <br />
+                Token counts are computed with a provider-aware tokeniser — exact for OpenAI
+                (gpt-4o, gpt-4, etc.) and a calibrated approximation for Anthropic, Gemini, and
+                Llama-family models. Estimates lean conservative, so the agent may drop a slightly
+                older message rather than risk overflowing the model&apos;s window.
               </FieldHelp>
             </Label>
             <Input
