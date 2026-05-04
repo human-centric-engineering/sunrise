@@ -723,6 +723,10 @@ const bundledAgentSchema = z.object({
   knowledgeCategories: z.array(z.string().max(100)).max(50).default([]),
   topicBoundaries: z.array(z.string().max(200)).max(50).default([]),
   brandVoiceInstructions: z.string().max(10000).nullable().optional(),
+  // widgetConfig is opaque on the wire (z.unknown) — the receiving side
+  // re-validates it through resolveWidgetConfig before reading. Older
+  // bundles that pre-date item 7 omit it; null = use defaults.
+  widgetConfig: z.unknown().nullable().optional(),
   capabilities: z
     .array(
       z.object({

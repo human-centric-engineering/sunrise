@@ -82,6 +82,7 @@ function makeDbAgent(id: string, slug: string) {
     knowledgeCategories: [],
     topicBoundaries: null,
     brandVoiceInstructions: null,
+    widgetConfig: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -303,6 +304,29 @@ describe('POST /api/v1/admin/orchestration/agents/export', () => {
       const filenameMatch = disposition.match(/filename="([^"]+)"/);
       expect(filenameMatch).toBeTruthy();
       expect(filenameMatch![1]).not.toContain(':');
+    });
+
+    it('roundtrips widgetConfig — non-null stored value comes through verbatim', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const stored = { primaryColor: '#16a34a', headerTitle: 'Council' };
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        { ...makeDbAgent(AGENT_ID_1, 'agent-one'), widgetConfig: stored },
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+      const body = await parseJson<{ data: { agents: { widgetConfig: unknown }[] } }>(response);
+      expect(body.data.agents[0].widgetConfig).toEqual(stored);
+    });
+
+    it('roundtrips widgetConfig — null becomes null in the bundle (importer fills defaults)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        makeDbAgent(AGENT_ID_1, 'agent-one'),
+      ] as never);
+
+      const response = await POST(makeRequest({ agentIds: [AGENT_ID_1] }));
+      const body = await parseJson<{ data: { agents: { widgetConfig: unknown }[] } }>(response);
+      expect(body.data.agents[0].widgetConfig).toBeNull();
     });
   });
 

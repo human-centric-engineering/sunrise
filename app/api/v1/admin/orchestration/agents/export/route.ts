@@ -104,6 +104,7 @@ export const POST = withAdminAuth(async (request, session) => {
         knowledgeCategories: agent.knowledgeCategories,
         topicBoundaries: agent.topicBoundaries,
         brandVoiceInstructions: agent.brandVoiceInstructions,
+        widgetConfig: jsonRecord.parse(agent.widgetConfig),
         capabilities: agent.capabilities.map((link) => ({
           slug: link.capability.slug,
           isEnabled: link.isEnabled,

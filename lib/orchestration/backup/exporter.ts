@@ -37,6 +37,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         maxHistoryTokens: true,
         retentionDays: true,
         providerConfig: true,
+        widgetConfig: true,
       },
     }),
     prisma.aiCapability.findMany({
