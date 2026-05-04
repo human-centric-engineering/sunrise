@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-03 (item 6 shipped)
+**Last updated:** 2026-05-04 (item 7 shipped)
 
 ---
 
@@ -117,8 +117,8 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 
 | #   | Improvement                                                      | Value         | Effort       | Status            |
 | --- | ---------------------------------------------------------------- | ------------- | ------------ | ----------------- |
-| 6   | Named evaluation metrics (faithfulness, groundedness, relevance) | High          | Moderate     | ✅ Done (this PR) |
-| 7   | Embed-widget customisation and theming                           | High          | Moderate     | ⚪ Not started    |
+| 6   | Named evaluation metrics (faithfulness, groundedness, relevance) | High          | Moderate     | ✅ Done           |
+| 7   | Embed-widget customisation and theming                           | High          | Moderate     | ✅ Done (this PR) |
 | 8   | Background / async execution model for long workflows            | Moderate–High | Moderate     | ✅ Done (PR #140) |
 | 9   | Exact per-provider tokenisation                                  | Moderate–High | Low–Moderate | ⚪ Not started    |
 | 10  | Built-in trace viewer / latency attribution improvements         | Moderate      | Moderate     | ⚪ Not started    |
@@ -149,13 +149,34 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 - Re-score overwrites in place. No score history is retained. Versioned scoring is an additive future change if needed.
 - Judge can itself be wrong. Reasoning text is always shown alongside the number so admins can spot judge errors. Standard mitigation; not solved by this PR.
 
-### 7. Embed-widget customisation and theming
+### 7. Embed-widget customisation and theming — ✅ Done
 
-**Why.** The trojan-horse model in business-applications repeatedly relies on dropping the agent into a partner's existing site (housing association, B&B, council planning page, broker website, charity microsite). Maturity-analysis rates widget customisation "Adequate" — Dify and Flowise are stronger here. Themeable widget (colour, font, header copy, conversation starters, suggested questions, branded footer, locale) directly affects partner sign-off.
+**Why it mattered.** The trojan-horse model in `business-applications.md` repeatedly relies on dropping the agent into a partner's existing site — housing-association tenant portal, B&B concierge, council planning pre-screen, broker site, tattoo-studio enquiry agent, SaaS onboarding assistant. Pre-PR, every one of those deployments would have shown the same hard-coded blue bubble (`#2563eb`), the same English chrome ("Chat", "Type a message…", "Send", "Sources"), and the same system font stack. Partners cannot brand this. Maturity-analysis rated widget customisation **Adequate** vs. Dify/Flowise **Strong**, and partner sign-off correlates directly with this gap.
 
-**Approach.** Frontend-heavy. Embed loader + Shadow-DOM CSS variables, admin form for widget config per agent.
+**What changed in scoping.** Two design forks resolved before the build:
 
-**Critical files:** `app/api/v1/embed/widget.js/`, embed widget React tree, `prisma/schema.prisma` (per-agent widget config).
+- **Per-agent vs per-token.** A single `widgetConfig` JSON column on `AiAgent` shared by every embed token for that agent. Per-token override is an additive future change (move `widgetConfig` to `AiAgentEmbedToken` with agent-level fallback, or add `tokenWidgetOverrides`); chosen against now to ship smaller. Two partner sites sharing one agent will look identical until that follow-up.
+- **No `locale` field.** The original framing mentioned locale as a knob. Pulling it in would have meant either a real i18n framework (translation tables for the widget chrome — nothing else in Sunrise needs one) or a system-prompt hint passed through the chat stream. Rejected both. Localisation is handled instead by admin-typed copy overrides — header, subtitle, placeholder, send button, conversation starters, footer — plus system instructions for the response language. Spanish UI = admin types Spanish into the copy fields; Spanish responses = admin adds it to system instructions. No new framework, no chat-stream wiring, ships smaller.
+
+**What shipped (this PR).**
+
+- **Schema.** One nullable `widgetConfig Json?` column on `AiAgent` (additive migration, no backfill). Defaults live in TypeScript via `DEFAULT_WIDGET_CONFIG` in `lib/validations/orchestration.ts`; the contract is explicit and centralised. `widgetConfigSchema` validates the resolved shape; `updateWidgetConfigSchema` is its `partial()` for PATCH bodies; `resolveWidgetConfig(stored)` merges defaults over the stored partial and falls back to defaults if the stored value is shape-invalid.
+- **Public widget-config endpoint.** `GET /api/v1/embed/widget-config` — same `X-Embed-Token` auth + CORS treatment as the chat-stream route. Returns the resolved config so the loader can apply it without admin credentials. `apiLimiter` keyed by `${token}:${ip}`.
+- **Admin endpoints.** `GET` (read resolved) and `PATCH` (partial update with from/to audit deltas under action `agent.widget_config.update`) at `/api/v1/admin/orchestration/agents/:id/widget-config`. PATCH validates the body via `updateWidgetConfigSchema`, merges over the current resolved config, persists the merged value, and returns the resolved config so the UI rebinds to the canonical shape.
+- **Widget loader refactor.** The Shadow-DOM widget now fetches `/widget-config` on boot, merges the response over local `DEFAULTS`, and mounts. Inline `<style>` references CSS custom properties (`--sw-primary`, `--sw-surface`, `--sw-text`, `--sw-border`, `--sw-surface-muted`, `--sw-input-bg`, `--sw-status`, `--sw-font`); the loader assigns them on the host element after merge so a single property write cascades through the tree without re-templating CSS strings per agent. Copy is applied via `textContent` / `setAttribute('placeholder', …)` — admin-saved strings can never inject HTML into the partner page. Subtitle and footer rows hide themselves when their strings are empty. A new `.starters` row paints chip buttons before the first message; click → drops the chip text into the input and fires the same `send()` path; chips auto-hide on first message.
+- **Defence-in-depth on inputs.** Colour fields validated as `^#[0-9a-fA-F]{6}$` before assignment. `fontFamily` validated by `^[\w\s,'"-]+$` — blocks `{`, `}`, `;`, parentheses so a stored font value cannot escape the CSS declaration. Length caps everywhere (header 60, subtitle 100, placeholder 80, send 30, footer 80, starters 4 × 200). The schema and the loader's defensive shape check together mean a corrupt stored value falls back to defaults rather than crashing the widget.
+- **Admin UI.** The agent form's Embed tab now stacks two cards. Top: `<WidgetAppearanceSection>` — three native colour pickers paired with hex text inputs, font family, header title + subtitle, placeholder + send label, footer caption, conversation-starter list editor (add up to 4 chips, trash to remove), Reset to defaults, Save appearance. Layout splits into a form column and a static live-preview pane on the right at desktop widths so admins iterate on colours without saving and reloading a partner page. Every field has a `<FieldHelp>` popover with what / when / default per the contextual-help directive. Save scope is independent of the main agent form's dirty tracking — appearance saves immediately via its own button, mirroring the tokens card. Bottom: the existing `<TokensCard>` — token CRUD + copy `<script>` snippet, unchanged.
+- **Tests.** 40 new tests landed across the schema (Zod hex/font/length/starter cap, partial-merge, `resolveWidgetConfig` fallbacks), the public endpoint (auth, CORS, defaults, merge, rate limit), the admin endpoint (auth gating, validation, audit row shape, resolved-config response), the widget loader (fetch path, fallback, CSS-var emission, copy substitution, starters lifecycle), and the appearance section (load, save, validation gating, starter add/remove, reset). The 18 existing `<EmbedConfigPanel>` tests had their `apiClient.get` mock dispatched to handle the new boot fetch.
+
+**Critical files (for reference):** `lib/validations/orchestration.ts` (`widgetConfigSchema`, `updateWidgetConfigSchema`, `DEFAULT_WIDGET_CONFIG`, `resolveWidgetConfig`), `prisma/migrations/20260504082421_add_agent_widget_config/`, `app/api/v1/embed/widget-config/route.ts`, `app/api/v1/admin/orchestration/agents/[id]/widget-config/route.ts`, `app/api/v1/embed/widget.js/route.ts` (refactored), `components/admin/orchestration/agents/widget-appearance-section.tsx`, `components/admin/orchestration/agents/embed-config-panel.tsx` (composes appearance + tokens), `.context/orchestration/embed.md` (Widget customisation section).
+
+**Tradeoffs surfaced in the work.**
+
+- **Native colour picker.** `<input type="color">` ships across browsers but renders differently on Safari/iOS. Acceptable v1 — saves a dependency. If a future review wants polished pickers, swap in `react-colorful` (~3 KB) without schema change.
+- **No live-on-partner-site preview.** The preview pane in admin is a static React mock that styles a frozen DOM with the in-form values. A genuine "see it on the actual site" preview would need an iframe-back-channel that's outside scope; admins can still drop the script tag into a scratch HTML file and reload to verify.
+- **Per-agent skin only.** Two partner sites sharing one agent will look identical. Per-token override is an additive future change; chose against now to ship smaller. The schema layout (one column on `AiAgent`) is forward-compatible with a per-token override layer that defaults through to the agent column.
+- **No iframe embed mode.** Maturity-analysis flags this separately as a different gap; not part of item 7. Shadow DOM remains the canonical embed.
+- **No bubble icon / avatar upload.** Out of scope for v1 — that wants a storage capability (item 16) before it can land cleanly. Default chat-bubble emoji stays.
 
 ### 8. Background / async execution model for long workflows — ✅ Done
 
@@ -236,7 +257,7 @@ A pragmatic order for the next sprints, optimised for "shortest path to a sellab
 | ------ | ----------------------- | -------------------------------------------------------------------- |
 | 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅ |
 | 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅   |
-| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, 7 (widget customisation)              |
+| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, ~~7 (widget customisation)~~ ✅       |
 | 4+     | Depth                   | ~~8 (background execution)~~ ✅, 9 (tokenisation), 10 (trace UI)     |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.

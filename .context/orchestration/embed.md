@@ -6,14 +6,17 @@ The embed system lets you surface an AI agent as a chat bubble on any external w
 
 ```
 app/api/v1/embed/
-├── widget.js/route.ts    — GET: serves the JavaScript loader (public)
-└── chat/stream/route.ts  — POST: SSE streaming chat (token-authenticated)
+├── widget.js/route.ts        — GET: serves the JavaScript loader (public)
+├── widget-config/route.ts    — GET: per-agent appearance + copy (token-authenticated)
+└── chat/stream/route.ts      — POST: SSE streaming chat (token-authenticated)
 
-lib/embed/auth.ts          — resolveEmbedToken(), isOriginAllowed()
+lib/embed/auth.ts              — resolveEmbedToken(), isOriginAllowed()
+lib/validations/orchestration  — widgetConfigSchema, DEFAULT_WIDGET_CONFIG, resolveWidgetConfig
 
-components/admin/orchestration/agents/embed-config-panel.tsx
-app/api/v1/admin/orchestration/agents/[id]/embed-tokens/route.ts
-app/api/v1/admin/orchestration/agents/[id]/embed-tokens/[tokenId]/route.ts
+components/admin/orchestration/agents/embed-config-panel.tsx       — composes both sections
+components/admin/orchestration/agents/widget-appearance-section.tsx — colours + copy + starters
+app/api/v1/admin/orchestration/agents/[id]/embed-tokens/...          — tokens CRUD
+app/api/v1/admin/orchestration/agents/[id]/widget-config/route.ts    — appearance read/update
 ```
 
 ## Embed tokens
@@ -75,6 +78,39 @@ Data attributes:
 
 The loader script uses Shadow DOM for style isolation. The `apiBase` URL is baked in at serve time from the request's `origin`.
 
+### Per-agent appearance — `/widget-config`
+
+On boot, the loader fetches `GET /api/v1/embed/widget-config` with the same `X-Embed-Token` header used for the chat stream. The response carries the agent's resolved `WidgetConfig` (defaults merged with the stored partial). The widget then assigns CSS custom properties on the host element so the Shadow DOM tree picks them up via `var(--sw-*)`, and substitutes the copy strings via `textContent` / `setAttribute('placeholder', …)` — never `innerHTML` for admin-saved values.
+
+If the fetch fails or returns an unexpected shape the widget falls back to `DEFAULT_WIDGET_CONFIG` (defined alongside the schema in `lib/validations/orchestration.ts`) and still mounts. There is no client-side caching beyond browser default — admin updates propagate on the next page load.
+
+```typescript
+interface WidgetConfig {
+  primaryColor: string; // 6-digit hex; bubble + send button + user bubbles + cite chips
+  surfaceColor: string; // chat panel background
+  textColor: string; // body text colour
+  fontFamily: string; // CSS font stack; allowlist regex blocks { } ; ( )
+  headerTitle: string; // 1–60 chars
+  headerSubtitle: string; // 0–100 chars; row hides when empty
+  inputPlaceholder: string; // 1–80 chars
+  sendLabel: string; // 1–30 chars
+  conversationStarters: string[]; // 0–4 chips, 1–200 chars each
+  footerText: string; // 0–80 chars; row hides when empty
+}
+```
+
+The CSS custom properties set on the host: `--sw-primary`, `--sw-surface`, `--sw-text`, `--sw-border`, `--sw-surface-muted`, `--sw-input-bg`, `--sw-status`, `--sw-font`. Future loader-side themes can extend this set without changing the API contract.
+
+#### Conversation starters
+
+When the panel opens and the message list is empty, up to four chip buttons render above the input area populated from `conversationStarters`. Click → drops the text into the input and fires the same `send()` path as a typed message. Chips disappear on the first message. The chips are a soft-prompt UX — they do not bypass any rate limit or guard.
+
+#### XSS posture
+
+- Colour fields validated by `^#[0-9a-fA-F]{6}$` before being assigned to CSS variables.
+- `fontFamily` validated by `^[\w\s,'"-]+$` — blocks `{` / `}` / `;` / parentheses so a stored value cannot escape the CSS declaration.
+- All copy fields rendered via `textContent` or `setAttribute('placeholder', …)` — admin-saved strings cannot inject HTML into the partner page.
+
 ### Citation rendering
 
 When the SSE stream emits a `citations` event (see [Streaming Chat — Citations](./chat.md#citations)), the widget rebuilds the assistant bubble: `[N]` markers in the streamed text become superscript chips, and a sources panel is appended below the bubble with each marker's document name, optional section, and excerpt. Hallucinated markers (no matching citation) get an amber `cite-bad` style.
@@ -123,7 +159,26 @@ On success, reuses `streamChat()` from the orchestration chat handler and return
 
 `components/admin/orchestration/agents/embed-config-panel.tsx`
 
-Located in the agent edit form's embed tab. Displays:
+Located in the agent edit form's Embed tab. The panel stacks two cards:
+
+### Appearance & copy (top)
+
+`components/admin/orchestration/agents/widget-appearance-section.tsx`. Edits the per-agent `widgetConfig` JSON column on `AiAgent`. Layout: a form column on the left and a static live-preview pane on the right (desktop) so admins can iterate on colours without saving and reloading a partner site.
+
+- Three colour pickers (primary / surface / text) — native `<input type="color">` paired with a hex text input.
+- Font-family stack (one line, 200 chars).
+- Header title (1–60), subtitle (0–100, row hides when empty).
+- Input placeholder (1–80), send-button label (1–30) — these are the localisation surface for non-English deployments.
+- Conversation-starter list editor (add up to 4 chips, trash to remove).
+- Footer caption (0–80, row hides when empty).
+- "Save appearance" → `PATCH /api/v1/admin/orchestration/agents/:id/widget-config`. "Reset to defaults" restores `DEFAULT_WIDGET_CONFIG` locally without saving.
+- Every field has a `<FieldHelp>` popover with what / when / default.
+
+The save scope is independent of the main agent form's dirty tracking — the appearance section saves immediately via its own button, mirroring how the tokens card already works.
+
+### Tokens (bottom)
+
+Token CRUD — unchanged from before the appearance section was added. Displays:
 
 - All tokens for the agent (label or "Untitled", active/inactive badge, token value, allowed origins)
 - Embed snippet code block: `<script src="{appUrl}/api/v1/embed/widget.js" data-token="{token}"></script>`
@@ -136,3 +191,14 @@ Create token form:
 - Optional label (e.g. "Marketing site")
 - Allowed origins textarea: comma-separated URLs, parsed into `string[]` on submit
 - Empty label → not sent in POST body
+
+## Admin endpoints — widget config
+
+```
+GET   /api/v1/admin/orchestration/agents/:id/widget-config
+PATCH /api/v1/admin/orchestration/agents/:id/widget-config
+```
+
+Both require admin auth + `adminLimiter`. PATCH validates the body via `updateWidgetConfigSchema` (a `partial()` of `widgetConfigSchema` that requires at least one known field) and merges over the current resolved config before writing. An audit row is written under action `agent.widget_config.update` with per-field `from` / `to` deltas.
+
+The PATCH response returns the resolved config (defaults filled in) so the UI can rebind to the canonical shape after saving.

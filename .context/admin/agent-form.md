@@ -8,16 +8,16 @@ Shared create/edit form for `AiAgent`. Eight shadcn tabs, one underlying `<form>
 
 ## Tab structure
 
-| #   | Tab           | Create | Edit | Notes                                                                                                                 |
-| --- | ------------- | ------ | ---- | --------------------------------------------------------------------------------------------------------------------- |
-| 1   | General       | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                       |
-| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn               |
-| 3   | Instructions  | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only) |
-| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                |
-| 5   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                      |
-| 6   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                              |
-| 7   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                              |
-| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` — create tokens, copy `<script>` snippet, toggle active, manage origins                          |
+| #   | Tab           | Create | Edit | Notes                                                                                                                                                                                           |
+| --- | ------------- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | General       | ✅     | ✅   | Name, slug, description, active, **visibility**, retention days                                                                                                                                 |
+| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn                                                                                         |
+| 3   | Instructions  | ✅     | ✅   | Textarea, **brand voice**, **knowledge categories**, **topic boundaries**, character count, history panel (edit only)                                                                           |
+| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                                                                                          |
+| 5   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                                                                                                |
+| 6   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                                                                                                        |
+| 7   | Test          | 🚫     | ✅   | Embeds `<AgentTestChat>`                                                                                                                                                                        |
+| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` stacks two cards: **Appearance & copy** (per-agent widget colours / fonts / copy / starters) + **Tokens** (create, copy `<script>` snippet, toggle active, manage origins) |
 
 Tabs 4–8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 5 additionally requires `visibility = 'invite_only'` — it is disabled for other visibility modes.
 
