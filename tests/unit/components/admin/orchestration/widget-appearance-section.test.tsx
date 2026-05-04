@@ -155,6 +155,29 @@ describe('WidgetAppearanceSection', () => {
     expect(screen.getByDisplayValue('Second')).toBeInTheDocument();
   });
 
+  it('shows a contrast warning when surface vs text contrast is below WCAG AA', async () => {
+    mockGet.mockResolvedValue({
+      config: { ...DEFAULTS, surfaceColor: '#ffffff', textColor: '#dddddd' },
+    });
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Chat'));
+    expect(screen.getByRole('status')).toHaveTextContent(/below the WCAG AA threshold/i);
+  });
+
+  it('does not show a contrast warning when contrast is good (default colours)', async () => {
+    mockGet.mockResolvedValue({ config: DEFAULTS });
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Chat'));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('renders a char counter for the font-family field', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, fontFamily: 'Inter, sans-serif' } });
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Inter, sans-serif'));
+    expect(screen.getByText(`${'Inter, sans-serif'.length}/200`)).toBeInTheDocument();
+  });
+
   it('reset restores defaults locally without calling PATCH', async () => {
     mockGet.mockResolvedValue({
       config: { ...DEFAULTS, headerTitle: 'Custom', primaryColor: '#16a34a' },

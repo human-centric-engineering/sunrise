@@ -155,7 +155,10 @@ export function GET(request: NextRequest): Response {
           min-width: 16px; height: 16px; padding: 0 4px; margin: 0 2px;
           border-radius: 3px; font-size: 10px; font-weight: 600;
           line-height: 1; vertical-align: super;
-          background: \${isDark ? 'rgba(96, 165, 250, 0.18)' : 'rgba(37, 99, 235, 0.10)'};
+          /* Tint derived from the configured primary so the chip
+             harmonises with custom brand colours instead of staying
+             stuck on the original blue. */
+          background: color-mix(in srgb, var(--sw-primary) \${isDark ? '18%' : '10%'}, transparent);
           color: var(--sw-primary);
           border: none; cursor: pointer; font-family: inherit;
         }

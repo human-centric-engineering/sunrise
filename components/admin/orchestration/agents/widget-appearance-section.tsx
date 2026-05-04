@@ -30,6 +30,38 @@ interface Props {
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const FONT_RE = /^[\w\s,'"-]+$/;
 
+// WCAG AA threshold for body text. Below this, we surface a soft
+// warning — admins can dismiss by ignoring it; we don't block save,
+// since the schema can't tell apart "intentional low-contrast brand"
+// from "white-on-white mistake".
+const MIN_CONTRAST_RATIO = 4.5;
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const toLin = (c: number): number => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+}
+
+function contrastRatio(a: string, b: string): number | null {
+  const ra = hexToRgb(a);
+  const rb = hexToRgb(b);
+  if (!ra || !rb) return null;
+  const la = relativeLuminance(ra);
+  const lb = relativeLuminance(rb);
+  const lighter = Math.max(la, lb);
+  const darker = Math.min(la, lb);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 type FormState = WidgetConfig;
 
 export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement {
@@ -165,6 +197,21 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
           </p>
         )}
 
+        {(() => {
+          const ratio = contrastRatio(form.surfaceColor, form.textColor);
+          if (ratio === null || ratio >= MIN_CONTRAST_RATIO) return null;
+          // Soft warning, not a save blocker — the brand may want this.
+          return (
+            <p
+              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+              role="status"
+            >
+              Contrast between text and surface is {ratio.toFixed(1)}:1, below the WCAG AA threshold
+              of 4.5:1. Messages may be hard to read. Save anyway if this matches your brand.
+            </p>
+          );
+        })()}
+
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           {/* ── Form column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
@@ -227,6 +274,9 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
                 maxLength={200}
                 onChange={(e) => update('fontFamily', e.target.value)}
               />
+              <p className="text-muted-foreground text-right text-[10px]">
+                {form.fontFamily.length}/200
+              </p>
             </div>
 
             {/* Header copy */}
@@ -463,13 +513,21 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
   const primary = cfg.primaryColor;
   const font = cfg.fontFamily;
 
+  // Dividers and muted backgrounds are derived from the form's text
+  // colour so the preview stays readable on a dark surfaceColor — the
+  // earlier hardcoded #e5e7eb / #f3f4f6 lit up like cracks on a dark
+  // panel. color-mix has wide modern-browser support and is safe in
+  // an admin-only surface.
+  const divider = `color-mix(in srgb, ${text} 15%, transparent)`;
+  const muted = `color-mix(in srgb, ${text} 8%, ${surface})`;
+
   return (
     <div
       style={{
         background: surface,
         color: text,
         fontFamily: font,
-        border: '1px solid #e5e7eb',
+        border: `1px solid ${divider}`,
         borderRadius: 12,
         overflow: 'hidden',
         fontSize: 14,
@@ -478,7 +536,7 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
       <div
         style={{
           padding: '12px 16px',
-          borderBottom: '1px solid #e5e7eb',
+          borderBottom: `1px solid ${divider}`,
           display: 'flex',
           alignItems: 'flex-start',
         }}
@@ -494,7 +552,7 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
         <div style={{ marginBottom: 8 }}>
           <span
             style={{
-              background: '#f3f4f6',
+              background: muted,
               padding: '6px 12px',
               borderRadius: '12px 12px 12px 0',
               display: 'inline-block',
@@ -511,8 +569,8 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
                 style={{
                   padding: '6px 10px',
                   fontSize: 12,
-                  background: '#f3f4f6',
-                  border: '1px solid #e5e7eb',
+                  background: muted,
+                  border: `1px solid ${divider}`,
                   borderRadius: 999,
                 }}
               >
@@ -525,7 +583,7 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
       <div
         style={{
           padding: '8px 12px',
-          borderTop: '1px solid #e5e7eb',
+          borderTop: `1px solid ${divider}`,
           display: 'flex',
           gap: 8,
         }}
@@ -536,11 +594,12 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
           style={{
             flex: 1,
             padding: '8px 12px',
-            border: '1px solid #e5e7eb',
+            border: `1px solid ${divider}`,
             borderRadius: 8,
             fontSize: 14,
             fontFamily: font,
-            background: '#fff',
+            background: surface,
+            color: text,
           }}
         />
         <span
@@ -563,7 +622,7 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
             fontSize: 11,
             opacity: 0.6,
             textAlign: 'center',
-            borderTop: '1px solid #e5e7eb',
+            borderTop: `1px solid ${divider}`,
           }}
         >
           {cfg.footerText}

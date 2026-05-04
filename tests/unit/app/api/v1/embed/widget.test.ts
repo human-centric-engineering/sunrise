@@ -278,4 +278,12 @@ describe('Embed widget per-agent config (Phase 2)', () => {
     // the user typed or clicked a starter).
     expect(body).toContain("startersEl.style.display = 'none'");
   });
+
+  it('cite-marker chip background derives from --sw-primary via color-mix', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The chip used to be hardcoded blue rgba; once admins customise
+    // primary to (say) green, the chip would have looked off. Tint
+    // now follows whatever --sw-primary the loader assigned.
+    expect(body).toContain('color-mix(in srgb, var(--sw-primary)');
+  });
 });
