@@ -136,6 +136,27 @@ describe('AgentForm — Model tab', () => {
         expect(screen.queryByRole('option', { name: /gpt-4o/i })).not.toBeInTheDocument();
       });
     });
+
+    it('auto-resets model when provider changes to one that does not own current model', async () => {
+      // Hits the useEffect at agent-form.tsx:172-179. Default provider is
+      // anthropic with model claude-opus-4-6; switching to openai makes the
+      // current model invalid for the new provider, so the effect picks
+      // the first openai model (gpt-4o). Covers both the `!valid` and the
+      // `filteredModels.length > 0` truthy branches.
+      const user = await renderAndOpenModelTab();
+
+      const providerSelect = screen.getByRole('combobox', { name: /provider/i });
+      await user.click(providerSelect);
+      const openaiOption = await screen.findByRole('option', { name: /openai/i });
+      await user.click(openaiOption);
+
+      // Effect synchronously sets model to filteredModels[0].id — the model
+      // combobox should now display an openai model.
+      await waitFor(() => {
+        const modelTrigger = screen.getByRole('combobox', { name: /model/i });
+        expect(modelTrigger).toHaveTextContent(/gpt-4o/i);
+      });
+    });
   });
 
   // ── Test connection ────────────────────────────────────────────────────────
