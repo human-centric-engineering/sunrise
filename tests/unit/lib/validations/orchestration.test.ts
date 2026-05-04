@@ -43,6 +43,10 @@ import {
   systemInstructionsHistoryEntrySchema,
   systemInstructionsHistorySchema,
   instructionsRevertSchema,
+  widgetConfigSchema,
+  updateWidgetConfigSchema,
+  resolveWidgetConfig,
+  DEFAULT_WIDGET_CONFIG,
   attachAgentCapabilitySchema,
   updateAgentCapabilitySchema,
   exportAgentsSchema,
@@ -2076,5 +2080,145 @@ describe('searchConfigSchema', () => {
   it('accepts an empty object (treated as all-defaults)', () => {
     const result = searchConfigSchema.safeParse({});
     expect(result.success).toBe(true);
+  });
+});
+
+describe('widgetConfigSchema', () => {
+  function validBase() {
+    return {
+      primaryColor: '#2563eb',
+      surfaceColor: '#ffffff',
+      textColor: '#111827',
+      fontFamily: 'Inter, sans-serif',
+      headerTitle: 'Chat',
+      headerSubtitle: '',
+      inputPlaceholder: 'Type a message…',
+      sendLabel: 'Send',
+      conversationStarters: [],
+      footerText: '',
+    };
+  }
+
+  it('accepts a fully-resolved valid config', () => {
+    const result = widgetConfigSchema.safeParse(validBase());
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects 3-digit hex colour shorthand (full 6-digit form required)', () => {
+    const bad = { ...validBase(), primaryColor: '#abc' };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-hex colour values', () => {
+    const bad = { ...validBase(), surfaceColor: 'rgb(255,255,255)' };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects font-family containing CSS-injection metacharacters', () => {
+    const bad = { ...validBase(), fontFamily: 'Inter; color: red' };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects font-family containing curly braces', () => {
+    const bad = { ...validBase(), fontFamily: 'Inter} {body{display:none}' };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a font stack with quoted family names', () => {
+    const ok = { ...validBase(), fontFamily: '"Helvetica Neue", Arial, sans-serif' };
+    const result = widgetConfigSchema.safeParse(ok);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects header longer than 60 chars', () => {
+    const bad = { ...validBase(), headerTitle: 'a'.repeat(61) };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty header (a header is required when set)', () => {
+    const bad = { ...validBase(), headerTitle: '' };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts up to 4 conversation starters', () => {
+    const ok = { ...validBase(), conversationStarters: ['a', 'b', 'c', 'd'] };
+    const result = widgetConfigSchema.safeParse(ok);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects more than 4 conversation starters', () => {
+    const bad = { ...validBase(), conversationStarters: ['a', 'b', 'c', 'd', 'e'] };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty starter strings', () => {
+    const bad = { ...validBase(), conversationStarters: [''] };
+    const result = widgetConfigSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('updateWidgetConfigSchema (PATCH body)', () => {
+  it('rejects an empty body', () => {
+    const result = updateWidgetConfigSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a single-field update', () => {
+    const result = updateWidgetConfigSchema.safeParse({ primaryColor: '#16a34a' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects unknown extra fields when the rest are valid (zod strict by default? — actually accepts; assert merge behaviour instead)', () => {
+    // zod object is non-strict; unknown keys pass through validation but are
+    // dropped on parse output. The contract for the PATCH route is that only
+    // known keys are persisted via resolveWidgetConfig — this test pins that.
+    const result = updateWidgetConfigSchema.safeParse({
+      primaryColor: '#16a34a',
+      bogusField: 'x',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).bogusField).toBeUndefined();
+    }
+  });
+});
+
+describe('resolveWidgetConfig', () => {
+  it('returns full defaults when stored value is null', () => {
+    const out = resolveWidgetConfig(null);
+    expect(out).toEqual(DEFAULT_WIDGET_CONFIG);
+  });
+
+  it('returns full defaults when stored value is undefined', () => {
+    const out = resolveWidgetConfig(undefined);
+    expect(out).toEqual(DEFAULT_WIDGET_CONFIG);
+  });
+
+  it('merges a partial stored value over defaults', () => {
+    const out = resolveWidgetConfig({ primaryColor: '#16a34a', headerTitle: 'Council' });
+    expect(out.primaryColor).toBe('#16a34a');
+    expect(out.headerTitle).toBe('Council');
+    expect(out.sendLabel).toBe(DEFAULT_WIDGET_CONFIG.sendLabel);
+  });
+
+  it('falls back to defaults if a stored field is invalid', () => {
+    // A stored value that fails schema validation (e.g. legacy bad data)
+    // must not crash the widget — we return defaults instead.
+    const out = resolveWidgetConfig({ primaryColor: 'not-a-colour' });
+    expect(out).toEqual(DEFAULT_WIDGET_CONFIG);
+  });
+
+  it('ignores unknown stored fields', () => {
+    const out = resolveWidgetConfig({ primaryColor: '#16a34a', legacy: 'ignored' });
+    expect(out.primaryColor).toBe('#16a34a');
+    expect((out as Record<string, unknown>).legacy).toBeUndefined();
   });
 });

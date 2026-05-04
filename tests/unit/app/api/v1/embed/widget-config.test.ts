@@ -1,0 +1,173 @@
+/**
+ * Unit Test: Embed Widget Config endpoint
+ *
+ * GET     /api/v1/embed/widget-config
+ * OPTIONS /api/v1/embed/widget-config
+ *
+ * Behaviours:
+ * - Missing X-Embed-Token → 401 MISSING_TOKEN
+ * - Invalid/inactive token → 401 INVALID_TOKEN
+ * - Origin not in allowedOrigins → 403 ORIGIN_DENIED
+ * - allowedOrigins: [] → wildcard CORS, proceeds
+ * - widgetConfig stored as null → returns DEFAULT_WIDGET_CONFIG
+ * - widgetConfig stored as partial → returns merged config
+ * - OPTIONS with token → 204 with CORS headers
+ *
+ * @see app/api/v1/embed/widget-config/route.ts
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
+
+vi.mock('@/lib/embed/auth', () => ({
+  resolveEmbedToken: vi.fn(),
+  isOriginAllowed: vi.fn(),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiAgent: { findUnique: vi.fn() },
+  },
+}));
+
+vi.mock('@/lib/security/rate-limit', () => ({
+  apiLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
+vi.mock('@/lib/security/ip', () => ({
+  getClientIP: vi.fn(() => '127.0.0.1'),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
+import { prisma } from '@/lib/db/client';
+import { apiLimiter } from '@/lib/security/rate-limit';
+import { GET, OPTIONS } from '@/app/api/v1/embed/widget-config/route';
+import { DEFAULT_WIDGET_CONFIG } from '@/lib/validations/orchestration';
+
+const VALID_TOKEN = 'tok_valid_1234';
+const VALID_CONTEXT = {
+  agentId: 'agent-1',
+  agentSlug: 'support-bot',
+  userId: 'embed_abc123',
+  allowedOrigins: ['https://mysite.com'],
+};
+
+function makeGetRequest(headers: Record<string, string> = {}): NextRequest {
+  return {
+    method: 'GET',
+    headers: new Headers(headers),
+    url: 'https://mysite.com/api/v1/embed/widget-config',
+  } as unknown as NextRequest;
+}
+
+function makeOptionsRequest(headers: Record<string, string> = {}): NextRequest {
+  return {
+    method: 'OPTIONS',
+    headers: new Headers(headers),
+    url: 'https://mysite.com/api/v1/embed/widget-config',
+  } as unknown as NextRequest;
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  return JSON.parse(await response.text()) as T;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(apiLimiter.check).mockReturnValue({ success: true } as never);
+  vi.mocked(resolveEmbedToken).mockResolvedValue(VALID_CONTEXT as never);
+  vi.mocked(isOriginAllowed).mockReturnValue(true);
+  vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ widgetConfig: null } as never);
+});
+
+describe('GET /api/v1/embed/widget-config', () => {
+  it('returns 401 MISSING_TOKEN when X-Embed-Token header is absent', async () => {
+    const response = await GET(makeGetRequest());
+    expect(response.status).toBe(401);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('MISSING_TOKEN');
+  });
+
+  it('returns 401 INVALID_TOKEN when the token cannot be resolved', async () => {
+    vi.mocked(resolveEmbedToken).mockResolvedValue(null);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.status).toBe(401);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('INVALID_TOKEN');
+  });
+
+  it('returns 403 ORIGIN_DENIED when the request origin is not allowed', async () => {
+    vi.mocked(isOriginAllowed).mockReturnValue(false);
+    const response = await GET(
+      makeGetRequest({ 'X-Embed-Token': VALID_TOKEN, Origin: 'https://other.com' })
+    );
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('ORIGIN_DENIED');
+  });
+
+  it('returns 429 when rate-limited', async () => {
+    vi.mocked(apiLimiter.check).mockReturnValue({ success: false } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.status).toBe(429);
+  });
+
+  it('returns DEFAULT_WIDGET_CONFIG when stored widgetConfig is null', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ widgetConfig: null } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { config: Record<string, unknown> } }>(response);
+    expect(body.data.config).toEqual(DEFAULT_WIDGET_CONFIG);
+  });
+
+  it('merges a partial stored widgetConfig over defaults', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: { primaryColor: '#16a34a', headerTitle: 'Council Planning' },
+    } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { config: Record<string, unknown> } }>(response);
+    expect(body.data.config.primaryColor).toBe('#16a34a');
+    expect(body.data.config.headerTitle).toBe('Council Planning');
+    expect(body.data.config.sendLabel).toBe(DEFAULT_WIDGET_CONFIG.sendLabel);
+  });
+
+  it('sets wildcard CORS when allowedOrigins is empty', async () => {
+    vi.mocked(resolveEmbedToken).mockResolvedValue({
+      ...VALID_CONTEXT,
+      allowedOrigins: [],
+    } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  it('echoes the matched origin when allowedOrigins is non-empty', async () => {
+    const response = await GET(
+      makeGetRequest({ 'X-Embed-Token': VALID_TOKEN, Origin: 'https://mysite.com' })
+    );
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://mysite.com');
+  });
+});
+
+describe('OPTIONS /api/v1/embed/widget-config', () => {
+  it('returns 204 with wildcard CORS when token is missing (preflight before token is known)', async () => {
+    const response = await OPTIONS(makeOptionsRequest());
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  it('returns 204 with CORS headers when token is valid and origin matches', async () => {
+    const response = await OPTIONS(
+      makeOptionsRequest({ 'X-Embed-Token': VALID_TOKEN, Origin: 'https://mysite.com' })
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://mysite.com');
+  });
+});

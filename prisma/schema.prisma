@@ -182,6 +182,7 @@ model AiAgent {
   maxHistoryTokens          Int? // override token-aware history truncation; null = use model context window
   retentionDays             Int? // auto-delete conversations older than N days; null = keep forever
   visibility                String   @default("internal") // "internal" | "public" | "invite_only"
+  widgetConfig              Json? // per-agent embed-widget appearance + copy; see widgetConfigSchema in lib/validations/orchestration.ts. null = use DEFAULT_WIDGET_CONFIG.
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
   createdBy                 String

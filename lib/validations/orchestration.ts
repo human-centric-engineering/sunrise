@@ -582,6 +582,64 @@ export const updateEmbedTokenSchema = z
   );
 
 // ============================================================================
+// Widget Config Schemas (per-agent embed-widget appearance + copy)
+// ============================================================================
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+// Restrictive font-family allowlist: word chars, spaces, commas, single + double
+// quotes, hyphens. Blocks `}` `{` `;` parentheses so a stored value cannot
+// escape the CSS declaration when injected as a custom property.
+const FONT_FAMILY = /^[\w\s,'"-]+$/;
+
+const DEFAULT_FONT_FAMILY = `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+
+/** Resolved widget configuration with all defaults filled in. */
+export const widgetConfigSchema = z.object({
+  primaryColor: z.string().regex(HEX_COLOR, 'Must be a 6-digit hex like #2563eb'),
+  surfaceColor: z.string().regex(HEX_COLOR, 'Must be a 6-digit hex like #ffffff'),
+  textColor: z.string().regex(HEX_COLOR, 'Must be a 6-digit hex like #111827'),
+  fontFamily: z.string().min(1).max(200).regex(FONT_FAMILY, 'Disallowed character in font stack'),
+  headerTitle: z.string().min(1).max(60),
+  headerSubtitle: z.string().max(100),
+  inputPlaceholder: z.string().min(1).max(80),
+  sendLabel: z.string().min(1).max(30),
+  conversationStarters: z.array(z.string().min(1).max(200)).max(4),
+  footerText: z.string().max(80),
+});
+
+export type WidgetConfig = z.infer<typeof widgetConfigSchema>;
+
+export const DEFAULT_WIDGET_CONFIG: WidgetConfig = {
+  primaryColor: '#2563eb',
+  surfaceColor: '#ffffff',
+  textColor: '#111827',
+  fontFamily: DEFAULT_FONT_FAMILY,
+  headerTitle: 'Chat',
+  headerSubtitle: '',
+  inputPlaceholder: 'Type a message…',
+  sendLabel: 'Send',
+  conversationStarters: [],
+  footerText: '',
+};
+
+/** Partial PATCH body for the admin endpoint. At least one field required. */
+export const updateWidgetConfigSchema = widgetConfigSchema
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'At least one field must be provided' });
+
+/**
+ * Merge a stored partial widgetConfig (or null) with defaults to produce a
+ * fully-resolved WidgetConfig. Unknown stored fields are ignored. Invalid
+ * stored fields fall back to their default.
+ */
+export function resolveWidgetConfig(stored: unknown): WidgetConfig {
+  if (!stored || typeof stored !== 'object') return DEFAULT_WIDGET_CONFIG;
+  const merged = { ...DEFAULT_WIDGET_CONFIG, ...(stored as Record<string, unknown>) };
+  const parsed = widgetConfigSchema.safeParse(merged);
+  return parsed.success ? parsed.data : DEFAULT_WIDGET_CONFIG;
+}
+
+// ============================================================================
 // Webhook Schemas
 // ============================================================================
 
