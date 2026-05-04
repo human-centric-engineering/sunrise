@@ -16,8 +16,23 @@
  * @see lib/orchestration/llm/tokeniser.ts
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { tokeniserForModel, __tokenisers } from '@/lib/orchestration/llm/tokeniser';
+import * as modelRegistry from '@/lib/orchestration/llm/model-registry';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
+
+function fakeModel(id: string, provider: string): ModelInfo {
+  return {
+    id,
+    name: id,
+    provider,
+    tier: 'mid',
+    inputCostPerMillion: 1,
+    outputCostPerMillion: 1,
+    maxContext: 128_000,
+    supportsTools: false,
+  };
+}
 
 describe('tokeniserForModel', () => {
   it('returns the heuristic tokeniser when modelId is missing', () => {
@@ -83,6 +98,43 @@ describe('tokeniserForModel', () => {
     expect(tokeniserForModel('meta-llama/Llama-4-70b-instruct').id).toBe('llama-approx');
     expect(tokeniserForModel('mistralai/mistral-large-future').id).toBe('llama-approx');
     expect(tokeniserForModel('qwen2.5-coder-32b').id).toBe('llama-approx');
+  });
+
+  // ── registry-by-provider switch coverage ───────────────────────────────────
+  // These exercise the layer-1 switch arms that production deployments will
+  // hit when the registry knows the model. Using vi.spyOn keeps the rest of
+  // the registry intact (including the static fallback map) while letting
+  // each test target one provider value.
+
+  it.each([
+    ['together', 'llama-approx'],
+    ['fireworks', 'llama-approx'],
+    ['groq', 'llama-approx'],
+    ['ollama', 'llama-approx'],
+    ['lmstudio', 'llama-approx'],
+    ['vllm', 'llama-approx'],
+    ['meta-llama', 'llama-approx'],
+    ['google', 'gemini-approx'],
+    ['gemini', 'gemini-approx'],
+  ])('routes registry provider "%s" to %s', (provider, expectedId) => {
+    const spy = vi.spyOn(modelRegistry, 'getModel').mockReturnValue(fakeModel('x', provider));
+    try {
+      expect(tokeniserForModel('x').id).toBe(expectedId);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('lowercases capitalised registry provider names before routing', () => {
+    // Defensive: a custom-named provider config could surface "Anthropic"
+    // (capitalised) on the model. The switch comparison is lowercase,
+    // so this still hits the anthropic case.
+    const spy = vi.spyOn(modelRegistry, 'getModel').mockReturnValue(fakeModel('y', 'Anthropic'));
+    try {
+      expect(tokeniserForModel('y').id).toBe('anthropic-approx');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
