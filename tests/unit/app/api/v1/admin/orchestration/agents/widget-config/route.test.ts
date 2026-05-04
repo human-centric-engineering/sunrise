@@ -24,7 +24,12 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
-  createRateLimitResponse: vi.fn(),
+  createRateLimitResponse: vi.fn(
+    () =>
+      new Response(JSON.stringify({ success: false, error: { code: 'RATE_LIMITED' } }), {
+        status: 429,
+      })
+  ),
 }));
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
@@ -34,6 +39,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { adminLimiter } from '@/lib/security/rate-limit';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/agents/[id]/widget-config/route';
 import { DEFAULT_WIDGET_CONFIG } from '@/lib/validations/orchestration';
@@ -117,6 +123,13 @@ describe('GET /agents/:id/widget-config', () => {
     expect(body.data.config.primaryColor).toBe('#16a34a');
     expect(body.data.config.headerTitle).toBe('Council');
   });
+
+  it('returns 429 when rate-limited', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({ success: false } as never);
+    const response = await GET(makeGetRequest(), makeParams());
+    expect(response.status).toBe(429);
+  });
 });
 
 describe('PATCH /agents/:id/widget-config', () => {
@@ -194,5 +207,21 @@ describe('PATCH /agents/:id/widget-config', () => {
     const body = await parseJson<{ data: { config: Record<string, unknown> } }>(response);
     expect(body.data.config.primaryColor).toBe('#16a34a');
     expect(body.data.config.sendLabel).toBe(DEFAULT_WIDGET_CONFIG.sendLabel);
+  });
+
+  it('returns 400 for invalid agent id on PATCH', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const response = await PATCH(
+      makePatchRequest({ primaryColor: '#16a34a' }),
+      makeParams('not-a-cuid')
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it('returns 429 when rate-limited on PATCH', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({ success: false } as never);
+    const response = await PATCH(makePatchRequest({ primaryColor: '#16a34a' }), makeParams());
+    expect(response.status).toBe(429);
   });
 });

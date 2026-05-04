@@ -192,4 +192,130 @@ describe('WidgetAppearanceSection', () => {
     expect(screen.getAllByDisplayValue('#2563eb').length).toBeGreaterThan(0);
     expect(mockPatch).not.toHaveBeenCalled();
   });
+
+  it('shows an error when the initial GET fails', async () => {
+    const { APIClientError } = await import('@/lib/api/client');
+    mockGet.mockRejectedValue(new APIClientError('Boom from server'));
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Boom from server/i));
+  });
+
+  it('shows a generic error when the initial GET rejects with a non-APIClientError', async () => {
+    mockGet.mockRejectedValue(new Error('network down'));
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/Failed to load appearance/i)
+    );
+  });
+
+  it('surfaces the APIClientError message when save fails', async () => {
+    const { APIClientError } = await import('@/lib/api/client');
+    mockGet.mockResolvedValue({ config: DEFAULTS });
+    mockPatch.mockRejectedValue(new APIClientError('Server rejected'));
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Chat'));
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Server rejected/i));
+  });
+
+  it('falls back to a generic error when save rejects with a non-APIClientError', async () => {
+    mockGet.mockResolvedValue({ config: DEFAULTS });
+    mockPatch.mockRejectedValue(new Error('network blip'));
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Chat'));
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/Failed to save appearance/i)
+    );
+  });
+
+  it('hides the Add starter button once 4 starters exist', async () => {
+    mockGet.mockResolvedValue({
+      config: { ...DEFAULTS, conversationStarters: ['a', 'b', 'c', 'd'] },
+    });
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('a'));
+    expect(screen.queryByRole('button', { name: /Add starter/i })).not.toBeInTheDocument();
+  });
+
+  it('updates a starter value when the input changes (covers updateStarter)', async () => {
+    mockGet.mockResolvedValue({
+      config: { ...DEFAULTS, conversationStarters: ['original'] },
+    });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    const input = await screen.findByDisplayValue('original');
+    await user.clear(input);
+    await user.type(input, 'edited');
+    expect(screen.getByDisplayValue('edited')).toBeInTheDocument();
+  });
+
+  it('renders "(empty)" placeholder in preview for blank starters', async () => {
+    mockGet.mockResolvedValue({
+      config: { ...DEFAULTS, conversationStarters: [''] },
+    });
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Chat'));
+    expect(screen.getByText('(empty)')).toBeInTheDocument();
+  });
+
+  it('blocks save when the surface colour is invalid', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, surfaceColor: 'not-a-hex' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('not-a-hex'));
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Surface colour must be a 6-digit hex/i);
+  });
+
+  it('blocks save when the text colour is invalid', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, textColor: 'rgb(0,0,0)' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('rgb(0,0,0)'));
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Text colour must be a 6-digit hex/i);
+  });
+
+  it('blocks save when the font family contains disallowed characters', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, fontFamily: 'Inter; color: red' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    await waitFor(() => screen.getByDisplayValue('Inter; color: red'));
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Font family contains a disallowed/i);
+  });
+
+  it('blocks save when the header title is empty', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, headerTitle: 'X' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    const title = await screen.findByDisplayValue('X');
+    await user.clear(title);
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Header title cannot be empty/i);
+  });
+
+  it('blocks save when the input placeholder is empty', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, inputPlaceholder: 'X' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    const placeholder = await screen.findByDisplayValue('X');
+    await user.clear(placeholder);
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Input placeholder cannot be empty/i);
+  });
+
+  it('blocks save when the send-button label is empty', async () => {
+    mockGet.mockResolvedValue({ config: { ...DEFAULTS, sendLabel: 'X' } });
+    const user = userEvent.setup();
+    render(<WidgetAppearanceSection agentId={AGENT_ID} />);
+    const sendLabel = await screen.findByDisplayValue('X');
+    await user.clear(sendLabel);
+    await user.click(screen.getByRole('button', { name: /Save appearance/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent(/Send button label cannot be empty/i);
+  });
 });
