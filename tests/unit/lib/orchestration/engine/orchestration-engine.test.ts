@@ -1324,6 +1324,40 @@ describe('OrchestrationEngine', () => {
     expect(retryEvents).toHaveLength(0);
   });
 
+  it('non-retriable error mid-retry-loop carries accumulated cost from prior retriable attempts', async () => {
+    // Attempt 0: retriable error with $0.005 partial. Attempt 1: non-retriable
+    // error with $0.005 partial. Without the accumulator-aware rethrow, only
+    // attempt 1's cost would land on the trace; attempt 0's billed cost would
+    // be in AiCostLog but missing from the row total.
+    let attempts = 0;
+    registerStepType('llm_call', async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new ExecutorError('a', 'transient', 'retry me', undefined, true, 50, 0.005);
+      }
+      throw new ExecutorError('a', 'permanent', 'cannot retry', undefined, false, 50, 0.005);
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'retry', retryCount: 3 };
+    def.steps = [{ ...def.steps[0], nextSteps: [] }];
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // The persisted trace entry for the failed step should reflect both
+    // attempts' partial cost (sum: 100 tokens / $0.010).
+    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{ stepId: string; tokensUsed: number; costUsd: number; status: string }>;
+    expect(lastTrace).toBeDefined();
+    const failedEntry = lastTrace.find((e) => e.stepId === 'a');
+    expect(failedEntry?.status).toBe('failed');
+    expect(failedEntry?.tokensUsed).toBe(100);
+    expect(failedEntry?.costUsd).toBeCloseTo(0.01);
+  }, 15_000);
+
   // ─── executeWithSubscriber ────────────────────────────────────────
 
   it('executeWithSubscriber delivers every event to the subscriber', async () => {

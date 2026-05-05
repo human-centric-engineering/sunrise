@@ -591,8 +591,21 @@ export class OrchestrationEngine {
                 );
           accumulatedTokens += lastError.tokensUsed;
           accumulatedCost += lastError.costUsd;
-          // Don't retry non-retriable errors.
-          if (!lastError.retriable) throw lastError;
+          // Don't retry non-retriable errors. Rethrow with the summed
+          // partial cost so prior retriable attempts' billed tokens land
+          // on the trace + ctx totals (otherwise we'd discard them when
+          // we throw the bare lastError).
+          if (!lastError.retriable) {
+            throw new ExecutorError(
+              lastError.stepId,
+              lastError.code,
+              lastError.message,
+              lastError.cause,
+              false,
+              accumulatedTokens,
+              accumulatedCost
+            );
+          }
           if (attempt < retryCount) {
             yield stepFailed(step.id, sanitizeError(lastError), true);
             await sleep(backoffDelayMs(attempt));
@@ -1132,13 +1145,36 @@ export class OrchestrationEngine {
                 );
           accumulatedTokens += lastError.tokensUsed;
           accumulatedCost += lastError.costUsd;
-          if (!lastError.retriable) throw lastError;
+          // Mirror runStepWithStrategy: rethrow non-retriable with the
+          // accumulator so prior retriable attempts' billed tokens aren't
+          // dropped from the trace.
+          if (!lastError.retriable) {
+            throw new ExecutorError(
+              lastError.stepId,
+              lastError.code,
+              lastError.message,
+              lastError.cause,
+              false,
+              accumulatedTokens,
+              accumulatedCost
+            );
+          }
           if (attempt < retryCount) {
             await sleep(backoffDelayMs(attempt));
           }
         }
       }
-      throw lastError ?? new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
+      throw lastError
+        ? new ExecutorError(
+            lastError.stepId,
+            lastError.code,
+            lastError.message,
+            lastError.cause,
+            lastError.retriable,
+            accumulatedTokens,
+            accumulatedCost
+          )
+        : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
 
     try {
