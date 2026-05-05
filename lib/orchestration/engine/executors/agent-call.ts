@@ -70,11 +70,18 @@ async function runSingleTurn(
         signal: ctx.signal,
       });
     } catch (err) {
+      // Carry partial cost from earlier successful turns through the error
+      // so the engine's retry/fallback accumulator can surface it on the
+      // trace entry. Without this, prior turns' tokens are billed via
+      // AiCostLog but invisible in the row-level totals.
       throw new ExecutorError(
         step.id,
         'agent_call_failed',
         err instanceof Error ? err.message : 'Agent LLM call failed',
-        err
+        err,
+        true,
+        totalTokensUsed,
+        totalCostUsd
       );
     }
     const turnDurationMs = Date.now() - turnStarted;

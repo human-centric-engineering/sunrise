@@ -270,6 +270,33 @@ describe('executeAgentCall', () => {
     });
   });
 
+  it('carries partial tokens/cost on ExecutorError when a later turn fails', async () => {
+    // Turn 1 succeeds and asks for a tool — its tokens/cost are real and
+    // billed via AiCostLog. Turn 2 throws. Without partial-cost on the
+    // ExecutorError, those billed tokens become invisible at the row level
+    // and the trace header diverges from the per-call cost sub-table.
+    mockChat
+      .mockResolvedValueOnce({
+        content: 'Let me search…',
+        toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { q: 'x' } }],
+        usage: { inputTokens: 100, outputTokens: 50 },
+        finishReason: 'tool_use',
+      })
+      .mockRejectedValueOnce(new Error('Provider 503'));
+
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: ['anything'] },
+    });
+    // calculateCost was set up with $0.01 per call in the test fixture.
+    await expect(executeAgentCall(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'agent_call_failed',
+      tokensUsed: 150, // 100 + 50 from the successful first turn
+      costUsd: 0.01, // single calculateCost call before the failure
+    });
+  });
+
   it('handles tool call loop: dispatches capability and loops back', async () => {
     // First call: model wants a tool
     mockChat.mockResolvedValueOnce({

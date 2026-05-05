@@ -564,9 +564,19 @@ export class OrchestrationEngine {
 
     if (strategy === 'retry') {
       let lastError: ExecutorError | null = null;
+      // Failed attempts may have consumed tokens before throwing — see
+      // ExecutorError's tokensUsed/costUsd. Roll the partials forward so
+      // the eventual successful attempt's StepResult reflects everything
+      // billed (and the fallthrough rethrow carries them on the error).
+      // This mirrors the parallel-path accumulator in `runStepToCompletion`.
+      let accumulatedTokens = 0;
+      let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
-          return await invokeExecutor();
+          const result = await invokeExecutor();
+          result.tokensUsed += accumulatedTokens;
+          result.costUsd += accumulatedCost;
+          return result;
         } catch (err) {
           if (err instanceof PausedForApproval) throw err;
           if (err instanceof BudgetExceeded) throw err;
@@ -579,6 +589,8 @@ export class OrchestrationEngine {
                   err instanceof Error ? err.message : 'Executor threw an unknown error',
                   err
                 );
+          accumulatedTokens += lastError.tokensUsed;
+          accumulatedCost += lastError.costUsd;
           // Don't retry non-retriable errors.
           if (!lastError.retriable) throw lastError;
           if (attempt < retryCount) {
@@ -587,8 +599,19 @@ export class OrchestrationEngine {
           }
         }
       }
-      // Exhausted retries — rethrow the last error.
-      throw lastError ?? new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
+      // Exhausted retries — rethrow the last error, carrying the summed
+      // partial cost so executeSingleStep's catch can record the total.
+      throw lastError
+        ? new ExecutorError(
+            lastError.stepId,
+            lastError.code,
+            lastError.message,
+            lastError.cause,
+            lastError.retriable,
+            accumulatedTokens,
+            accumulatedCost
+          )
+        : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
 
     try {
@@ -606,9 +629,19 @@ export class OrchestrationEngine {
               err
             );
 
+      // Capture partial cost from the failed step so skip/fallback strategies
+      // surface it instead of zeroing it out.
+      const partialTokens = execErr.tokensUsed;
+      const partialCost = execErr.costUsd;
+
       if (strategy === 'skip') {
         yield stepFailed(step.id, sanitizeError(execErr), false);
-        return { output: null, tokensUsed: 0, costUsd: 0, skipped: true };
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          skipped: true,
+        };
       }
 
       if (strategy === 'fallback') {
@@ -616,12 +649,12 @@ export class OrchestrationEngine {
         if (errorConfig.fallbackStepId) {
           return {
             output: null,
-            tokensUsed: 0,
-            costUsd: 0,
+            tokensUsed: partialTokens,
+            costUsd: partialCost,
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
       }
 
       // strategy === 'fail' — propagate.

@@ -348,6 +348,44 @@ describe('OrchestrationEngine', () => {
     expect(events.map((e) => e.type)).toContain('workflow_failed');
   }, 15_000);
 
+  it('sequential retry: failed-attempt tokens/cost roll forward into the success result', async () => {
+    // Mirrors the parallel-path accumulator. Without it, a step that retried
+    // once would show only the successful attempt's cost, even though
+    // AiCostLog records the failed attempt's billing too — leaving the trace
+    // header and the per-call cost sub-table out of sync.
+    let attempts = 0;
+    registerStepType('llm_call', async (step) => {
+      attempts++;
+      if (step.id === 'a' && attempts === 1) {
+        throw new ExecutorError(
+          'a',
+          'transient',
+          'partial-cost failure',
+          undefined,
+          true,
+          50, // tokensUsed before failure
+          0.005 // costUsd before failure
+        );
+      }
+      return { output: `out:${step.id}`, tokensUsed: 10, costUsd: 0.001 };
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'retry', retryCount: 1 };
+    // Trim the workflow to a single step so totals are easy to assert against.
+    def.steps = [{ ...def.steps[0], nextSteps: [] }];
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+    const completed = events.find((e) => e.type === 'step_completed') as
+      | { tokensUsed: number; costUsd: number }
+      | undefined;
+
+    // Successful attempt yielded 10 tokens / $0.001; failed attempt added
+    // 50 tokens / $0.005. The header should now sum to the full billed total.
+    expect(completed?.tokensUsed).toBe(60);
+    expect(completed?.costUsd).toBeCloseTo(0.006);
+  }, 15_000);
+
   // ─── Fallback strategy ─────────────────────────────────────────────
 
   it('fallback strategy invokes fallbackStepId', async () => {
