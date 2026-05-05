@@ -163,4 +163,112 @@ describe('RetryEdge', () => {
       expect(icon).not.toBeNull();
     });
   });
+
+  describe('default control point geometry', () => {
+    it('bows perpendicular (90° clockwise) from the source→target line', () => {
+      // Diagonal source (0,0) → target (100,100). Direction (1,1)/√2;
+      // perpendicular rotated 90° CW = (-1, 1)/√2. Midpoint = (50, 50).
+      // Default offset = 150. CP = mid + perp * offset
+      //                 = (50 - 150/√2, 50 + 150/√2) ≈ (-56.066, 156.066).
+      render(
+        <RetryEdge
+          {...(makeEdgeProps({
+            sourceX: 0,
+            sourceY: 0,
+            targetX: 100,
+            targetY: 100,
+          }) as Parameters<typeof RetryEdge>[0])}
+        />
+      );
+      const path = screen.getByTestId('base-edge').getAttribute('d') ?? '';
+      // SVG path string format: "M sx,sy Q cx,cy tx,ty" — extract CP.
+      const match = path.match(/Q\s*(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+      expect(match).not.toBeNull();
+      const cpX = Number(match![1]);
+      const cpY = Number(match![2]);
+      // Expect ~(-56.066, 156.066) — round to whole pixels for tolerance.
+      expect(Math.round(cpX)).toBe(-56);
+      expect(Math.round(cpY)).toBe(156);
+    });
+
+    it('produces a finite path even when source equals target (zero-length direction)', () => {
+      render(
+        <RetryEdge
+          {...(makeEdgeProps({
+            sourceX: 50,
+            sourceY: 50,
+            targetX: 50,
+            targetY: 50,
+          }) as Parameters<typeof RetryEdge>[0])}
+        />
+      );
+      const path = screen.getByTestId('base-edge').getAttribute('d') ?? '';
+      // Should contain a control point — no NaN values.
+      expect(path).not.toContain('NaN');
+      expect(path).toMatch(/^M 50,50 Q -?\d+(?:\.\d+)?,-?\d+(?:\.\d+)? 50,50$/);
+    });
+  });
+
+  describe('drag lifecycle', () => {
+    it('attaches document mousemove + mouseup listeners on mousedown and removes them on mouseup', () => {
+      const addSpy = vi.spyOn(document, 'addEventListener');
+      const removeSpy = vi.spyOn(document, 'removeEventListener');
+
+      render(<RetryEdge {...(makeEdgeProps() as Parameters<typeof RetryEdge>[0])} />);
+      const handle = screen.getByTestId('retry-edge-handle-edge-1');
+
+      // No drag in progress yet — no document listeners installed by us.
+      const baselineAdd = addSpy.mock.calls.filter(
+        ([type]) => type === 'mousemove' || type === 'mouseup'
+      ).length;
+      expect(baselineAdd).toBe(0);
+
+      // mousedown → effect runs → listeners attach.
+      fireEvent.mouseDown(handle);
+      const addedTypes = addSpy.mock.calls
+        .filter(([type]) => type === 'mousemove' || type === 'mouseup')
+        .map(([type]) => type);
+      expect(addedTypes).toContain('mousemove');
+      expect(addedTypes).toContain('mouseup');
+
+      // mouseup at document level → effect's onUp clears `dragging` →
+      // cleanup removes the listeners.
+      fireEvent(document, new MouseEvent('mouseup', { bubbles: true }));
+      const removedTypes = removeSpy.mock.calls
+        .filter(([type]) => type === 'mousemove' || type === 'mouseup')
+        .map(([type]) => type);
+      expect(removedTypes).toContain('mousemove');
+      expect(removedTypes).toContain('mouseup');
+
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    });
+
+    it('updates the edge data with a new control point when dragging', () => {
+      // Move event at flow position (300, 200). Source=(0,0), target=(100,0)
+      // → midpoint=(50,0). Expected new CP = (2*300 - 50, 2*200 - 0) = (550, 400).
+      render(<RetryEdge {...(makeEdgeProps() as Parameters<typeof RetryEdge>[0])} />);
+      const handle = screen.getByTestId('retry-edge-handle-edge-1');
+      fireEvent.mouseDown(handle);
+
+      fireEvent(
+        document,
+        new MouseEvent('mousemove', { clientX: 300, clientY: 200, bubbles: true })
+      );
+
+      // setEdges receives an updater. Run it on a stub edge to inspect the
+      // updated controlPoint.
+      const updater = setEdgesMock.mock.calls.at(-1)?.[0] as
+        | ((edges: { id: string; data?: unknown }[]) => { id: string; data?: unknown }[])
+        | undefined;
+      expect(typeof updater).toBe('function');
+      const result = updater!([{ id: 'edge-1', data: { maxRetries: 2 } }]);
+      const updatedData = result[0].data as { controlPoint: { x: number; y: number } };
+      expect(updatedData.controlPoint).toEqual({ x: 550, y: 400 });
+
+      // Tidy up: stop the drag so subsequent test renders don't keep the
+      // listeners attached.
+      fireEvent(document, new MouseEvent('mouseup', { bubbles: true }));
+    });
+  });
 });
