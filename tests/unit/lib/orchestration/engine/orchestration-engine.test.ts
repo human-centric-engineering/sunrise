@@ -2501,38 +2501,328 @@ describe('OrchestrationEngine', () => {
 
   // ─── Bounded retry back-edge logic ───────────────────────────────────────
   //
-  // ⚠️ SUSPECTED CODE BUG — inDegree deadlock with back-edges
+  // The engine permits a step to declare a back-edge with `maxRetries +
+  // condition` to express bounded re-execution. The validator exempts such
+  // edges from cycle detection; the engine's in-degree map skips them so the
+  // initial topo walk does not deadlock; on a verdict fail the engine cascade-
+  // clears `visited` and `pending` for the retry target and its downstream
+  // dependents and re-queues the target. When the retry budget is spent and
+  // the source step has a sibling fail edge with no `maxRetries`, the engine
+  // routes there as the exhaustion handler (otherwise it stops silently).
   //
-  // The engine builds an `inDegree` map from ALL `nextSteps` edges, including
-  // back-edges that carry `maxRetries + condition`. A back-edge from step C to
-  // step A means `inDegree['A']` includes C. On initial execution, A is the
-  // entryStepId but `isReady('A')` returns false (C not yet visited), so A goes
-  // to `pending` and the engine immediately emits "workflow deadlocked".
-  //
-  // The validator rightly permits back-edges with maxRetries+condition. The
-  // executor correctly discovers the `retryEdge` via `step.nextSteps`. The
-  // `inDegree` computation should skip edges with `maxRetries > 0 && condition`
-  // (treating them as back-edges that don't block initial readiness), but it
-  // currently doesn't. This means any bounded-retry workflow deadlocks.
-  //
-  // The todo tests below document the CORRECT expected behavior. They will pass
-  // once the `inDegree` computation excludes bounded-retry back-edges.
+  // Helper builds a producer → guard → done workflow with a bounded
+  // back-edge from guard ("fail") back to producer.
+  function backEdgeDefinition(): WorkflowDefinition {
+    return {
+      steps: [
+        {
+          id: 'producer',
+          name: 'Producer',
+          type: 'llm_call',
+          config: { prompt: 'P' },
+          nextSteps: [{ targetStepId: 'guard' }],
+        },
+        {
+          id: 'guard',
+          name: 'Guard',
+          type: 'guard',
+          config: { rules: 'r', mode: 'regex', failAction: 'block' },
+          nextSteps: [
+            { targetStepId: 'done', condition: 'pass' },
+            { targetStepId: 'producer', condition: 'fail', maxRetries: 2 },
+          ],
+        },
+        {
+          id: 'done',
+          name: 'Done',
+          type: 'llm_call',
+          config: { prompt: 'D' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'producer',
+      errorStrategy: 'fail',
+    };
+  }
 
-  it.todo(
-    'does NOT retry when retryCount reaches maxRetries — skips the back-edge (BUG: inDegree deadlock prevents initial execution with back-edge in nextSteps)'
-  );
+  it('cascade-clears visited and re-runs the producer when the guard verdict fails then passes', async () => {
+    // Arrange — producer counts attempts; guard fails twice then passes.
+    let producerAttempts = 0;
+    let doneRan = 0;
+    let guardCalls = 0;
 
-  it.todo(
-    'emits step_retry with the failure reason when output has a "reason" object property (BUG: inDegree deadlock)'
-  );
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'producer') producerAttempts++;
+      if (step.id === 'done') doneRan++;
+      return { output: `${step.id}:${producerAttempts}`, tokensUsed: 0, costUsd: 0 };
+    });
 
-  it.todo(
-    'emits step_retry with JSON-stringified reason when failureReason is a non-string object (BUG: inDegree deadlock)'
-  );
+    registerStepType('guard', async () => {
+      guardCalls++;
+      if (guardCalls < 3) {
+        return {
+          output: { verdict: 'fail', reason: 'still bad' },
+          tokensUsed: 0,
+          costUsd: 0,
+          nextStepIds: ['producer'],
+        };
+      }
+      return {
+        output: { verdict: 'pass', reason: '' },
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: ['done'],
+      };
+    });
 
-  it.todo(
-    'cascade-clears visited and pending sets for downstream steps when retrying (BUG: inDegree deadlock)'
-  );
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(backEdgeDefinition()));
+
+    // Assert — producer ran 3× (initial + 2 retries), done ran once.
+    expect(producerAttempts).toBe(3);
+    expect(doneRan).toBe(1);
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+
+    // Two step_retry events were emitted, neither marked exhausted.
+    const retries = events.filter((e) => e.type === 'step_retry');
+    expect(retries).toHaveLength(2);
+    expect(retries.map((r) => r.attempt)).toEqual([1, 2]);
+    expect(retries.every((r) => r.exhausted !== true)).toBe(true);
+  });
+
+  it('does NOT retry past maxRetries — silently halts when no fallback edge exists', async () => {
+    // Arrange — guard always fails. No sibling non-retry fail edge in this
+    // workflow, so once the budget is spent the engine should stop without
+    // running `done`.
+    let producerAttempts = 0;
+    let doneRan = 0;
+
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'producer') producerAttempts++;
+      if (step.id === 'done') doneRan++;
+      return { output: 'x', tokensUsed: 0, costUsd: 0 };
+    });
+    registerStepType('guard', async () => ({
+      output: { verdict: 'fail', reason: 'always fails' },
+      tokensUsed: 0,
+      costUsd: 0,
+      nextStepIds: ['producer'],
+    }));
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(backEdgeDefinition()));
+
+    // Assert — initial + 2 retries = 3 producer runs, no further work.
+    expect(producerAttempts).toBe(3);
+    expect(doneRan).toBe(0);
+
+    // Workflow ends — completes (the engine has no failure to report on a
+    // silent halt) without ever running the `done` step.
+    expect(events.map((e) => e.type)).toContain('workflow_completed');
+
+    // Exactly maxRetries (2) step_retry events; none marked exhausted because
+    // the legacy silent-halt path takes no fallback action.
+    const retries = events.filter((e) => e.type === 'step_retry');
+    expect(retries).toHaveLength(2);
+  });
+
+  it('emits step_retry with the failure reason from output.reason on each retry', async () => {
+    // Arrange — guard fails once with a string reason, then passes.
+    const guardOutputs = [
+      { verdict: 'fail', reason: 'tierRole "supercomputer" is not valid' },
+      { verdict: 'pass', reason: '' },
+    ];
+    let guardCalls = 0;
+
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+    registerStepType('guard', async () => {
+      const out = guardOutputs[Math.min(guardCalls++, guardOutputs.length - 1)];
+      return {
+        output: out,
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: out.verdict === 'pass' ? ['done'] : ['producer'],
+      };
+    });
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(backEdgeDefinition()));
+    const retry = events.find((e) => e.type === 'step_retry') as Extract<
+      ExecutionEvent,
+      { type: 'step_retry' }
+    >;
+
+    // Assert
+    expect(retry).toBeDefined();
+    expect(retry.fromStepId).toBe('guard');
+    expect(retry.targetStepId).toBe('producer');
+    expect(retry.attempt).toBe(1);
+    expect(retry.maxRetries).toBe(2);
+    expect(retry.reason).toBe('tierRole "supercomputer" is not valid');
+  });
+
+  it('JSON-stringifies a non-string output.reason when emitting step_retry', async () => {
+    // Arrange — guard fails with an object reason, then passes.
+    let guardCalls = 0;
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+    registerStepType('guard', async () => {
+      guardCalls++;
+      if (guardCalls === 1) {
+        return {
+          output: { verdict: 'fail', reason: { code: 'BAD_ENUM', field: 'tierRole' } },
+          tokensUsed: 0,
+          costUsd: 0,
+          nextStepIds: ['producer'],
+        };
+      }
+      return {
+        output: { verdict: 'pass', reason: '' },
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: ['done'],
+      };
+    });
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(backEdgeDefinition()));
+    const retry = events.find((e) => e.type === 'step_retry') as Extract<
+      ExecutionEvent,
+      { type: 'step_retry' }
+    >;
+
+    // Assert — engine JSON.stringifies the object reason before emitting.
+    expect(retry.reason).toBe('{"code":"BAD_ENUM","field":"tierRole"}');
+  });
+
+  it('routes to a sibling fail edge with no maxRetries once retries are exhausted', async () => {
+    // Arrange — workflow has a 4th step `failhandler` reachable via a second
+    // fail edge from guard with no maxRetries. Guard always fails.
+    const def = backEdgeDefinition();
+    def.steps.push({
+      id: 'failhandler',
+      name: 'Fail handler',
+      type: 'llm_call',
+      config: { prompt: 'F' },
+      nextSteps: [],
+    });
+    const guardStep = def.steps.find((s) => s.id === 'guard')!;
+    guardStep.nextSteps.push({ targetStepId: 'failhandler', condition: 'fail' });
+
+    let producerAttempts = 0;
+    let failHandlerRan = 0;
+    let doneRan = 0;
+
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'producer') producerAttempts++;
+      if (step.id === 'failhandler') failHandlerRan++;
+      if (step.id === 'done') doneRan++;
+      return { output: 'x', tokensUsed: 0, costUsd: 0 };
+    });
+    registerStepType('guard', async () => ({
+      output: { verdict: 'fail', reason: 'still failing' },
+      tokensUsed: 0,
+      costUsd: 0,
+      nextStepIds: ['producer'],
+    }));
+
+    // Act
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — producer ran 3× (initial + 2 retries), then exhaustion handler ran.
+    expect(producerAttempts).toBe(3);
+    expect(failHandlerRan).toBe(1);
+    expect(doneRan).toBe(0);
+
+    // Two normal retry events plus one exhaustion event.
+    const retries = events.filter((e) => e.type === 'step_retry');
+    expect(retries).toHaveLength(3);
+    expect(retries[0].exhausted).not.toBe(true);
+    expect(retries[1].exhausted).not.toBe(true);
+    expect(retries[2].exhausted).toBe(true);
+    expect(retries[2].targetStepId).toBe('failhandler');
+    expect(retries[2].attempt).toBe(3); // maxRetries + 1
+  });
+
+  it('attaches each retry record to the most recent trace entry for the source step', async () => {
+    // Arrange — same exhaustion-fallback scenario, asserting on the persisted trace.
+    const def = backEdgeDefinition();
+    def.steps.push({
+      id: 'failhandler',
+      name: 'Fail handler',
+      type: 'llm_call',
+      config: { prompt: 'F' },
+      nextSteps: [],
+    });
+    def.steps
+      .find((s) => s.id === 'guard')!
+      .nextSteps.push({
+        targetStepId: 'failhandler',
+        condition: 'fail',
+      });
+
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+    let guardCalls = 0;
+    registerStepType('guard', async () => {
+      const reason =
+        guardCalls === 0 ? 'first failure' : guardCalls === 1 ? 'second failure' : 'final failure';
+      guardCalls++;
+      return {
+        output: { verdict: 'fail', reason },
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: ['producer'],
+      };
+    });
+
+    // Act
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Assert — each guard run pushes its own trace entry and the retry it
+    // triggered attaches to that entry, so the three retries land on three
+    // different guard rows (one each, in order: first/second/exhaustion).
+    const trace = lastWrittenTrace();
+    const guardEntries = trace.filter(
+      (
+        e
+      ): e is {
+        stepId: string;
+        retries?: Array<{
+          attempt: number;
+          reason: string;
+          targetStepId: string;
+          exhausted?: boolean;
+        }>;
+      } => typeof e === 'object' && e !== null && (e as { stepId?: unknown }).stepId === 'guard'
+    );
+    expect(guardEntries).toHaveLength(3);
+
+    // First two guard rows route back to producer; the third routes to
+    // the exhaustion handler.
+    expect(guardEntries[0].retries).toEqual([
+      expect.objectContaining({
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'first failure',
+        targetStepId: 'producer',
+      }),
+    ]);
+    expect(guardEntries[1].retries).toEqual([
+      expect.objectContaining({
+        attempt: 2,
+        maxRetries: 2,
+        reason: 'second failure',
+        targetStepId: 'producer',
+      }),
+    ]);
+    expect(guardEntries[2].retries).toEqual([
+      expect.objectContaining({
+        attempt: 3,
+        maxRetries: 2,
+        targetStepId: 'failhandler',
+        exhausted: true,
+      }),
+    ]);
+  });
 
   // ─── stepRetry event shape — tested via the events module directly ─────────
   // These tests verify the event constructor behavior that the retry IIFE invokes,
