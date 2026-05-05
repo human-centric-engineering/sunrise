@@ -56,7 +56,8 @@ describe('ExecutionTraceEntryRow', () => {
 
     it('shows duration when provided', () => {
       render(<ExecutionTraceEntryRow {...BASE_PROPS} durationMs={1234} />);
-      expect(screen.getByText('1234 ms')).toBeInTheDocument();
+      // toLocaleString() formats with thousands separators in en-US.
+      expect(screen.getByText(/1,?234 ms/)).toBeInTheDocument();
     });
 
     it('shows token count when > 0', () => {
@@ -213,6 +214,131 @@ describe('ExecutionTraceEntryRow', () => {
 
       await user.click(screen.getByRole('button'));
       expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Phase 4 — new latency / model / cost-entry surfaces.
+  // ────────────────────────────────────────────────────────────────────────
+
+  describe('model / provider chip', () => {
+    it('renders provider · model when both are present', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} model="gpt-4o-mini" provider="openai" />);
+      expect(screen.getByTestId('trace-entry-model-step-1')).toHaveTextContent(
+        'openai · gpt-4o-mini'
+      );
+    });
+
+    it('renders model alone when no provider', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} model="gpt-4o-mini" />);
+      expect(screen.getByTestId('trace-entry-model-step-1')).toHaveTextContent('gpt-4o-mini');
+    });
+
+    it('does not render the chip when no model', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} />);
+      expect(screen.queryByTestId('trace-entry-model-step-1')).toBeNull();
+    });
+  });
+
+  describe('latency breakdown', () => {
+    it('shows "LLM xxx ms · other yyy ms" when both fields are present', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} durationMs={500} llmDurationMs={350} />);
+      const breakdown = screen.getByTestId('trace-entry-latency-breakdown-step-1');
+      expect(breakdown).toHaveTextContent('LLM 350 ms');
+      expect(breakdown).toHaveTextContent('other 150 ms');
+    });
+
+    it('omits the breakdown when llmDurationMs is missing', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} durationMs={500} />);
+      expect(screen.queryByTestId('trace-entry-latency-breakdown-step-1')).toBeNull();
+    });
+
+    it('omits the breakdown when llmDurationMs is zero (non-LLM step)', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} durationMs={500} llmDurationMs={0} />);
+      expect(screen.queryByTestId('trace-entry-latency-breakdown-step-1')).toBeNull();
+    });
+  });
+
+  describe('input / output side-by-side', () => {
+    it('renders both input and output when expanded', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          input={{ prompt: 'Hi there' }}
+          output={{ reply: 'Hello' }}
+        />
+      );
+      await user.click(screen.getByRole('button'));
+      expect(screen.getByTestId('trace-entry-input-step-1')).toHaveTextContent('Hi there');
+      expect(screen.getByTestId('trace-entry-output-step-1')).toHaveTextContent('Hello');
+    });
+
+    it('renders input alone when output is undefined', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} input={{ prompt: 'just input' }} />);
+      await user.click(screen.getByRole('button'));
+      expect(screen.getByTestId('trace-entry-input-step-1')).toHaveTextContent('just input');
+      expect(screen.queryByTestId('trace-entry-output-step-1')).toBeNull();
+    });
+  });
+
+  describe('per-call cost sub-table', () => {
+    it('renders a row per cost entry when expanded', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          costEntries={[
+            {
+              model: 'gpt-4o-mini',
+              provider: 'openai',
+              inputTokens: 100,
+              outputTokens: 50,
+              totalCostUsd: 0.005,
+              operation: 'chat',
+              createdAt: '2026-01-01T00:00:00Z',
+            },
+            {
+              model: 'gpt-4o-mini',
+              provider: 'openai',
+              inputTokens: 80,
+              outputTokens: 30,
+              totalCostUsd: 0.004,
+              operation: 'chat',
+              createdAt: '2026-01-01T00:00:01Z',
+            },
+          ]}
+        />
+      );
+      await user.click(screen.getByRole('button'));
+      const sub = screen.getByTestId('trace-entry-cost-entries-step-1');
+      // One header row + two body rows.
+      expect(sub.querySelectorAll('tbody tr')).toHaveLength(2);
+      expect(sub).toHaveTextContent('Per-call cost (2)');
+      expect(sub).toHaveTextContent('$0.0050');
+      expect(sub).toHaveTextContent('$0.0040');
+    });
+
+    it('does not render the sub-table when no cost entries', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} output="x" />);
+      await user.click(screen.getByRole('button'));
+      expect(screen.queryByTestId('trace-entry-cost-entries-step-1')).toBeNull();
+    });
+  });
+
+  describe('highlight prop', () => {
+    it('applies the highlight ring class when highlighted=true', () => {
+      const { container } = render(<ExecutionTraceEntryRow {...BASE_PROPS} highlighted />);
+      const root = container.querySelector('[data-testid="trace-entry-step-1"]');
+      expect(root?.className).toMatch(/ring-/);
+    });
+
+    it('does not apply the ring class when highlighted is false', () => {
+      const { container } = render(<ExecutionTraceEntryRow {...BASE_PROPS} />);
+      const root = container.querySelector('[data-testid="trace-entry-step-1"]');
+      expect(root?.className ?? '').not.toMatch(/ring-/);
     });
   });
 });

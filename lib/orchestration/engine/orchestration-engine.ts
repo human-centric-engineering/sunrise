@@ -50,10 +50,12 @@ import {
   WorkflowStatus,
   type ExecutionEvent,
   type ExecutionTraceEntry,
+  type LlmTelemetryEntry,
   type StepResult,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@/types/orchestration';
+import { rollupTelemetry } from '@/lib/orchestration/trace/aggregate';
 import {
   createContext,
   mergeStepResult,
@@ -516,7 +518,8 @@ export class OrchestrationEngine {
    */
   private async *runStepWithStrategy(
     step: WorkflowStep,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
+    telemetryOut: LlmTelemetryEntry[]
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -526,14 +529,23 @@ export class OrchestrationEngine {
     const stepTimeoutMs = errorConfig.timeoutMs;
 
     // Wrap the executor call with an optional per-step timeout.
+    // We DON'T reset telemetryOut between retry attempts: failed-attempt
+    // turns were billed via AiCostLog, and the outer retry loop now also
+    // accumulates their tokensUsed/costUsd into the StepResult (so the
+    // header total matches the cost sub-table). Discarding telemetry on
+    // retry would leave inputTokens/outputTokens reflecting only the
+    // last attempt, mismatching the summed totals. Order is preserved
+    // (failed turns come before the successful turn in time), so
+    // rollupTelemetry's "last entry wins" still picks model/provider
+    // from the successful attempt's last turn.
     const invokeExecutor = async (): Promise<StepResult> => {
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx));
+        return executor(step, snapshotContext(ctx, telemetryOut));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx)),
+          executor(step, snapshotContext(ctx, telemetryOut)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -557,12 +569,42 @@ export class OrchestrationEngine {
 
     if (strategy === 'retry') {
       let lastError: ExecutorError | null = null;
+      // Failed attempts may have consumed tokens before throwing — see
+      // ExecutorError's tokensUsed/costUsd. Roll the partials forward so
+      // the eventual successful attempt's StepResult reflects everything
+      // billed (and the fallthrough rethrow carries them on the error).
+      // This mirrors the parallel-path accumulator in `runStepToCompletion`.
+      let accumulatedTokens = 0;
+      let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         try {
-          return await invokeExecutor();
+          const result = await invokeExecutor();
+          result.tokensUsed += accumulatedTokens;
+          result.costUsd += accumulatedCost;
+          return result;
         } catch (err) {
-          if (err instanceof PausedForApproval) throw err;
-          if (err instanceof BudgetExceeded) throw err;
+          // Pause / budget short-circuits: rethrow but carry the
+          // accumulated partial so the engine's caught-handler in
+          // executeSingleStep can record the cost from prior retriable
+          // attempts (would otherwise be lost on the bare rethrow).
+          if (err instanceof PausedForApproval) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new PausedForApproval(
+              err.stepId,
+              err.payload,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
+          if (err instanceof BudgetExceeded) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new BudgetExceeded(
+              err.usedUsd,
+              err.limitUsd,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
           lastError =
             err instanceof ExecutorError
               ? err
@@ -572,16 +614,42 @@ export class OrchestrationEngine {
                   err instanceof Error ? err.message : 'Executor threw an unknown error',
                   err
                 );
-          // Don't retry non-retriable errors.
-          if (!lastError.retriable) throw lastError;
+          accumulatedTokens += lastError.tokensUsed;
+          accumulatedCost += lastError.costUsd;
+          // Don't retry non-retriable errors. Rethrow with the summed
+          // partial cost so prior retriable attempts' billed tokens land
+          // on the trace + ctx totals (otherwise we'd discard them when
+          // we throw the bare lastError).
+          if (!lastError.retriable) {
+            throw new ExecutorError(
+              lastError.stepId,
+              lastError.code,
+              lastError.message,
+              lastError.cause,
+              false,
+              accumulatedTokens,
+              accumulatedCost
+            );
+          }
           if (attempt < retryCount) {
             yield stepFailed(step.id, sanitizeError(lastError), true);
             await sleep(backoffDelayMs(attempt));
           }
         }
       }
-      // Exhausted retries — rethrow the last error.
-      throw lastError ?? new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
+      // Exhausted retries — rethrow the last error, carrying the summed
+      // partial cost so executeSingleStep's catch can record the total.
+      throw lastError
+        ? new ExecutorError(
+            lastError.stepId,
+            lastError.code,
+            lastError.message,
+            lastError.cause,
+            lastError.retriable,
+            accumulatedTokens,
+            accumulatedCost
+          )
+        : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
 
     try {
@@ -599,9 +667,19 @@ export class OrchestrationEngine {
               err
             );
 
+      // Capture partial cost from the failed step so skip/fallback strategies
+      // surface it instead of zeroing it out.
+      const partialTokens = execErr.tokensUsed;
+      const partialCost = execErr.costUsd;
+
       if (strategy === 'skip') {
         yield stepFailed(step.id, sanitizeError(execErr), false);
-        return { output: null, tokensUsed: 0, costUsd: 0, skipped: true };
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          skipped: true,
+        };
       }
 
       if (strategy === 'fallback') {
@@ -609,12 +687,12 @@ export class OrchestrationEngine {
         if (errorConfig.fallbackStepId) {
           return {
             output: null,
-            tokensUsed: 0,
-            costUsd: 0,
+            tokensUsed: partialTokens,
+            costUsd: partialCost,
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: 0, costUsd: 0 };
+        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
       }
 
       // strategy === 'fail' — propagate.
@@ -656,25 +734,34 @@ export class OrchestrationEngine {
     await this.markCurrentStep(executionId, step.id);
 
     const started = Date.now();
+    const telemetryOut: LlmTelemetryEntry[] = [];
     let stepResult: StepResult | null = null;
     let stepError: ExecutorError | null = null;
 
     try {
-      stepResult = yield* this.runStepWithStrategy(step, ctx);
+      stepResult = yield* this.runStepWithStrategy(step, ctx, telemetryOut);
     } catch (err) {
       if (err instanceof PausedForApproval) {
         const durationMs = Date.now() - started;
+        // Surface any partial cost from prior retry attempts (the retry
+        // loop wraps the original PausedForApproval with the accumulator).
+        // Default 0 for the common case (human_approval pauses with no
+        // prior LLM work).
+        ctx.totalTokensUsed += err.tokensUsed;
+        ctx.totalCostUsd += err.costUsd;
         trace.push({
           stepId: step.id,
           stepType: step.type,
           label: step.name,
           status: 'awaiting_approval',
           output: err.payload,
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: err.tokensUsed,
+          costUsd: err.costUsd,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         const approvalData =
           typeof err.payload === 'object' && err.payload !== null
@@ -730,6 +817,8 @@ export class OrchestrationEngine {
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
+        input: step.config,
+        ...rollupTelemetry(telemetryOut),
       });
       await this.checkpoint(executionId, ctx, trace);
       const reason = sanitizeError(stepError);
@@ -750,6 +839,8 @@ export class OrchestrationEngine {
       startedAt: new Date(started).toISOString(),
       completedAt: new Date().toISOString(),
       durationMs,
+      input: step.config,
+      ...rollupTelemetry(telemetryOut),
     });
     await this.checkpoint(executionId, ctx, trace);
 
@@ -770,7 +861,15 @@ export class OrchestrationEngine {
       };
     }
 
-    yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+    // Skip the step_completed event for skipped steps — runStepWithStrategy
+    // already yielded step_failed { willRetry: false } when the strategy
+    // resolved to 'skip', and emitting both events for the same step is
+    // contradictory. Matches executeParallelBatch which only emits one
+    // event per skipped step. The trace entry's status: 'skipped' remains
+    // the canonical record.
+    if (!result.skipped) {
+      yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+    }
 
     if (
       budgetLimitUsd &&
@@ -843,12 +942,21 @@ export class OrchestrationEngine {
     // Node.js is single-threaded — each push() completes atomically between awaits.
     const promises = steps.map(async (step) => {
       const started = Date.now();
+      // Per-step telemetry buffer — isolated from sibling parallel branches.
+      const telemetryOut: LlmTelemetryEntry[] = [];
       allEvents.push(stepStarted(step.id, step.type, step.name));
 
       try {
-        const result = await this.runStepToCompletion(step, ctx);
+        const result = await this.runStepToCompletion(step, ctx, telemetryOut);
         const durationMs = Date.now() - started;
-        return { step, result, durationMs, started, error: null as ExecutorError | null };
+        return {
+          step,
+          result,
+          durationMs,
+          started,
+          telemetryOut,
+          error: null as ExecutorError | null,
+        };
       } catch (err) {
         const durationMs = Date.now() - started;
         if (err instanceof PausedForApproval) {
@@ -857,8 +965,13 @@ export class OrchestrationEngine {
             result: null,
             durationMs,
             started,
+            telemetryOut,
             paused: true,
             payload: err.payload,
+            // Carry partial cost (set by the retry loop's accumulator-aware
+            // PausedForApproval rethrow) so the trace entry below records it.
+            tokensUsed: err.tokensUsed,
+            costUsd: err.costUsd,
             error: null,
           };
         }
@@ -871,7 +984,7 @@ export class OrchestrationEngine {
                 err instanceof Error ? err.message : 'Executor threw an unknown error',
                 err
               );
-        return { step, result: null, durationMs, started, error: execErr };
+        return { step, result: null, durationMs, started, telemetryOut, error: execErr };
       }
     });
 
@@ -883,21 +996,27 @@ export class OrchestrationEngine {
         // Should not happen — inner function catches all errors.
         continue;
       }
-      const { step, result, durationMs, started, error } = outcome.value;
+      const { step, result, durationMs, started, telemetryOut, error } = outcome.value;
 
       // Handle pause (rare in parallel — only if human_approval is in a branch)
       if ('paused' in outcome.value && outcome.value.paused) {
+        const pausedTokens = (outcome.value as { tokensUsed?: number }).tokensUsed ?? 0;
+        const pausedCost = (outcome.value as { costUsd?: number }).costUsd ?? 0;
+        ctx.totalTokensUsed += pausedTokens;
+        ctx.totalCostUsd += pausedCost;
         trace.push({
           stepId: step.id,
           stepType: step.type,
           label: step.name,
           status: 'awaiting_approval',
           output: outcome.value.payload,
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: pausedTokens,
+          costUsd: pausedCost,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         const batchApprovalData =
           typeof outcome.value.payload === 'object' && outcome.value.payload !== null
@@ -932,6 +1051,8 @@ export class OrchestrationEngine {
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         await this.checkpoint(executionId, ctx, trace);
         allEvents.push(workflowFailed(sanitizeError(error), step.id));
@@ -954,6 +1075,8 @@ export class OrchestrationEngine {
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
+        input: step.config,
+        ...rollupTelemetry(telemetryOut),
       });
       await this.checkpoint(executionId, ctx, trace);
 
@@ -1004,7 +1127,8 @@ export class OrchestrationEngine {
    */
   private async runStepToCompletion(
     step: WorkflowStep,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
+    telemetryOut: LlmTelemetryEntry[]
   ): Promise<StepResult> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -1013,14 +1137,17 @@ export class OrchestrationEngine {
       typeof errorConfig.retryCount === 'number' ? errorConfig.retryCount : DEFAULT_RETRY_COUNT;
     const stepTimeoutMs = errorConfig.timeoutMs;
 
+    // Same telemetry-accumulation rule as runStepWithStrategy: do NOT reset
+    // telemetryOut between attempts so summed inputTokens/outputTokens
+    // align with the summed tokensUsed/costUsd the retry loop produces.
     const invokeExecutor = async (): Promise<StepResult> => {
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx));
+        return executor(step, snapshotContext(ctx, telemetryOut));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx)),
+          executor(step, snapshotContext(ctx, telemetryOut)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -1055,7 +1182,19 @@ export class OrchestrationEngine {
           result.costUsd += accumulatedCost;
           return result;
         } catch (err) {
-          if (err instanceof PausedForApproval) throw err;
+          // Pause short-circuit: carry the retry accumulator through so
+          // prior attempts' billed tokens reach the trace entry.
+          if (err instanceof PausedForApproval) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new PausedForApproval(
+              err.stepId,
+              err.payload,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
+          // (Parallel retry doesn't catch BudgetExceeded — engine throws
+          // it from outside the executor — so no symmetric path here.)
           lastError =
             err instanceof ExecutorError
               ? err
@@ -1067,13 +1206,36 @@ export class OrchestrationEngine {
                 );
           accumulatedTokens += lastError.tokensUsed;
           accumulatedCost += lastError.costUsd;
-          if (!lastError.retriable) throw lastError;
+          // Mirror runStepWithStrategy: rethrow non-retriable with the
+          // accumulator so prior retriable attempts' billed tokens aren't
+          // dropped from the trace.
+          if (!lastError.retriable) {
+            throw new ExecutorError(
+              lastError.stepId,
+              lastError.code,
+              lastError.message,
+              lastError.cause,
+              false,
+              accumulatedTokens,
+              accumulatedCost
+            );
+          }
           if (attempt < retryCount) {
             await sleep(backoffDelayMs(attempt));
           }
         }
       }
-      throw lastError ?? new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
+      throw lastError
+        ? new ExecutorError(
+            lastError.stepId,
+            lastError.code,
+            lastError.message,
+            lastError.cause,
+            lastError.retriable,
+            accumulatedTokens,
+            accumulatedCost
+          )
+        : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
 
     try {

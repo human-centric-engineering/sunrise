@@ -12,7 +12,7 @@
  */
 
 import type { Logger } from '@/lib/logging';
-import type { StepResult } from '@/types/orchestration';
+import type { LlmTelemetryEntry, StepResult } from '@/types/orchestration';
 
 /**
  * Context passed to each step executor.
@@ -46,6 +46,19 @@ export interface ExecutionContext {
   signal?: AbortSignal;
   /** Child logger scoped to `{ executionId, workflowId }`. */
   logger: Logger;
+  /**
+   * Per-step LLM telemetry accumulator. Snapshots produced by
+   * `snapshotContext` always carry their own array (the engine threads
+   * one in via `telemetryOut` so it can drain entries after the executor
+   * returns). The live context produced by `createContext` carries an
+   * empty array as well, but it is never read in production — the engine
+   * only reads from the per-step `telemetryOut` array.
+   *
+   * Optional on the type so existing test fixtures that build literal
+   * ExecutionContext shapes don't have to change. Production callers
+   * (engine, `runLlmCall`, `agent_call`) all set or guard the array.
+   */
+  stepTelemetry?: LlmTelemetryEntry[];
 }
 
 /**
@@ -75,6 +88,7 @@ export function createContext(params: {
     budgetLimitUsd: params.budgetLimitUsd,
     signal: params.signal,
     logger: params.logger,
+    stepTelemetry: [],
   };
 }
 
@@ -104,11 +118,22 @@ export function mergeStepResult(
  * `Object.freeze` is shallow — executors that want to mutate
  * `stepOutputs` or `variables` will get a clear runtime error rather
  * than silently corrupting shared state during parallel branches.
+ *
+ * `stepTelemetry` is a write channel: every snapshot gets its OWN array
+ * so concurrent parallel branches don't interleave. When the engine wants
+ * to capture telemetry from a specific step, it passes its own array via
+ * `telemetryOut` and reads the entries back after the executor returns.
+ * Callers that don't pass `telemetryOut` (e.g., test harnesses) still get
+ * a correctly-typed empty array — pushes are silently discarded.
  */
-export function snapshotContext(ctx: ExecutionContext): Readonly<ExecutionContext> {
+export function snapshotContext(
+  ctx: ExecutionContext,
+  telemetryOut?: LlmTelemetryEntry[]
+): Readonly<ExecutionContext> {
   return Object.freeze({
     ...ctx,
     stepOutputs: Object.freeze({ ...ctx.stepOutputs }),
     variables: Object.freeze({ ...ctx.variables }),
+    stepTelemetry: telemetryOut ?? [],
   });
 }

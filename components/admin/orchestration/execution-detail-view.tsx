@@ -8,7 +8,7 @@
  * existing `ExecutionTraceEntryRow` for each trace entry.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -44,7 +44,17 @@ import { useExecutionStatusPoller } from '@/lib/hooks/use-execution-status-polle
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
-import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
+import {
+  ExecutionTraceEntryRow,
+  type TraceCostEntry,
+} from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
+import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
+import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
+import {
+  ExecutionTraceFilters,
+  applyTraceFilter,
+  type TraceFilter,
+} from '@/components/admin/orchestration/execution-trace-filters';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 import { z } from 'zod';
 
@@ -66,9 +76,21 @@ export interface ExecutionInfo {
   createdAt: string;
 }
 
+/** Same shape as `TraceCostEntry`, but carries the `stepId` link from the API. */
+export interface TraceCostEntryRow extends TraceCostEntry {
+  stepId: string;
+}
+
 export interface ExecutionDetailViewProps {
   execution: ExecutionInfo;
   trace: ExecutionTraceEntry[];
+  /**
+   * Cost-log rows attributed to this execution, keyed by `stepId` via
+   * `metadata.stepId`. Returned by `GET /executions/:id` from Phase 2.
+   * The view groups by stepId and renders a per-call sub-table inside
+   * each expanded trace row.
+   */
+  costEntries?: TraceCostEntryRow[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -126,8 +148,36 @@ function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewProps) {
+export function ExecutionDetailView({ execution, trace, costEntries }: ExecutionDetailViewProps) {
   const router = useRouter();
+
+  // Group cost entries by stepId so each ExecutionTraceEntryRow can render
+  // its own per-call breakdown. Memoised so the grouping doesn't re-run
+  // on every render.
+  const costEntriesByStep = useMemo(() => {
+    const map = new Map<string, TraceCostEntry[]>();
+    for (const entry of costEntries ?? []) {
+      const existing = map.get(entry.stepId);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        map.set(entry.stepId, [entry]);
+      }
+    }
+    return map;
+  }, [costEntries]);
+
+  // Filter chip state — local to this view; not persisted.
+  const [filter, setFilter] = useState<TraceFilter>('all');
+  const filteredTrace = useMemo(() => applyTraceFilter(trace, filter), [trace, filter]);
+  // Mirror filteredTrace into a ref so handleSelectStep can read the
+  // current filtered set without re-creating the callback on every render.
+  // Without this, the callback's dep array would have to include
+  // filteredTrace, defeating its memoisation.
+  const filteredTraceRef = useRef(filteredTrace);
+  useEffect(() => {
+    filteredTraceRef.current = filteredTrace;
+  }, [filteredTrace]);
 
   // Live status — polls /executions/:id/status while the execution is in a
   // non-terminal status, then triggers router.refresh() so the trace catches
@@ -155,6 +205,23 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  // Tracks which trace row was last clicked from the timeline strip so the
+  // matching row below can be highlighted and scrolled into view.
+  const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
+
+  const handleSelectStep = useCallback((stepId: string) => {
+    // Only reset the filter when the target row is hidden by the current
+    // filter — otherwise we'd silently drop a deliberate filter selection
+    // every time the user clicked a bar that was already visible.
+    const visible = filteredTraceRef.current.some((e) => e.stepId === stepId);
+    if (!visible) setFilter('all');
+    setHighlightedStepId(stepId);
+    // Defer to next paint so the highlighted row class is applied before scrolling.
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-testid="trace-entry-${stepId}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
 
   const handleCancel = useCallback(async () => {
     setActionLoading(true);
@@ -457,14 +524,29 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         <CollapsibleJsonCard title="Output Data" data={execution.outputData} />
       </div>
 
+      {/* Aggregates + timeline strip — both hidden when trace.length < 2. */}
+      <ExecutionAggregates trace={trace} />
+      <ExecutionTimelineStrip
+        trace={trace}
+        onSelectStep={handleSelectStep}
+        highlightedStepId={highlightedStepId ?? undefined}
+      />
+
       {/* Step timeline */}
-      <section aria-label="Execution trace">
-        <h2 className="mb-3 text-lg font-semibold">Step Timeline</h2>
+      <section aria-label="Execution trace" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Step Timeline</h2>
+          <ExecutionTraceFilters trace={trace} active={filter} onChange={setFilter} />
+        </div>
         {trace.length === 0 ? (
           <p className="text-muted-foreground py-4 text-sm">No trace entries recorded.</p>
+        ) : filteredTrace.length === 0 ? (
+          <p className="text-muted-foreground py-4 text-sm" data-testid="trace-empty-filter">
+            No steps match the current filter.
+          </p>
         ) : (
           <div className="space-y-2">
-            {trace.map((entry, idx) => (
+            {filteredTrace.map((entry, idx) => (
               <ExecutionTraceEntryRow
                 key={`${entry.stepId}-${idx}`}
                 stepId={entry.stepId}
@@ -476,6 +558,14 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
                 tokensUsed={entry.tokensUsed}
                 costUsd={entry.costUsd}
                 durationMs={entry.durationMs}
+                input={entry.input}
+                model={entry.model}
+                provider={entry.provider}
+                inputTokens={entry.inputTokens}
+                outputTokens={entry.outputTokens}
+                llmDurationMs={entry.llmDurationMs}
+                costEntries={costEntriesByStep.get(entry.stepId)}
+                highlighted={highlightedStepId === entry.stepId}
               />
             ))}
           </div>

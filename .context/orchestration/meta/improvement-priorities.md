@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-04 (item 9 shipped)
+**Last updated:** 2026-05-05 (item 10 shipped)
 
 ---
 
@@ -121,7 +121,7 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 | 7   | Embed-widget customisation and theming                           | High          | Moderate     | ✅ Done (this PR) |
 | 8   | Background / async execution model for long workflows            | Moderate–High | Moderate     | ✅ Done (PR #140) |
 | 9   | Exact per-provider tokenisation                                  | Moderate–High | Low–Moderate | ✅ Done (this PR) |
-| 10  | Built-in trace viewer / latency attribution improvements         | Moderate      | Moderate     | ⚪ Not started    |
+| 10  | Built-in trace viewer / latency attribution improvements         | Moderate      | Moderate     | ✅ Done (this PR) |
 
 ### 6. Named evaluation metrics (faithfulness, groundedness, relevance) — ✅ Done
 
@@ -210,13 +210,37 @@ Both restrict `tool_call` use to `search_knowledge_base` (already in the unit-te
 - **No exact-pre-flight path for non-OpenAI.** A future feature wanting exact pre-call counts (e.g. budget enforcement before a long generation) can opt in to the network path independently — the abstraction supports adding async tokenisers later without changing the truncation hot path.
 - **Chunker still uses the simple heuristic.** Documented as out of scope; embedding tokenisers don't match chat tokenisers and the chunker's failure mode is benign chunk-size drift rather than provider rejection.
 
-### 10. Built-in trace viewer / latency attribution improvements
+### 10. Built-in trace viewer / latency attribution improvements — ✅ Done
 
-**Why.** For single-tenant small projects, OTEL-to-Datadog integration matters less than the in-product trace viewer. Maturity rates per-step latency attribution as "Weak." A better in-app trace UI (per-step duration, tokens, cost, prompt diff, tool I/O) gives developers and domain experts the diagnostics they need without external observability infrastructure.
+**Why it mattered.** For single-tenant small projects, OTEL-to-Datadog integration (Tier 3 item 13) matters less than an in-product trace viewer. Maturity-analysis rated per-step latency attribution as "Weak" — admins debugging a workflow execution had a flat list of step rows with a single `durationMs` per row, no breakdown of LLM time vs. engine overhead vs. tool I/O, no aggregate view, no way to filter by failure or outlier, no per-call cost rollup for multi-turn executors. The data was largely there (`AiWorkflowExecution.executionTrace` JSON, `AiCostLog` rows joined by `workflowExecutionId`); the diagnostic value was bottled up because the UI never surfaced it and the engine never captured the per-step input or per-LLM-turn metadata that would make the surface useful.
 
-**Approach.** Most data is already captured in `AiWorkflowExecution` / `AiCostLog`; needs UI polish in execution detail page.
+**What changed in scoping.** Two design forks resolved before the build:
 
-**Critical files:** `app/admin/orchestration/executions/[id]/`, execution event stream serialisation.
+- **Where to store the new fields.** Considered a separate `AiTraceSpan` table for per-LLM-turn telemetry. Rejected — the JSON column already holds the per-step shape, and adding optional fields to `ExecutionTraceEntry` is back-compatible with historical rows (they parse cleanly, the UI just shows nothing extra). The `AiCostLog` join provides the per-LLM-call grain that multi-turn executors (`tool_call`, `agent_call`, `orchestrator`) need.
+- **How telemetry flows through the engine.** Considered making each LLM-bearing executor return new fields on `StepResult`. Rejected — eight executors call into the LLM, and a future executor adding an LLM call would silently miss telemetry. Instead introduced an `LlmTelemetryEntry[]` accumulator on `ExecutionContext`. The engine pre-allocates a fresh array per snapshot via a new `telemetryOut` parameter on `snapshotContext` so concurrent parallel branches don't interleave. `runLlmCall` and `agent_call`'s `runSingleTurn` push one entry per `provider.chat()` call. The engine drains the array after each step and rolls the entries up into the trace entry's optional fields. New executors that hit the LLM through `runLlmCall` get telemetry for free.
+
+OTEL/Langfuse/Datadog ingestion remains out of scope here — Tier 3 item 13 keeps that as a pluggable tracer for forks that need external observability.
+
+**What shipped (this PR).**
+
+- **Engine-side capture (Phase 1).** `ExecutionTraceEntry` gained six optional fields: `input` (snapshot of `step.config` at execution time), `model`, `provider`, `inputTokens`, `outputTokens`, `llmDurationMs`. `executionTraceEntrySchema` updated and is back-compatible with historical rows. `ExecutionContext.stepTelemetry?` is the new mutable write channel; `snapshotContext(ctx, telemetryOut?)` allocates per-snapshot arrays. `runStepWithStrategy` and `runStepToCompletion` thread a per-step telemetry buffer that resets between retry attempts so only the successful (or terminally-failed) attempt's data surfaces.
+- **API enrichment (Phase 2).** `GET /executions/:id` now joins `AiCostLog` rows by `workflowExecutionId`, filters to those with a `metadata.stepId`, and returns a flat `costEntries[]` array. Multi-turn executors naturally produce several entries sharing a `stepId`; the UI groups client-side. Cross-user 404 short-circuits before the cost-log query so no timing/count signal leaks about another user's execution.
+- **Aggregates card (Phase 3).** `ExecutionAggregates` renders step time sum (sum of per-step `durationMs` — labelled explicitly so it isn't confused with wall-clock), p50/p95 step duration (nearest-rank), slowest step (label + duration), LLM share (sum of `llmDurationMs` / step time sum), and a per-step-type breakdown (count · duration · tokens). Hidden when the trace has fewer than 2 entries — single-step traces have no aggregate to summarise.
+- **Timeline strip (Phase 3).** `ExecutionTimelineStrip` renders one Gantt-style bar per step, widths proportional to the slowest step. Slow outliers (≥ p90 in traces with ≥ 5 entries) and failed bars are colour-coded; awaiting-approval bars are amber-striped. Click a bar → the parent scrolls and ring-highlights the matching trace row below. Hidden for single-step traces.
+- **Per-step detail expansion (Phase 4).** `ExecutionTraceEntryRow` extended with: a `provider · model` chip in the header, a latency breakdown line ("LLM xxx ms · other yyy ms"), input/output side-by-side panels in the expanded body, a per-call cost sub-table populated from `costEntries[]` grouped by `stepId`, and a highlight ring when selected from the timeline strip.
+- **Filter chips (Phase 4).** Six client-side filters above the trace list: All / Failed / Slow / LLM only / Tool only / With approvals. State is local to the view (not persisted to URL — single-tenant deployments don't need deep-linkable filtered traces). Filters that match zero entries are disabled and show their count.
+- **Pure aggregate helper.** `lib/orchestration/trace/aggregate.ts` exports `rollupTelemetry`, `computeTraceAggregates`, and `slowOutlierThresholdMs`. Pure functions so the engine and the UI share one implementation, and edge cases (empty trace, single-entry trace, ties, missing optional fields) are exercised at source.
+- **Tests.** 12 pure-function aggregate tests, 8 engine trace-capture tests, 4 schema back-compat tests, 1 llm-runner telemetry test, 1 agent-call telemetry test, 3 integration tests round-tripping through `executionTraceSchema`, 6 route-level tests for the cost-entries enrichment, 7 timeline-strip tests, 7 aggregates-card tests, 13 filter tests (pure + component), 9 trace-entry expansion tests covering model chip / latency breakdown / input-output / cost sub-table / highlight ring. Everything stays under the existing `npm run validate` (0 errors) and the 5421-test orchestration suite.
+
+**Critical files (for reference):** `lib/orchestration/trace/aggregate.ts` (the new shared module), `lib/orchestration/engine/orchestration-engine.ts` (six trace.push sites, telemetry threading), `lib/orchestration/engine/context.ts` (`stepTelemetry?` + `snapshotContext` overload), `lib/orchestration/engine/llm-runner.ts` (`runLlmCall` push), `lib/orchestration/engine/executors/agent-call.ts` (per-turn push), `lib/validations/orchestration.ts` (`executionTraceEntrySchema` extension), `app/api/v1/admin/orchestration/executions/[id]/route.ts` (cost-log join), `components/admin/orchestration/execution-aggregates.tsx`, `components/admin/orchestration/execution-timeline-strip.tsx`, `components/admin/orchestration/execution-trace-filters.tsx`, `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx`, `components/admin/orchestration/execution-detail-view.tsx`, `.context/orchestration/engine.md` (new optional fields documented), `.context/admin/orchestration-observability.md` (new viewer surfaces).
+
+**Tradeoffs surfaced in the work.**
+
+- **Last-turn wins for model/provider.** When a step issues multiple LLM calls (multi-turn executors), the rolled-up `model` / `provider` reflects the LAST turn. Workflows that mix models within a single `agent_call` (rare) will lose nuance — admins who care can drill into the per-call cost sub-table, which preserves the per-turn detail. Acceptable v1.
+- **No prompt diff.** The plan flagged prompt-diff between runs as a stretch; deferred to a future opt-in flag. Capturing full prompts inflates the trace JSON significantly per execution and most workflows don't need it. The new `input` field stores `step.config` (interpolated prompts come from the cost log's separate trail).
+- **Filter state is not URL-persisted.** Single-tenant deployments don't need deep-linkable filtered traces. If a future need (sharing a "look at the failed step" link with a colleague) comes up, query-string serialisation is a small additive change.
+- **Slow-outlier highlighting needs ≥ 5 entries.** Highlighting outliers in a 3-step trace is statistical noise rather than insight. The threshold is documented inline in `slowOutlierThresholdMs`.
+- **Aggregate `stepTimeSumMs` does not collapse parallel branches.** It sums all step durations, so parallel branches inflate the number above the actual wall-clock duration of the run. The card label was originally "Total wall" — renamed to "Step time sum" to remove the implication that this number is wall-clock. The Duration card up in the summary grid still shows the true wall-clock from `startedAt`/`completedAt`. The timeline strip's bar layout is the more honest visualisation when branches overlap.
 
 ---
 
@@ -269,12 +293,12 @@ These were P0–P2 in `maturity-analysis.md` but lose value or relevance under s
 
 A pragmatic order for the next sprints, optimised for "shortest path to a sellable wedge."
 
-| Sprint | Theme                   | Items                                                                   |
-| ------ | ----------------------- | ----------------------------------------------------------------------- |
-| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅    |
-| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅      |
-| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, ~~7 (widget customisation)~~ ✅          |
-| 4+     | Depth                   | ~~8 (background execution)~~ ✅, ~~9 (tokenisation)~~ ✅, 10 (trace UI) |
+| Sprint | Theme                   | Items                                                                          |
+| ------ | ----------------------- | ------------------------------------------------------------------------------ |
+| 1      | RAG quality + trust     | ~~1 (hybrid search)~~ ✅, ~~2 (citations)~~ ✅, ~~5 (ingestion)~~ ✅           |
+| 2      | Velocity to first pilot | ~~4 (templates)~~ ✅ (narrowed), ~~3 (HTTP fetcher + recipes)~~ ✅             |
+| 3      | Validation + polish     | ~~6 (named eval metrics)~~ ✅, ~~7 (widget customisation)~~ ✅                 |
+| 4+     | Depth                   | ~~8 (background execution)~~ ✅, ~~9 (tokenisation)~~ ✅, ~~10 (trace UI)~~ ✅ |
 
 Tier 3 items can be picked up opportunistically when a specific pilot needs them.
 

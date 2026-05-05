@@ -74,6 +74,7 @@ import {
   workflowDefinitionHistorySchema,
   workflowDefinitionRevertSchema,
   executionStatusSchema,
+  executionTraceEntrySchema,
   executionTraceSchema,
   chatAttachmentSchema,
   searchConfigSchema,
@@ -1943,6 +1944,139 @@ describe('executionTraceSchema', () => {
       expect.stringContaining('Malformed execution trace'),
       expect.any(Object)
     );
+  });
+
+  it('parses historical trace rows that lack the new optional latency fields', () => {
+    // Forwards-compat: rows written before the trace-viewer work omit
+    // input/model/provider/inputTokens/outputTokens/llmDurationMs entirely.
+    const historical = [
+      {
+        stepId: 'step-1',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: { text: 'hi' },
+        tokensUsed: 100,
+        costUsd: 0.01,
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:01Z',
+        durationMs: 1000,
+      },
+    ];
+    const result = executionTraceSchema.parse(historical);
+    expect(result).toHaveLength(1);
+    expect(result[0].input).toBeUndefined();
+    expect(result[0].model).toBeUndefined();
+    expect(result[0].provider).toBeUndefined();
+    expect(result[0].inputTokens).toBeUndefined();
+    expect(result[0].outputTokens).toBeUndefined();
+    expect(result[0].llmDurationMs).toBeUndefined();
+  });
+
+  it('parses new-shape trace rows with the optional latency fields populated', () => {
+    const newShape = [
+      {
+        stepId: 'step-1',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: { text: 'hi' },
+        tokensUsed: 150,
+        costUsd: 0.05,
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:01Z',
+        durationMs: 1000,
+        input: { prompt: 'hello' },
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        llmDurationMs: 850,
+      },
+    ];
+    const result = executionTraceSchema.parse(newShape);
+    expect(result[0].model).toBe('gpt-4o-mini');
+    expect(result[0].provider).toBe('openai');
+    expect(result[0].inputTokens).toBe(100);
+    expect(result[0].outputTokens).toBe(50);
+    expect(result[0].llmDurationMs).toBe(850);
+    expect(result[0].input).toEqual({ prompt: 'hello' });
+  });
+
+  it('falls through to empty array when one entry is malformed (whole-array catch)', async () => {
+    const { logger } = vi.mocked(await import('@/lib/logging'));
+    vi.clearAllMocks();
+
+    // Mixed: first entry valid, second entry has wrong type for inputTokens.
+    const mixed = [
+      {
+        stepId: 'step-1',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: null,
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2026-01-01T00:00:00Z',
+        durationMs: 100,
+      },
+      {
+        stepId: 'step-2',
+        stepType: 'llm_call',
+        label: 'Generate',
+        status: 'completed',
+        output: null,
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2026-01-01T00:00:01Z',
+        durationMs: 200,
+        inputTokens: 'not-a-number',
+      },
+    ];
+    const result = executionTraceSchema.parse(mixed);
+    expect(result).toEqual([]);
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('rejects negative inputTokens / outputTokens / llmDurationMs in entry-level parse', () => {
+    const bad = {
+      stepId: 'step-1',
+      stepType: 'llm_call',
+      label: 'Generate',
+      status: 'completed',
+      output: null,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-01-01T00:00:00Z',
+      durationMs: 100,
+      inputTokens: -1,
+    };
+    // The entry-level schema MUST reject negatives. The whole-array
+    // schema would .catch() and return empty, so we test the entry directly.
+    const result = executionTraceEntrySchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  it('preserves unknown fields on parse (forward-compat for resume re-checkpoint)', () => {
+    // If a future engine version adds a field, persists it, and is then
+    // read by older code on the resume path, that field must survive the
+    // parse → re-checkpoint round-trip rather than being silently stripped.
+    const futureEntry = {
+      stepId: 'step-1',
+      stepType: 'llm_call',
+      label: 'Generate',
+      status: 'completed',
+      output: null,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-01-01T00:00:00Z',
+      durationMs: 100,
+      futureField: 'should-survive',
+      anotherFuture: { nested: true },
+    };
+    const result = executionTraceEntrySchema.parse(futureEntry);
+    expect((result as Record<string, unknown>).futureField).toBe('should-survive');
+    expect((result as Record<string, unknown>).anotherFuture).toEqual({ nested: true });
   });
 });
 

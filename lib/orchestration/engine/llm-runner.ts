@@ -82,6 +82,7 @@ export async function runLlmCall(
     );
   }
 
+  const callStarted = Date.now();
   let response;
   try {
     response = await provider.chat([{ role: 'user', content: interpolated }], {
@@ -99,6 +100,20 @@ export async function runLlmCall(
       err
     );
   }
+  const callDurationMs = Date.now() - callStarted;
+
+  // Telemetry: record this turn for the engine to roll up into the trace
+  // entry. The engine pre-allocates the array on the snapshot via
+  // `snapshotContext(ctx, telemetryOut)`; test harnesses that don't care
+  // about telemetry leave the field undefined and the optional chain
+  // silently no-ops.
+  ctx.stepTelemetry?.push({
+    model: modelId,
+    provider: modelInfo.provider,
+    inputTokens: response.usage.inputTokens,
+    outputTokens: response.usage.outputTokens,
+    durationMs: callDurationMs,
+  });
 
   const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
 

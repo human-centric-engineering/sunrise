@@ -1871,19 +1871,34 @@ export const updateOrchestrationSettingsSchema = z
  * `Json`. Used in route handlers to safely parse the raw JSON array instead
  * of blind-casting.
  */
-export const executionTraceEntrySchema = z.object({
-  stepId: z.string(),
-  stepType: z.string(),
-  label: z.string(),
-  status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval', 'rejected']),
-  output: z.unknown(),
-  error: z.string().optional(),
-  tokensUsed: z.number(),
-  costUsd: z.number(),
-  startedAt: z.string(),
-  completedAt: z.string().optional(),
-  durationMs: z.number(),
-});
+export const executionTraceEntrySchema = z
+  .object({
+    stepId: z.string(),
+    stepType: z.string(),
+    label: z.string(),
+    status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval', 'rejected']),
+    output: z.unknown(),
+    error: z.string().optional(),
+    tokensUsed: z.number(),
+    costUsd: z.number(),
+    startedAt: z.string(),
+    completedAt: z.string().optional(),
+    durationMs: z.number(),
+    // Optional latency / model attribution fields. Added in the trace-viewer
+    // work; absent on rows written before that. All optional so historical
+    // executions parse cleanly.
+    input: z.unknown().optional(),
+    model: z.string().optional(),
+    provider: z.string().optional(),
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    llmDurationMs: z.number().int().nonnegative().optional(),
+  })
+  // Forward-compat: keep unknown fields on the parsed entry so a future
+  // engine version that adds a field, persists it, and is then read by
+  // older code on the resume path doesn't silently strip the field on
+  // re-checkpoint. Default `z.object()` would strip; passthrough preserves.
+  .passthrough();
 
 export const executionTraceSchema = z.array(executionTraceEntrySchema).catch((ctx) => {
   logger.warn('Malformed execution trace — returning empty array', {

@@ -189,6 +189,53 @@ describe('runLlmCall', () => {
     });
   });
 
+  it('pushes a telemetry entry to ctx.stepTelemetry on successful call', async () => {
+    const mockChat = vi.fn().mockResolvedValue({
+      content: 'answer',
+      usage: { inputTokens: 12, outputTokens: 7 },
+    });
+    vi.mocked(getModel).mockReturnValue({ provider: 'anthropic' } as any);
+    vi.mocked(getProvider).mockResolvedValue({ chat: mockChat } as any);
+    vi.mocked(calculateCost).mockReturnValue({
+      totalCostUsd: 0.001,
+      isLocal: false,
+    } as any);
+    vi.mocked(logCost).mockResolvedValue(null as any);
+
+    const telemetry: import('@/types/orchestration').LlmTelemetryEntry[] = [];
+    const ctx = makeCtx({ stepTelemetry: telemetry });
+    await runLlmCall(ctx, { stepId: 's1', prompt: 'hi', modelOverride: 'claude-3-5-sonnet' });
+
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      model: 'claude-3-5-sonnet',
+      provider: 'anthropic',
+      inputTokens: 12,
+      outputTokens: 7,
+    });
+    expect(telemetry[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not throw when ctx.stepTelemetry is undefined (back-compat for callers without an array)', async () => {
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockResolvedValue({
+        content: 'answer',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0.001, isLocal: false } as any);
+    vi.mocked(logCost).mockResolvedValue(null as any);
+
+    // No `stepTelemetry` passed — the optional-chain push must be a no-op,
+    // not a TypeError.
+    const ctx = makeCtx();
+    delete (ctx as { stepTelemetry?: unknown }).stepTelemetry;
+    await expect(
+      runLlmCall(ctx, { stepId: 's1', prompt: 'hi', modelOverride: 'gpt-4' })
+    ).resolves.toMatchObject({ content: 'answer' });
+  });
+
   it('swallows cost logging failure (fire-and-forget)', async () => {
     vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
     vi.mocked(getProvider).mockResolvedValue({

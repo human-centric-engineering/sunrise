@@ -235,6 +235,35 @@ describe('ExecutionDetailView', () => {
 
       expect(screen.getByRole('heading', { name: /step timeline/i })).toBeInTheDocument();
     });
+
+    it('clears filter on timeline click ONLY when the target row is hidden', async () => {
+      const user = userEvent.setup();
+      const entries: ExecutionTraceEntry[] = [
+        { ...TRACE_ENTRY, stepId: 'step-ok', status: 'completed', label: 'OK' },
+        { ...TRACE_ENTRY, stepId: 'step-bad', status: 'failed', label: 'Bad' },
+      ];
+
+      render(<ExecutionDetailView execution={makeExecution()} trace={entries} />);
+
+      // Apply Failed filter — completed row drops out of the list.
+      await user.click(screen.getByTestId('trace-filter-failed'));
+      expect(screen.queryByTestId('trace-entry-step-ok')).not.toBeInTheDocument();
+      expect(screen.getByTestId('trace-filter-failed')).toHaveAttribute('data-active', 'true');
+
+      // Clicking the OK bar (currently HIDDEN) should reset the filter so the
+      // target row appears in the DOM.
+      await user.click(screen.getByTestId('timeline-bar-step-ok'));
+      expect(screen.getByTestId('trace-entry-step-ok')).toBeInTheDocument();
+      expect(screen.getByTestId('trace-filter-all')).toHaveAttribute('data-active', 'true');
+
+      // Re-apply Failed filter, then click the Bad bar (still VISIBLE). The
+      // filter must be preserved — we don't drop a deliberate selection
+      // when the target is already in the visible set.
+      await user.click(screen.getByTestId('trace-filter-failed'));
+      expect(screen.getByTestId('trace-filter-failed')).toHaveAttribute('data-active', 'true');
+      await user.click(screen.getByTestId('timeline-bar-step-bad'));
+      expect(screen.getByTestId('trace-filter-failed')).toHaveAttribute('data-active', 'true');
+    });
   });
 
   describe('Approval prompt card', () => {

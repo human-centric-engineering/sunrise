@@ -59,6 +59,7 @@ async function runSingleTurn(
   let currentMessages = [...initialMessages];
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const turnStarted = Date.now();
     let response;
     try {
       response = await provider.chat(currentMessages, {
@@ -69,13 +70,29 @@ async function runSingleTurn(
         signal: ctx.signal,
       });
     } catch (err) {
+      // Carry partial cost from earlier successful turns through the error
+      // so the engine's retry/fallback accumulator can surface it on the
+      // trace entry. Without this, prior turns' tokens are billed via
+      // AiCostLog but invisible in the row-level totals.
       throw new ExecutorError(
         step.id,
         'agent_call_failed',
         err instanceof Error ? err.message : 'Agent LLM call failed',
-        err
+        err,
+        true,
+        totalTokensUsed,
+        totalCostUsd
       );
     }
+    const turnDurationMs = Date.now() - turnStarted;
+
+    ctx.stepTelemetry?.push({
+      model: agent!.model,
+      provider: usedSlug,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      durationMs: turnDurationMs,
+    });
 
     const turnTokens = response.usage.inputTokens + response.usage.outputTokens;
     const turnCost = calculateCost(
@@ -252,17 +269,36 @@ export async function executeAgentCall(
   ];
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    // Run one turn (with tool loops)
-    const turnResult = await runSingleTurn(
-      step,
-      ctx,
-      agent,
-      currentMessages,
-      toolDefinitions,
-      provider,
-      usedSlug,
-      maxIterations
-    );
+    // Run one turn (with tool loops). On failure, propagate the
+    // outer-loop's accumulated cost so far PLUS any partial cost the
+    // failing turn carries on its ExecutorError. Without this wrap,
+    // outer turn 1's billed cost is lost when outer turn 2 throws.
+    let turnResult;
+    try {
+      turnResult = await runSingleTurn(
+        step,
+        ctx,
+        agent,
+        currentMessages,
+        toolDefinitions,
+        provider,
+        usedSlug,
+        maxIterations
+      );
+    } catch (err) {
+      if (err instanceof ExecutorError) {
+        throw new ExecutorError(
+          err.stepId,
+          err.code,
+          err.message,
+          err.cause,
+          err.retriable,
+          totalTokensUsed + err.tokensUsed,
+          totalCostUsd + err.costUsd
+        );
+      }
+      throw err;
+    }
 
     totalTokensUsed += turnResult.tokensUsed;
     totalCostUsd += turnResult.costUsd;
