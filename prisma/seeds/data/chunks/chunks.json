@@ -294,7 +294,7 @@
   {
     "id": "pattern-02-tldr",
     "chunk_id": 22,
-    "content": "# Pattern 2: Routing — Summary\n\nDynamically directing a user request to the most appropriate specialised agent, model, or processing path based on the semantic intent and complexity of the query. A \"Router\" classifies the input and delegates execution to a downstream handler optimised for that specific task.\n\n*In practice: A mobile banking app's AI assistant routes \"transfer £500 to Mum\" to a payments agent, \"why was I charged twice?\" to a disputes agent, and \"what's a good savings rate?\" to a general knowledge agent.*",
+    "content": "# Pattern 2: Routing — Summary\n\nSending each request to the specialised agent, model, or processing path best suited to it — based on what the request **means**, not which keywords it contains. A \"Router\" classifies the input and delegates execution to a downstream handler optimised for that specific task.\n\n*In practice: A mobile banking app's AI assistant routes \"transfer £500 to Mum\" to a payments agent, \"why was I charged twice?\" to a disputes agent, and \"what's a good savings rate?\" to a general knowledge agent.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 2,
@@ -307,7 +307,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 131
+    "estimated_tokens": 130
   },
   {
     "id": "pattern-02-definition",
@@ -437,7 +437,7 @@
   {
     "id": "pattern-03-tldr",
     "chunk_id": 30,
-    "content": "# Pattern 3: Parallelisation — Summary\n\nExecuting multiple independent agentic tasks simultaneously — such as voting on a decision, generating multiple creative drafts, or verifying facts against different sources — and then aggregating the results. Also known as the \"Sectioning\" or \"Voting\" pattern.",
+    "content": "# Pattern 3: Parallelisation — Summary\n\nExecuting multiple independent agentic tasks simultaneously — such as voting on a decision, generating multiple creative drafts, or verifying facts against different sources — and then aggregating the results. Also known as the \"Sectioning\" or \"Voting\" pattern.\n\n*In practice: A small recruitment agency receives a new role brief and the agent matches it in parallel against 200 candidate CVs already in the database — surfacing semantic matches a consultant searching by keyword would never hold in their head at once.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 3,
@@ -450,7 +450,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 75
+    "estimated_tokens": 140
   },
   {
     "id": "pattern-03-definition",
@@ -580,7 +580,7 @@
   {
     "id": "pattern-04-tldr",
     "chunk_id": 38,
-    "content": "# Pattern 4: Reflection — Summary\n\nEnables an agent to critique its own output (or the output of another agent) to identify errors, hallucinations, or areas for improvement, and then iteratively refine the result. It acts as an internal feedback loop.",
+    "content": "# Pattern 4: Reflection — Summary\n\nEnables an agent to critique its own output (or the output of another agent) to identify errors, hallucinations, or areas for improvement, and then iteratively refine the result. It acts as an internal feedback loop.\n\n*In practice: A tenant rights advisor drafts a Section 21 dispute letter, a critic agent checks it against current housing law and the letter's tone, and the draft cycles through revision until the critic approves — before any tenant ever sees it.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 4,
@@ -593,7 +593,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 62
+    "estimated_tokens": 125
   },
   {
     "id": "pattern-04-definition",
@@ -866,7 +866,7 @@
   {
     "id": "pattern-06-tldr",
     "chunk_id": 54,
-    "content": "# Pattern 6: Planning — Summary\n\nThe capability of an agent to break down a high-level, ambiguous user goal into a sequence of executable steps (a plan), and then execute them whilst maintaining the state of progress.",
+    "content": "# Pattern 6: Planning — Summary\n\nBreaking a high-level, often-ambiguous user goal into a sequence of executable steps, then carrying them out while tracking progress so the agent can adapt when reality diverges from the plan.\n\n*In practice: A utility billing dispute agent decomposes \"I'm being overcharged\" into a plan: pull the account, walk the customer through each charge, identify the discrepancy, propose an adjustment, route to a supervisor if it's above the auto-approve threshold.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 6,
@@ -879,7 +879,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 54
+    "estimated_tokens": 122
   },
   {
     "id": "pattern-06-definition",
@@ -1009,7 +1009,7 @@
   {
     "id": "pattern-07-tldr",
     "chunk_id": 62,
-    "content": "# Pattern 7: Multi-Agent Collaboration — Summary\n\nStructuring a system as a team of specialised agents (e.g., a Researcher, a Writer, a Reviewer, a Coder) that collaborate, hand off tasks, and communicate to solve complex problems through role specialisation and task decomposition.",
+    "content": "# Pattern 7: Multi-Agent Collaboration — Summary\n\nStructuring a system as a team of specialised agents (e.g., a Researcher, a Writer, a Reviewer, a Coder) that collaborate, hand off tasks, and communicate to solve complex problems through role specialisation and task decomposition.\n\n*In practice: A council planning pre-screening tool runs three specialists in concert — an Extractor that pulls project details from a homeowner's description, a Policy Checker that flags conservation-area or permitted-development issues, and a Drafter that produces the pre-application document.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 7,
@@ -1022,7 +1022,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 70
+    "estimated_tokens": 145
   },
   {
     "id": "pattern-07-definition",
@@ -1152,7 +1152,7 @@
   {
     "id": "pattern-08-tldr",
     "chunk_id": 70,
-    "content": "# Pattern 8: Memory Management — Summary\n\nMechanisms for agents to store, index, and retrieve information over time, spanning short-term (conversation context) and long-term (knowledge base/episodic) history. This gives the agent a sense of continuity and identity.",
+    "content": "# Pattern 8: Memory Management — Summary\n\nStoring, indexing, and retrieving information across conversations — short-term (the live context window) and long-term (knowledge bases, episodic history) — so the agent doesn't start every interaction from scratch.\n\n*In practice: A post-knee-replacement rehab advisor remembers each patient's daily exercise history, pain reports, and milestone hits across a 12-week programme — so week 4's advice builds on week 1's actual progress, not a generic protocol.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 8,
@@ -1165,7 +1165,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 66
+    "estimated_tokens": 125
   },
   {
     "id": "pattern-08-definition",
@@ -1295,7 +1295,7 @@
   {
     "id": "pattern-09-tldr",
     "chunk_id": 78,
-    "content": "# Pattern 9: Learning & Adaptation — Summary\n\nThe ability of an agent to improve its performance over time based on feedback, user interactions, or new data, without full model retraining. Includes techniques like \"In-Context Learning\" (updating few-shot examples) or updating a knowledge base.",
+    "content": "# Pattern 9: Learning & Adaptation — Summary\n\nImproving an agent's performance over time from feedback, user interactions, or new data — without retraining the underlying model. The system updates the things you can change at runtime: prompts, few-shot examples, and the knowledge base.\n\n*In practice: A SEND advocate's agent adds successful EHCP appeal narratives to its few-shot examples each time a parent wins on review — so its drafting sharpens across cases without anyone retraining the model.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 9,
@@ -1308,7 +1308,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 73
+    "estimated_tokens": 125
   },
   {
     "id": "pattern-09-definition",
@@ -1438,7 +1438,7 @@
   {
     "id": "pattern-10-tldr",
     "chunk_id": 86,
-    "content": "# Pattern 10: State Management (MCP) — Summary\n\nA standardised protocol (Model Context Protocol) for connecting AI models to data sources and tools, ensuring consistent context and state exchange between systems. MCP acts as a universal translator between the LLM and external systems.",
+    "content": "# Pattern 10: State Management (MCP) — Summary\n\nA standardised protocol (Model Context Protocol) for connecting AI models to data sources and tools — the USB-C of LLMs, so any compliant agent can plug into any compliant resource without bespoke glue code.\n\n*In practice: A solicitor's case-management agent reaches Land Registry, Companies House, and the firm's own document store through MCP servers — adding a new data source means publishing a new MCP server, not rewiring the agent.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 10,
@@ -1451,7 +1451,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 71
+    "estimated_tokens": 121
   },
   {
     "id": "pattern-10-definition",
@@ -1581,7 +1581,7 @@
   {
     "id": "pattern-11-tldr",
     "chunk_id": 94,
-    "content": "# Pattern 11: Goal Setting & Monitoring — Summary\n\nMechanisms for agents to define high-level objectives, break them into trackable sub-goals, and continuously monitor progress towards completion. The agent checks: \"Am I closer to the goal than I was 5 minutes ago?\"",
+    "content": "# Pattern 11: Goal Setting & Monitoring — Summary\n\nMechanisms for agents to define high-level objectives, break them into trackable sub-goals, and continuously monitor progress towards completion. The agent checks: \"Am I closer to the goal than I was 5 minutes ago?\"\n\n*In practice: A smoking-cessation companion tracks the user's stated quit goal, monitors daily craving check-ins, and shifts its approach when frequency stops decreasing — rather than running the same script regardless of progress.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 11,
@@ -1594,7 +1594,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 66
+    "estimated_tokens": 125
   },
   {
     "id": "pattern-11-definition",
@@ -1724,7 +1724,7 @@
   {
     "id": "pattern-12-tldr",
     "chunk_id": 102,
-    "content": "# Pattern 12: Exception Handling & Recovery — Summary\n\nStrategies for agents to detect failures (e.g., API errors, hallucinations, logic loops) and self-correct or retry using alternative strategies. Allows the system to be resilient in the face of uncertainty.",
+    "content": "# Pattern 12: Exception Handling & Recovery — Summary\n\nDetecting failures (API errors, hallucinations, logic loops) and recovering — by retrying, switching to an alternative tool, gracefully degrading, or escalating to a human — so one broken step doesn't sink the whole interaction.\n\n*In practice: A mutual-aid coordinator agent can't find a volunteer to collect a prescription within 1 mile, widens the radius to 3 miles, then escalates to the human coordinator with full context — rather than telling the requester \"no match found\".*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 12,
@@ -1737,7 +1737,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 65
+    "estimated_tokens": 134
   },
   {
     "id": "pattern-12-definition",
@@ -2153,7 +2153,7 @@
   {
     "id": "pattern-15-tldr",
     "chunk_id": 126,
-    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Summary\n\nProtocols and formats for autonomous agents to exchange messages, tasks, and state information to collaborate on a shared goal.",
+    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Summary\n\nProtocols and formats for autonomous agents to exchange messages, tasks, and state information to collaborate on a shared goal.\n\n*In practice: A property manager's maintenance agent contacts a network of tradesperson agents — plumber, electrician, locksmith — to compare availability and quotes for a tenant call-out, then books the right one without a human chasing anyone by phone.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 15,
@@ -2166,7 +2166,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 46
+    "estimated_tokens": 110
   },
   {
     "id": "pattern-15-definition",
@@ -2296,7 +2296,7 @@
   {
     "id": "pattern-16-tldr",
     "chunk_id": 134,
-    "content": "# Pattern 16: Resource-Aware Optimisation — Summary\n\nAgents aware of their token consumption, API costs, and computational limits, optimising their strategies accordingly (e.g., using a cheaper model for simple summarisation vs. a frontier model for reasoning).",
+    "content": "# Pattern 16: Resource-Aware Optimisation — Summary\n\nAgents aware of their token consumption, API costs, and computational limits, optimising their strategies accordingly (e.g., using a cheaper model for simple summarisation vs. a frontier model for reasoning).\n\n*In practice: A trade association's member advisor uses a cheap classifier model to triage enquiries (policy question, compliance lookup, complex casework) and only spins up the frontier model for the complex cases — keeping per-member cost predictable across thousands of monthly questions.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 16,
@@ -2309,7 +2309,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 65
+    "estimated_tokens": 138
   },
   {
     "id": "pattern-16-definition",
@@ -2439,7 +2439,7 @@
   {
     "id": "pattern-17-tldr",
     "chunk_id": 142,
-    "content": "# Pattern 17: Reasoning Techniques — Summary\n\nAdvanced cognitive architectures like Chain-of-Thought (CoT), Tree-of-Thought (ToT), and ReAct (Reason+Act) that structure the model's internal processing to solve complex problems.",
+    "content": "# Pattern 17: Reasoning Techniques — Summary\n\nStructured ways of getting the model to think out loud — Chain-of-Thought (CoT), Tree-of-Thought (ToT), and ReAct (Reason+Act) — so it can tackle problems too tangled for a single-shot answer.\n\n*In practice: A planning permission pre-screener uses ReAct to interleave reasoning (\"this looks like permitted development, but the conservation-area constraint flips it\") with tool calls (look up the property's conservation status) — leaving an auditable trail the planning officer can review.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 17,
@@ -2452,7 +2452,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 56
+    "estimated_tokens": 134
   },
   {
     "id": "pattern-17-definition",
@@ -2725,7 +2725,7 @@
   {
     "id": "pattern-19-tldr",
     "chunk_id": 158,
-    "content": "# Pattern 19: Evaluation & Monitoring — Summary\n\nFrameworks for measuring agent performance (accuracy, faithfulness, tool usage) and monitoring behaviour in production (traces, logs).",
+    "content": "# Pattern 19: Evaluation & Monitoring — Summary\n\nFrameworks for measuring agent performance (accuracy, faithfulness, tool usage) and monitoring behaviour in production (traces, logs).\n\n*In practice: A benefits-entitlements advisor is graded on whether it correctly identifies the relevant benefits (PIP, ESA, Universal Credit) for each scenario — so accuracy regressions are caught in CI rather than by users mid-application.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 19,
@@ -2738,7 +2738,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 45
+    "estimated_tokens": 106
   },
   {
     "id": "pattern-19-definition",
@@ -2868,7 +2868,7 @@
   {
     "id": "pattern-20-tldr",
     "chunk_id": 166,
-    "content": "# Pattern 20: Prioritisation — Summary\n\nThe ability of an agent to rank disparate tasks or goals based on urgency, importance, and constraints, effectively managing its own backlog.",
+    "content": "# Pattern 20: Prioritisation — Summary\n\nThe ability of an agent to rank disparate tasks or goals based on urgency, importance, and constraints, effectively managing its own backlog.\n\n*In practice: A property manager's maintenance agent ranks a leaking ceiling above a routine repaint enquiry, even when the leaking-ceiling tenant is less polite — urgency comes from the impact of the issue, not the tone of the request.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 20,
@@ -2881,7 +2881,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 45
+    "estimated_tokens": 105
   },
   {
     "id": "pattern-20-definition",
@@ -3011,7 +3011,7 @@
   {
     "id": "pattern-21-tldr",
     "chunk_id": 174,
-    "content": "# Pattern 21: Exploration & Discovery — Summary\n\nAgents proactively seeking new information, testing hypotheses, or exploring an environment to expand their knowledge or capabilities, rather than just reacting to prompts.",
+    "content": "# Pattern 21: Exploration & Discovery — Summary\n\nAgents proactively seeking new information, testing hypotheses, or exploring an environment to expand their knowledge or capabilities, rather than just reacting to prompts.\n\n*In practice: A council-spending investigation agent spots that a single supplier received payments from three departments in one month, queries Companies House for the supplier's incorporation date unprompted, and flags the pattern to the journalist before being asked.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 21,
@@ -3024,7 +3024,7 @@
       "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 55
+    "estimated_tokens": 123
   },
   {
     "id": "pattern-21-definition",
