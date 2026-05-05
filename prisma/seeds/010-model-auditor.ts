@@ -277,11 +277,21 @@ const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
  * Also binds the existing search_knowledge_base and
  * estimate_workflow_cost capabilities.
  *
- * Idempotent — safe to run on every deploy. The `update` branch only
- * sets `isSystem: true` so re-seeding never overwrites admin edits.
+ * Idempotent — safe to run on every deploy. The audit template is in
+ * `hashInputs` so any edit to the template file invalidates the unit's
+ * content hash and forces a re-run.
+ *
+ * The `aiWorkflow.upsert` rewrites `workflowDefinition`, `metadata`,
+ * `name`, `description`, and `patternsUsed` on every re-seed because
+ * the audit workflow is a SYSTEM workflow (framework-managed). Admin
+ * edits to system workflows are not preserved — admins should clone
+ * the workflow if they want a custom variant. Templates (seeded by
+ * `004-builtin-templates`) follow the opposite convention and only
+ * write on initial create.
  */
 const unit: SeedUnit = {
   name: '010-model-auditor',
+  hashInputs: ['data/templates/provider-model-audit.ts'],
   async run({ prisma, logger }) {
     logger.info('🔍 Seeding provider-model-auditor agent...');
 
@@ -431,12 +441,28 @@ const unit: SeedUnit = {
       },
     });
 
-    // 8. Upsert the Provider Model Audit workflow as a system workflow
+    // 8. Upsert the Provider Model Audit workflow as a system workflow.
+    // System workflows are framework-managed: every re-seed rewrites the
+    // definition + metadata to track the code. Admin edits are not
+    // preserved — clone the workflow to customise.
     const tpl = PROVIDER_MODEL_AUDIT_TEMPLATE;
     const patternsUsed = tpl.patterns.map((p) => p.number);
+    const metadata = {
+      flowSummary: tpl.flowSummary,
+      useCases: tpl.useCases,
+      patterns: tpl.patterns,
+    } as unknown as object;
     await prisma.aiWorkflow.upsert({
       where: { slug: tpl.slug },
-      update: { isSystem: true, isTemplate: false },
+      update: {
+        name: tpl.name,
+        description: tpl.shortDescription,
+        workflowDefinition: tpl.workflowDefinition as unknown as object,
+        patternsUsed,
+        metadata,
+        isSystem: true,
+        isTemplate: false,
+      },
       create: {
         slug: tpl.slug,
         name: tpl.name,
@@ -446,11 +472,7 @@ const unit: SeedUnit = {
         isActive: true,
         isTemplate: false,
         isSystem: true,
-        metadata: {
-          flowSummary: tpl.flowSummary,
-          useCases: tpl.useCases,
-          patterns: tpl.patterns,
-        } as unknown as object,
+        metadata,
         createdBy,
       },
     });
