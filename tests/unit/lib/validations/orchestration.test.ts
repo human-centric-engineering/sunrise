@@ -2056,6 +2056,28 @@ describe('executionTraceSchema', () => {
     const result = executionTraceEntrySchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
+
+  it('preserves unknown fields on parse (forward-compat for resume re-checkpoint)', () => {
+    // If a future engine version adds a field, persists it, and is then
+    // read by older code on the resume path, that field must survive the
+    // parse → re-checkpoint round-trip rather than being silently stripped.
+    const futureEntry = {
+      stepId: 'step-1',
+      stepType: 'llm_call',
+      label: 'Generate',
+      status: 'completed',
+      output: null,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-01-01T00:00:00Z',
+      durationMs: 100,
+      futureField: 'should-survive',
+      anotherFuture: { nested: true },
+    };
+    const result = executionTraceEntrySchema.parse(futureEntry);
+    expect((result as Record<string, unknown>).futureField).toBe('should-survive');
+    expect((result as Record<string, unknown>).anotherFuture).toEqual({ nested: true });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

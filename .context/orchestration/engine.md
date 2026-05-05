@@ -229,6 +229,12 @@ Each step carries `errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail'` in its
 
 `PausedForApproval` is handled outside the strategy switch: the row is flipped to `paused_for_approval`, an `approval_required` event is yielded, and the generator returns cleanly.
 
+**Partial-cost surfacing.** When an executor throws an `ExecutorError` carrying `tokensUsed` / `costUsd` (e.g. an `agent_call` that completed turn 1 before turn 2's `provider.chat()` failed), the engine surfaces those values:
+
+- `retry` strategy accumulates them across all attempts (failed and successful) into the StepResult so the trace header total matches `AiCostLog`.
+- `skip` and `fallback` propagate them onto the StepResult instead of zeroing — meaning a `step_completed` event for a `skipped` step now carries non-zero `tokensUsed` / `costUsd` when the partial existed. Clients that key off skip-equals-zero need to update.
+- `fail` propagates them on the rethrown error so the trace `failed` entry records the billed cost.
+
 ### Non-retriable errors
 
 `ExecutorError` carries a `retriable` flag (defaults to `true`). When `strategy === 'retry'` and the error has `retriable: false`, the engine skips retry attempts and fails immediately. This prevents pointless retries on HTTP 404, missing credentials, or host-not-allowed errors.
