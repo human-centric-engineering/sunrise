@@ -8,7 +8,7 @@
  * existing `ExecutionTraceEntryRow` for each trace entry.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -170,6 +170,14 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
   // Filter chip state — local to this view; not persisted.
   const [filter, setFilter] = useState<TraceFilter>('all');
   const filteredTrace = useMemo(() => applyTraceFilter(trace, filter), [trace, filter]);
+  // Mirror filteredTrace into a ref so handleSelectStep can read the
+  // current filtered set without re-creating the callback on every render.
+  // Without this, the callback's dep array would have to include
+  // filteredTrace, defeating its memoisation.
+  const filteredTraceRef = useRef(filteredTrace);
+  useEffect(() => {
+    filteredTraceRef.current = filteredTrace;
+  }, [filteredTrace]);
 
   // Live status — polls /executions/:id/status while the execution is in a
   // non-terminal status, then triggers router.refresh() so the trace catches
@@ -202,11 +210,11 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
   const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
 
   const handleSelectStep = useCallback((stepId: string) => {
-    // Reset the filter to "all" so the target row exists in the DOM. Without
-    // this, clicking a Completed bar while the Failed filter is active would
-    // silently no-op — the timeline strip renders all bars but the trace list
-    // below renders only filtered entries.
-    setFilter('all');
+    // Only reset the filter when the target row is hidden by the current
+    // filter — otherwise we'd silently drop a deliberate filter selection
+    // every time the user clicked a bar that was already visible.
+    const visible = filteredTraceRef.current.some((e) => e.stepId === stepId);
+    if (!visible) setFilter('all');
     setHighlightedStepId(stepId);
     // Defer to next paint so the highlighted row class is applied before scrolling.
     requestAnimationFrame(() => {
