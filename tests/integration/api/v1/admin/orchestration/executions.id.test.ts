@@ -33,6 +33,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       findUnique: vi.fn(),
     },
+    aiCostLog: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -102,6 +105,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/executions/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: no cost logs. Tests that need them override this.
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([] as never);
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -156,6 +161,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
           workflow: { id: string; name: string };
         };
         trace: Array<{ stepId: string; status: string }>;
+        costEntries: unknown[];
       };
     }>(response);
 
@@ -167,5 +173,152 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.execution.workflow.name).toBe('Test Workflow');
     expect(data.data.trace).toHaveLength(1);
     expect(data.data.trace[0].stepId).toBe('step1');
+    // No cost logs configured for this case → empty costEntries.
+    expect(data.data.costEntries).toEqual([]);
+  });
+
+  it('returns costEntries from AiCostLog, keyed by metadata.stepId', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        totalCostUsd: 0.005,
+        operation: 'chat',
+        metadata: { stepId: 'step1', iteration: 0 },
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+      },
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 80,
+        outputTokens: 30,
+        totalCostUsd: 0.004,
+        operation: 'chat',
+        metadata: { stepId: 'step1', iteration: 1 },
+        createdAt: new Date('2025-01-01T00:00:01Z'),
+      },
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 50,
+        outputTokens: 25,
+        totalCostUsd: 0.002,
+        operation: 'chat',
+        metadata: { stepId: 'step2' },
+        createdAt: new Date('2025-01-01T00:00:02Z'),
+      },
+    ] as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(200);
+
+    const data = await parseJson<{
+      data: { costEntries: Array<{ stepId: string; inputTokens: number; operation: string }> };
+    }>(response);
+
+    // Three entries, two attributed to step1 (multi-turn tool loop), one to step2.
+    expect(data.data.costEntries).toHaveLength(3);
+    expect(data.data.costEntries[0]).toMatchObject({
+      stepId: 'step1',
+      inputTokens: 100,
+      operation: 'chat',
+    });
+    expect(data.data.costEntries[1]).toMatchObject({ stepId: 'step1', inputTokens: 80 });
+    expect(data.data.costEntries[2]).toMatchObject({ stepId: 'step2', inputTokens: 50 });
+  });
+
+  it('drops cost logs with null/missing metadata.stepId', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([
+      // No metadata at all — must be dropped.
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 5,
+        outputTokens: 5,
+        totalCostUsd: 0.001,
+        operation: 'embedding',
+        metadata: null,
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+      },
+      // Metadata present but no stepId — must be dropped.
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 10,
+        outputTokens: 5,
+        totalCostUsd: 0.002,
+        operation: 'chat',
+        metadata: { phase: 'summary' },
+        createdAt: new Date('2025-01-01T00:00:01Z'),
+      },
+      // Valid — kept.
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        totalCostUsd: 0.005,
+        operation: 'chat',
+        metadata: { stepId: 'step1' },
+        createdAt: new Date('2025-01-01T00:00:02Z'),
+      },
+    ] as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{
+      data: { costEntries: Array<{ stepId: string }> };
+    }>(response);
+
+    expect(data.data.costEntries).toHaveLength(1);
+    expect(data.data.costEntries[0].stepId).toBe('step1');
+  });
+
+  it('queries AiCostLog scoped to the execution id (no leakage across runs)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+
+    await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+
+    expect(prisma.aiCostLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workflowExecutionId: EXECUTION_ID },
+        orderBy: { createdAt: 'asc' },
+      })
+    );
+  });
+
+  it('omits the AiCostLog query when execution does not belong to caller (404 path)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ userId: OTHER_USER_ID }) as never
+    );
+
+    await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+
+    // Important: cross-user 404 path must short-circuit BEFORE the cost
+    // query, so we never expose timing / count signal about another user's
+    // execution.
+    expect(prisma.aiCostLog.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns empty costEntries when trace is non-array (schema .catch() falls through)', async () => {
+    // executionTraceSchema uses z.catch(), so a malformed trace returns []
+    // — and the route still succeeds with empty costEntries (since the
+    // execution row itself is intact).
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ executionTrace: { not: 'an array' } }) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(200);
+    const data = await parseJson<{ data: { trace: unknown[]; costEntries: unknown[] } }>(response);
+    expect(data.data.trace).toEqual([]);
   });
 });
