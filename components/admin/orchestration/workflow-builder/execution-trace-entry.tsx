@@ -23,6 +23,22 @@ import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 type Status = ExecutionTraceEntry['status'] | 'running';
 
+/**
+ * Subset of an `AiCostLog` row attributed to a single step, used by the
+ * trace viewer to render per-LLM-call detail under multi-turn executors
+ * (`tool_call`, `agent_call`, `orchestrator`). Comes from the
+ * `costEntries[]` payload returned by `GET /executions/:id`.
+ */
+export interface TraceCostEntry {
+  model: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalCostUsd: number;
+  operation: string;
+  createdAt: string;
+}
+
 export interface ExecutionTraceEntryRowProps {
   stepId: string;
   stepType: string;
@@ -33,6 +49,17 @@ export interface ExecutionTraceEntryRowProps {
   tokensUsed?: number;
   costUsd?: number;
   durationMs?: number;
+  /** New optional Phase-1 fields. Absent when the engine didn't capture them. */
+  input?: unknown;
+  model?: string;
+  provider?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  llmDurationMs?: number;
+  /** Cost-log rows attributed to this step, for the per-call breakdown. */
+  costEntries?: TraceCostEntry[];
+  /** When true, render with a highlighted background (used by timeline-strip clicks). */
+  highlighted?: boolean;
   /** Fires when the user clicks "Retry" on a failed step. */
   onRetry?: (stepId: string) => void;
 }
@@ -56,6 +83,14 @@ export function ExecutionTraceEntryRow({
   tokensUsed = 0,
   costUsd = 0,
   durationMs,
+  input,
+  model,
+  provider,
+  inputTokens,
+  outputTokens,
+  llmDurationMs,
+  costEntries,
+  highlighted,
   onRetry,
 }: ExecutionTraceEntryRowProps) {
   const [expanded, setExpanded] = useState(false);
@@ -63,10 +98,20 @@ export function ExecutionTraceEntryRow({
   const Icon = style.icon;
   const animate = status === 'running' ? 'animate-spin' : '';
 
+  // Latency breakdown — the `llmDurationMs` is a subset of total `durationMs`.
+  // Show "engine + tool I/O" as the remainder, which is the most useful framing.
+  const otherMs =
+    typeof durationMs === 'number' && typeof llmDurationMs === 'number'
+      ? Math.max(0, durationMs - llmDurationMs)
+      : null;
+
   return (
     <div
       data-testid={`trace-entry-${stepId}`}
-      className="border-border/60 rounded-md border p-3 text-sm"
+      className={cn(
+        'border-border/60 rounded-md border p-3 text-sm transition-colors',
+        highlighted && 'bg-muted/40 ring-primary/40 ring-1'
+      )}
     >
       <button
         type="button"
@@ -75,14 +120,36 @@ export function ExecutionTraceEntryRow({
       >
         <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', style.colour, animate)} />
         <div className="flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{label}</span>
             <span className="text-muted-foreground text-xs">{stepType}</span>
+            {model && (
+              <span
+                data-testid={`trace-entry-model-${stepId}`}
+                className="bg-muted/60 text-muted-foreground rounded px-1.5 py-0.5 font-mono text-[11px]"
+                title={provider ? `Provider: ${provider}` : undefined}
+              >
+                {provider ? `${provider} · ${model}` : model}
+              </span>
+            )}
           </div>
           <div className="text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
             <span>{style.text}</span>
-            {typeof durationMs === 'number' && <span>{durationMs} ms</span>}
-            {tokensUsed > 0 && <span>{tokensUsed.toLocaleString()} tokens</span>}
+            {typeof durationMs === 'number' && <span>{durationMs.toLocaleString()} ms</span>}
+            {typeof llmDurationMs === 'number' && llmDurationMs > 0 && otherMs !== null && (
+              <span data-testid={`trace-entry-latency-breakdown-${stepId}`}>
+                LLM {llmDurationMs.toLocaleString()} ms · other {otherMs.toLocaleString()} ms
+              </span>
+            )}
+            {(typeof inputTokens === 'number' || typeof outputTokens === 'number') &&
+            (inputTokens || outputTokens) ? (
+              <span>
+                {(inputTokens ?? 0).toLocaleString()} in · {(outputTokens ?? 0).toLocaleString()}{' '}
+                out
+              </span>
+            ) : tokensUsed > 0 ? (
+              <span>{tokensUsed.toLocaleString()} tokens</span>
+            ) : null}
             {costUsd > 0 && <span>${costUsd.toFixed(4)}</span>}
           </div>
         </div>
@@ -100,10 +167,61 @@ export function ExecutionTraceEntryRow({
               {error}
             </pre>
           )}
-          {output !== undefined && output !== null && (
-            <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
-              {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
-            </pre>
+          {(input !== undefined || output !== undefined) && (
+            <div className="grid gap-2 lg:grid-cols-2">
+              {input !== undefined && input !== null && (
+                <div data-testid={`trace-entry-input-${stepId}`}>
+                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+                    Input
+                  </p>
+                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
+                    {typeof input === 'string' ? input : JSON.stringify(input, null, 2)}
+                  </pre>
+                </div>
+              )}
+              {output !== undefined && output !== null && (
+                <div data-testid={`trace-entry-output-${stepId}`}>
+                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+                    Output
+                  </p>
+                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
+                    {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+          {costEntries && costEntries.length > 0 && (
+            <div data-testid={`trace-entry-cost-entries-${stepId}`}>
+              <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+                Per-call cost ({costEntries.length})
+              </p>
+              <table className="w-full text-xs tabular-nums">
+                <thead>
+                  <tr className="text-muted-foreground border-b text-left">
+                    <th className="py-1 pr-2 font-normal">Model</th>
+                    <th className="py-1 pr-2 font-normal">In</th>
+                    <th className="py-1 pr-2 font-normal">Out</th>
+                    <th className="py-1 pr-2 font-normal">USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {costEntries.map((entry, idx) => (
+                    <tr
+                      key={`${entry.createdAt}-${idx}`}
+                      className="border-border/40 border-b last:border-b-0"
+                    >
+                      <td className="py-0.5 pr-2 font-mono">
+                        {entry.provider}/{entry.model}
+                      </td>
+                      <td className="py-0.5 pr-2">{entry.inputTokens.toLocaleString()}</td>
+                      <td className="py-0.5 pr-2">{entry.outputTokens.toLocaleString()}</td>
+                      <td className="py-0.5 pr-2">${entry.totalCostUsd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {status === 'failed' && onRetry && (
             <Button

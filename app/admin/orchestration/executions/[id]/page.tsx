@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { ExecutionDetailView } from '@/components/admin/orchestration/execution-detail-view';
+import {
+  ExecutionDetailView,
+  type TraceCostEntryRow,
+} from '@/components/admin/orchestration/execution-detail-view';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -34,6 +37,7 @@ interface ExecutionDetail {
 interface ExecutionResponse {
   execution: ExecutionDetail;
   trace: ExecutionTraceEntry[];
+  costEntries?: TraceCostEntryRow[];
 }
 
 async function getExecution(id: string): Promise<ExecutionResponse | null> {
@@ -100,7 +104,11 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
         </p>
       </header>
 
-      <ExecutionDetailView execution={data.execution} trace={data.trace} />
+      <ExecutionDetailView
+        execution={data.execution}
+        trace={data.trace}
+        costEntries={data.costEntries}
+      />
     </div>
   );
 }
