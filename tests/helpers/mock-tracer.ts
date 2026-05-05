@@ -117,6 +117,14 @@ export class MockTracer implements Tracer {
    */
   private readonly _activeStack: RecordedSpan[] = [];
 
+  /**
+   * NOTE — deterministic-but-non-isolating traceId assignment:
+   * MockTracer assigns `'trace-1'` to every root span for assertion convenience —
+   * this is a deterministic constant, not a real propagated trace context. Tests that
+   * need true trace-context isolation (e.g. asserting two spans share a real propagated
+   * traceId vs. independently producing 'trace-1') must use the OTEL adapter against
+   * `BasicTracerProvider` — see `tests/unit/lib/orchestration/tracing/otel-adapter.test.ts`.
+   */
   private _nextId(): { traceId: string; spanId: string } {
     this._spanCounter += 1;
     const spanId = `span-${this._spanCounter}`;
@@ -197,6 +205,12 @@ export class ThrowingTracer implements Tracer {
     throw new Error('mock tracer broken');
   }
 
+  /**
+   * NOTE — this models the with-span.ts fallback path (NOOP_SPAN after startSpan throws),
+   * not a real OTEL withSpan. Tests that need to exercise the startSpan throw path should
+   * call `getTracer().startSpan(...)` directly rather than `withSpan(...)`, since withSpan
+   * here bypasses the throw and invokes fn(NOOP_SPAN) directly.
+   */
   async withSpan<T>(
     _name: string,
     _options: StartSpanOptions,

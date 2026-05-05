@@ -82,7 +82,6 @@ describe('OtelTracer', () => {
     expect(spans[0].name).toBe('llm.call');
     expect(spans[0].attributes).toMatchObject({ model: 'gpt-4o', tokens: 100 });
     expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.OK);
-    expect(spans[0].endTime).toBeDefined();
     expect(result).toBe('ok');
   });
 

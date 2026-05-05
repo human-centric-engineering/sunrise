@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/lib/logging';
-import { NOOP_TRACER } from '@/lib/orchestration/tracing/noop-tracer';
+import { NOOP_SPAN, NOOP_TRACER } from '@/lib/orchestration/tracing/noop-tracer';
 import { getTracer, registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
 import type { Span, StartSpanOptions, Tracer } from '@/lib/orchestration/tracing/tracer';
 
@@ -148,7 +148,7 @@ describe('concurrent withSpan calls after registerTracer', () => {
     tracer.calls.forEach(({ span }) => {
       // Each span produced by TestTracer.startSpan delegates to NOOP_TRACER.startSpan,
       // which returns NOOP_SPAN — confirming the registered tracer handled the call.
-      expect(span).toBeDefined();
+      expect(span).toBe(NOOP_SPAN);
     });
   });
 

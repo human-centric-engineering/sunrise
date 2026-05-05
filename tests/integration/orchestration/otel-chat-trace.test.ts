@@ -60,11 +60,16 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
-  checkBudget: vi.fn(),
-  logCost: vi.fn().mockResolvedValue(null),
-  calculateCost: vi.fn().mockReturnValue({ totalCostUsd: 0.001 }),
-}));
+vi.mock('@/lib/orchestration/llm/cost-tracker', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/orchestration/llm/cost-tracker')>(
+    '@/lib/orchestration/llm/cost-tracker'
+  );
+  return {
+    ...actual,
+    logCost: vi.fn().mockResolvedValue(null),
+    checkBudget: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/orchestration/llm/budget-mutex', () => ({
   withAgentBudgetLock: vi
@@ -158,7 +163,7 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
 
 import { prisma } from '@/lib/db/client';
 import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
-import { checkBudget } from '@/lib/orchestration/llm/cost-tracker';
+import { checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { scanOutput } from '@/lib/orchestration/chat/output-guard';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { StreamingChatHandler } from '@/lib/orchestration/chat/streaming-handler';
@@ -533,6 +538,14 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     // Assert — chat.turn span is ok (the turn ultimately succeeded)
     const chatSpan = findSpan(tracer.spans, 'chat.turn');
     expect(chatSpan.status?.code).toBe('ok');
+
+    // Assert — logCost was called with the SECOND (successful) span's IDs, not the first
+    // (failed) span's IDs. A regression that captured span IDs before the retry attempt
+    // would silently misattribute the cost row.
+    const failoverLlmCalls = tracer.spans.filter((s) => s.name === 'llm.call');
+    expect(failoverLlmCalls).toHaveLength(2);
+    const successfulSpan = failoverLlmCalls[1]; // second span is the successful retry
+    expect(vi.mocked(logCost).mock.calls[0]?.[0]?.spanId).toBe(successfulSpan.spanId);
   });
 
   // -------------------------------------------------------------------------

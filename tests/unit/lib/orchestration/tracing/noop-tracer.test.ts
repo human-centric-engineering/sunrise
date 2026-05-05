@@ -37,79 +37,64 @@ describe('NOOP_TRACER.startSpan', () => {
 
 describe('NOOP_SPAN methods', () => {
   it('setAttribute is callable with string value and does not throw', () => {
-    // Arrange + Act + Assert — observable post-call state: span is still the singleton
-    NOOP_SPAN.setAttribute('gen_ai.system', 'openai');
-    expect(NOOP_SPAN).toBe(NOOP_SPAN); // sentinel: singleton identity preserved
+    // Arrange + Act + Assert — the lambda exercises the real call, so .not.toThrow() is valid
+    expect(() => NOOP_SPAN.setAttribute('gen_ai.system', 'openai')).not.toThrow();
   });
 
   it('setAttribute is callable with numeric, boolean, and undefined values', () => {
     // Arrange + Act — should not throw for any of these types
-    NOOP_SPAN.setAttribute('tokens', 42);
-    NOOP_SPAN.setAttribute('success', true);
-    NOOP_SPAN.setAttribute('optional', undefined);
-
-    // Assert — singleton identity preserved after all calls
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    expect(() => NOOP_SPAN.setAttribute('tokens', 42)).not.toThrow();
+    expect(() => NOOP_SPAN.setAttribute('success', true)).not.toThrow();
+    expect(() => NOOP_SPAN.setAttribute('optional', undefined)).not.toThrow();
   });
 
   it('setAttributes is callable with an arbitrary attributes map and does not throw', () => {
-    // Arrange + Act
-    NOOP_SPAN.setAttributes({
-      'gen_ai.system': 'anthropic',
-      'gen_ai.usage.input_tokens': 100,
-      'sunrise.cost_usd': 0.002,
-    });
-
-    // Assert — singleton identity preserved
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    // Arrange + Act + Assert
+    expect(() =>
+      NOOP_SPAN.setAttributes({
+        'gen_ai.system': 'anthropic',
+        'gen_ai.usage.input_tokens': 100,
+        'sunrise.cost_usd': 0.002,
+      })
+    ).not.toThrow();
   });
 
   it('setStatus is callable with ok, error, and unset codes and does not throw', () => {
-    // Arrange + Act
-    NOOP_SPAN.setStatus({ code: 'ok' });
-    NOOP_SPAN.setStatus({ code: 'error', message: 'something went wrong' });
-    NOOP_SPAN.setStatus({ code: 'unset' });
-
-    // Assert — singleton identity preserved
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    // Arrange + Act + Assert
+    expect(() => NOOP_SPAN.setStatus({ code: 'ok' })).not.toThrow();
+    expect(() =>
+      NOOP_SPAN.setStatus({ code: 'error', message: 'something went wrong' })
+    ).not.toThrow();
+    expect(() => NOOP_SPAN.setStatus({ code: 'unset' })).not.toThrow();
   });
 
   it('recordException is callable with an Error instance and does not throw', () => {
     // Arrange
     const err = new Error('network timeout');
 
-    // Act
-    NOOP_SPAN.recordException(err);
-
-    // Assert — singleton identity preserved
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    // Act + Assert — the lambda exercises the real call
+    expect(() => NOOP_SPAN.recordException(err)).not.toThrow();
   });
 
   it('recordException is callable with non-Error values (string, plain object, undefined)', () => {
-    // Arrange + Act — must not throw for any of these inputs
-    NOOP_SPAN.recordException('raw string error');
-    NOOP_SPAN.recordException({ code: 500, detail: 'internal' });
-    NOOP_SPAN.recordException(undefined);
-    NOOP_SPAN.recordException(null);
-    NOOP_SPAN.recordException(42);
-
-    // Assert — singleton identity preserved after all edge-case inputs
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    // Arrange + Act + Assert — must not throw for any of these inputs
+    expect(() => NOOP_SPAN.recordException('raw string error')).not.toThrow();
+    expect(() => NOOP_SPAN.recordException({ code: 500, detail: 'internal' })).not.toThrow();
+    expect(() => NOOP_SPAN.recordException(undefined)).not.toThrow();
+    expect(() => NOOP_SPAN.recordException(null)).not.toThrow();
+    expect(() => NOOP_SPAN.recordException(42)).not.toThrow();
   });
 
   it('end is callable and does not throw', () => {
-    // Arrange + Act
-    NOOP_SPAN.end();
-
-    // Assert — singleton identity preserved (end must be idempotent for a no-op)
-    expect(NOOP_SPAN).toBe(NOOP_SPAN);
+    // Arrange + Act + Assert — end must be idempotent for a no-op
+    expect(() => NOOP_SPAN.end()).not.toThrow();
   });
 
   it('traceId returns an empty string — sentinel used by cost-log threading to detect no real tracer', () => {
     // Arrange + Act
     const id = NOOP_SPAN.traceId();
 
-    // Assert — downstream logic at cost-tracker.ts:152-155 checks for empty string
+    // Assert — downstream logic at cost-tracker.ts:148-149 checks for empty string
     expect(id).toBe('');
   });
 
@@ -117,7 +102,7 @@ describe('NOOP_SPAN methods', () => {
     // Arrange + Act
     const id = NOOP_SPAN.spanId();
 
-    // Assert — downstream logic at cost-tracker.ts:152-155 checks for empty string
+    // Assert — downstream logic at cost-tracker.ts:148-149 checks for empty string
     expect(id).toBe('');
   });
 });

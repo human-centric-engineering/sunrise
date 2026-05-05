@@ -44,19 +44,30 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Required for runLlmCall path used in A2
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getProvider: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  getDefaultModelForTask: vi.fn().mockResolvedValue('gpt-4o-mini'),
+  invalidateSettingsCache: vi.fn(),
+  __resetSettingsResolverForTests: vi.fn(),
+}));
+
 import { logger } from '@/lib/logging';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import {
   __resetRegistryForTests,
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
-import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { prisma } from '@/lib/db/client';
+import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
 import { registerTracer } from '@/lib/orchestration/tracing';
 import { resetTracer } from '@/lib/orchestration/tracing/registry';
 import { ThrowingTracer } from '@/tests/helpers/mock-tracer';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
-import { CostOperation } from '@/types/orchestration';
 
 const USER_ID = 'user_resilience_test';
 
@@ -178,27 +189,32 @@ describe('OTel resilience — ThrowingTracer', () => {
   // A2. ThrowingTracer + AiCostLog rows still write (traceId is null)
   // ---------------------------------------------------------------------------
 
-  it('A2: AiCostLog rows still land under ThrowingTracer, with traceId absent (null normalisation)', async () => {
-    // Arrange: register an executor that calls logCost directly via the production
-    // path — passing the span IDs from whatever span the ThrowingTracer returns.
+  it('A2: AiCostLog rows still land under ThrowingTracer, with traceId/spanId absent (normalisation)', async () => {
+    // Arrange: register an executor that exercises the production runLlmCall path.
     // Under ThrowingTracer, withSpan falls back to NOOP_SPAN (traceId='', spanId='').
-    // The if (params.traceId) guard in cost-tracker.ts normalises empty strings away
-    // so traceId/spanId should be absent from the Prisma write.
+    // The if (params.traceId) guard in cost-tracker.ts:148-149 normalises empty strings
+    // away so traceId/spanId should be absent from the Prisma write — same pattern as B1
+    // in cost-log-trace-correlation.test.ts.
 
-    registerStepType('llm_call', async (_step, ctx) => {
-      // Call logCost with the empty-string IDs that NOOP_SPAN produces
-      await logCost({
-        workflowExecutionId: ctx.executionId,
-        model: 'gpt-4o-mini',
-        provider: 'openai',
-        inputTokens: 50,
-        outputTokens: 25,
-        operation: CostOperation.CHAT,
-        // Simulate what happens when NOOP_SPAN's traceId/spanId (both '') are passed
-        traceId: '',
-        spanId: '',
+    // Mock a provider so runLlmCall can resolve a chat call
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockResolvedValue({
+        content: 'mock response',
+        usage: { inputTokens: 50, outputTokens: 25 },
+      }),
+    } as never);
+
+    registerStepType('llm_call', async (step, ctx) => {
+      const result = await runLlmCall(ctx, {
+        stepId: step.id,
+        prompt: (step.config as { prompt: string }).prompt,
+        modelOverride: 'gpt-4o-mini',
       });
-      return { output: { text: 'result' }, tokensUsed: 75, costUsd: 0 };
+      return {
+        output: { text: result.content },
+        tokensUsed: result.tokensUsed,
+        costUsd: result.costUsd,
+      };
     });
 
     vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -210,13 +226,17 @@ describe('OTel resilience — ThrowingTracer', () => {
       definition: SIMPLE_WORKFLOW,
     });
 
+    // Allow fire-and-forget logCost microtasks to settle
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     // Assert: workflow still completed
     expect(events.map((e) => e.type)).toContain('workflow_completed');
 
-    // Assert: aiCostLog.create was called at least once
+    // Assert: aiCostLog.create was called (cost logging is not disabled by ThrowingTracer)
     expect(prisma.aiCostLog.create).toHaveBeenCalledTimes(1);
 
-    // Assert: traceId and spanId were NOT written (empty strings normalised away)
+    // Assert: traceId and spanId are absent — NOOP_SPAN's empty-string IDs were normalised
+    // away by the if (params.traceId) guard at cost-tracker.ts:148-149
     const createCall = vi.mocked(prisma.aiCostLog.create).mock.calls[0][0];
     expect(createCall.data).not.toHaveProperty('traceId');
     expect(createCall.data).not.toHaveProperty('spanId');

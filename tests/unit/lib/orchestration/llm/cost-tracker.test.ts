@@ -557,6 +557,85 @@ describe('getAgentCosts — date range branches', () => {
   });
 });
 
+describe('logCost — trace correlation', () => {
+  it('omits traceId from the Prisma write when traceId is an empty string', async () => {
+    // Arrange: empty string is the sentinel returned by NOOP_SPAN.traceId()
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      traceId: '',
+    });
+
+    // Assert: the if (params.traceId) guard at cost-tracker.ts:148-149 normalises
+    // empty strings away so the column remains NULL rather than an empty string.
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('traceId');
+  });
+
+  it('includes traceId in the Prisma write when traceId is a real span ID', async () => {
+    // Arrange
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      traceId: 'abc-123',
+    });
+
+    // Assert: a non-empty traceId passes through the normalisation guard
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.traceId).toBe('abc-123');
+  });
+
+  it('omits spanId from the Prisma write when spanId is an empty string', async () => {
+    // Arrange: empty string is the sentinel returned by NOOP_SPAN.spanId()
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      spanId: '',
+    });
+
+    // Assert: empty spanId is normalised away (same guard at cost-tracker.ts:148-149)
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('spanId');
+  });
+
+  it('includes spanId in the Prisma write when spanId is a real span ID', async () => {
+    // Arrange
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      spanId: 'def-456',
+    });
+
+    // Assert: a non-empty spanId passes through the normalisation guard
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.spanId).toBe('def-456');
+  });
+});
+
 describe('calculateLocalSavings', () => {
   it('returns zero savings when no local rows exist in the window', async () => {
     // Arrange: DB returns empty list for local rows
