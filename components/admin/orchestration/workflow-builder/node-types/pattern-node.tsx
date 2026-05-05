@@ -6,6 +6,11 @@
  * driven entirely by the step registry, so adding a new pattern is a
  * registry edit — no new component needed.
  *
+ * Output handles do NOT carry an in-box label. Edges originating from
+ * a labelled handle (guard's pass/fail, route's named branches) carry
+ * the same string as their edge label, so an in-box label would be
+ * redundant. Hover the handle to see the label as a native tooltip.
+ *
  * Selected state is rendered via a `ring-2 ring-primary` outline.
  */
 
@@ -19,7 +24,6 @@ import {
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
-import { computePatternNodeSize } from '@/components/admin/orchestration/workflow-builder/box-sizing';
 import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
@@ -31,25 +35,17 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
 
-  const size = computePatternNodeSize(data.type, data.config);
-
   return (
     <div
       data-testid={`pattern-node-${data.type}`}
       className={cn(
-        'relative flex flex-col items-center gap-2 rounded-lg border-2 py-3 shadow-sm transition-shadow',
+        'flex max-w-[160px] min-w-[140px] flex-col items-center gap-2 rounded-lg border-2 px-3 py-3 shadow-sm transition-shadow',
         colours.bg,
         colours.border,
         colours.text,
         selected && !hasError && 'ring-primary shadow-md ring-2',
         hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
       )}
-      style={{
-        paddingLeft: size.paddingLeft,
-        paddingRight: size.paddingRight,
-        minWidth: size.minWidth,
-        maxWidth: size.maxWidth,
-      }}
     >
       {hasError && <span className="sr-only">Step has validation errors</span>}
       {/* Input handles — stacked on the left side */}
@@ -75,28 +71,23 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
         <div className="text-muted-foreground font-mono text-[10px] uppercase">{data.type}</div>
       </div>
 
-      {/* Output handles — stacked on the right side */}
+      {/* Output handles — stacked on the right side. The handle's `title`
+          provides a native tooltip showing the output label so users
+          authoring routes/guards can still tell which handle is which
+          before they connect an edge. */}
       {Array.from({ length: outputs }).map((_, i) => {
         const label = outputLabels?.[i];
         const topPct = outputs === 1 ? '50%' : `${((i + 1) * 100) / (outputs + 1)}%`;
         return (
-          <div key={`out-${i}`}>
-            <Handle
-              id={`out-${i}`}
-              type="source"
-              position={Position.Right}
-              style={{ top: topPct }}
-              className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
-            />
-            {label && (
-              <span
-                className="text-muted-foreground pointer-events-none absolute right-2.5 -translate-y-1/2 text-[9px] leading-none"
-                style={{ top: topPct }}
-              >
-                {label}
-              </span>
-            )}
-          </div>
+          <Handle
+            key={`out-${i}`}
+            id={`out-${i}`}
+            type="source"
+            position={Position.Right}
+            style={{ top: topPct }}
+            title={label}
+            className="!h-2 !w-2 !border-2 !border-current !bg-white dark:!bg-zinc-800"
+          />
         );
       })}
     </div>

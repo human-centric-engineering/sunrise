@@ -18,9 +18,15 @@ import { render, screen } from '@testing-library/react';
 // Mock @xyflow/react before importing the component so Handle renders as
 // a testable DOM element.
 vi.mock('@xyflow/react', () => {
-  const Handle = ({ type, position }: { type: string; position: string }) => (
-    <div data-testid="handle" data-type={type} data-position={position} />
-  );
+  const Handle = ({
+    type,
+    position,
+    title,
+  }: {
+    type: string;
+    position: string;
+    title?: string;
+  }) => <div data-testid="handle" data-type={type} data-position={position} title={title} />;
   Handle.displayName = 'Handle';
 
   return {
@@ -162,21 +168,11 @@ describe('PatternNode', () => {
     });
   });
 
-  describe('output-label gutter sizing', () => {
-    it('uses the base width when there are no output labels', () => {
-      renderNode({ label: 'Summarise', type: 'llm_call', config: {} });
-      const node = screen.getByTestId('pattern-node-llm_call');
-      // No outputLabels → gutter = 0 → minWidth = 140, maxWidth = 160
-      expect(node.style.minWidth).toBe('140px');
-      expect(node.style.maxWidth).toBe('160px');
-      expect(node.style.paddingRight).toBe('12px');
-      expect(node.style.paddingLeft).toBe('12px');
-    });
-
-    it('grows the gutter symmetrically (both sides) to fit the longest output label', () => {
-      // Route step with a long admin-defined label. Gutter is mirrored on
-      // both sides so the centred step name stays visually centred — the
-      // box looks balanced rather than lopsided.
+  describe('output handle labels', () => {
+    it('exposes each output label as a native title tooltip on its handle', () => {
+      // Route step with admin-defined route labels. The labels should not
+      // be rendered inline (avoiding box-widening) but should still be
+      // discoverable as native tooltips on hover.
       renderNode({
         label: 'Classify',
         type: 'route',
@@ -184,24 +180,27 @@ describe('PatternNode', () => {
           routes: [
             { label: 'chat', value: 'chat' },
             { label: 'embedding', value: 'embedding' },
-            { label: 'control_plane', value: 'control_plane' },
           ],
         },
       });
-      const node = screen.getByTestId('pattern-node-route');
-      // longest = 'control_plane' (13 chars). Gutter = ceil(13 * 5.5) + 8 = 80px.
-      // minWidth = 140 + 80*2 = 300, maxWidth = 160 + 80*2 = 320,
-      // paddingLeft = paddingRight = 12 + 80 = 92.
-      expect(node.style.minWidth).toBe('300px');
-      expect(node.style.maxWidth).toBe('320px');
-      expect(node.style.paddingLeft).toBe('92px');
-      expect(node.style.paddingRight).toBe('92px');
+      const handles = screen
+        .getAllByTestId('handle')
+        .filter((h) => h.getAttribute('data-type') === 'source');
+      const titles = handles.map((h) => h.getAttribute('title'));
+      expect(titles).toEqual(['chat', 'embedding']);
     });
 
-    it('marks the container relative so output labels anchor to the box', () => {
-      renderNode({ label: 'Classify', type: 'route', config: {} });
-      const node = screen.getByTestId('pattern-node-route');
-      expect(node.className).toContain('relative');
+    it('does not render the output label as inline text', () => {
+      renderNode({
+        label: 'Classify',
+        type: 'route',
+        config: {
+          routes: [{ label: 'embedding', value: 'embedding' }],
+        },
+      });
+      // The label appears only as the handle's title attribute, never as
+      // visible text inside the box. queryByText returns null when absent.
+      expect(screen.queryByText('embedding')).toBeNull();
     });
   });
 });

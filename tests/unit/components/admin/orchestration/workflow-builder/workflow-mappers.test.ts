@@ -227,44 +227,6 @@ describe('workflowDefinitionToFlow', () => {
     expect(stepC?.position).toEqual({ x: 440, y: 0 });
   });
 
-  it('spaces columns to fit the widest box at each level', () => {
-    // Arrange — entry is a route step with a long admin-defined label,
-    // followed by a plain llm_call. The route step's box width should
-    // determine the gap to its successor.
-    const definition: WorkflowDefinition = {
-      entryStepId: 'classify',
-      errorStrategy: 'fail',
-      steps: [
-        {
-          id: 'classify',
-          name: 'Classify',
-          type: 'route',
-          config: {
-            routes: [
-              { label: 'chat', value: 'chat' },
-              { label: 'control_plane', value: 'control_plane' },
-            ],
-          },
-          nextSteps: [{ targetStepId: 'next', condition: 'chat' }],
-        },
-        {
-          id: 'next',
-          name: 'Next',
-          type: 'llm_call',
-          config: {},
-          nextSteps: [],
-        },
-      ],
-    };
-
-    const { nodes } = workflowDefinitionToFlow(definition);
-
-    // Route box max width: 160 + ceil(13*5.5+8)*2 = 160 + 80*2 = 320.
-    // X gap = 60. Successor x = 320 + 60 = 380.
-    const next = nodes.find((n) => n.id === 'next');
-    expect(next?.position.x).toBe(380);
-  });
-
   it('guard step edges get sourceHandle matching the condition label', () => {
     const definition: WorkflowDefinition = {
       entryStepId: 'guard',
