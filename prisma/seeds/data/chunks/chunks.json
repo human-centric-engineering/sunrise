@@ -366,7 +366,7 @@
   {
     "id": "pattern-02-swe_parallels",
     "chunk_id": 26,
-    "content": "# Pattern 2: Routing — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Load Balancer / API Gateway\n**Agentic Pattern:** Routing\n\n**Shared Principles**\n\nBoth mechanisms exist to optimise resource usage, enforce separation of concerns, and ensure that a request is handled by the component best suited for it. Just as an API Gateway inspects a request header or URL path to route traffic to the correct backend microservice, an Agentic Router inspects the meaning of a prompt to route it to the correct downstream agent.\n\n**Critical Differences**\n\nTraditional routing is rule-based and syntactic (RegEx, URL paths, headers). Agentic routing is semantic; it requires an LLM call or a vector similarity search to classify intent. This introduces a probabilistic element at the very entry point of the system — the router itself can \"misunderstand\" the destination.",
+    "content": "# Pattern 2: Routing — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Load Balancer / API Gateway (also: Strategy Pattern, web framework routing in Express, Rails, Spring, Django)\n**Agentic Pattern:** Routing\n\n**Shared Principles**\n\nBoth mechanisms exist to optimise resource usage, enforce separation of concerns, and ensure that a request is handled by the component best suited for it. Just as an API Gateway inspects a request header or URL path to route traffic to the correct backend microservice, an Agentic Router inspects the meaning of a prompt to route it to the correct downstream agent.\n\n**Critical Differences**\n\nTraditional routing is rule-based and syntactic (RegEx, URL paths, headers). Agentic routing is semantic; it requires an LLM call or a vector similarity search to classify intent. This introduces a probabilistic element at the very entry point of the system — the router itself can \"misunderstand\" the destination.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 2,
@@ -379,7 +379,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 223
+    "estimated_tokens": 244
   },
   {
     "id": "pattern-02-considerations",
@@ -652,7 +652,7 @@
   {
     "id": "pattern-04-swe_parallels",
     "chunk_id": 42,
-    "content": "# Pattern 4: Reflection — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Unit Testing / TDD Loop\n**Agentic Pattern:** Reflection\n\n**Shared Principles**\n\nBoth exist to catch errors before final delivery. The \"Red-Green-Refactor\" loop in TDD is structurally analogous to the \"Draft-Critique-Revise\" loop in Reflection. It is a quality assurance gate embedded in the development/execution process.\n\n**Critical Differences**\n\nUnit tests check against known, deterministic assertions (e.g., `assert x == 5`). Reflection checks against qualitative, ambiguous criteria (e.g., \"Is this tone professional?\", \"Is this code secure?\", \"Does this argument make sense?\") using an LLM as the judge. The \"test\" itself is probabilistic.",
+    "content": "# Pattern 4: Reflection — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Unit Testing / TDD Loop\n**Agentic Pattern:** Reflection\n\n**Shared Principles**\n\nBoth exist to catch errors before final delivery. The \"Red-Green-Refactor\" loop in TDD is structurally analogous to the \"Draft-Critique-Revise\" loop in Reflection. It is a quality assurance gate embedded in the development/execution process.\n\n**Critical Differences**\n\nUnit tests check against known, deterministic assertions (e.g., `assert x == 5`). Reflection checks against qualitative, ambiguous criteria (e.g., \"Is this tone professional?\", \"Is this code secure?\", \"Does this argument make sense?\") using an LLM as the judge. The \"test\" itself is probabilistic.\n\n**Closer analogy: Code Review**\n\nThe TDD loop is mechanical — an assertion either passes or fails. Reflection is closer to a code review: a colleague reads the work and judges it against ambiguous criteria like clarity, security, or whether the approach makes sense. The reviewer can be wrong, change their mind, or miss things — exactly like an LLM critic.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 4,
@@ -665,7 +665,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 188
+    "estimated_tokens": 278
   },
   {
     "id": "pattern-04-considerations",
@@ -795,7 +795,7 @@
   {
     "id": "pattern-05-swe_parallels",
     "chunk_id": 50,
-    "content": "# Pattern 5: Tool Use — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Adapter / Proxy Pattern\n**Agentic Pattern:** Tool Use\n\n**Shared Principles**\n\nJust as the Adapter pattern wraps an incompatible interface (like a 3rd party API) to make it usable by a client class, Agentic Tool Use wraps an external API (like a weather service or SQL database) into a schema (JSON) that the LLM can \"understand\" and \"call.\"\n\n**Critical Differences**\n\nIn Software Engineering, the developer writes the code to call the API explicitly (`service.call()`). In Agentic Design, the developer defines the interface (the tool definition), and the Agent decides when and how to call it based on the conversation context. This is Inversion of Control at the logic level — much like dependency injection where the framework decides what to call, here the agent decides the execution path at runtime, not the programmer.",
+    "content": "# Pattern 5: Tool Use — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Adapter / Proxy Pattern (also: Plugin architecture like VS Code extensions, the Stripe SDK)\n**Agentic Pattern:** Tool Use\n\n**Shared Principles**\n\nJust as the Adapter pattern wraps an incompatible interface (like a 3rd party API) to make it usable by a client class, Agentic Tool Use wraps an external API (like a weather service or SQL database) into a schema (JSON) that the LLM can \"understand\" and \"call.\"\n\n**Critical Differences**\n\nIn Software Engineering, the developer writes the code to call the API explicitly (`service.call()`). In Agentic Design, the developer defines the interface (the tool definition), and the Agent decides when and how to call it based on the conversation context. This is Inversion of Control at the logic level — much like dependency injection where the framework decides what to call, here the agent decides the execution path at runtime, not the programmer.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 5,
@@ -808,7 +808,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 232
+    "estimated_tokens": 249
   },
   {
     "id": "pattern-05-considerations",
@@ -1081,7 +1081,7 @@
   {
     "id": "pattern-07-swe_parallels",
     "chunk_id": 66,
-    "content": "# Pattern 7: Multi-Agent Collaboration — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Microservices\n**Agentic Pattern:** Multi-Agent Collaboration\n\n**Shared Principles**\n\nBoth involve the decomposition of a monolithic problem into specialised, decoupled components that communicate over a network/protocol. Both rely on the principle of Separation of Concerns.\n\n**Critical Differences**\n\nMicroservices communicate via rigid, defined APIs (Syntactic Contracts). Agents communicate via natural language conversations (Semantic Contracts). The \"handshake\" between agents involves negotiation and context sharing, not just data transfer.",
+    "content": "# Pattern 7: Multi-Agent Collaboration — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Microservices\n**Agentic Pattern:** Multi-Agent Collaboration\n\n**Shared Principles**\n\nBoth involve the decomposition of a monolithic problem into specialised, decoupled components that communicate over a network/protocol. Both rely on the principle of Separation of Concerns.\n\n**Critical Differences**\n\nMicroservices communicate via rigid, defined APIs (Syntactic Contracts). Agents communicate via natural language conversations (Semantic Contracts). The \"handshake\" between agents involves negotiation and context sharing, not just data transfer.\n\n**Closer analogy: A team of specialist contractors**\n\nMicroservices share the decoupling, but each microservice does the same thing every time. Multi-agent collaboration is closer to a building project where the architect, structural engineer, electrician, and plumber each apply judgement to the brief, hand off via written notes and contracts, and renegotiate when something on site doesn't match the plan. The contracts are written down; the work isn't templated.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 7,
@@ -1094,7 +1094,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 167
+    "estimated_tokens": 284
   },
   {
     "id": "pattern-07-considerations",
@@ -1224,7 +1224,7 @@
   {
     "id": "pattern-08-swe_parallels",
     "chunk_id": 74,
-    "content": "# Pattern 8: Memory Management — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Database / Caching / Session State\n**Agentic Pattern:** Memory Management\n\n**Shared Principles**\n\nPersistence of state is crucial for both. Short-term memory ≈ RAM/Redis (Session Store); Long-term memory ≈ Disk/SQL/NoSQL (Persistent Store).\n\n**Critical Differences**\n\nAgentic memory is often Vector-based (semantic similarity) rather than Key-Value or Relational. Retrieval is probabilistic (getting \"relevant\" memories based on embedding distance) rather than exact (getting \"row ID 123\").",
+    "content": "# Pattern 8: Memory Management — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Database / Caching / Session State (also: Browser `localStorage` and `sessionStorage`, Redis vs Postgres for hot/cold data)\n**Agentic Pattern:** Memory Management\n\n**Shared Principles**\n\nPersistence of state is crucial for both. Short-term memory ≈ RAM/Redis (Session Store); Long-term memory ≈ Disk/SQL/NoSQL (Persistent Store).\n\n**Critical Differences**\n\nAgentic memory is often Vector-based (semantic similarity) rather than Key-Value or Relational. Retrieval is probabilistic (getting \"relevant\" memories based on embedding distance) rather than exact (getting \"row ID 123\").",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 8,
@@ -1237,7 +1237,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 151
+    "estimated_tokens": 173
   },
   {
     "id": "pattern-08-considerations",
@@ -1367,7 +1367,7 @@
   {
     "id": "pattern-09-swe_parallels",
     "chunk_id": 82,
-    "content": "# Pattern 9: Learning & Adaptation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Continuous Integration & Deployment CI/CD / Testing\n**Agentic Pattern:** Learning & Adaptation\n\n**Shared Principles**\n\nBoth represent the continuous improvement lifecycle of the system.\n\n**Critical Differences**\n\nIn Software Engineering, improvement requires a code commit, build, and deploy cycle. In Agentic systems, improvement can happen dynamically at runtime. The agent can \"learn\" a new rule by adding it to its system prompt or memory store, instantly changing behaviour without a deployment.",
+    "content": "# Pattern 9: Learning & Adaptation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Continuous Integration & Deployment CI/CD / Testing\n**Agentic Pattern:** Learning & Adaptation\n\n**Shared Principles**\n\nBoth represent the continuous improvement lifecycle of the system.\n\n**Critical Differences**\n\nIn Software Engineering, improvement requires a code commit, build, and deploy cycle. In Agentic systems, improvement can happen dynamically at runtime. The agent can \"learn\" a new rule by adding it to its system prompt or memory store, instantly changing behaviour without a deployment.\n\n**Closer analogy: Feature Flags**\n\nCI/CD captures the *lifecycle* of improvement, but each deploy is still a code change. Feature flags (LaunchDarkly, Unleash, or a homegrown DB table) are the closer fit: behaviour changes at runtime by flipping a value, no rebuild required. Updating an agent's system prompt or its few-shot examples is exactly that — a runtime toggle, not a deployment.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 9,
@@ -1380,7 +1380,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 154
+    "estimated_tokens": 252
   },
   {
     "id": "pattern-09-considerations",
@@ -1510,7 +1510,7 @@
   {
     "id": "pattern-10-swe_parallels",
     "chunk_id": 90,
-    "content": "# Pattern 10: State Management (MCP) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Interface Definition Language (IDL) / RESTful standards / USB-C\n**Agentic Pattern:** State Management (MCP)\n\n**Shared Principles**\n\nBoth provide a standardised contract for interoperability. Just as USB-C allows any device to connect to any charger, MCP allows any AI agent to connect to any data repository (GitHub, Slack, Drive) without custom glue code.\n\n**Critical Differences**\n\nMCP focuses specifically on exposing context (prompts, resources, tools) to LLMs, optimising for the way models \"read\" interfaces (token-efficient schemas) rather than how compilers read code.",
+    "content": "# Pattern 10: State Management (MCP) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Interface Definition Language (IDL) / RESTful standards / USB-C (also: gRPC, OpenAPI / Swagger)\n**Agentic Pattern:** State Management (MCP)\n\n**Shared Principles**\n\nBoth provide a standardised contract for interoperability. Just as USB-C allows any device to connect to any charger, MCP allows any AI agent to connect to any data repository (GitHub, Slack, Drive) without custom glue code.\n\n**Critical Differences**\n\nMCP focuses specifically on exposing context (prompts, resources, tools) to LLMs, optimising for the way models \"read\" interfaces (token-efficient schemas) rather than how compilers read code.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 10,
@@ -1523,7 +1523,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 174
+    "estimated_tokens": 182
   },
   {
     "id": "pattern-10-considerations",
@@ -1653,7 +1653,7 @@
   {
     "id": "pattern-11-swe_parallels",
     "chunk_id": 98,
-    "content": "# Pattern 11: Goal Setting & Monitoring — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Health Checks / Application Performance Monitoring (APM)\n**Agentic Pattern:** Goal Setting & Monitoring\n\n**Shared Principles**\n\nMonitoring system health and progress towards a defined state.\n\n**Critical Differences**\n\nTraditional monitoring checks system metrics (CPU usage, latency, error rate). Agentic monitoring checks semantic progress (e.g., \"Have we gathered enough research data yet?\", \"Is the draft complete?\"). It requires \"Metacognition\" — thinking about thinking.",
+    "content": "# Pattern 11: Goal Setting & Monitoring — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Health Checks / Application Performance Monitoring (APM) (also: OKRs, sprint burndown charts)\n**Agentic Pattern:** Goal Setting & Monitoring\n\n**Shared Principles**\n\nMonitoring system health and progress towards a defined state.\n\n**Critical Differences**\n\nTraditional monitoring checks system metrics (CPU usage, latency, error rate). Agentic monitoring checks semantic progress (e.g., \"Have we gathered enough research data yet?\", \"Is the draft complete?\"). It requires \"Metacognition\" — thinking about thinking.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 11,
@@ -1666,7 +1666,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 149
+    "estimated_tokens": 159
   },
   {
     "id": "pattern-11-considerations",
@@ -1796,7 +1796,7 @@
   {
     "id": "pattern-12-swe_parallels",
     "chunk_id": 106,
-    "content": "# Pattern 12: Exception Handling & Recovery — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Try-Catch / Circuit Breaker\n**Agentic Pattern:** Exception Handling & Recovery\n\n**Shared Principles**\n\nPreventing system crash upon encountering an error.\n\n**Critical Differences**\n\nAgentic recovery is semantic. If a tool fails (e.g., \"API Error 500\"), the agent can reason about why and try a different tool (e.g., \"Google Search failed, I will try Wikipedia\") or rephrase the query. It is dynamic problem solving, not just retrying the same operation.",
+    "content": "# Pattern 12: Exception Handling & Recovery — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Try-Catch / Circuit Breaker\n**Agentic Pattern:** Exception Handling & Recovery\n\n**Shared Principles**\n\nPreventing system crash upon encountering an error.\n\n**Critical Differences**\n\nAgentic recovery is semantic. If a tool fails (e.g., \"API Error 500\"), the agent can reason about why and try a different tool (e.g., \"Google Search failed, I will try Wikipedia\") or rephrase the query. It is dynamic problem solving, not just retrying the same operation.\n\n**Closer analogy: Graceful degradation**\n\nTry-catch is a single defensive boundary; the circuit breaker adds a timeout. Graceful degradation is the closer match: when the recommendations service is down, you show a generic homepage; when the payment provider fails, you queue the order and try an alternative. The agent does the same — tool A failed, try tool B, fall back to a cached answer, escalate to a human as the last resort.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 12,
@@ -1809,7 +1809,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 145
+    "estimated_tokens": 253
   },
   {
     "id": "pattern-12-considerations",
@@ -1939,7 +1939,7 @@
   {
     "id": "pattern-13-swe_parallels",
     "chunk_id": 114,
-    "content": "# Pattern 13: Human-in-the-Loop — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Human Approval Gates\n**Agentic Pattern:** Human-in-the-Loop\n\n**Shared Principles**\n\nPausing a workflow for authorisation or verification.\n\n**Critical Differences**\n\nIn Agentic systems, the human is treated as a \"Tool\" or an Oracle. The agent generates a prompt for the human (\"I plan to send this email. Is it okay?\"), and the human's response is injected back into the agent's context as a tool output. The interaction is conversational.",
+    "content": "# Pattern 13: Human-in-the-Loop — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Human Approval Gates (also: Manual deploy gates in CI/CD, the two-person rule for sensitive transactions)\n**Agentic Pattern:** Human-in-the-Loop\n\n**Shared Principles**\n\nPausing a workflow for authorisation or verification.\n\n**Critical Differences**\n\nIn Agentic systems, the human is treated as a \"Tool\" or an Oracle. The agent generates a prompt for the human (\"I plan to send this email. Is it okay?\"), and the human's response is injected back into the agent's context as a tool output. The interaction is conversational.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 13,
@@ -1952,7 +1952,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 138
+    "estimated_tokens": 159
   },
   {
     "id": "pattern-13-considerations",
@@ -2082,7 +2082,7 @@
   {
     "id": "pattern-14-swe_parallels",
     "chunk_id": 122,
-    "content": "# Pattern 14: Knowledge Retrieval (RAG) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Database Query / Search Index\n**Agentic Pattern:** Knowledge Retrieval (RAG)\n\n**Shared Principles**\n\nFetching data from storage to populate a view or answer a request.\n\n**Critical Differences**\n\nRAG involves semantic search (vector embeddings) rather than keyword match. It creates a prompt context, not just a data object. The \"Schema\" is the semantic meaning of the data chunks.",
+    "content": "# Pattern 14: Knowledge Retrieval (RAG) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Database Query / Search Index (also: Elasticsearch full-text search)\n**Agentic Pattern:** Knowledge Retrieval (RAG)\n\n**Shared Principles**\n\nFetching data from storage to populate a view or answer a request.\n\n**Critical Differences**\n\nRAG involves semantic search (vector embeddings) rather than keyword match. It creates a prompt context, not just a data object. The \"Schema\" is the semantic meaning of the data chunks.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 14,
@@ -2095,7 +2095,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 126
+    "estimated_tokens": 135
   },
   {
     "id": "pattern-14-considerations",
@@ -2225,7 +2225,7 @@
   {
     "id": "pattern-15-swe_parallels",
     "chunk_id": 130,
-    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Message Queues / API Contracts\n**Agentic Pattern:** Inter-Agent Communication (A2A)\n\n**Shared Principles**\n\nDecoupled components exchanging information to coordinate work.\n\n**Critical Differences**\n\nAgents talk in natural language or structured JSON schemas representing \"Intent\" and \"Content.\" The communication is often a negotiation (\"Can you help with X?\" \"No, I am busy, ask Agent Y\") rather than a command.",
+    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Message Queues / API Contracts (also: Kafka topics, WebSocket pub/sub)\n**Agentic Pattern:** Inter-Agent Communication (A2A)\n\n**Shared Principles**\n\nDecoupled components exchanging information to coordinate work.\n\n**Critical Differences**\n\nAgents talk in natural language or structured JSON schemas representing \"Intent\" and \"Content.\" The communication is often a negotiation (\"Can you help with X?\" \"No, I am busy, ask Agent Y\") rather than a command.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 15,
@@ -2238,7 +2238,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 135
+    "estimated_tokens": 145
   },
   {
     "id": "pattern-15-considerations",
@@ -2368,7 +2368,7 @@
   {
     "id": "pattern-16-swe_parallels",
     "chunk_id": 138,
-    "content": "# Pattern 16: Resource-Aware Optimisation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Auto-Scaling / Load Shedding\n**Agentic Pattern:** Resource-Aware Optimisation\n\n**Shared Principles**\n\nManaging finite system resources (memory, CPU, budget) to prevent outages or overruns.\n\n**Critical Differences**\n\nOptimisation is decision-based (dynamic choice of model/path) rather than infrastructure-based (adding servers). The agent chooses to be frugal.",
+    "content": "# Pattern 16: Resource-Aware Optimisation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Auto-Scaling / Load Shedding\n**Agentic Pattern:** Resource-Aware Optimisation\n\n**Shared Principles**\n\nManaging finite system resources (memory, CPU, budget) to prevent outages or overruns.\n\n**Critical Differences**\n\nOptimisation is decision-based (dynamic choice of model/path) rather than infrastructure-based (adding servers). The agent chooses to be frugal.\n\n**Closer analogy: HTTP content negotiation**\n\nAuto-scaling adds servers; load shedding drops requests. Resource-aware optimisation is closer to HTTP content negotiation — the server reads the request's `Accept` headers and device capabilities, then picks the response format that fits (WebP for modern browsers, JPEG for older ones, a mobile-sized image for low bandwidth). The agent reads the request's complexity and picks the model that fits — cheap for trivial classification, frontier for hard reasoning. Backend devs will also recognise this in the SQL query optimiser choosing between an index-scan and a full-scan based on the cost of the specific query.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 16,
@@ -2381,7 +2381,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 121
+    "estimated_tokens": 287
   },
   {
     "id": "pattern-16-considerations",
@@ -2511,7 +2511,7 @@
   {
     "id": "pattern-17-swe_parallels",
     "chunk_id": 146,
-    "content": "# Pattern 17: Reasoning Techniques — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Algorithms / Design Patterns\n**Agentic Pattern:** Reasoning Techniques\n\n**Shared Principles**\n\nThe \"method\" by which the problem is solved. ToT is essentially a search algorithm (BFS/DFS) applied to the space of \"thoughts.\"\n\n**Critical Differences**\n\nReasoning is prompted, not coded. You don't write the for loop; you tell the model how to think about the loop. You are programming the cognitive process, not the instruction set.",
+    "content": "# Pattern 17: Reasoning Techniques — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Algorithms / Design Patterns (also: Decision trees, chess engines exploring move sequences)\n**Agentic Pattern:** Reasoning Techniques\n\n**Shared Principles**\n\nThe \"method\" by which the problem is solved. ToT is essentially a search algorithm (BFS/DFS) applied to the space of \"thoughts.\"\n\n**Critical Differences**\n\nReasoning is prompted, not coded. You don't write the for loop; you tell the model how to think about the loop. You are programming the cognitive process, not the instruction set.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 17,
@@ -2524,7 +2524,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 137
+    "estimated_tokens": 153
   },
   {
     "id": "pattern-17-considerations",
@@ -2654,7 +2654,7 @@
   {
     "id": "pattern-18-swe_parallels",
     "chunk_id": 154,
-    "content": "# Pattern 18: Guardrails & Safety — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Input Validation / Firewalls, IAM\n**Agentic Pattern:** Guardrails & Safety\n\n**Shared Principles**\n\nPreventing bad data or malicious actions from compromising the system.\n\n**Critical Differences**\n\nGuardrails must filter semantic risks (e.g., \"Don't give financial advice,\" \"Don't be rude\") rather than just syntactic ones (e.g., \"Drop SQL injection,\" \"Validate Email format\"). This often requires a separate, smaller LLM to act as the \"Censor.\"",
+    "content": "# Pattern 18: Guardrails & Safety — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Input Validation / Firewalls / IAM (also: Web Application Firewalls (WAF), Content Security Policy (CSP))\n**Agentic Pattern:** Guardrails & Safety\n\n**Shared Principles**\n\nPreventing bad data or malicious actions from compromising the system.\n\n**Critical Differences**\n\nGuardrails must filter semantic risks (e.g., \"Don't give financial advice,\" \"Don't be rude\") rather than just syntactic ones (e.g., \"Drop SQL injection,\" \"Validate Email format\"). This often requires a separate, smaller LLM to act as the \"Censor.\"",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 18,
@@ -2667,7 +2667,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 140
+    "estimated_tokens": 158
   },
   {
     "id": "pattern-18-considerations",
@@ -2797,7 +2797,7 @@
   {
     "id": "pattern-19-swe_parallels",
     "chunk_id": 162,
-    "content": "# Pattern 19: Evaluation & Monitoring — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Integration Testing / Observability\n**Agentic Pattern:** Evaluation & Monitoring\n\n**Shared Principles**\n\nTracking system health and correctness.\n\n**Critical Differences**\n\n\"Correctness\" is subjective. Traditional metrics (Latency, Error Rate) are insufficient. You need \"LLM-as-a-Judge\" metrics to score \"Correctness,\" \"Hallucination Rate,\" and \"Tone.\"",
+    "content": "# Pattern 19: Evaluation & Monitoring — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Integration Testing / Observability (also: End-to-end smoke tests run in production, application logs and traces)\n**Agentic Pattern:** Evaluation & Monitoring\n\n**Shared Principles**\n\nTracking system health and correctness.\n\n**Critical Differences**\n\n\"Correctness\" is subjective. Traditional metrics (Latency, Error Rate) are insufficient. You need \"LLM-as-a-Judge\" metrics to score \"Correctness,\" \"Hallucination Rate,\" and \"Tone.\"",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 19,
@@ -2810,7 +2810,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 118
+    "estimated_tokens": 138
   },
   {
     "id": "pattern-19-considerations",
@@ -2940,7 +2940,7 @@
   {
     "id": "pattern-20-swe_parallels",
     "chunk_id": 170,
-    "content": "# Pattern 20: Prioritisation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Priority Queue / Job Scheduling\n**Agentic Pattern:** Prioritisation\n\n**Shared Principles**\n\nDeciding what to process next to optimise throughput and SLA adherence.\n\n**Critical Differences**\n\nPriorities are determined by semantic understanding of the task content (e.g., \"This email looks angry, prioritise it\"), not just a numerical priority flag set by a user.",
+    "content": "# Pattern 20: Prioritisation — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Priority Queue / Job Scheduling\n**Agentic Pattern:** Prioritisation\n\n**Shared Principles**\n\nDeciding what to process next to optimise throughput and SLA adherence.\n\n**Critical Differences**\n\nPriorities are determined by semantic understanding of the task content (e.g., \"This email looks angry, prioritise it\"), not just a numerical priority flag set by a user.\n\n**Closer analogy: Support ticket triage**\n\nA priority queue uses a fixed numerical priority you set when enqueueing. Support ticket triage is the closer fit: an engineer (or a triage rota) reads \"the homepage is down\" and tags it P0; \"the spinner has the wrong shade of blue\" gets P3. The priority is a *judgement* about impact, made from the content of the request — exactly what an agent does when it ranks a leaking ceiling above a repaint enquiry.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 20,
@@ -2953,7 +2953,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 118
+    "estimated_tokens": 231
   },
   {
     "id": "pattern-20-considerations",
@@ -3083,7 +3083,7 @@
   {
     "id": "pattern-21-swe_parallels",
     "chunk_id": 178,
-    "content": "# Pattern 21: Exploration & Discovery — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Chaos Engineering / Fuzz Testing\n**Agentic Pattern:** Exploration & Discovery\n\n**Shared Principles**\n\nAutomated exploration of a system or dataspace to find edge cases or new data.\n\n**Critical Differences**\n\nExploration is goal-directed and semantic. The agent explores \"concepts\" or \"solutions,\" not just code paths. It formulates a hypothesis, tests it, and learns.",
+    "content": "# Pattern 21: Exploration & Discovery — Traditional Software Engineering Parallels\n\n**Traditional Software Engineering:** Chaos Engineering / Fuzz Testing (also: automated red-team / pen-test scripts)\n**Agentic Pattern:** Exploration & Discovery\n\n**Shared Principles**\n\nAutomated exploration of a system or dataspace to find edge cases or new data.\n\n**Critical Differences**\n\nExploration is goal-directed and semantic. The agent explores \"concepts\" or \"solutions,\" not just code paths. It formulates a hypothesis, tests it, and learns.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 21,
@@ -3096,7 +3096,7 @@
       "section_title": "Traditional Software Engineering Parallels",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 122
+    "estimated_tokens": 133
   },
   {
     "id": "pattern-21-considerations",
