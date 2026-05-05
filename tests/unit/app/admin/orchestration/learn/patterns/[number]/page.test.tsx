@@ -13,7 +13,8 @@
  * - getPatternNames: body.success false → empty Map
  * - getPatternNames: serverFetch throws → empty Map (no logger call per source)
  * - Happy path: renders pattern name, hero/rest chunks, related patterns
- * - heroChunks: sections "overview" / "tldr" / "tl;dr summary" → hero cards
+ * - overview chunk: rendered as labelled subtitle in header, not a hero card
+ * - heroChunks: sections "tldr" / "summary" → hero cards
  * - restChunks: other sections → accordion (PatternDetailSections rendered)
  * - restChunks empty → PatternDetailSections NOT rendered
  * - generateMetadata: isNaN → "Pattern Not Found" title
@@ -374,10 +375,11 @@ describe('PatternDetailPage', () => {
   // ── heroChunks / restChunks split ────────────────────────────────────────
 
   describe('hero vs rest chunks', () => {
-    it('routes "overview" section chunks to hero cards', async () => {
-      // Arrange
+    it('renders "overview" section as a labelled subtitle, not a hero card', async () => {
+      // Arrange — overview content with parseable bold line for parallels
+      const overviewContent = '**Step-by-step reasoning, like a structured proof.**';
       const detail = makePatternDetail([
-        makeChunk('c1', 'overview', 'This is the overview'),
+        makeChunk('c1', 'overview', overviewContent),
         makeChunk('c2', 'when_to_use', 'When to use'),
       ]);
       vi.mocked(serverFetch).mockResolvedValue(okResponse());
@@ -389,9 +391,12 @@ describe('PatternDetailPage', () => {
       // Act
       render(await PatternDetailPage({ params }));
 
-      // Assert: PatternContent rendered (hero card) for overview chunk
-      const contents = screen.getAllByTestId('pattern-content');
-      expect(contents.length).toBeGreaterThanOrEqual(1);
+      // Assert: overview renders as a labelled subtitle, NOT as a PatternContent card
+      expect(screen.getByText(/software-engineering parallels/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/step-by-step reasoning, like a structured proof/i)
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId('pattern-content')).not.toBeInTheDocument();
     });
 
     it('routes "tldr" section chunks to hero cards', async () => {

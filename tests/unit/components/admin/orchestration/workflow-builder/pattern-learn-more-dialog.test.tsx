@@ -200,7 +200,19 @@ describe('PatternLearnMoreDialog', () => {
     });
 
     it('renders hero chunk content via PatternContent', async () => {
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_DETAIL);
+      // Hero sections are "tldr" and "summary" — overview is now a labelled
+      // subtitle in the dialog description, not a PatternContent card.
+      const detailWithHero = {
+        ...MOCK_DETAIL,
+        chunks: [
+          makeChunk({
+            id: 'chunk-summary',
+            section: 'summary',
+            content: 'Summary content for the pattern.',
+          }),
+        ],
+      };
+      vi.mocked(apiClient.get).mockResolvedValue(detailWithHero);
       renderDialog();
       await waitFor(() => {
         expect(screen.getByTestId('pattern-content')).toBeInTheDocument();
