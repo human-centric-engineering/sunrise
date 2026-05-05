@@ -529,11 +529,16 @@ export class OrchestrationEngine {
     const stepTimeoutMs = errorConfig.timeoutMs;
 
     // Wrap the executor call with an optional per-step timeout.
-    // Each attempt resets the telemetry buffer so the final entries reflect
-    // only the successful (or terminally-failed) attempt — failed retry
-    // attempts are not surfaced through the trace's optional fields.
+    // We DON'T reset telemetryOut between retry attempts: failed-attempt
+    // turns were billed via AiCostLog, and the outer retry loop now also
+    // accumulates their tokensUsed/costUsd into the StepResult (so the
+    // header total matches the cost sub-table). Discarding telemetry on
+    // retry would leave inputTokens/outputTokens reflecting only the
+    // last attempt, mismatching the summed totals. Order is preserved
+    // (failed turns come before the successful turn in time), so
+    // rollupTelemetry's "last entry wins" still picks model/provider
+    // from the successful attempt's last turn.
     const invokeExecutor = async (): Promise<StepResult> => {
-      telemetryOut.length = 0;
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx, telemetryOut));
       }
@@ -1090,8 +1095,10 @@ export class OrchestrationEngine {
       typeof errorConfig.retryCount === 'number' ? errorConfig.retryCount : DEFAULT_RETRY_COUNT;
     const stepTimeoutMs = errorConfig.timeoutMs;
 
+    // Same telemetry-accumulation rule as runStepWithStrategy: do NOT reset
+    // telemetryOut between attempts so summed inputTokens/outputTokens
+    // align with the summed tokensUsed/costUsd the retry loop produces.
     const invokeExecutor = async (): Promise<StepResult> => {
-      telemetryOut.length = 0;
       if (!stepTimeoutMs) {
         return executor(step, snapshotContext(ctx, telemetryOut));
       }

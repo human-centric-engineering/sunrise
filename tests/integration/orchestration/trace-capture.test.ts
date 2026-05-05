@@ -231,7 +231,7 @@ describe('engine trace capture — schema round-trip integration', () => {
     expect(bEntry?.inputTokens).toBe(30);
   });
 
-  it('retry success: failed-attempt telemetry is dropped, trace parses with the successful turn only', async () => {
+  it('retry success: failed-attempt telemetry is preserved (summed) — model still from last attempt', async () => {
     let attempts = 0;
     registerStepType('llm_call', async (_step, ctx) => {
       attempts++;
@@ -267,10 +267,13 @@ describe('engine trace capture — schema round-trip integration', () => {
     const parsed = executionTraceSchema.parse(lastWrittenRawTrace());
     expect(parsed).toHaveLength(1);
     expect(parsed[0].status).toBe('completed');
-    // Second attempt's pushes survived; first attempt's were cleared.
+    // Model + provider come from the LAST telemetry entry (successful attempt).
     expect(parsed[0].model).toBe('model-2');
-    expect(parsed[0].inputTokens).toBe(20);
-    expect(parsed[0].outputTokens).toBe(10);
-    expect(parsed[0].llmDurationMs).toBe(200);
+    expect(parsed[0].provider).toBe('openai');
+    // Tokens / duration sum across both attempts (10+20, 5+10, 100+200) so
+    // the trace header aligns with the AiCostLog-derived per-call sub-table.
+    expect(parsed[0].inputTokens).toBe(30);
+    expect(parsed[0].outputTokens).toBe(15);
+    expect(parsed[0].llmDurationMs).toBe(300);
   });
 });

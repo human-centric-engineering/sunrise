@@ -2751,13 +2751,14 @@ describe('OrchestrationEngine', () => {
     expect(bEntry?.inputTokens).toBe(10);
   });
 
-  it('discards failed-attempt telemetry on retry success — only the successful attempt is persisted', async () => {
+  it('preserves failed-attempt telemetry on retry success — sums tokens across attempts, model from last', async () => {
+    // Failed-attempt cost is now accumulated into the StepResult so the
+    // trace header total matches AiCostLog. Telemetry follows the same
+    // rule: tokens/duration sum across attempts; model/provider come
+    // from the LAST telemetry entry (the successful attempt's last turn).
     let attempt = 0;
     registerStepType('llm_call', async (_step, ctx) => {
       attempt++;
-      // Both attempts push, but the engine resets the buffer between
-      // attempts, so only the successful attempt's entries make it
-      // into the trace.
       ctx.stepTelemetry?.push({
         model: `model-attempt-${attempt}`,
         provider: 'openai',
@@ -2790,11 +2791,19 @@ describe('OrchestrationEngine', () => {
     const trace = lastWrittenTrace() as Array<{
       status: string;
       model?: string;
+      provider?: string;
       inputTokens?: number;
+      outputTokens?: number;
+      llmDurationMs?: number;
     }>;
     expect(trace[0].status).toBe('completed');
+    // Last telemetry entry wins for model — successful attempt's last turn.
     expect(trace[0].model).toBe('model-attempt-2');
-    expect(trace[0].inputTokens).toBe(20);
+    expect(trace[0].provider).toBe('openai');
+    // Tokens/duration sum across both attempts (10+20, 5+10, 100+200).
+    expect(trace[0].inputTokens).toBe(30);
+    expect(trace[0].outputTokens).toBe(15);
+    expect(trace[0].llmDurationMs).toBe(300);
   });
 
   it('captures input on a paused-for-approval trace entry', async () => {

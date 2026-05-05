@@ -170,7 +170,7 @@ Two call sites push entries today:
 - `runLlmCall` (used by `llm_call`, `evaluate`, `guard`, `orchestrator`, `plan`, `reflect`, `route`) — one entry per `provider.chat()` call.
 - `agent_call`'s inner `runSingleTurn` — one entry per turn in the tool-use loop.
 
-Retries reset the buffer between attempts so only the successful (or terminally-failed) attempt's data surfaces — failed retry attempts don't pollute the trace's optional fields.
+Retries do **not** reset the buffer between attempts: failed-attempt turns are billed via `AiCostLog` and the engine accumulates their `tokensUsed` / `costUsd` into the StepResult, so the trace header total matches the per-call cost sub-table. Telemetry follows the same rule — `inputTokens` / `outputTokens` / `llmDurationMs` sum across all attempts. `model` / `provider` come from the LAST telemetry entry, which is the successful attempt's last turn (failed turns precede it in time).
 
 A new executor that hits the LLM via `runLlmCall` gets telemetry capture **for free**; one that calls `provider.chat()` directly should push to `ctx.stepTelemetry?` itself (mirror the `agent_call` pattern).
 
