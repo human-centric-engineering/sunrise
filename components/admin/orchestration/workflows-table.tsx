@@ -15,7 +15,7 @@
  */
 
 import type { AiWorkflowListItem } from '@/types/orchestration';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -109,8 +109,6 @@ export function WorkflowsTable({
       page = 1,
       overrides?: {
         search?: string;
-        sortField?: SortField;
-        sortOrder?: 'asc' | 'desc';
         showTemplates?: boolean;
       }
     ) => {
@@ -135,17 +133,7 @@ export function WorkflowsTable({
         const body = await parseApiResponse<AiWorkflowListItem[]>(res);
         if (!body.success) throw new Error('list failed');
 
-        const next = [...body.data];
-        const field = overrides?.sortField ?? sortField;
-        const order = overrides?.sortOrder ?? sortOrder;
-        next.sort((a, b) => {
-          const av = field === 'name' ? a.name.toLowerCase() : new Date(a.createdAt).getTime();
-          const bv = field === 'name' ? b.name.toLowerCase() : new Date(b.createdAt).getTime();
-          if (av < bv) return order === 'asc' ? -1 : 1;
-          if (av > bv) return order === 'asc' ? 1 : -1;
-          return 0;
-        });
-        setWorkflows(next);
+        setWorkflows(body.data);
 
         const parsedMeta = parsePaginationMeta(body.meta);
         if (parsedMeta) setMeta(parsedMeta);
@@ -155,7 +143,7 @@ export function WorkflowsTable({
         setIsLoading(false);
       }
     },
-    [meta.limit, search, showTemplates, sortField, sortOrder]
+    [meta.limit, search, showTemplates]
   );
 
   const handleSearch = useCallback(
@@ -183,7 +171,7 @@ export function WorkflowsTable({
         sortField === field ? (sortOrder === 'asc' ? 'desc' : 'asc') : 'desc';
       setSortField(field);
       setSortOrder(nextOrder);
-      void fetchWorkflows(meta.page, { sortField: field, sortOrder: nextOrder });
+      void fetchWorkflows(meta.page);
     },
     [fetchWorkflows, meta.page, sortField, sortOrder]
   );
@@ -273,6 +261,27 @@ export function WorkflowsTable({
     },
     [router]
   );
+
+  // Group rows by category before applying the user's sort: bespoke
+  // (non-system, non-template) app workflows first, then system workflows,
+  // then templates. Within each group, fall back to the active sort field.
+  const sortedWorkflows = useMemo(() => {
+    const categoryRank = (w: AiWorkflowListItem): number => {
+      if (w.isSystem) return 1;
+      if (w.isTemplate) return 2;
+      return 0;
+    };
+    return [...workflows].sort((a, b) => {
+      const ra = categoryRank(a);
+      const rb = categoryRank(b);
+      if (ra !== rb) return ra - rb;
+      const av = sortField === 'name' ? a.name.toLowerCase() : new Date(a.createdAt).getTime();
+      const bv = sortField === 'name' ? b.name.toLowerCase() : new Date(b.createdAt).getTime();
+      if (av < bv) return sortOrder === 'asc' ? -1 : 1;
+      if (av > bv) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [workflows, sortField, sortOrder]);
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
@@ -370,13 +379,13 @@ export function WorkflowsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && workflows.length === 0 ? (
+            {isLoading && sortedWorkflows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
-            ) : workflows.length === 0 ? (
+            ) : sortedWorkflows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center">
                   No workflows found. Click{' '}
@@ -387,7 +396,7 @@ export function WorkflowsTable({
                 </TableCell>
               </TableRow>
             ) : (
-              workflows.map((workflow) => (
+              sortedWorkflows.map((workflow) => (
                 <TableRow key={workflow.id}>
                   <TableCell className="font-medium">
                     <Link

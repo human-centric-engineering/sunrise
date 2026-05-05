@@ -98,7 +98,7 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
 
 1. **Retry tracking** — `retryCount: Map<string, number>` keyed by `"sourceId→targetId"`. Each back-edge traversal increments the counter.
 2. **Under limit** — the target and all its downstream steps are removed from `visited` and `pending` (cascade-clear via BFS over the adjacency list). The target is re-queued and re-executes with fresh context.
-3. **At limit** — the back-edge is skipped silently. The engine continues to the next edge or stops if none remain.
+3. **At limit** — the engine looks for a sibling edge from the same source step with the same `condition` but no `maxRetries`. If one exists, it enqueues that target as the **exhaustion handler**. If not, the back-edge is skipped silently and the engine continues to the next edge or stops if none remain. This lets a workflow surface a retry-budget-spent failure to a notification or alert step rather than terminating in the middle of the graph. See the audit template (`prisma/seeds/data/templates/provider-model-audit.ts`) for an example: `validate_proposals` carries both a `maxRetries: 2` fail-edge to `audit_models` and a no-`maxRetries` fail-edge to `report_validation_failure`.
 4. **Failure context** — before re-queuing, the engine stores `ctx.variables.__retryContext`:
    ```typescript
    {
@@ -108,8 +108,16 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
      failureReason: '...'  // guard's failure output
    }
    ```
-   The retry target can reference `{{__retryContext.failureReason}}` in its prompt template to learn what went wrong.
-5. **Observability** — a `step_retry` event is emitted for each retry, distinct from `step_started`, so the execution trace shows retry attempts clearly.
+   The retry target can reference these via the template's `vars.` prefix:
+   ```
+   {{#if vars.__retryContext}}
+   Previous attempt failed validation: {{vars.__retryContext.failureReason}}
+   (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}).
+   Re-evaluate and produce corrected output.
+   {{/if}}
+   ```
+   The interpolator (`lib/orchestration/engine/llm-runner.ts`) supports `{{vars.<dotted.path>}}` for any context variable plus flat `{{#if vars.<path>}}body{{/if}}` conditional blocks. Earlier versions referenced `__retryContext` without the `vars.` prefix; that syntax was never wired to anything and silently expanded to empty.
+5. **Observability** — a `step_retry` event is emitted for each retry, distinct from `step_started`, so the execution trace shows retry attempts clearly. The exhaustion-handler routing (step 3) emits its own `step_retry` event with `attempt = maxRetries + 1` and `exhausted: true`, with `targetStepId` pointing at the fallback edge target — trace consumers can render this as a distinct "retry budget exhausted" sub-row. The engine also attaches each retry record to the source step's most recent `ExecutionTraceEntry` under an optional `retries[]` array, so the persisted trace shows where loops happened without replaying the SSE stream.
 
 **Safety:** each retry iteration counts against `MAX_STEPS_PER_RUN = 1000`. Combined with the per-edge `maxRetries` cap of 10, runaway loops are doubly bounded.
 
@@ -119,17 +127,17 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
 
 Defined in `types/orchestration.ts`. Discriminated union — every client switches on `event.type`:
 
-| `type`               | Key fields                                                      |
-| -------------------- | --------------------------------------------------------------- |
-| `workflow_started`   | `executionId`, `workflowId`                                     |
-| `step_started`       | `stepId`, `stepType`, `label`                                   |
-| `step_completed`     | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs`       |
-| `step_retry`         | `fromStepId`, `targetStepId`, `attempt`, `maxRetries`, `reason` |
-| `step_failed`        | `stepId`, `error`, `willRetry`                                  |
-| `approval_required`  | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)        |
-| `budget_warning`     | `usedUsd`, `limitUsd`                                           |
-| `workflow_completed` | `output`, `totalTokensUsed`, `totalCostUsd`                     |
-| `workflow_failed`    | `error`, `failedStepId?`                                        |
+| `type`               | Key fields                                                                                                                                          |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow_started`   | `executionId`, `workflowId`                                                                                                                         |
+| `step_started`       | `stepId`, `stepType`, `label`                                                                                                                       |
+| `step_completed`     | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs`                                                                                           |
+| `step_retry`         | `fromStepId`, `targetStepId`, `attempt`, `maxRetries`, `reason`, optional `exhausted: true` when routed to a fallback edge after retries were spent |
+| `step_failed`        | `stepId`, `error`, `willRetry`                                                                                                                      |
+| `approval_required`  | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)                                                                                            |
+| `budget_warning`     | `usedUsd`, `limitUsd`                                                                                                                               |
+| `workflow_completed` | `output`, `totalTokensUsed`, `totalCostUsd`                                                                                                         |
+| `workflow_failed`    | `error`, `failedStepId?`                                                                                                                            |
 
 The parallel `ExecutionTraceEntry` (also in `types/orchestration.ts`) is what the engine persists to `AiWorkflowExecution.executionTrace` — one per completed step, with `stepId`, `stepType`, `label`, `status`, `output`, `tokensUsed`, `costUsd`, `startedAt`, `completedAt`, and `durationMs`. The engine also writes six **optional** fields populated from the per-step telemetry channel (see "LLM telemetry capture" below):
 

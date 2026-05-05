@@ -18,9 +18,15 @@ import { render, screen } from '@testing-library/react';
 // Mock @xyflow/react before importing the component so Handle renders as
 // a testable DOM element.
 vi.mock('@xyflow/react', () => {
-  const Handle = ({ type, position }: { type: string; position: string }) => (
-    <div data-testid="handle" data-type={type} data-position={position} />
-  );
+  const Handle = ({
+    type,
+    position,
+    title,
+  }: {
+    type: string;
+    position: string;
+    title?: string;
+  }) => <div data-testid="handle" data-type={type} data-position={position} title={title} />;
   Handle.displayName = 'Handle';
 
   return {
@@ -159,6 +165,42 @@ describe('PatternNode', () => {
     it('shows the type string on the node', () => {
       renderNode({ label: 'My LLM Step', type: 'llm_call', config: {} });
       expect(screen.getByText('llm_call')).toBeInTheDocument();
+    });
+  });
+
+  describe('output handle labels', () => {
+    it('exposes each output label as a native title tooltip on its handle', () => {
+      // Route step with admin-defined route labels. The labels should not
+      // be rendered inline (avoiding box-widening) but should still be
+      // discoverable as native tooltips on hover.
+      renderNode({
+        label: 'Classify',
+        type: 'route',
+        config: {
+          routes: [
+            { label: 'chat', value: 'chat' },
+            { label: 'embedding', value: 'embedding' },
+          ],
+        },
+      });
+      const handles = screen
+        .getAllByTestId('handle')
+        .filter((h) => h.getAttribute('data-type') === 'source');
+      const titles = handles.map((h) => h.getAttribute('title'));
+      expect(titles).toEqual(['chat', 'embedding']);
+    });
+
+    it('does not render the output label as inline text', () => {
+      renderNode({
+        label: 'Classify',
+        type: 'route',
+        config: {
+          routes: [{ label: 'embedding', value: 'embedding' }],
+        },
+      });
+      // The label appears only as the handle's title attribute, never as
+      // visible text inside the box. queryByText returns null when absent.
+      expect(screen.queryByText('embedding')).toBeNull();
     });
   });
 });

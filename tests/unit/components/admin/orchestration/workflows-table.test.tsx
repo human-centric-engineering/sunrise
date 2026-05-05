@@ -748,4 +748,58 @@ describe('WorkflowsTable', () => {
       });
     });
   });
+
+  // ── Category grouping (bespoke → system → template) ─────────────────────
+
+  describe('category grouping', () => {
+    function rowOrder(): string[] {
+      // Each workflow's name appears inside a TableRow; gather the rows in
+      // DOM order and pull out the link text (= workflow name).
+      return Array.from(document.querySelectorAll('table tbody tr a'))
+        .map((a) => a.textContent ?? '')
+        .filter((s) => s.length > 0);
+    }
+
+    it('lists bespoke workflows first, then system, then templates', () => {
+      // Mix of all three categories — the input order is intentionally
+      // jumbled so we can prove the regrouping happens client-side.
+      const mixed: AiWorkflowListItem[] = [
+        makeWorkflow({ id: 'sys-1', name: 'Z System', slug: 'z-sys', isSystem: true }),
+        makeWorkflow({ id: 'tpl-1', name: 'A Template', slug: 'a-tpl', isTemplate: true }),
+        makeWorkflow({ id: 'app-1', name: 'M Bespoke', slug: 'm-bespoke' }),
+        makeWorkflow({ id: 'app-2', name: 'X Bespoke', slug: 'x-bespoke' }),
+        makeWorkflow({ id: 'tpl-2', name: 'B Template', slug: 'b-tpl', isTemplate: true }),
+      ];
+      render(<WorkflowsTable initialWorkflows={mixed} initialMeta={MOCK_META} />);
+      const order = rowOrder();
+      const indexOf = (name: string): number => order.indexOf(name);
+
+      // Bespoke before system; system before template.
+      expect(indexOf('M Bespoke')).toBeLessThan(indexOf('Z System'));
+      expect(indexOf('X Bespoke')).toBeLessThan(indexOf('Z System'));
+      expect(indexOf('Z System')).toBeLessThan(indexOf('A Template'));
+      expect(indexOf('Z System')).toBeLessThan(indexOf('B Template'));
+    });
+
+    it('treats system workflows as system even when isTemplate is also true', () => {
+      // A system workflow that also has isTemplate: true (defensive — the
+      // engine sets isSystem and shouldn't conflict, but the rank logic
+      // gives system precedence). Should sort before plain templates.
+      const wfs: AiWorkflowListItem[] = [
+        makeWorkflow({ id: 'tpl-1', name: 'Pure Template', isTemplate: true }),
+        makeWorkflow({
+          id: 'sys-tpl',
+          name: 'System+Template',
+          isSystem: true,
+          isTemplate: true,
+        }),
+        makeWorkflow({ id: 'app-1', name: 'Bespoke One' }),
+      ];
+      render(<WorkflowsTable initialWorkflows={wfs} initialMeta={MOCK_META} />);
+      const order = rowOrder();
+      const idx = (n: string): number => order.indexOf(n);
+      expect(idx('Bespoke One')).toBeLessThan(idx('System+Template'));
+      expect(idx('System+Template')).toBeLessThan(idx('Pure Template'));
+    });
+  });
 });

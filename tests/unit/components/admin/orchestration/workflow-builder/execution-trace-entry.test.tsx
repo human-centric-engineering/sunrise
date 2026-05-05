@@ -341,4 +341,51 @@ describe('ExecutionTraceEntryRow', () => {
       expect(root?.className ?? '').not.toMatch(/ring-/);
     });
   });
+
+  describe('retries sub-rows', () => {
+    it('renders an attempt sub-row for each non-exhausted retry', () => {
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          retries={[
+            {
+              attempt: 1,
+              maxRetries: 2,
+              reason: 'tierRole "supercomputer" is not valid',
+              targetStepId: 'audit_models',
+            },
+          ]}
+        />
+      );
+      expect(
+        screen.getByText('Attempt 1 of 2 failed — re-running audit_models')
+      ).toBeInTheDocument();
+      expect(screen.getByText(/Reason: tierRole "supercomputer" is not valid/)).toBeInTheDocument();
+    });
+
+    it('renders an exhaustion sub-row when exhausted is true', () => {
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          retries={[
+            {
+              attempt: 3,
+              maxRetries: 2,
+              reason: 'final failure',
+              targetStepId: 'report_validation_failure',
+              exhausted: true,
+            },
+          ]}
+        />
+      );
+      expect(
+        screen.getByText('Retry budget exhausted — routed to report_validation_failure')
+      ).toBeInTheDocument();
+    });
+
+    it('does not render a retries list when no retries are provided', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} />);
+      expect(screen.queryByTestId('trace-entry-retries-step-1')).not.toBeInTheDocument();
+    });
+  });
 });

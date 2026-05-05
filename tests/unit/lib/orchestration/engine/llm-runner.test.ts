@@ -346,4 +346,97 @@ describe('interpolatePrompt', () => {
     const result = interpolatePrompt('{{missingStep.output}}', ctx);
     expect(result).toBe('');
   });
+
+  // ─── vars.<path> interpolation ─────────────────────────────────────────────
+
+  describe('{{vars.<path>}}', () => {
+    it('drills into ctx.variables along a single-segment path', () => {
+      const ctx = makeCtx({ variables: { foo: 'bar' } });
+      const result = interpolatePrompt('Got: {{vars.foo}}', ctx);
+      expect(result).toBe('Got: bar');
+    });
+
+    it('drills into a nested path', () => {
+      const ctx = makeCtx({
+        variables: { __retryContext: { failureReason: 'enum mismatch', attempt: 2 } },
+      });
+      const result = interpolatePrompt(
+        'Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}})',
+        ctx
+      );
+      expect(result).toBe('Reason: enum mismatch (attempt 2)');
+    });
+
+    it('expands missing path to empty string', () => {
+      const ctx = makeCtx({ variables: {} });
+      const result = interpolatePrompt('x={{vars.missing.path}}', ctx);
+      expect(result).toBe('x=');
+    });
+
+    it('does not crash when an intermediate value is null', () => {
+      const ctx = makeCtx({ variables: { __retryContext: null } });
+      const result = interpolatePrompt('{{vars.__retryContext.failureReason}}', ctx);
+      expect(result).toBe('');
+    });
+
+    it('JSON-stringifies a non-primitive value at the resolved path', () => {
+      const ctx = makeCtx({ variables: { obj: { a: 1, b: 2 } } });
+      const result = interpolatePrompt('{{vars.obj}}', ctx);
+      expect(result).toBe('{"a":1,"b":2}');
+    });
+  });
+
+  // ─── {{#if vars.<path>}}body{{/if}} conditional blocks ─────────────────────
+
+  describe('{{#if vars.<path>}}body{{/if}}', () => {
+    it('includes the body when the path resolves to a truthy value', () => {
+      const ctx = makeCtx({ variables: { __retryContext: { attempt: 1 } } });
+      const result = interpolatePrompt(
+        'Prefix.{{#if vars.__retryContext}} retry preamble {{/if}}Suffix.',
+        ctx
+      );
+      expect(result).toBe('Prefix. retry preamble Suffix.');
+    });
+
+    it('omits the body when the path resolves to undefined', () => {
+      const ctx = makeCtx({ variables: {} });
+      const result = interpolatePrompt(
+        'Prefix.{{#if vars.__retryContext}} retry preamble {{/if}}Suffix.',
+        ctx
+      );
+      expect(result).toBe('Prefix.Suffix.');
+    });
+
+    it('omits the body when the path resolves to an empty string', () => {
+      const ctx = makeCtx({ variables: { reason: '' } });
+      const result = interpolatePrompt('A{{#if vars.reason}}B{{/if}}C', ctx);
+      expect(result).toBe('AC');
+    });
+
+    it('omits the body when the path resolves to an empty object', () => {
+      const ctx = makeCtx({ variables: { ctx: {} } });
+      const result = interpolatePrompt('A{{#if vars.ctx}}B{{/if}}C', ctx);
+      expect(result).toBe('AC');
+    });
+
+    it('resolves nested {{vars.<path>}} references inside the body when the conditional is true', () => {
+      const ctx = makeCtx({
+        variables: { __retryContext: { failureReason: 'invalid enum' } },
+      });
+      const result = interpolatePrompt(
+        '{{#if vars.__retryContext}}Reason: {{vars.__retryContext.failureReason}}{{/if}}',
+        ctx
+      );
+      expect(result).toBe('Reason: invalid enum');
+    });
+
+    it('handles multiple flat conditionals on the same template', () => {
+      const ctx = makeCtx({ variables: { a: 1, b: '' } });
+      const result = interpolatePrompt(
+        '{{#if vars.a}}A{{/if}}{{#if vars.b}}B{{/if}}{{#if vars.a}}C{{/if}}',
+        ctx
+      );
+      expect(result).toBe('AC');
+    });
+  });
 });
