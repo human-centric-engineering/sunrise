@@ -151,7 +151,7 @@
   {
     "id": "pattern-01-tldr",
     "chunk_id": 14,
-    "content": "# Pattern 1: Prompt Chaining — TL;DR Summary\n\nThe foundational design pattern where a complex task is decomposed into a linear sequence of smaller, discrete LLM calls. The output of one step becomes the input (context) for the next step. Also known as the Pipeline pattern.\n\n*In practice: A SaaS customer onboarding agent might chain: Extract company details from the signup form → Validate against a companies API → Generate a personalised welcome email → Create the initial workspace configuration.*",
+    "content": "# Pattern 1: Prompt Chaining — Summary\n\nThe foundational design pattern where a complex task is decomposed into a linear sequence of smaller, discrete LLM calls. The output of one step becomes the input (context) for the next step. Also known as the Pipeline pattern.\n\n*In practice: A SaaS customer onboarding agent might chain: Extract company details from the signup form → Validate against a companies API → Generate a personalised welcome email → Create the initial workspace configuration.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 1,
@@ -161,15 +161,15 @@
       "related_patterns": ["2", "4", "18"],
       "keywords": "pipeline, sequential, chain, multi-step, decomposition, validation gate, structured output",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 125
+    "estimated_tokens": 123
   },
   {
     "id": "pattern-01-definition",
     "chunk_id": 15,
-    "content": "# Pattern 1: Prompt Chaining — Agentic Definition\n\nPrompt Chaining is the foundational design pattern where a complex task is decomposed into a linear sequence of smaller, discrete LLM calls. The output of one step becomes the input (context) for the next step. By breaking a monolithic prompt into a chain, the system reduces the cognitive load on the model (the amount of instruction and context it must process at once), significantly improving accuracy, adherence to instructions, and reliability. It allows for intermediate \"gates\" where deterministic code can validate outputs before passing them to the next link in the chain.\n\nSingle monolithic prompts suffer from five key failure modes: instruction neglect (parts of the prompt are overlooked), contextual drift (the model loses track of initial context), error propagation (early errors amplify), context window exhaustion (insufficient information to respond), and hallucination (cognitive overload increases the chance of fabrication). These mirror human cognitive limitations: just as a person given a 20-point brief will forget items in the middle (instruction neglect), lose track of the original question during a long meeting (contextual drift), or make confident mistakes when overwhelmed (hallucination), LLMs exhibit the same patterns — but at machine scale and speed. Prompt chaining directly addresses each of these by constraining each step to a single focused objective.\n\nA critical reliability technique is enforcing structured output (JSON or XML) between chain steps. If the output of one prompt is ambiguous or poorly formatted, the subsequent prompt may fail due to faulty input. Structured formats ensure data is machine-readable and can be precisely parsed without ambiguity. Additionally, each step in the chain can be assigned a distinct role or persona (e.g., \"Market Analyst\" for summarisation, \"Trade Analyst\" for trend identification) to further focus the model's output.",
+    "content": "# Pattern 1: Prompt Chaining — Agentic Definition\n\nBy breaking a monolithic prompt into a chain, the system reduces the cognitive load on the model (the amount of instruction and context it must process at once), significantly improving accuracy, adherence to instructions, and reliability. It allows for intermediate \"gates\" where deterministic code can validate outputs before passing them to the next link in the chain.\n\nSingle monolithic prompts suffer from five key failure modes: instruction neglect (parts of the prompt are overlooked), contextual drift (the model loses track of initial context), error propagation (early errors amplify), context window exhaustion (insufficient information to respond), and hallucination (cognitive overload increases the chance of fabrication). These mirror human cognitive limitations: just as a person given a 20-point brief will forget items in the middle (instruction neglect), lose track of the original question during a long meeting (contextual drift), or make confident mistakes when overwhelmed (hallucination), LLMs exhibit the same patterns — but at machine scale and speed. Prompt chaining directly addresses each of these by constraining each step to a single focused objective.\n\nA critical reliability technique is enforcing structured output (JSON or XML) between chain steps. If the output of one prompt is ambiguous or poorly formatted, the subsequent prompt may fail due to faulty input. Structured formats ensure data is machine-readable and can be precisely parsed without ambiguity. Additionally, each step in the chain can be assigned a distinct role or persona (e.g., \"Market Analyst\" for summarisation, \"Trade Analyst\" for trend identification) to further focus the model's output.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 1,
@@ -182,7 +182,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 493
+    "estimated_tokens": 437
   },
   {
     "id": "pattern-01-faq",
@@ -294,7 +294,7 @@
   {
     "id": "pattern-02-tldr",
     "chunk_id": 22,
-    "content": "# Pattern 2: Routing — TL;DR Summary\n\nDynamically directing a user request to the most appropriate specialised agent, model, or processing path based on the semantic intent and complexity of the query. A \"Router\" classifies the input and delegates execution to a downstream handler optimised for that specific task.\n\n*In practice: A mobile banking app's AI assistant routes \"transfer £500 to Mum\" to a payments agent, \"why was I charged twice?\" to a disputes agent, and \"what's a good savings rate?\" to a general knowledge agent.*",
+    "content": "# Pattern 2: Routing — Summary\n\nDynamically directing a user request to the most appropriate specialised agent, model, or processing path based on the semantic intent and complexity of the query. A \"Router\" classifies the input and delegates execution to a downstream handler optimised for that specific task.\n\n*In practice: A mobile banking app's AI assistant routes \"transfer £500 to Mum\" to a payments agent, \"why was I charged twice?\" to a disputes agent, and \"what's a good savings rate?\" to a general knowledge agent.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 2,
@@ -304,15 +304,15 @@
       "related_patterns": ["1", "16"],
       "keywords": "classify, intent, route, dispatch, switch, gateway, semantic classification",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 132
+    "estimated_tokens": 131
   },
   {
     "id": "pattern-02-definition",
     "chunk_id": 23,
-    "content": "# Pattern 2: Routing — Agentic Definition\n\nRouting introduces conditional logic into an agent's operational framework, enabling a shift from a fixed execution path to a model where the agent dynamically evaluates specific criteria to select from a set of possible subsequent actions. Instead of a single general-purpose model handling everything, a \"Router\" (often a smaller, faster model) classifies the input and delegates execution to a downstream handler optimised for that specific task.\n\nRouting can be implemented through four distinct mechanisms: **LLM-based Routing** (prompting the model to classify intent and output a category), **Embedding-based Routing** (converting the input to a numerical vector that captures its meaning, then comparing it against vectors representing each possible route), **Rule-based Routing** (predefined if-else logic based on keywords or patterns — faster and deterministic but less flexible), and **ML Classifier-based Routing** (a small model trained on labelled examples to perform the routing decision — unlike LLM-based routing, the decision logic is baked into the trained model's weights rather than executed via prompt at inference time).\n\nRouting mechanisms can be applied at multiple points: at the outset to classify a primary task, at intermediate points within a processing chain to determine a subsequent action, or during a subroutine to select the most appropriate tool.",
+    "content": "# Pattern 2: Routing — Agentic Definition\n\nRouting introduces conditional logic into an agent's operational framework — a shift from a fixed execution path to dynamic evaluation of criteria that select from a set of subsequent actions. The Router (often a smaller, faster model than the downstream handlers) sits in front of the workflow and dispatches each request to the path optimised for it.\n\nRouting can be implemented through four distinct mechanisms: **LLM-based Routing** (prompting the model to classify intent and output a category), **Embedding-based Routing** (converting the input to a numerical vector that captures its meaning, then comparing it against vectors representing each possible route), **Rule-based Routing** (predefined if-else logic based on keywords or patterns — faster and deterministic but less flexible), and **ML Classifier-based Routing** (a small model trained on labelled examples to perform the routing decision — unlike LLM-based routing, the decision logic is baked into the trained model's weights rather than executed via prompt at inference time).\n\nRouting mechanisms can be applied at multiple points: at the outset to classify a primary task, at intermediate points within a processing chain to determine a subsequent action, or during a subroutine to select the most appropriate tool.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 2,
@@ -325,7 +325,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 363
+    "estimated_tokens": 332
   },
   {
     "id": "pattern-02-faq",
@@ -437,7 +437,7 @@
   {
     "id": "pattern-03-tldr",
     "chunk_id": 30,
-    "content": "# Pattern 3: Parallelisation — TL;DR Summary\n\nExecuting multiple independent agentic tasks simultaneously — such as voting on a decision, generating multiple creative drafts, or verifying facts against different sources — and then aggregating the results. Also known as the \"Sectioning\" or \"Voting\" pattern.",
+    "content": "# Pattern 3: Parallelisation — Summary\n\nExecuting multiple independent agentic tasks simultaneously — such as voting on a decision, generating multiple creative drafts, or verifying facts against different sources — and then aggregating the results. Also known as the \"Sectioning\" or \"Voting\" pattern.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 3,
@@ -447,15 +447,15 @@
       "related_patterns": ["7", "16"],
       "keywords": "parallel, concurrent, scatter-gather, fan-out, fan-in, reducer, merge, voting",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 76
+    "estimated_tokens": 75
   },
   {
     "id": "pattern-03-definition",
     "chunk_id": 31,
-    "content": "# Pattern 3: Parallelisation — Agentic Definition\n\nParallelisation involves executing multiple independent agentic tasks simultaneously — such as voting on a decision, generating multiple creative drafts, or verifying facts against different sources — and then aggregating the results. This is also known as the \"Sectioning\" or \"Voting\" pattern. It is the primary lever for reducing end-to-end latency in complex agentic workflows.",
+    "content": "# Pattern 3: Parallelisation — Agentic Definition\n\nParallelisation is the primary lever for reducing end-to-end latency in complex agentic workflows. It comes in three flavours — **Sectioning** (independent subtasks fan out and their results aggregate), **Voting** (the same task runs N times and the answers are reconciled by majority, self-consistency, or weighted vote), and **Verification** (parallel critics evaluate a single draft from different angles). The aggregation step is the hard part: a poor aggregator can erase the gains by introducing its own errors or letting one bad branch dominate.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 3,
@@ -468,7 +468,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 107
+    "estimated_tokens": 150
   },
   {
     "id": "pattern-03-faq",
@@ -580,7 +580,7 @@
   {
     "id": "pattern-04-tldr",
     "chunk_id": 38,
-    "content": "# Pattern 4: Reflection — TL;DR Summary\n\nEnables an agent to critique its own output (or the output of another agent) to identify errors, hallucinations, or areas for improvement, and then iteratively refine the result. It acts as an internal feedback loop.",
+    "content": "# Pattern 4: Reflection — Summary\n\nEnables an agent to critique its own output (or the output of another agent) to identify errors, hallucinations, or areas for improvement, and then iteratively refine the result. It acts as an internal feedback loop.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 4,
@@ -590,15 +590,15 @@
       "related_patterns": ["17", "19"],
       "keywords": "self-correction, critique, review, feedback loop, draft-revise, producer-critic, quality",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 64
+    "estimated_tokens": 62
   },
   {
     "id": "pattern-04-definition",
     "chunk_id": 39,
-    "content": "# Pattern 4: Reflection — Agentic Definition\n\nReflection (or Self-Correction) enables an agent to critique its own output (or the output of another agent) to identify errors, hallucinations, or areas for improvement, and then iteratively refine the result. It acts as an internal feedback loop, significantly increasing the quality and robustness of the final output.\n\nA key architectural choice is between self-reflection (the same agent critiques its own output) and the **Producer-Critic model** (a separate agent or prompted role evaluates the initial output). The Producer-Critic separation enhances objectivity and allows for more specialised, structured feedback. The core loop is: Draft → Critique → Revise → (repeat until approved or max retries reached).",
+    "content": "# Pattern 4: Reflection — Agentic Definition\n\nA key architectural choice is between **self-reflection** (the same agent critiques its own output) and the **Producer-Critic model** (a separate agent or prompted role evaluates the initial output). The Producer-Critic separation enhances objectivity and allows for more specialised, structured feedback — the critic can be tuned with a different prompt, a different model, or even a different set of tools (e.g., a code executor for verifying outputs).\n\nThe core loop is: Draft → Critique → Revise → (repeat until approved or max retries reached). The two failure modes to watch for are infinite loops (the critic never accepts) and sycophantic critics (the critic rubber-stamps anything the producer wrote).",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 4,
@@ -611,7 +611,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 191
+    "estimated_tokens": 189
   },
   {
     "id": "pattern-04-faq",
@@ -723,7 +723,7 @@
   {
     "id": "pattern-05-tldr",
     "chunk_id": 46,
-    "content": "# Pattern 5: Tool Use — TL;DR Summary\n\nExtends the capabilities of an LLM by allowing it to interact with the external world (APIs, databases, calculators, software environments) to perform actions or retrieve data not present in its parametric memory (the knowledge baked into the model during training). Transforms the LLM from a text generator into a system controller.\n\n*In practice: A property search chatbot decides at runtime whether to call a postcode lookup API, a mortgage calculator, or a Land Registry search — depending on what the user is asking.*",
+    "content": "# Pattern 5: Tool Use — Summary\n\nExtends the capabilities of an LLM by allowing it to interact with the external world (APIs, databases, calculators, software environments) to perform actions or retrieve data not present in its parametric memory (the knowledge baked into the model during training). Transforms the LLM from a text generator into a system controller.\n\n*In practice: A property search chatbot decides at runtime whether to call a postcode lookup API, a mortgage calculator, or a Land Registry search — depending on what the user is asking.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 5,
@@ -733,15 +733,15 @@
       "related_patterns": ["10", "12", "18"],
       "keywords": "function calling, API, tools, external, actions, calculator, database, search",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 144
+    "estimated_tokens": 138
   },
   {
     "id": "pattern-05-definition",
     "chunk_id": 47,
-    "content": "# Pattern 5: Tool Use — Agentic Definition\n\nTool Use (or Function Calling) extends the capabilities of an LLM by allowing it to interact with the external world (APIs, databases, calculators, software environments) to perform actions or retrieve data that is not present in its training data. This transforms the LLM from a text generator into a system controller.\n\nThe process works as follows: tools are defined with clear descriptions and parameters that the LLM can understand. The LLM then decides when to use a tool based on conversation context and generates a structured function call. The framework executes the actual tool call and returns the results to the LLM for incorporation into its response. The quality of the tool description is the primary determinant of reliability — the LLM reads the description to decide when and how to call it.",
+    "content": "# Pattern 5: Tool Use — Agentic Definition\n\nMechanically: tools are defined with descriptions and parameter schemas the LLM can read. At runtime the LLM decides whether to call one based on conversation context, emits a structured function call, the framework executes it, and the result is fed back as context for the next reasoning step. The quality of the tool description is the primary determinant of reliability — the LLM reads the description to decide when and how to call the tool, so vague or ambiguous descriptions cause the wrong tool to be selected (or no tool at all).\n\nDesigning the tool surface area matters as much as the descriptions. Too few tools forces the agent to chain awkward sequences; too many overwhelms the selection prompt and degrades accuracy. The useful unit of granularity is one tool per discrete external capability.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 5,
@@ -866,7 +866,7 @@
   {
     "id": "pattern-06-tldr",
     "chunk_id": 54,
-    "content": "# Pattern 6: Planning — TL;DR Summary\n\nThe capability of an agent to break down a high-level, ambiguous user goal into a sequence of executable steps (a plan), and then execute them whilst maintaining the state of progress.",
+    "content": "# Pattern 6: Planning — Summary\n\nThe capability of an agent to break down a high-level, ambiguous user goal into a sequence of executable steps (a plan), and then execute them whilst maintaining the state of progress.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 6,
@@ -876,15 +876,15 @@
       "related_patterns": ["4", "11"],
       "keywords": "plan, decompose, steps, DAG, workflow, goal, sequence, replan, dynamic",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 55
+    "estimated_tokens": 54
   },
   {
     "id": "pattern-06-definition",
     "chunk_id": 55,
-    "content": "# Pattern 6: Planning — Agentic Definition\n\nPlanning is the capability of an agent to break down a high-level, ambiguous user goal into a sequence of executable steps (a plan), and then execute them, maintaining the state of progress. It allows agents to tackle tasks that are too complex to be solved in a single turn. Critically, the agent builds its own DAG (Directed Acyclic Graph — a workflow where tasks flow in one direction with dependencies, like a data pipeline) at run-time based on the specific request, and can dynamically replan — updating or restructuring the plan mid-execution when a step fails or new information emerges.",
+    "content": "# Pattern 6: Planning — Agentic Definition\n\nCritically, the agent builds its own DAG (Directed Acyclic Graph — a workflow where tasks flow in one direction with dependencies, like a data pipeline) at run-time based on the specific request, and can dynamically replan — updating or restructuring the plan mid-execution when a step fails or new information emerges. This run-time DAG construction is what separates Planning from a pre-defined Workflow: the same agent given two different goals will produce two different plans, rather than following a fixed template.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 6,
@@ -897,7 +897,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 163
+    "estimated_tokens": 141
   },
   {
     "id": "pattern-06-faq",
@@ -1009,7 +1009,7 @@
   {
     "id": "pattern-07-tldr",
     "chunk_id": 62,
-    "content": "# Pattern 7: Multi-Agent Collaboration — TL;DR Summary\n\nStructuring a system as a team of specialised agents (e.g., a Researcher, a Writer, a Reviewer, a Coder) that collaborate, hand off tasks, and communicate to solve complex problems through role specialisation and task decomposition.",
+    "content": "# Pattern 7: Multi-Agent Collaboration — Summary\n\nStructuring a system as a team of specialised agents (e.g., a Researcher, a Writer, a Reviewer, a Coder) that collaborate, hand off tasks, and communicate to solve complex problems through role specialisation and task decomposition.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 7,
@@ -1019,15 +1019,15 @@
       "related_patterns": ["3", "6", "15"],
       "keywords": "multi-agent, team, collaboration, handoff, orchestrator, coordinator, specialised, roles",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 72
+    "estimated_tokens": 70
   },
   {
     "id": "pattern-07-definition",
     "chunk_id": 63,
-    "content": "# Pattern 7: Multi-Agent Collaboration — Agentic Definition\n\nThis pattern involves structuring a system as a team of specialised agents (e.g., a Researcher, a Writer, a Reviewer, a Coder) that collaborate, hand off tasks, and communicate to solve complex problems. It relies on role specialisation and task decomposition, predicated on the principle that complex challenges are often best solved not by a single generalist, but by a team of specialists working in concert.\n\nCollaboration can take several topological forms: **sequential handoffs** (agent A completes and passes to agent B), **parallel processing** (multiple agents work simultaneously), **debate** (agents argue competing perspectives to reach consensus), and **hierarchical structures** (a coordinator agent delegates to and supervises worker agents).",
+    "content": "# Pattern 7: Multi-Agent Collaboration — Agentic Definition\n\nThe pattern is predicated on the principle that complex challenges are often best solved not by a single generalist, but by a team of specialists working in concert. Each agent has a narrower role definition, a smaller and more focused tool set, and a prompt tuned for its specific responsibility — which keeps each agent's reasoning crisper than a monolithic agent trying to wear every hat.\n\nCollaboration can take several topological forms: **sequential handoffs** (agent A completes and passes to agent B), **parallel processing** (multiple agents work simultaneously), **debate** (agents argue competing perspectives to reach consensus), and **hierarchical structures** (a coordinator agent delegates to and supervises worker agents).",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 7,
@@ -1040,7 +1040,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 204
+    "estimated_tokens": 199
   },
   {
     "id": "pattern-07-faq",
@@ -1152,7 +1152,7 @@
   {
     "id": "pattern-08-tldr",
     "chunk_id": 70,
-    "content": "# Pattern 8: Memory Management — TL;DR Summary\n\nMechanisms for agents to store, index, and retrieve information over time, spanning short-term (conversation context) and long-term (knowledge base/episodic) history. This gives the agent a sense of continuity and identity.",
+    "content": "# Pattern 8: Memory Management — Summary\n\nMechanisms for agents to store, index, and retrieve information over time, spanning short-term (conversation context) and long-term (knowledge base/episodic) history. This gives the agent a sense of continuity and identity.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 8,
@@ -1162,10 +1162,10 @@
       "related_patterns": ["9", "14"],
       "keywords": "memory, context, session, persistence, short-term, long-term, vector, recall, history",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 67
+    "estimated_tokens": 66
   },
   {
     "id": "pattern-08-definition",
@@ -1295,7 +1295,7 @@
   {
     "id": "pattern-09-tldr",
     "chunk_id": 78,
-    "content": "# Pattern 9: Learning & Adaptation — TL;DR Summary\n\nThe ability of an agent to improve its performance over time based on feedback, user interactions, or new data, without full model retraining. Includes techniques like \"In-Context Learning\" (updating few-shot examples) or updating a knowledge base.",
+    "content": "# Pattern 9: Learning & Adaptation — Summary\n\nThe ability of an agent to improve its performance over time based on feedback, user interactions, or new data, without full model retraining. Includes techniques like \"In-Context Learning\" (updating few-shot examples) or updating a knowledge base.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 9,
@@ -1305,15 +1305,15 @@
       "related_patterns": ["8", "18", "19"],
       "keywords": "learning, adaptation, improvement, feedback, drift, few-shot, prompt tuning, self-improving",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 75
+    "estimated_tokens": 73
   },
   {
     "id": "pattern-09-definition",
     "chunk_id": 79,
-    "content": "# Pattern 9: Learning & Adaptation — Agentic Definition\n\nThe ability of an agent to improve its performance over time based on feedback, user interactions, or new data, without full model retraining. This includes techniques like \"In-Context Learning\" (updating the few-shot examples in a prompt) or updating a knowledge base.\n\nAdaptation can occur at two distinct levels: **Instructional Modification** (the system continuously refines prompts, few-shot examples, and context provided to each agent — changing behaviour without changing code) and **Architectural Modification** (individual agents can rewrite their own source code and restructure their internals for higher efficiency). Real-world research examples include SICA (Self-Improving Coding Agent), an experimental system that autonomously modifies its own code based on past performance, and AlphaEvolve, Google's research AI agent that uses LLMs and evolutionary frameworks to autonomously discover and optimise algorithms.",
+    "content": "# Pattern 9: Learning & Adaptation — Agentic Definition\n\nAdaptation can occur at two distinct levels: **Instructional Modification** (the system continuously refines prompts, few-shot examples, and context provided to each agent — changing behaviour without changing code) and **Architectural Modification** (individual agents rewrite their own source code or restructure their internal tools for higher efficiency). The instructional level is where most production systems operate today; the architectural level is still largely research territory.\n\nReal-world research examples include SICA (Self-Improving Coding Agent), an experimental system that autonomously modifies its own code based on past performance, and AlphaEvolve, Google's research agent that uses LLMs and evolutionary frameworks to autonomously discover and optimise algorithms.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 9,
@@ -1326,7 +1326,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 250
+    "estimated_tokens": 211
   },
   {
     "id": "pattern-09-faq",
@@ -1438,7 +1438,7 @@
   {
     "id": "pattern-10-tldr",
     "chunk_id": 86,
-    "content": "# Pattern 10: State Management (MCP) — TL;DR Summary\n\nA standardised protocol (Model Context Protocol) for connecting AI models to data sources and tools, ensuring consistent context and state exchange between systems. MCP acts as a universal translator between the LLM and external systems.",
+    "content": "# Pattern 10: State Management (MCP) — Summary\n\nA standardised protocol (Model Context Protocol) for connecting AI models to data sources and tools, ensuring consistent context and state exchange between systems. MCP acts as a universal translator between the LLM and external systems.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 10,
@@ -1448,10 +1448,10 @@
       "related_patterns": ["5", "15", "18"],
       "keywords": "MCP, protocol, standard, integration, discovery, server, client, plug-and-play, interoperability",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 72
+    "estimated_tokens": 71
   },
   {
     "id": "pattern-10-definition",
@@ -1581,7 +1581,7 @@
   {
     "id": "pattern-11-tldr",
     "chunk_id": 94,
-    "content": "# Pattern 11: Goal Setting & Monitoring — TL;DR Summary\n\nMechanisms for agents to define high-level objectives, break them into trackable sub-goals, and continuously monitor progress towards completion. The agent checks: \"Am I closer to the goal than I was 5 minutes ago?\"",
+    "content": "# Pattern 11: Goal Setting & Monitoring — Summary\n\nMechanisms for agents to define high-level objectives, break them into trackable sub-goals, and continuously monitor progress towards completion. The agent checks: \"Am I closer to the goal than I was 5 minutes ago?\"",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 11,
@@ -1591,15 +1591,15 @@
       "related_patterns": ["4", "6", "12"],
       "keywords": "goal, monitor, progress, tracking, metacognition, doom loop, completion, watchdog",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 68
+    "estimated_tokens": 66
   },
   {
     "id": "pattern-11-definition",
     "chunk_id": 95,
-    "content": "# Pattern 11: Goal Setting & Monitoring — Agentic Definition\n\nMechanisms for agents to define high-level objectives, break them into trackable sub-goals, and continuously monitor progress towards completion. The agent checks: \"Am I closer to the goal than I was 5 minutes ago?\" When monitoring detects that progress has stalled or regressed, the agent can trigger replanning — adjusting its approach based on the current state of affairs.",
+    "content": "# Pattern 11: Goal Setting & Monitoring — Agentic Definition\n\nGoal Setting & Monitoring sits underneath the Planning pattern but operates at a longer time horizon. The agent maintains an explicit representation of the goal — usually decomposed into a tree of sub-goals with success criteria — and periodically scores its current state against that tree. When monitoring detects stalled or regressing progress, the agent can trigger replanning, escalate to a human, or abandon the goal.\n\nThe hard problem is defining the success criteria precisely enough that progress is measurable, without making them so rigid the agent can't recover from surprises. Vague criteria (\"make the user happy\") give the agent nothing to score against; over-specified criteria (\"send exactly three emails by 4pm\") block legitimate alternative paths to the same outcome.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 11,
@@ -1612,7 +1612,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 109
+    "estimated_tokens": 212
   },
   {
     "id": "pattern-11-faq",
@@ -1724,7 +1724,7 @@
   {
     "id": "pattern-12-tldr",
     "chunk_id": 102,
-    "content": "# Pattern 12: Exception Handling & Recovery — TL;DR Summary\n\nStrategies for agents to detect failures (e.g., API errors, hallucinations, logic loops) and self-correct or retry using alternative strategies. Allows the system to be resilient in the face of uncertainty.",
+    "content": "# Pattern 12: Exception Handling & Recovery — Summary\n\nStrategies for agents to detect failures (e.g., API errors, hallucinations, logic loops) and self-correct or retry using alternative strategies. Allows the system to be resilient in the face of uncertainty.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 12,
@@ -1734,15 +1734,15 @@
       "related_patterns": ["5", "13", "18"],
       "keywords": "error, failure, recovery, retry, fallback, graceful degradation, resilience, escalation",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 66
+    "estimated_tokens": 65
   },
   {
     "id": "pattern-12-definition",
     "chunk_id": 103,
-    "content": "# Pattern 12: Exception Handling & Recovery — Agentic Definition\n\nException Handling & Recovery involves three distinct phases: **Detection** (validating tool outputs, checking API error codes, using timeouts to catch stalled processes), **Handling** (logging errors, retrying operations, falling back to alternative tools, gracefully degrading functionality, notifying human operators), and **Recovery** (restoring stable operation through diagnosis, self-correction, or escalation to a human). This allows the system to be resilient in the face of uncertainty.",
+    "content": "# Pattern 12: Exception Handling & Recovery — Agentic Definition\n\nException Handling & Recovery involves three distinct phases: **Detection** (validating tool outputs, checking API error codes, using timeouts to catch stalled processes), **Handling** (logging errors, retrying operations, falling back to alternative tools, gracefully degrading functionality, notifying human operators), and **Recovery** (restoring stable operation through diagnosis, self-correction, or escalation to a human).\n\nDetection is the phase most often skipped: agents that don't actively validate tool outputs cannot tell whether a downstream call genuinely succeeded or silently returned junk, and the failure surfaces much later as a hallucinated final answer.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 12,
@@ -1755,7 +1755,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 140
+    "estimated_tokens": 185
   },
   {
     "id": "pattern-12-faq",
@@ -1867,7 +1867,7 @@
   {
     "id": "pattern-13-tldr",
     "chunk_id": 110,
-    "content": "# Pattern 13: Human-in-the-Loop — TL;DR Summary\n\nIntegrating human oversight at critical decision points to validate agent actions, provide feedback, or disambiguate requests. The agent pauses execution and requests input from a human \"Tool.\"\n\n*In practice: An AI recruitment tool auto-screens CVs and drafts rejection or interview invitation emails, but pauses for a human recruiter to approve before any email is actually sent.*",
+    "content": "# Pattern 13: Human-in-the-Loop — Summary\n\nIntegrating human oversight at critical decision points to validate agent actions, provide feedback, or disambiguate requests. The agent pauses execution and requests input from a human \"Tool.\"\n\n*In practice: An AI recruitment tool auto-screens CVs and drafts rejection or interview invitation emails, but pauses for a human recruiter to approve before any email is actually sent.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 13,
@@ -1877,15 +1877,15 @@
       "related_patterns": ["12", "18", "5"],
       "keywords": "human, approval, oversight, escalation, review, manual, verification, gate",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 107
+    "estimated_tokens": 106
   },
   {
     "id": "pattern-13-definition",
     "chunk_id": 111,
-    "content": "# Pattern 13: Human-in-the-Loop — Agentic Definition\n\nIntegrating human oversight at critical decision points to validate agent actions, provide feedback, or disambiguate requests. The agent pauses execution and requests input from a human \"Tool.\" This requires well-defined **escalation policies** — clear criteria that determine when the agent should hand off to a human, rather than relying on the agent to make that judgement ad hoc. Escalation can be triggered by confidence thresholds, risk levels, policy requirements, or the nature of the action (e.g., any write operation above a certain value).",
+    "content": "# Pattern 13: Human-in-the-Loop — Agentic Definition\n\nWhat separates HITL from ad-hoc human intervention is the **escalation policy** — clear, written-down criteria that determine when the agent should hand off rather than relying on the agent's own judgement. Escalation triggers commonly include confidence thresholds, risk levels, regulatory requirements, or the nature of the action (e.g., any write operation above a certain monetary value).\n\nThe complementary design problem is the human side of the handoff: a queue of pending approvals, enough context for the human to decide quickly, a default if the human doesn't respond in time, and a feedback channel so the agent learns from approvals and rejections rather than re-asking the same question forever.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 13,
@@ -1898,7 +1898,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 151
+    "estimated_tokens": 190
   },
   {
     "id": "pattern-13-faq",
@@ -2010,7 +2010,7 @@
   {
     "id": "pattern-14-tldr",
     "chunk_id": 118,
-    "content": "# Pattern 14: Knowledge Retrieval (RAG) — TL;DR Summary\n\nRetrieval-Augmented Generation (RAG) equips agents with the ability to query external knowledge bases (Vector DBs, Search Indices) to ground their answers in fact and access proprietary data.\n\n*In practice: A legal-tech SaaS retrieves relevant clauses from a client's contract library and grounds its answers in those specific documents, rather than relying on general legal knowledge that might be wrong for that jurisdiction.*",
+    "content": "# Pattern 14: Knowledge Retrieval (RAG) — Summary\n\nRetrieval-Augmented Generation (RAG) equips agents with the ability to query external knowledge bases (Vector DBs, Search Indices) to ground their answers in fact and access proprietary data.\n\n*In practice: A legal-tech SaaS retrieves relevant clauses from a client's contract library and grounds its answers in those specific documents, rather than relying on general legal knowledge that might be wrong for that jurisdiction.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 14,
@@ -2020,10 +2020,10 @@
       "related_patterns": ["8", "5", "18"],
       "keywords": "RAG, retrieval, knowledge, vector, embedding, semantic search, grounding, chunking, citation",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 121
+    "estimated_tokens": 119
   },
   {
     "id": "pattern-14-definition",
@@ -2153,7 +2153,7 @@
   {
     "id": "pattern-15-tldr",
     "chunk_id": 126,
-    "content": "# Pattern 15: Inter-Agent Communication (A2A) — TL;DR Summary\n\nProtocols and formats for autonomous agents to exchange messages, tasks, and state information to collaborate on a shared goal.",
+    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Summary\n\nProtocols and formats for autonomous agents to exchange messages, tasks, and state information to collaborate on a shared goal.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 15,
@@ -2163,15 +2163,15 @@
       "related_patterns": ["7", "10"],
       "keywords": "A2A, agent-to-agent, protocol, communication, agent card, discovery, interoperability",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 47
+    "estimated_tokens": 46
   },
   {
     "id": "pattern-15-definition",
     "chunk_id": 127,
-    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Agentic Definition\n\nProtocols and formats for autonomous agents to exchange messages, tasks, and state information to collaborate on a shared goal. The Google A2A (Agent-to-Agent) protocol is an emerging open, HTTP-based standard for this purpose.\n\nKey concepts include: **Agent Cards** (digital identifiers that describe an agent's capabilities, enabling automatic discovery by other agents), support for both **synchronous request-response** and **streaming** interaction patterns, and **multi-turn conversations** with an `input-required` state that allows agents to request additional information mid-interaction.\n\nAn important architectural distinction: **A2A is a high-level protocol for managing tasks and workflows between different agents**, whilst **MCP (Pattern 10) provides a standardised interface for LLMs to access external resources and tools**. They are complementary — A2A handles agent-to-agent orchestration, MCP handles agent-to-tool integration.",
+    "content": "# Pattern 15: Inter-Agent Communication (A2A) — Agentic Definition\n\nThe Google A2A (Agent-to-Agent) protocol is an emerging open, HTTP-based standard for this purpose. Key concepts include **Agent Cards** (digital identifiers that describe an agent's capabilities, enabling automatic discovery by other agents), support for both **synchronous request-response** and **streaming** interaction patterns, and **multi-turn conversations** with an `input-required` state that allows agents to request additional information mid-interaction.\n\nAn important architectural distinction: **A2A is a high-level protocol for managing tasks and workflows between different agents**, whilst **MCP (Pattern 10) provides a standardised interface for LLMs to access external resources and tools**. They are complementary — A2A handles agent-to-agent orchestration, MCP handles agent-to-tool integration.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 15,
@@ -2184,7 +2184,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 253
+    "estimated_tokens": 221
   },
   {
     "id": "pattern-15-faq",
@@ -2296,7 +2296,7 @@
   {
     "id": "pattern-16-tldr",
     "chunk_id": 134,
-    "content": "# Pattern 16: Resource-Aware Optimisation — TL;DR Summary\n\nAgents aware of their token consumption, API costs, and computational limits, optimising their strategies accordingly (e.g., using a cheaper model for simple summarisation vs. a frontier model for reasoning).",
+    "content": "# Pattern 16: Resource-Aware Optimisation — Summary\n\nAgents aware of their token consumption, API costs, and computational limits, optimising their strategies accordingly (e.g., using a cheaper model for simple summarisation vs. a frontier model for reasoning).",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 16,
@@ -2306,15 +2306,15 @@
       "related_patterns": ["2", "1"],
       "keywords": "cost, token, budget, optimisation, model selection, tiered, pruning, efficiency",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 66
+    "estimated_tokens": 65
   },
   {
     "id": "pattern-16-definition",
     "chunk_id": 135,
-    "content": "# Pattern 16: Resource-Aware Optimisation — Agentic Definition\n\nAgents aware of their token consumption, API costs, and computational limits, optimising their strategies accordingly. The primary technique is dynamic model selection (routing simple tasks to cheap/fast models and complex tasks to expensive/capable models), but optimisation extends to: **Adaptive Tool Use** (selecting the most efficient tool for the task), **Contextual Pruning & Summarisation** (reducing context window size by summarising or discarding irrelevant information), **Graceful Degradation** (falling back to simpler approaches when resources are constrained), and **Proactive Resource Prediction** (anticipating resource needs before execution).",
+    "content": "# Pattern 16: Resource-Aware Optimisation — Agentic Definition\n\nThe primary technique is **dynamic model selection** (routing simple tasks to cheap/fast models and complex ones to expensive/capable models), but optimisation extends to: **Adaptive Tool Use** (selecting the most efficient tool for the task), **Contextual Pruning & Summarisation** (reducing context window size by summarising or discarding irrelevant information), **Graceful Degradation** (falling back to simpler approaches when resources are constrained), and **Proactive Resource Prediction** (anticipating resource needs before execution).\n\nWhat makes this pattern \"agentic\" rather than a static config is that the optimisation decisions are made at runtime by the agent itself based on the observed shape of each request — not by an engineer at design time.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 16,
@@ -2327,7 +2327,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 181
+    "estimated_tokens": 207
   },
   {
     "id": "pattern-16-faq",
@@ -2439,7 +2439,7 @@
   {
     "id": "pattern-17-tldr",
     "chunk_id": 142,
-    "content": "# Pattern 17: Reasoning Techniques — TL;DR Summary\n\nAdvanced cognitive architectures like Chain-of-Thought (CoT), Tree-of-Thought (ToT), and ReAct (Reason+Act) that structure the model's internal processing to solve complex problems.",
+    "content": "# Pattern 17: Reasoning Techniques — Summary\n\nAdvanced cognitive architectures like Chain-of-Thought (CoT), Tree-of-Thought (ToT), and ReAct (Reason+Act) that structure the model's internal processing to solve complex problems.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 17,
@@ -2449,10 +2449,10 @@
       "related_patterns": ["4", "6", "7"],
       "keywords": "chain-of-thought, tree-of-thought, ReAct, reasoning, step-by-step, inference, thinking time",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 58
+    "estimated_tokens": 56
   },
   {
     "id": "pattern-17-definition",
@@ -2582,7 +2582,7 @@
   {
     "id": "pattern-18-tldr",
     "chunk_id": 150,
-    "content": "# Pattern 18: Guardrails & Safety — TL;DR Summary\n\nArchitectural safeguards (input/output filters) to prevent agents from executing harmful actions, leaking PII, or deviating from policy. Ensures the agent stays \"on rails.\"\n\n*In practice: A customer-facing chatbot for a financial services firm has input guardrails blocking prompt injection attempts, behavioural constraints preventing specific investment advice, and output filters scanning every response for accidental PII leakage before delivery.*",
+    "content": "# Pattern 18: Guardrails & Safety — Summary\n\nArchitectural safeguards (input/output filters) to prevent agents from executing harmful actions, leaking PII, or deviating from policy. Ensures the agent stays \"on rails.\"\n\n*In practice: A customer-facing chatbot for a financial services firm has input guardrails blocking prompt injection attempts, behavioural constraints preventing specific investment advice, and output filters scanning every response for accidental PII leakage before delivery.*",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 18,
@@ -2592,15 +2592,15 @@
       "related_patterns": ["5", "13", "19"],
       "keywords": "guardrails, safety, filter, PII, moderation, validation, policy, firewall, censor",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 125
+    "estimated_tokens": 124
   },
   {
     "id": "pattern-18-definition",
     "chunk_id": 151,
-    "content": "# Pattern 18: Guardrails & Safety — Agentic Definition\n\nArchitectural safeguards to prevent agents from executing harmful actions, leaking PII, or deviating from policy. Guardrails can be implemented at multiple layers: **input validation** (filtering harmful or out-of-scope prompts), **output filtering** (scanning responses for PII, toxicity, or policy violations), **behavioural prompting** (system-level instructions constraining agent behaviour), **tool use restrictions** (limiting which tools can be called and under what conditions), and **external moderation** (using a separate, smaller LLM as a \"Censor\" to evaluate outputs before delivery).\n\nThe most effective approach is layered defence — combining multiple techniques rather than relying on any single guardrail. The book emphasises that the most reliable way to build production-grade agents is to treat them as complex software, applying the same proven engineering best practices (fault tolerance, state management, robust testing) that have governed traditional systems for decades.",
+    "content": "# Pattern 18: Guardrails & Safety — Agentic Definition\n\nGuardrails operate at multiple layers: **input validation** (filtering harmful or out-of-scope prompts), **output filtering** (scanning responses for PII, toxicity, or policy violations), **behavioural prompting** (system-level instructions constraining agent behaviour), **tool-use restrictions** (limiting which tools can be called and under what conditions), and **external moderation** (using a separate, smaller LLM as a \"Censor\" to evaluate outputs before delivery).\n\nThe most effective approach is **layered defence** — combining multiple techniques rather than relying on any single guardrail. The book emphasises that the most reliable way to build production-grade agents is to treat them as complex software, applying the same proven engineering best practices (fault tolerance, state management, robust testing) that have governed traditional systems for decades.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 18,
@@ -2613,7 +2613,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 263
+    "estimated_tokens": 232
   },
   {
     "id": "pattern-18-faq",
@@ -2725,7 +2725,7 @@
   {
     "id": "pattern-19-tldr",
     "chunk_id": 158,
-    "content": "# Pattern 19: Evaluation & Monitoring — TL;DR Summary\n\nFrameworks for measuring agent performance (accuracy, faithfulness, tool usage) and monitoring behaviour in production (traces, logs).",
+    "content": "# Pattern 19: Evaluation & Monitoring — Summary\n\nFrameworks for measuring agent performance (accuracy, faithfulness, tool usage) and monitoring behaviour in production (traces, logs).",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 19,
@@ -2735,15 +2735,15 @@
       "related_patterns": ["4", "9", "18"],
       "keywords": "evaluation, monitoring, testing, drift, LLM-as-a-judge, trajectory, metrics, observability",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 47
+    "estimated_tokens": 45
   },
   {
     "id": "pattern-19-definition",
     "chunk_id": 159,
-    "content": "# Pattern 19: Evaluation & Monitoring — Agentic Definition\n\nFrameworks for measuring agent performance (accuracy, faithfulness, tool usage) and monitoring behaviour in production (traces, logs). Evaluation must go beyond final-output accuracy to include **agent trajectories** — the sequence of steps an agent takes, compared against an ideal ground-truth path to identify errors and inefficiencies. For instance, if an agent asked to book a flight searched for hotels first, the trajectory reveals this inefficient path even if the final booking was correct.\n\nA key technique is **LLM-as-a-Judge** — using a separate LLM to score qualitative aspects of agent output (correctness, hallucination rate, tone, helpfulness) that cannot be measured by traditional deterministic assertions. For high-stakes applications, the concept of **contracts** is emerging — formal specifications that precisely define verifiable deliverables and scope, allowing agents to negotiate, clarify ambiguities, and iteratively validate their own work.",
+    "content": "# Pattern 19: Evaluation & Monitoring — Agentic Definition\n\nEvaluation must go beyond final-output accuracy to include **agent trajectories** — the sequence of steps an agent takes, compared against an ideal ground-truth path to identify errors and inefficiencies. If an agent asked to book a flight searched for hotels first, the trajectory exposes the inefficient path even when the final booking was correct.\n\nA core technique is **LLM-as-a-Judge** — using a separate LLM to score qualitative aspects of agent output (correctness, hallucination rate, tone, helpfulness) that cannot be measured by traditional deterministic assertions. For high-stakes applications, the concept of **contracts** is emerging — formal specifications that precisely define verifiable deliverables and scope, allowing agents to negotiate, clarify ambiguities, and iteratively validate their own work.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 19,
@@ -2756,7 +2756,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 257
+    "estimated_tokens": 220
   },
   {
     "id": "pattern-19-faq",
@@ -2868,7 +2868,7 @@
   {
     "id": "pattern-20-tldr",
     "chunk_id": 166,
-    "content": "# Pattern 20: Prioritisation — TL;DR Summary\n\nThe ability of an agent to rank disparate tasks or goals based on urgency, importance, and constraints, effectively managing its own backlog.",
+    "content": "# Pattern 20: Prioritisation — Summary\n\nThe ability of an agent to rank disparate tasks or goals based on urgency, importance, and constraints, effectively managing its own backlog.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 20,
@@ -2878,15 +2878,15 @@
       "related_patterns": ["6", "11", "16"],
       "keywords": "priority, ranking, urgency, scheduling, backlog, triage, dynamic, re-prioritise",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 46
+    "estimated_tokens": 45
   },
   {
     "id": "pattern-20-definition",
     "chunk_id": 167,
-    "content": "# Pattern 20: Prioritisation — Agentic Definition\n\nThe ability of an agent to rank disparate tasks or goals based on urgency, importance, and constraints, effectively managing its own backlog. A key capability is **dynamic re-prioritisation** — agents adjusting their operational focus in real-time as conditions change, not just performing an initial ranking. Prioritisation occurs at multiple levels, from overarching strategic objectives to immediate tactical decisions.",
+    "content": "# Pattern 20: Prioritisation — Agentic Definition\n\nThe interesting capability is **dynamic re-prioritisation** — agents adjusting their operational focus in real-time as conditions change, rather than performing only an initial ranking. Prioritisation operates at multiple levels, from overarching strategic objectives down to immediate tactical decisions about which tool to call next.\n\nThe signal that a system needs explicit prioritisation rather than ad-hoc ordering is when the agent has more candidate actions than it can usefully execute in the available budget — at which point the choice of *what to drop* becomes as important as the choice of what to do.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 20,
@@ -2899,7 +2899,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 118
+    "estimated_tokens": 166
   },
   {
     "id": "pattern-20-faq",
@@ -3011,7 +3011,7 @@
   {
     "id": "pattern-21-tldr",
     "chunk_id": 174,
-    "content": "# Pattern 21: Exploration & Discovery — TL;DR Summary\n\nAgents proactively seeking new information, testing hypotheses, or exploring an environment to expand their knowledge or capabilities, rather than just reacting to prompts.",
+    "content": "# Pattern 21: Exploration & Discovery — Summary\n\nAgents proactively seeking new information, testing hypotheses, or exploring an environment to expand their knowledge or capabilities, rather than just reacting to prompts.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 21,
@@ -3021,15 +3021,15 @@
       "related_patterns": ["6", "7", "9"],
       "keywords": "exploration, discovery, hypothesis, experiment, research, proactive, autonomous, novel",
       "section": "tldr",
-      "section_title": "TL;DR Summary",
+      "section_title": "Summary",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 56
+    "estimated_tokens": 55
   },
   {
     "id": "pattern-21-definition",
     "chunk_id": 175,
-    "content": "# Pattern 21: Exploration & Discovery — Agentic Definition\n\nAgents proactively seeking new information, testing hypotheses, or exploring an environment to expand their knowledge or capabilities, rather than just reacting to prompts. This is the essence of truly agentic behaviour — the shift from passive instruction-following to proactive exploration.\n\nReal-world implementations include **Google Co-Scientist**, where agents autonomously generate, debate, and evolve scientific hypotheses, and **Agent Laboratory**, which structures exploration through an agentic hierarchy mimicking human research teams (literature review, experimentation, report writing) with each agent embodying a specific proactive role.",
+    "content": "# Pattern 21: Exploration & Discovery — Agentic Definition\n\nThis is the essence of truly agentic behaviour — the shift from passive instruction-following to proactive exploration. The agent decides, given an open-ended objective, what to investigate next rather than waiting for the next user prompt.\n\nReal-world implementations include **Google Co-Scientist**, where agents autonomously generate, debate, and evolve scientific hypotheses, and **Agent Laboratory**, which structures exploration through an agentic hierarchy mimicking human research teams (literature review, experimentation, report writing) with each agent embodying a specific proactive role.",
     "metadata": {
       "type": "pattern_section",
       "pattern_number": 21,
@@ -3042,7 +3042,7 @@
       "section_title": "Agentic Definition",
       "source": "Agentic Design Patterns by Antonio Gullí"
     },
-    "estimated_tokens": 178
+    "estimated_tokens": 165
   },
   {
     "id": "pattern-21-faq",
