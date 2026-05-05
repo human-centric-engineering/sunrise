@@ -583,8 +583,28 @@ export class OrchestrationEngine {
           result.costUsd += accumulatedCost;
           return result;
         } catch (err) {
-          if (err instanceof PausedForApproval) throw err;
-          if (err instanceof BudgetExceeded) throw err;
+          // Pause / budget short-circuits: rethrow but carry the
+          // accumulated partial so the engine's caught-handler in
+          // executeSingleStep can record the cost from prior retriable
+          // attempts (would otherwise be lost on the bare rethrow).
+          if (err instanceof PausedForApproval) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new PausedForApproval(
+              err.stepId,
+              err.payload,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
+          if (err instanceof BudgetExceeded) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new BudgetExceeded(
+              err.usedUsd,
+              err.limitUsd,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
           lastError =
             err instanceof ExecutorError
               ? err
@@ -723,14 +743,20 @@ export class OrchestrationEngine {
     } catch (err) {
       if (err instanceof PausedForApproval) {
         const durationMs = Date.now() - started;
+        // Surface any partial cost from prior retry attempts (the retry
+        // loop wraps the original PausedForApproval with the accumulator).
+        // Default 0 for the common case (human_approval pauses with no
+        // prior LLM work).
+        ctx.totalTokensUsed += err.tokensUsed;
+        ctx.totalCostUsd += err.costUsd;
         trace.push({
           stepId: step.id,
           stepType: step.type,
           label: step.name,
           status: 'awaiting_approval',
           output: err.payload,
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: err.tokensUsed,
+          costUsd: err.costUsd,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
@@ -934,6 +960,10 @@ export class OrchestrationEngine {
             telemetryOut,
             paused: true,
             payload: err.payload,
+            // Carry partial cost (set by the retry loop's accumulator-aware
+            // PausedForApproval rethrow) so the trace entry below records it.
+            tokensUsed: err.tokensUsed,
+            costUsd: err.costUsd,
             error: null,
           };
         }
@@ -962,14 +992,18 @@ export class OrchestrationEngine {
 
       // Handle pause (rare in parallel — only if human_approval is in a branch)
       if ('paused' in outcome.value && outcome.value.paused) {
+        const pausedTokens = (outcome.value as { tokensUsed?: number }).tokensUsed ?? 0;
+        const pausedCost = (outcome.value as { costUsd?: number }).costUsd ?? 0;
+        ctx.totalTokensUsed += pausedTokens;
+        ctx.totalCostUsd += pausedCost;
         trace.push({
           stepId: step.id,
           stepType: step.type,
           label: step.name,
           status: 'awaiting_approval',
           output: outcome.value.payload,
-          tokensUsed: 0,
-          costUsd: 0,
+          tokensUsed: pausedTokens,
+          costUsd: pausedCost,
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
@@ -1140,7 +1174,19 @@ export class OrchestrationEngine {
           result.costUsd += accumulatedCost;
           return result;
         } catch (err) {
-          if (err instanceof PausedForApproval) throw err;
+          // Pause short-circuit: carry the retry accumulator through so
+          // prior attempts' billed tokens reach the trace entry.
+          if (err instanceof PausedForApproval) {
+            if (accumulatedTokens === 0 && accumulatedCost === 0) throw err;
+            throw new PausedForApproval(
+              err.stepId,
+              err.payload,
+              err.tokensUsed + accumulatedTokens,
+              err.costUsd + accumulatedCost
+            );
+          }
+          // (Parallel retry doesn't catch BudgetExceeded — engine throws
+          // it from outside the executor — so no symmetric path here.)
           lastError =
             err instanceof ExecutorError
               ? err

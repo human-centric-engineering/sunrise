@@ -15,12 +15,23 @@
 export class PausedForApproval extends Error {
   public readonly stepId: string;
   public readonly payload: unknown;
+  /**
+   * Partial token/cost usage from the current step before the pause.
+   * Carried so the engine's retry-accumulator can fold prior failed
+   * attempts' billed cost into the awaiting_approval trace entry instead
+   * of hardcoding zero. Defaults to 0 for executors that pause without
+   * doing LLM work first (the common case — `human_approval`).
+   */
+  public readonly tokensUsed: number;
+  public readonly costUsd: number;
 
-  constructor(stepId: string, payload: unknown) {
+  constructor(stepId: string, payload: unknown, tokensUsed = 0, costUsd = 0) {
     super(`Workflow paused for approval at step "${stepId}"`);
     this.name = 'PausedForApproval';
     this.stepId = stepId;
     this.payload = payload;
+    this.tokensUsed = tokensUsed;
+    this.costUsd = costUsd;
   }
 }
 
@@ -31,12 +42,23 @@ export class PausedForApproval extends Error {
 export class BudgetExceeded extends Error {
   public readonly usedUsd: number;
   public readonly limitUsd: number;
+  /**
+   * Partial token/cost from the current step that triggered the budget
+   * check. Distinct from `usedUsd` (the running execution total). Carried
+   * so retry-loop accumulators can fold prior attempts' billed cost into
+   * the failure trace entry. Defaults to 0 — only set when the engine
+   * has a non-zero accumulator at the throw site.
+   */
+  public readonly tokensUsed: number;
+  public readonly costUsd: number;
 
-  constructor(usedUsd: number, limitUsd: number) {
+  constructor(usedUsd: number, limitUsd: number, tokensUsed = 0, costUsd = 0) {
     super(`Budget exceeded: $${usedUsd.toFixed(4)} / $${limitUsd.toFixed(4)}`);
     this.name = 'BudgetExceeded';
     this.usedUsd = usedUsd;
     this.limitUsd = limitUsd;
+    this.tokensUsed = tokensUsed;
+    this.costUsd = costUsd;
   }
 }
 

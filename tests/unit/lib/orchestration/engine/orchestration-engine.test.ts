@@ -1324,6 +1324,42 @@ describe('OrchestrationEngine', () => {
     expect(retryEvents).toHaveLength(0);
   });
 
+  it('PausedForApproval mid-retry-loop carries accumulator from prior retriable attempts', async () => {
+    // Attempt 0 throws retriable with $0.005 partial. Attempt 1 throws
+    // PausedForApproval. Without the accumulator-aware rethrow, attempt 0's
+    // billed cost would be lost from the trace's awaiting_approval entry.
+    let attempts = 0;
+    registerStepType('llm_call', async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new ExecutorError('a', 'transient', 'retry me', undefined, true, 50, 0.005);
+      }
+      throw new PausedForApproval('a', { prompt: 'review please' });
+    });
+
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'retry', retryCount: 3 };
+    def.steps = [{ ...def.steps[0], nextSteps: [] }];
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{
+      stepId: string;
+      tokensUsed: number;
+      costUsd: number;
+      status: string;
+    }>;
+    expect(lastTrace).toBeDefined();
+    const pausedEntry = lastTrace.find((e) => e.stepId === 'a');
+    expect(pausedEntry?.status).toBe('awaiting_approval');
+    expect(pausedEntry?.tokensUsed).toBe(50);
+    expect(pausedEntry?.costUsd).toBeCloseTo(0.005);
+  }, 15_000);
+
   it('non-retriable error mid-retry-loop carries accumulated cost from prior retriable attempts', async () => {
     // Attempt 0: retriable error with $0.005 partial. Attempt 1: non-retriable
     // error with $0.005 partial. Without the accumulator-aware rethrow, only
