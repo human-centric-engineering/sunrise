@@ -109,50 +109,40 @@ describe('RetryEdge', () => {
     });
   });
 
-  describe('label rendering', () => {
-    it('renders the label text', () => {
+  describe('draggable label', () => {
+    it('renders the label text inside a single button (label IS the handle)', () => {
       render(
         <RetryEdge
           {...(makeEdgeProps({ label: 'fail (retry ×2)' }) as Parameters<typeof RetryEdge>[0])}
         />
       );
-      expect(screen.getByText('fail (retry ×2)')).toBeInTheDocument();
+      const handle = screen.getByTestId('retry-edge-handle-edge-1');
+      expect(handle.tagName).toBe('BUTTON');
+      expect(handle.textContent).toContain('fail (retry ×2)');
     });
 
     it('positions the label at the curve midpoint (t=0.5 of the quadratic)', () => {
-      // Default control = (50, 150). Label at midpoint of {midpoint(P0,P2), CP}
-      // = midpoint of {(50,0), (50,150)} = (50, 75).
+      // Default control point = (50, 150). Curve midpoint = midpoint of
+      // {endpoint-midpoint, CP} = midpoint of {(50,0), (50,150)} = (50, 75).
       render(
         <RetryEdge {...(makeEdgeProps({ label: 'retry' }) as Parameters<typeof RetryEdge>[0])} />
       );
-      const labelText = screen.getByText('retry');
-      const badge = labelText.closest('div')!;
-      expect(badge.style.transform).toContain('50px');
-      expect(badge.style.transform).toContain('75px');
-    });
-  });
-
-  describe('draggable control-point handle', () => {
-    it('renders a focusable button handle at the control point', () => {
-      render(<RetryEdge {...(makeEdgeProps() as Parameters<typeof RetryEdge>[0])} />);
       const handle = screen.getByTestId('retry-edge-handle-edge-1');
-      expect(handle).toBeInTheDocument();
-      expect(handle.tagName).toBe('BUTTON');
-      // Default control = (50, 150)
       expect(handle.style.transform).toContain('50px');
-      expect(handle.style.transform).toContain('150px');
+      expect(handle.style.transform).toContain('75px');
     });
 
-    it('positions the handle at data.controlPoint when supplied', () => {
+    it('honours data.controlPoint when supplied (label sits at the new midpoint)', () => {
+      // CP = (200, -80). Curve midpoint = midpoint of {(50, 0), (200, -80)} = (125, -40).
       render(
         <RetryEdge
           {...(makeEdgeProps({
-            data: { controlPoint: { x: 250, y: -40 } },
+            data: { controlPoint: { x: 200, y: -80 } },
           }) as Parameters<typeof RetryEdge>[0])}
         />
       );
       const handle = screen.getByTestId('retry-edge-handle-edge-1');
-      expect(handle.style.transform).toContain('250px');
+      expect(handle.style.transform).toContain('125px');
       expect(handle.style.transform).toContain('-40px');
     });
 
@@ -162,6 +152,15 @@ describe('RetryEdge', () => {
       expect(handle.style.cursor).toBe('grab');
       fireEvent.mouseDown(handle);
       expect(handle.style.cursor).toBe('grabbing');
+    });
+
+    it('renders a Move icon to signal draggability', () => {
+      const { container } = render(
+        <RetryEdge {...(makeEdgeProps() as Parameters<typeof RetryEdge>[0])} />
+      );
+      // lucide icons render as svg elements with the lucide class.
+      const icon = container.querySelector('svg.lucide-move');
+      expect(icon).not.toBeNull();
     });
   });
 });
