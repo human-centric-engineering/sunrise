@@ -861,7 +861,15 @@ export class OrchestrationEngine {
       };
     }
 
-    yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+    // Skip the step_completed event for skipped steps — runStepWithStrategy
+    // already yielded step_failed { willRetry: false } when the strategy
+    // resolved to 'skip', and emitting both events for the same step is
+    // contradictory. Matches executeParallelBatch which only emits one
+    // event per skipped step. The trace entry's status: 'skipped' remains
+    // the canonical record.
+    if (!result.skipped) {
+      yield stepCompleted(step.id, result.output, result.tokensUsed, result.costUsd, durationMs);
+    }
 
     if (
       budgetLimitUsd &&

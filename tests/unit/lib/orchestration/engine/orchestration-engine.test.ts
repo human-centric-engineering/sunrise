@@ -212,6 +212,32 @@ describe('OrchestrationEngine', () => {
     expect(types).toContain('workflow_completed');
   });
 
+  it('skip strategy does NOT also emit step_completed for the skipped step', async () => {
+    // Sequential previously emitted both step_failed AND step_completed for
+    // a skipped step — contradictory and inconsistent with the parallel
+    // path. Now the only step-level event for a skipped step is step_failed.
+    // The trace entry's status:'skipped' is the canonical record.
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'skip' };
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError('a', 'bad', 'boom');
+      return { output: 'b-output', tokensUsed: 1, costUsd: 0.001 };
+    });
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    // Only one step_completed should appear (for step b, which succeeded).
+    const completedFor = events
+      .filter((e) => e.type === 'step_completed')
+      .map((e) => (e as { stepId: string }).stepId);
+    expect(completedFor).toEqual(['b']);
+    // step_failed should appear for the skipped step a.
+    const failedFor = events
+      .filter((e) => e.type === 'step_failed')
+      .map((e) => (e as { stepId: string }).stepId);
+    expect(failedFor).toContain('a');
+  });
+
   it('human_approval pauses execution with approval_required', async () => {
     const def: WorkflowDefinition = {
       steps: [
