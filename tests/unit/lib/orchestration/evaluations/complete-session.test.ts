@@ -567,6 +567,316 @@ describe('per-turn metric scoring', () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildAnalysisMessages — capability log formatting and null description
+// ---------------------------------------------------------------------------
+
+describe('buildAnalysisMessages contract', () => {
+  it('formats capability_call logs with capabilitySlug prefix in the transcript', async () => {
+    // Arrange: a session with a capability_call log so the ternary true-branch is taken.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, {
+        eventType: 'capability_call',
+        content: 'search query',
+        capabilitySlug: 'web-search',
+      }),
+    ]);
+    const chat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    // Act
+    await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Assert: the capability slug and content appear in the user message
+    const userMsg = chat.mock.calls[0][0].find((m: { role: string }) => m.role === 'user') as {
+      content: string;
+    };
+    expect(userMsg.content).toContain('web-search: search query');
+    // The format is "#seq [capability_call] slug: content"
+    expect(userMsg.content).toMatch(/#1 \[capability_call\] web-search:/);
+  });
+
+  it('formats capability_result logs with capabilitySlug prefix in the transcript', async () => {
+    // Arrange: a capability_result log — the other arm of the same ternary.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, {
+        eventType: 'capability_result',
+        content: 'result data',
+        capabilitySlug: 'web-search',
+      }),
+    ]);
+    const chat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    const userMsg = chat.mock.calls[0][0].find((m: { role: string }) => m.role === 'user') as {
+      content: string;
+    };
+    expect(userMsg.content).toMatch(/#1 \[capability_result\] web-search:/);
+    expect(userMsg.content).toContain('web-search: result data');
+  });
+
+  it('uses "unknown" when a capability log has a null capabilitySlug', async () => {
+    // Covers capabilitySlug ?? 'unknown' fallback on line 299.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'capability_call', content: 'data', capabilitySlug: null }),
+    ]);
+    const chat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    const userMsg = chat.mock.calls[0][0].find((m: { role: string }) => m.role === 'user') as {
+      content: string;
+    };
+    expect(userMsg.content).toContain('unknown: data');
+  });
+
+  it('omits the Description line when sessionDescription is null', async () => {
+    // Covers the null branch of `opts.sessionDescription ? ... : null` (line 314).
+    findFirst.mockResolvedValueOnce(makeSession({ description: null }));
+    findLogs.mockResolvedValueOnce([makeLog(1)]);
+    const chat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    const userMsg = chat.mock.calls[0][0].find((m: { role: string }) => m.role === 'user') as {
+      content: string;
+    };
+    expect(userMsg.content).not.toContain('Description:');
+    expect(userMsg.content).toContain('Evaluation title:');
+  });
+
+  it('retries when the LLM returns valid JSON that does not match the expected shape', async () => {
+    // Covers parseAnalysis returning null for valid-JSON-wrong-shape (branch 28, line 335).
+    // The first response is valid JSON but missing required fields → retry.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([makeLog(1)]);
+
+    const wrongShape = { unexpected: 'field' };
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify(wrongShape),
+        usage: { inputTokens: 15, outputTokens: 8 },
+        model: 'claude-sonnet-4-6',
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce(VALID_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Two chat calls — original + retry
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(result.summary).toBe('Agent performed well.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-turn metric scoring — skip and null-score branches
+// ---------------------------------------------------------------------------
+
+describe('per-turn metric scoring — branch coverage', () => {
+  it('skips non-ai_response non-user_input events when scoring (e.g. capability_call)', async () => {
+    // Covers: log.eventType !== 'ai_response' continue (branch 31, line 392).
+    // A capability_call between user_input and ai_response is silently skipped;
+    // only the ai_response log is scored.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q?' }),
+      makeLog(2, { eventType: 'capability_call', content: 'tool data', capabilitySlug: 'search' }),
+      makeLog(3, { eventType: 'ai_response', content: 'A.' }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Only the ai_response log is scored; capability_call is skipped entirely.
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    expect(updateLog.mock.calls[0][0].where.id).toBe('log-3');
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+  });
+
+  it('skips an ai_response that has no preceding user_input in the log sequence', async () => {
+    // Covers: !lastUserContent continue (branch 32, line 393).
+    // An ai_response that appears before any user_input is skipped.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'ai_response', content: 'Orphaned response.' }),
+      makeLog(2, { eventType: 'user_input', content: 'Q?' }),
+      makeLog(3, { eventType: 'ai_response', content: 'Proper answer.' }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Only log-3 (with a preceding question) is scored; log-1 is skipped.
+    expect(updateLog).toHaveBeenCalledTimes(1);
+    expect(updateLog.mock.calls[0][0].where.id).toBe('log-3');
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+  });
+
+  it('does not include null scores in the aggregate averages', async () => {
+    // Covers: faithfulness.score !== null / groundedness.score !== null / relevance.score !== null
+    // branches (lines 421–423). A null faithfulness score must not skew the average.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q?' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A (no inline markers).' }),
+    ]);
+
+    const judgeResponseWithNullFaithfulness = {
+      content: JSON.stringify({
+        faithfulness: { score: null, reasoning: 'No inline citations to evaluate.' },
+        groundedness: { score: 0.8, reasoning: 'Grounded.' },
+        relevance: { score: 1.0, reasoning: 'Direct.' },
+      }),
+      usage: { inputTokens: 80, outputTokens: 40 },
+      model: 'claude-sonnet-4-6',
+      finishReason: 'stop' as const,
+    };
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(judgeResponseWithNullFaithfulness);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Null faithfulness score is NOT averaged — avgFaithfulness should be null.
+    expect(result.metricSummary?.avgFaithfulness).toBeNull();
+    // Non-null scores are averaged normally.
+    expect(result.metricSummary?.avgGroundedness).toBeCloseTo(0.8);
+    expect(result.metricSummary?.avgRelevance).toBeCloseTo(1.0);
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+  });
+
+  it('omits agentId from the scoring cost log when agentId is null', async () => {
+    // Covers: if (opts.agentId) costParams.agentId = ... false branch (line 449).
+    // In rescoreEvaluationSession, the session may have a null agentId.
+    findFirst.mockResolvedValueOnce({
+      id: 'sess-1',
+      status: 'completed',
+      agentId: null,
+      metricSummary: null,
+    });
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A.', metadata: { citations: [] } }),
+    ]);
+
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(judgeChat));
+    updateLog.mockResolvedValue({});
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    await rescoreEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Scoring cost was logged but without an agentId field.
+    expect(mockedLogCost).toHaveBeenCalledTimes(1);
+    expect(mockedLogCost.mock.calls[0][0]).not.toHaveProperty('agentId');
+    expect(mockedLogCost.mock.calls[0][0].metadata?.phase).toBe('scoring');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractLogCitations — defensive validation branches
+// ---------------------------------------------------------------------------
+
+describe('extractLogCitations — defensive validation', () => {
+  it('returns empty citations when the metadata.citations field is not an array', async () => {
+    // Covers: !Array.isArray(citations) return [] branch (line 481).
+    // A hand-edited row where citations is an object, not an array.
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q?' }),
+      makeLog(2, {
+        eventType: 'ai_response',
+        content: 'A.',
+        // citations is an object, not an array — should be treated as empty.
+        metadata: { citations: { marker: 1, excerpt: 'Body.' } },
+      }),
+    ]);
+
+    const summaryChat = vi.fn().mockResolvedValueOnce(VALID_RESPONSE);
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider
+      .mockResolvedValueOnce(makeProvider(summaryChat))
+      .mockResolvedValueOnce(makeProvider(judgeChat));
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+    updateLog.mockResolvedValue({});
+
+    const result = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // Scoring completed despite the malformed citations field.
+    expect(result.metricSummary?.scoredLogCount).toBe(1);
+    // The judge was called with no citations (empty array in the prompt).
+    const userMsg = (judgeChat.mock.calls[0][0] as Array<{ role: string; content: string }>).find(
+      (m) => m.role === 'user'
+    );
+    expect(userMsg?.content).toContain('no cited sources');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rescoreEvaluationSession — additional branch coverage
+// ---------------------------------------------------------------------------
+
+describe('rescoreEvaluationSession — additional branches', () => {
+  it('uses 0 as previousCost when metricSummary exists but has no totalScoringCostUsd field', async () => {
+    // Covers: previous?.totalScoringCostUsd ?? 0 fallback when the field is absent (branch 20, line 229).
+    findFirst.mockResolvedValueOnce({
+      id: 'sess-1',
+      status: 'completed',
+      agentId: 'agent-1',
+      // metricSummary exists but has no totalScoringCostUsd — simulates schema drift.
+      metricSummary: { scoredLogCount: 2, scoredAt: '2024-01-01T00:00:00.000Z' },
+    });
+    findLogs.mockResolvedValueOnce([
+      makeLog(1, { eventType: 'user_input', content: 'Q' }),
+      makeLog(2, { eventType: 'ai_response', content: 'A.', metadata: { citations: [] } }),
+    ]);
+
+    const judgeChat = vi.fn().mockResolvedValueOnce(VALID_JUDGE_RESPONSE);
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(judgeChat));
+    updateLog.mockResolvedValue({});
+    update.mockResolvedValueOnce({ id: 'sess-1' });
+
+    const result = await rescoreEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
+
+    // previousCost fell back to 0; totalScoringCostUsd reflects only the new run's cost.
+    expect(result.metricSummary.totalScoringCostUsd).toBeCloseTo(0.003);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // rescoreEvaluationSession
 // ---------------------------------------------------------------------------
 

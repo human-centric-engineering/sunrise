@@ -532,3 +532,273 @@ describe('setSpanAttributes', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Option defaults and edge cases
+// ---------------------------------------------------------------------------
+
+describe('option defaults and edge cases', () => {
+  afterEach(() => {
+    resetTracer();
+    vi.restoreAllMocks();
+  });
+
+  // -------------------------------------------------------------------------
+  // truncateAttributes — undefined / falsy early-return branch (line 24)
+  // -------------------------------------------------------------------------
+
+  it('startManualSpan: handles undefined attrs without throwing (truncateAttributes falsy early-return branch)', () => {
+    // Arrange — cast undefined to bypass TS; drives the `if (!attrs) return attrs` branch
+    // in truncateAttributes (line 24). The TypeScript signature requires SpanAttributes, but
+    // the runtime guard exists for defensive safety.
+    const tracer = new RecordingTracer();
+    registerTracer(tracer);
+
+    // Act — startManualSpan internally calls truncateAttributes(undefined)
+    const { end } = startManualSpan('undefined-attrs-span', undefined as unknown as SpanAttributes);
+    end({ code: 'ok' });
+
+    // Assert — span created and status recorded cleanly; truncateAttributes returned without iterating
+    expect(tracer.spans).toHaveLength(1);
+    expect(tracer.spans[0].span.status).toEqual({ code: 'ok' });
+  });
+
+  // -------------------------------------------------------------------------
+  // withSpan — non-Error thrown by fn (line 101 'error' literal branch)
+  // -------------------------------------------------------------------------
+
+  it('withSpan: uses "error" as the status message when fn throws a non-Error value', async () => {
+    // Arrange — throw a plain string (not an Error instance)
+    const tracer = new RecordingTracer();
+    registerTracer(tracer);
+
+    // Act
+    await expect(
+      withSpan('non-error-throw-span', {}, async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'plain string error';
+      })
+    ).rejects.toThrow('plain string error');
+
+    // Assert — span status message falls back to the literal 'error' string
+    const { span } = tracer.spans[0];
+    expect(span.status).toEqual({ code: 'error', message: 'error' });
+    // Exception is still recorded (recordException not opted out)
+    expect(span.exceptions).toHaveLength(1);
+    expect(span.exceptions[0]).toBe('plain string error');
+    expect(span.ended).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // withSpan — non-Error thrown by startSpan (line 91 String(err) branch)
+  // -------------------------------------------------------------------------
+
+  it('withSpan: logs String(err) in the warn when startSpan throws a non-Error value', async () => {
+    // Arrange — a tracer whose startSpan throws a plain string
+    const nonErrorThrowingTracer: Tracer = {
+      startSpan: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'string tracer error';
+      },
+      withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+    };
+    registerTracer(nonErrorThrowingTracer);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Act — fn must still run (fallback to NOOP_SPAN)
+    const result = await withSpan('non-error-startspan-span', {}, async () => 'ran');
+
+    // Assert — fn ran, warn was called with String(err) as the error field
+    expect(result).toBe('ran');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.startSpan threw — proceeding without span',
+      expect.objectContaining({ error: 'string tracer error' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // startManualSpan — non-Error thrown by startSpan (line 130 String(err) branch)
+  // -------------------------------------------------------------------------
+
+  it('startManualSpan: logs String(err) in the warn when startSpan throws a non-Error value', () => {
+    // Arrange
+    const nonErrorThrowingTracer: Tracer = {
+      startSpan: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 42;
+      },
+      withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+    };
+    registerTracer(nonErrorThrowingTracer);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Act
+    const { span, end } = startManualSpan('manual-non-error-throw', {});
+    end({ code: 'ok' });
+
+    // Assert — NOOP_SPAN fallback, warn carries String(42) = '42'
+    expect(span).toBe(NOOP_SPAN);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.startSpan threw — proceeding without span',
+      expect.objectContaining({ error: '42' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // safeSetStatus — non-Error thrown by span.setStatus (line 38 String(err) branch)
+  // -------------------------------------------------------------------------
+
+  it('withSpan: logs String(err) in safeSetStatus warn when setStatus throws a non-Error', async () => {
+    // Arrange — a span whose setStatus throws a plain string
+    const stringThrowSpan: Span = {
+      setAttribute: vi.fn(),
+      setAttributes: vi.fn(),
+      setStatus: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'setStatus string error';
+      },
+      recordException: vi.fn(),
+      end: vi.fn(),
+      traceId: () => '',
+      spanId: () => '',
+    };
+    const stringThrowTracer: Tracer = {
+      startSpan: () => stringThrowSpan,
+      withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+    };
+    registerTracer(stringThrowTracer);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Act — fn succeeds; safeSetStatus fires and its internal catch gets a non-Error
+    const result = await withSpan('setStatus-non-error', {}, async () => 'done');
+
+    // Assert — result preserved; warn carries the stringified value
+    expect(result).toBe('done');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.setStatus threw — continuing',
+      expect.objectContaining({ error: 'setStatus string error' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // safeRecordException — non-Error thrown by span.recordException (line 49)
+  // -------------------------------------------------------------------------
+
+  it('withSpan: logs String(err) in safeRecordException warn when recordException throws a non-Error', async () => {
+    // Arrange — span whose recordException throws a plain number
+    const recordThrowSpan: Span = {
+      setAttribute: vi.fn(),
+      setAttributes: vi.fn(),
+      setStatus: vi.fn(),
+      recordException: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 99;
+      },
+      end: vi.fn(),
+      traceId: () => '',
+      spanId: () => '',
+    };
+    const recordThrowTracer: Tracer = {
+      startSpan: () => recordThrowSpan,
+      withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+    };
+    registerTracer(recordThrowTracer);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const fnError = new Error('fn threw');
+
+    // Act — fn throws so safeRecordException is called; recordException internally throws non-Error
+    await expect(
+      withSpan('recordException-non-error', {}, async () => {
+        throw fnError;
+      })
+    ).rejects.toThrow('fn threw');
+
+    // Assert — warn carries String(99) = '99'
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.recordException threw — continuing',
+      expect.objectContaining({ error: '99' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // safeEnd — non-Error thrown by span.end (line 60 String(err) branch)
+  // -------------------------------------------------------------------------
+
+  it('withSpan: logs String(err) in safeEnd warn when end throws a non-Error', async () => {
+    // Arrange — span whose end throws a plain object
+    const endThrowSpan: Span = {
+      setAttribute: vi.fn(),
+      setAttributes: vi.fn(),
+      setStatus: vi.fn(),
+      recordException: vi.fn(),
+      end: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw { msg: 'end-object-error' };
+      },
+      traceId: () => '',
+      spanId: () => '',
+    };
+    const endThrowTracer: Tracer = {
+      startSpan: () => endThrowSpan,
+      withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+    };
+    registerTracer(endThrowTracer);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Act — fn succeeds; safeEnd fires in the finally block
+    const result = await withSpan('safeEnd-non-error', {}, async () => 'ok');
+
+    // Assert — result preserved; warn carries String({ msg: 'end-object-error' })
+    expect(result).toBe('ok');
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.end threw — continuing',
+      expect.objectContaining({ error: '[object Object]' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // setSpanAttributes — truncateAttributes returns undefined → ?? {} fallback (line 151)
+  // -------------------------------------------------------------------------
+
+  it('setSpanAttributes: calls span.setAttributes with {} when truncateAttributes returns undefined', () => {
+    // Arrange — pass undefined as attrs (cast to bypass TS); truncateAttributes returns undefined
+    // so the ?? {} fallback on line 151 kicks in, calling setAttributes({}) instead of undefined
+    const span = new RecordingSpan();
+
+    // Act
+    setSpanAttributes(span, undefined as unknown as SpanAttributes);
+
+    // Assert — setAttributes was called with the {} fallback (no keys set, but called cleanly)
+    expect(span.attributes).toEqual({});
+  });
+
+  // -------------------------------------------------------------------------
+  // setSpanAttributes — non-Error thrown by span.setAttributes (line 154)
+  // -------------------------------------------------------------------------
+
+  it('setSpanAttributes: logs String(err) in the warn when setAttributes throws a non-Error', () => {
+    // Arrange — a span whose setAttributes throws a plain string
+    const brokenSpan: Span = {
+      setAttribute: vi.fn(),
+      setAttributes: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'string-setAttributes-error';
+      },
+      setStatus: vi.fn(),
+      recordException: vi.fn(),
+      end: vi.fn(),
+      traceId: () => '',
+      spanId: () => '',
+    };
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // Act
+    setSpanAttributes(brokenSpan, { key: 'value' });
+
+    // Assert — warn carries String('string-setAttributes-error')
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Tracer.setAttributes threw — continuing',
+      expect.objectContaining({ error: 'string-setAttributes-error' })
+    );
+  });
+});
