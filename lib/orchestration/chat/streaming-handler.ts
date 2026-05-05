@@ -1148,6 +1148,11 @@ export class StreamingChatHandler {
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
       );
     } catch (err) {
+      // Set chatSpanError up front so every caught-exception path (including
+      // ChatError early-return below) marks the chat.turn span as error in
+      // the finally. In-try `yield errorEvent(...); return;` paths are
+      // application-level outcomes (HTTP 4xx-equivalent) and keep span ok.
+      chatSpanError = err;
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {
           code: err.code,
@@ -1158,7 +1163,6 @@ export class StreamingChatHandler {
         yield errorEvent(err.code, err.message);
         return;
       }
-      chatSpanError = err;
       if (err instanceof ProviderError) {
         log.warn('Provider error during chat', {
           code: err.code,

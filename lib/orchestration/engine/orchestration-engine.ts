@@ -1040,7 +1040,7 @@ export class OrchestrationEngine {
         const durationMs = Date.now() - started;
         if (err instanceof PausedForApproval) {
           // Pause is not a tracer-level error — workflow continues from the
-          // pause point after admin approval. Mark span ok with a payload-attribute.
+          // pause point after admin approval.
           endParallelSpan({ code: 'ok' });
           return {
             step,
