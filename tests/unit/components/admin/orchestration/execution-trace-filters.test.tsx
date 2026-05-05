@@ -63,16 +63,18 @@ describe('applyTraceFilter', () => {
     expect(result.map((e) => e.stepId).sort()).toEqual(['b', 'e']);
   });
 
-  it('"slow" returns the original trace unchanged when threshold cannot be computed', () => {
+  it('"slow" filters by p90 threshold when computable (≥ 5 entries)', () => {
     // n=5 → slowOutlierThresholdMs returns p90; for [0,50,100,200,300] sorted, p90 = 300.
     const result = applyTraceFilter(trace, 'slow');
     // Only the 300ms entry meets ≥ p90.
     expect(result.map((e) => e.stepId)).toEqual(['e']);
   });
 
-  it('"slow" returns full trace when fewer than 5 entries (threshold null)', () => {
+  it('"slow" returns [] for traces with fewer than 5 entries (no threshold)', () => {
+    // Short traces have no statistically meaningful "slow" outlier — returning
+    // [] keeps the chip count at 0 so the UI auto-disables it.
     const tiny = trace.slice(0, 3);
-    expect(applyTraceFilter(tiny, 'slow')).toEqual(tiny);
+    expect(applyTraceFilter(tiny, 'slow')).toEqual([]);
   });
 });
 
@@ -101,6 +103,13 @@ describe('ExecutionTraceFilters', () => {
     expect(screen.getByTestId('trace-filter-with-approvals')).toBeDisabled();
     expect(screen.getByTestId('trace-filter-tool-only')).toBeDisabled();
     expect(screen.getByTestId('trace-filter-all')).not.toBeDisabled();
+  });
+
+  it('disables "slow" when the trace is too short to compute a p90 threshold', () => {
+    // 2-entry trace → slowOutlierThresholdMs is null → applyTraceFilter('slow') is [] → count 0.
+    render(<ExecutionTraceFilters trace={sampleTrace} active="all" onChange={() => {}} />);
+    expect(screen.getByTestId('trace-filter-slow')).toBeDisabled();
+    expect(screen.getByTestId('trace-filter-slow')).toHaveTextContent('0');
   });
 
   it('fires onChange with the clicked filter id', async () => {

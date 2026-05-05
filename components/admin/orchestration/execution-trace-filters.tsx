@@ -51,7 +51,10 @@ export function applyTraceFilter(
   }
   if (filter === 'slow') {
     const threshold = slowOutlierThresholdMs(trace);
-    if (threshold === null) return trace;
+    // `null` means the trace is too short to identify outliers (< 5 entries).
+    // Return an empty list so the chip's count is 0 and the chip auto-disables —
+    // showing "everything" under a Slow filter would be misleading.
+    if (threshold === null) return [];
     return trace.filter((e) => e.durationMs >= threshold);
   }
   if (filter === 'llm-only') {
