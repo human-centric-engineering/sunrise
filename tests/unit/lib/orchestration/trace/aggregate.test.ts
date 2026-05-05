@@ -82,16 +82,16 @@ describe('rollupTelemetry', () => {
 describe('computeTraceAggregates', () => {
   it('returns an empty-shape result for an empty trace', () => {
     const result = computeTraceAggregates([]);
-    expect(result.totalWallMs).toBe(0);
+    expect(result.stepTimeSumMs).toBe(0);
     expect(result.p50DurationMs).toBeNull();
     expect(result.p95DurationMs).toBeNull();
     expect(result.slowestStep).toBeNull();
     expect(result.byStepType).toEqual({});
   });
 
-  it('sums totalWallMs and skips percentiles for single-entry traces', () => {
+  it('sums stepTimeSumMs and skips percentiles for single-entry traces', () => {
     const result = computeTraceAggregates([entry({ durationMs: 200 })]);
-    expect(result.totalWallMs).toBe(200);
+    expect(result.stepTimeSumMs).toBe(200);
     expect(result.p50DurationMs).toBeNull();
     expect(result.p95DurationMs).toBeNull();
     expect(result.slowestStep).toEqual({ stepId: 's1', label: 'Step', durationMs: 200 });
@@ -109,7 +109,7 @@ describe('computeTraceAggregates', () => {
     expect(result.p95DurationMs).toBe(1000);
     expect(result.slowestStep?.stepId).toBe('s9');
     expect(result.slowestStep?.durationMs).toBe(1000);
-    expect(result.totalWallMs).toBe(5500);
+    expect(result.stepTimeSumMs).toBe(5500);
   });
 
   it('breaks ties on slowestStep by first-seen order (stable)', () => {

@@ -44,6 +44,19 @@ describe('ExecutionAggregates', () => {
     expect(screen.getByTestId('execution-aggregates')).toBeInTheDocument();
   });
 
+  it('labels the per-step duration sum as "Step time sum" (not wall-clock)', () => {
+    // Sum is 300ms across the two entries — and the label intentionally
+    // does NOT say "wall-clock" because parallel branches inflate this.
+    render(
+      <ExecutionAggregates
+        trace={[entry({ stepId: 'a', durationMs: 100 }), entry({ stepId: 'b', durationMs: 200 })]}
+      />
+    );
+    const term = screen.getByText('Step time sum');
+    expect(term).toBeInTheDocument();
+    expect(term.closest('div')).toHaveTextContent(/300 ms/);
+  });
+
   it('shows the slowest step label and duration', () => {
     render(
       <ExecutionAggregates

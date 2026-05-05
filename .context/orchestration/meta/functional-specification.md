@@ -467,7 +467,7 @@ Admin dashboard with:
 
 Per-execution detail page (`/admin/orchestration/executions/:id`) with:
 
-- **Aggregates card** — total wall-clock, p50 / p95 step duration, slowest step, LLM share (LLM ms / total ms), per-step-type breakdown (count · duration · tokens). Hidden for traces with fewer than 2 entries.
+- **Aggregates card** — step time sum (sum of per-step `durationMs` — NOT wall-clock; parallel branches inflate it), p50 / p95 step duration, slowest step, LLM share (sum of `llmDurationMs` / step time sum), per-step-type breakdown (count · duration · tokens). The Duration card up in the summary grid shows true wall-clock. Hidden for traces with fewer than 2 entries.
 - **Timeline strip** — Gantt-style horizontal bar per step, widths proportional to the slowest step. Slow outliers (≥ p90 in traces with ≥ 5 entries) and failed steps colour-coded; awaiting-approval bars amber-striped. Click → scroll-to + ring-highlight the matching trace row.
 - **Per-step row** — header carries provider · model chip and a latency breakdown ("LLM xxx ms · other yyy ms"). Expanded body shows input + output side-by-side and a per-call cost sub-table populated from `AiCostLog` rows attributed to the step (multi-turn executors like `tool_call` / `agent_call` / `orchestrator` produce several rows).
 - **Filter chips** — All / Failed / Slow / LLM only / Tool only / With approvals. Local state, not URL-persisted. Disabled chips show their zero count rather than vanishing.

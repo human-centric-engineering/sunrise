@@ -57,9 +57,12 @@ export function rollupTelemetry(entries: LlmTelemetryEntry[]): {
  * Computed summary across an entire execution trace. Powers the
  * aggregates card on the execution detail page (Phase 3).
  *
- * - `totalWallMs` is the sum of `durationMs` across all entries; it does
- *   not collapse parallel branches because parallelism is implicit in the
- *   trace ordering and is rare in single-tenant deployments.
+ * - `stepTimeSumMs` is the sum of `durationMs` across all entries. It is
+ *   NOT wall-clock: for workflows with parallel branches it exceeds the
+ *   actual run duration (the engine reports each branch's full duration
+ *   even though they ran concurrently). True wall-clock comes from
+ *   `execution.startedAt`/`completedAt` and is shown in the summary cards
+ *   above the aggregates card.
  * - p50 / p95 are computed via the standard "nearest-rank" method on
  *   `durationMs`. For traces with < 2 entries, returns `null` — callers
  *   should hide the aggregate row in that case.
@@ -68,7 +71,11 @@ export function rollupTelemetry(entries: LlmTelemetryEntry[]): {
  *   step.
  */
 export interface TraceAggregates {
-  totalWallMs: number;
+  /**
+   * Sum of per-step `durationMs`. NOT wall-clock — parallel branches each
+   * contribute their full duration. UI label: "Step time sum".
+   */
+  stepTimeSumMs: number;
   p50DurationMs: number | null;
   p95DurationMs: number | null;
   slowestStep: { stepId: string; label: string; durationMs: number } | null;
@@ -81,7 +88,7 @@ export interface TraceAggregates {
 export function computeTraceAggregates(trace: ExecutionTraceEntry[]): TraceAggregates {
   if (trace.length === 0) {
     return {
-      totalWallMs: 0,
+      stepTimeSumMs: 0,
       p50DurationMs: null,
       p95DurationMs: null,
       slowestStep: null,
@@ -92,7 +99,7 @@ export function computeTraceAggregates(trace: ExecutionTraceEntry[]): TraceAggre
     };
   }
 
-  let totalWallMs = 0;
+  let stepTimeSumMs = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalLlmDurationMs = 0;
@@ -101,7 +108,7 @@ export function computeTraceAggregates(trace: ExecutionTraceEntry[]): TraceAggre
 
   for (let i = 0; i < trace.length; i++) {
     const entry = trace[i];
-    totalWallMs += entry.durationMs;
+    stepTimeSumMs += entry.durationMs;
     totalInputTokens += entry.inputTokens ?? 0;
     totalOutputTokens += entry.outputTokens ?? 0;
     totalLlmDurationMs += entry.llmDurationMs ?? 0;
@@ -118,7 +125,7 @@ export function computeTraceAggregates(trace: ExecutionTraceEntry[]): TraceAggre
   const sorted = trace.length >= 2 ? trace.map((e) => e.durationMs).sort((a, b) => a - b) : null;
 
   return {
-    totalWallMs,
+    stepTimeSumMs,
     p50DurationMs: sorted ? percentile(sorted, 50) : null,
     p95DurationMs: sorted ? percentile(sorted, 95) : null,
     slowestStep: {

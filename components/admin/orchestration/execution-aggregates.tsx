@@ -4,9 +4,15 @@
  * ExecutionAggregates — summary card row above the trace timeline.
  *
  * Surfaces the aggregates the trace viewer cares about that aren't
- * obvious from scrolling the per-step list: total wall, p50 / p95 step
- * duration, slowest step, total LLM time and tokens, and a per-step-type
- * breakdown.
+ * obvious from scrolling the per-step list: step-time sum, p50 / p95
+ * step duration, slowest step, total LLM time and tokens, and a
+ * per-step-type breakdown.
+ *
+ * "Step time sum" is the sum of per-step `durationMs` — NOT wall-clock.
+ * Parallel branches contribute each branch's full duration, so the value
+ * exceeds true wall-clock for workflows with `parallel` steps. The true
+ * wall-clock duration is shown in the Duration card up in the summary
+ * grid (`startedAt`/`completedAt`).
  *
  * Hidden when the trace has fewer than 2 entries — single-step traces
  * have no aggregate to summarise.
@@ -34,8 +40,13 @@ export function ExecutionAggregates({
   if (trace.length < 2) return null;
 
   const aggregates = computeTraceAggregates(trace);
+  // Fraction of step-time-sum spent inside LLM calls. Using the sum (not
+  // wall-clock) keeps the share consistent with the per-entry `llmDurationMs`
+  // values it's derived from.
   const llmFraction =
-    aggregates.totalWallMs > 0 ? (aggregates.totalLlmDurationMs / aggregates.totalWallMs) * 100 : 0;
+    aggregates.stepTimeSumMs > 0
+      ? (aggregates.totalLlmDurationMs / aggregates.stepTimeSumMs) * 100
+      : 0;
   const stepTypes = Object.entries(aggregates.byStepType).sort((a, b) => a[0].localeCompare(b[0]));
 
   return (
@@ -45,6 +56,12 @@ export function ExecutionAggregates({
           Aggregates
           <FieldHelp title="Trace aggregates">
             <p>Quick summary across the whole run.</p>
+            <p className="text-foreground mt-2 font-medium">Step time sum</p>
+            <p>
+              Sum of per-step durations. NOT wall-clock — parallel branches each contribute their
+              full duration, so this exceeds the actual run time for workflows with parallel steps.
+              The Duration card above shows the true wall-clock.
+            </p>
             <p className="text-foreground mt-2 font-medium">p50 / p95 duration</p>
             <p>
               Median and 95th-percentile step duration — the bulk of work happens at the p50, while
@@ -52,7 +69,7 @@ export function ExecutionAggregates({
             </p>
             <p className="text-foreground mt-2 font-medium">LLM share</p>
             <p>
-              Fraction of total wall-clock spent inside LLM calls. The rest is engine overhead, tool
+              Fraction of step time sum spent inside LLM calls. The rest is engine overhead, tool
               I/O, or DB checkpointing.
             </p>
           </FieldHelp>
@@ -61,9 +78,9 @@ export function ExecutionAggregates({
       <CardContent>
         <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <dt className="text-muted-foreground text-xs">Total wall</dt>
+            <dt className="text-muted-foreground text-xs">Step time sum</dt>
             <dd className="text-base font-semibold tabular-nums">
-              {formatMs(aggregates.totalWallMs)}
+              {formatMs(aggregates.stepTimeSumMs)}
             </dd>
           </div>
           <div>

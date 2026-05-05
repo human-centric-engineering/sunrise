@@ -97,7 +97,7 @@ Layout:
 - **Summary section**: 5 cards — status badge, total tokens, total cost, budget bar, duration.
 - **Error banner**: red alert when `execution.errorMessage` is present.
 - **Input/Output**: collapsible JSON cards (the execution-level inputs / outputs, distinct from the per-step `input` field).
-- **Aggregates card**: total wall-clock, p50 / p95 step duration, slowest step, LLM share (sum of `llmDurationMs` / total wall), per-step-type breakdown (count · duration · tokens). Hidden for traces with fewer than 2 entries.
+- **Aggregates card**: step time sum (sum of per-step `durationMs` — NOT wall-clock; parallel branches inflate it), p50 / p95 step duration, slowest step, LLM share (sum of `llmDurationMs` / step time sum), per-step-type breakdown (count · duration · tokens). True wall-clock is shown in the Duration card up in the summary grid. Hidden for traces with fewer than 2 entries.
 - **Timeline strip**: Gantt-style horizontal bar per step, widths proportional to the slowest step. Slow outliers (≥ p90 in traces with ≥ 5 entries) and failed bars colour-coded; awaiting-approval bars amber-striped. Click → ring-highlights and scrolls to the matching trace row below.
 - **Filter chips**: All / Failed / Slow / LLM only / Tool only / With approvals. Local state only — filter selection is not persisted to URL. Disabled chips show their (zero) count rather than vanishing.
 - **Step timeline**: per-trace-entry `ExecutionTraceEntryRow` with header (status pill, label, type, **provider · model chip**, duration, **latency breakdown** "LLM xxx ms · other yyy ms", token split, cost). Expanded body shows **input + output side-by-side** and a **per-call cost sub-table** populated from `costEntries[]` grouped by `stepId`.
