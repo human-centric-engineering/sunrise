@@ -315,7 +315,42 @@ export class OrchestrationEngine {
 
           const edgeKey = `${step.id}\u2192${id}`;
           const attempts = retryCount.get(edgeKey) ?? 0;
-          if (attempts >= retryEdge.maxRetries!) continue;
+          if (attempts >= retryEdge.maxRetries!) {
+            // Retry budget exhausted. If the source step has a sibling
+            // edge with the same condition but no maxRetries, route
+            // there as the exhaustion handler. Otherwise fall through
+            // to the legacy silent-halt behaviour.
+            const fallbackEdge = step.nextSteps.find(
+              (e) =>
+                e.targetStepId !== id &&
+                e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
+                (!e.maxRetries || e.maxRetries === 0)
+            );
+            if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
+              const failureReason =
+                typeof singleResult.output === 'object' &&
+                singleResult.output !== null &&
+                'reason' in singleResult.output
+                  ? (singleResult.output as Record<string, unknown>).reason
+                  : singleResult.output;
+              const reasonStr =
+                typeof failureReason === 'string'
+                  ? failureReason
+                  : failureReason !== undefined && failureReason !== null
+                    ? JSON.stringify(failureReason)
+                    : '';
+              queue.push(fallbackEdge.targetStepId);
+              yield stepRetry(
+                step.id,
+                fallbackEdge.targetStepId,
+                retryEdge.maxRetries! + 1,
+                retryEdge.maxRetries!,
+                reasonStr,
+                true
+              );
+            }
+            continue;
+          }
 
           // Under the retry limit — re-queue the target.
           retryCount.set(edgeKey, attempts + 1);

@@ -232,6 +232,9 @@ export type ExecutionEvent =
       attempt: number;
       maxRetries: number;
       reason: string;
+      // True when the retry budget is exhausted and `targetStepId`
+      // points to a sibling fallback edge instead of the retry target.
+      exhausted?: boolean;
     }
   | { type: 'approval_required'; stepId: string; payload: unknown }
   | { type: 'budget_warning'; usedUsd: number; limitUsd: number }

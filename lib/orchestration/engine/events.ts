@@ -47,9 +47,18 @@ export function stepRetry(
   targetStepId: string,
   attempt: number,
   maxRetries: number,
-  reason: string
+  reason: string,
+  exhausted = false
 ): ExecutionEvent {
-  return { type: 'step_retry', fromStepId, targetStepId, attempt, maxRetries, reason };
+  return {
+    type: 'step_retry',
+    fromStepId,
+    targetStepId,
+    attempt,
+    maxRetries,
+    reason,
+    ...(exhausted ? { exhausted: true } : {}),
+  };
 }
 
 export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent {
