@@ -17,6 +17,19 @@ import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manag
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
+import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_REQUEST_MODEL,
+  GEN_AI_REQUEST_MAX_TOKENS,
+  GEN_AI_RESPONSE_MODEL,
+  GEN_AI_SYSTEM,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  GEN_AI_USAGE_OUTPUT_TOKENS,
+  GEN_AI_USAGE_TOTAL_TOKENS,
+  SPAN_LLM_CALL,
+  setSpanAttributes,
+  withSpan,
+} from '@/lib/orchestration/tracing';
 
 const SUMMARY_SYSTEM_PROMPT = `You are a conversation summarizer. Given the conversation history below, produce a concise summary that preserves:
 - The user's original problem or request
@@ -48,26 +61,44 @@ export async function summarizeMessages(
 
     const formatted = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n\n');
 
-    const response = await provider.chat(
-      [
-        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-        { role: 'user', content: formatted },
-      ],
-      { model, maxTokens: 500 }
+    return await withSpan(
+      SPAN_LLM_CALL,
+      {
+        [GEN_AI_OPERATION_NAME]: 'summary',
+        [GEN_AI_REQUEST_MODEL]: model,
+        [GEN_AI_SYSTEM]: providerSlug,
+        [GEN_AI_REQUEST_MAX_TOKENS]: 500,
+      },
+      async (span) => {
+        const response = await provider.chat(
+          [
+            { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+            { role: 'user', content: formatted },
+          ],
+          { model, maxTokens: 500 }
+        );
+
+        setSpanAttributes(span, {
+          [GEN_AI_RESPONSE_MODEL]: model,
+          [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
+          [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
+          [GEN_AI_USAGE_TOTAL_TOKENS]: response.usage.inputTokens + response.usage.outputTokens,
+        });
+
+        // Fire-and-forget cost log for the summary call
+        void logCost({
+          agentId: 'system',
+          conversationId: 'summary',
+          model,
+          provider: providerSlug,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          operation: CostOperation.CHAT,
+        });
+
+        return response.content.trim() || FALLBACK_MESSAGE;
+      }
     );
-
-    // Fire-and-forget cost log for the summary call
-    void logCost({
-      agentId: 'system',
-      conversationId: 'summary',
-      model,
-      provider: providerSlug,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      operation: CostOperation.CHAT,
-    });
-
-    return response.content.trim() || FALLBACK_MESSAGE;
   } catch (err) {
     logger.warn('Conversation summarization failed, using fallback', {
       error: err instanceof Error ? err.message : String(err),

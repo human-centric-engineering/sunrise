@@ -89,6 +89,7 @@ export async function scoreResponse(params: ScoreResponseParams): Promise<ScoreR
     maxTokens: SCORING_MAX_TOKENS,
     timeoutMs: SCORING_TIMEOUT_MS,
     onFinalFailure: () => new Error('Judge response was not valid JSON after retry'),
+    phase: 'scoring',
   });
 
   return {

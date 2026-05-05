@@ -49,6 +49,27 @@ import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
 import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_REQUEST_MODEL,
+  GEN_AI_REQUEST_TEMPERATURE,
+  GEN_AI_RESPONSE_MODEL,
+  GEN_AI_SYSTEM,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  GEN_AI_USAGE_OUTPUT_TOKENS,
+  GEN_AI_USAGE_TOTAL_TOKENS,
+  SPAN_CHAT_TURN,
+  SPAN_LLM_CALL,
+  SUNRISE_AGENT_ID,
+  SUNRISE_AGENT_SLUG,
+  SUNRISE_CONVERSATION_ID,
+  SUNRISE_PROVIDER_FAILOVER_FROM,
+  SUNRISE_PROVIDER_FAILOVER_TO,
+  SUNRISE_TOOL_ITERATION,
+  SUNRISE_USER_ID,
+  setSpanAttributes,
+  startManualSpan,
+} from '@/lib/orchestration/tracing';
+import {
   MAX_HISTORY_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -149,10 +170,21 @@ export class StreamingChatHandler {
     const log = request.requestId ? logger.withContext({ requestId: request.requestId }) : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
+    const { span: chatSpan, end: endChatSpan } = startManualSpan(SPAN_CHAT_TURN, {
+      [GEN_AI_OPERATION_NAME]: 'chat',
+      [SUNRISE_USER_ID]: request.userId,
+      [SUNRISE_AGENT_SLUG]: request.agentSlug,
+    });
+    let chatSpanError: unknown = undefined;
     try {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
+      setSpanAttributes(chatSpan, {
+        [SUNRISE_AGENT_ID]: agent.id,
+        [GEN_AI_REQUEST_MODEL]: agent.model,
+        ...(agent.temperature !== null ? { [GEN_AI_REQUEST_TEMPERATURE]: agent.temperature } : {}),
+      });
 
       // Per-agent mutex prevents TOCTOU race between concurrent budget reads.
       // See lib/orchestration/llm/budget-mutex.ts for accepted over-run tolerance.
@@ -206,6 +238,7 @@ export class StreamingChatHandler {
         capSettings?.maxConversationsPerUser ?? null
       );
       conversationId = conversation.id;
+      setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
       const history = await this.loadHistory(conversation.id);
 
       // Enforce message-per-conversation cap using actual DB count
@@ -428,6 +461,18 @@ export class StreamingChatHandler {
         const MAX_STREAM_RETRIES = 2;
 
         while (!streamSucceeded && streamRetries <= MAX_STREAM_RETRIES) {
+          const { span: llmSpan, end: endLlmSpan } = startManualSpan(SPAN_LLM_CALL, {
+            [GEN_AI_OPERATION_NAME]: 'chat',
+            [GEN_AI_REQUEST_MODEL]: agent.model,
+            [GEN_AI_SYSTEM]: currentProviderSlug,
+            [SUNRISE_AGENT_ID]: agent.id,
+            [SUNRISE_AGENT_SLUG]: agent.slug,
+            [SUNRISE_CONVERSATION_ID]: conversation.id,
+            [SUNRISE_TOOL_ITERATION]: iteration,
+            ...(agent.temperature !== null
+              ? { [GEN_AI_REQUEST_TEMPERATURE]: agent.temperature }
+              : {}),
+          });
           try {
             const stream = currentProvider.chatStream(messages, llmOptions);
 
@@ -444,6 +489,15 @@ export class StreamingChatHandler {
               }
             }
             streamSucceeded = true;
+            if (usage) {
+              setSpanAttributes(llmSpan, {
+                [GEN_AI_RESPONSE_MODEL]: agent.model,
+                [GEN_AI_USAGE_INPUT_TOKENS]: usage.inputTokens,
+                [GEN_AI_USAGE_OUTPUT_TOKENS]: usage.outputTokens,
+                [GEN_AI_USAGE_TOTAL_TOKENS]: usage.inputTokens + usage.outputTokens,
+              });
+            }
+            endLlmSpan({ code: 'ok' });
           } catch (streamErr) {
             streamRetries++;
             getBreaker(currentProviderSlug).recordFailure();
@@ -453,6 +507,13 @@ export class StreamingChatHandler {
               streamErr instanceof Error &&
               (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
             ) {
+              endLlmSpan(
+                {
+                  code: 'error',
+                  message: streamErr instanceof Error ? streamErr.message : 'stream aborted',
+                },
+                streamErr
+              );
               throw streamErr;
             }
 
@@ -464,6 +525,13 @@ export class StreamingChatHandler {
                 provider: currentProviderSlug,
                 retries: streamRetries,
               });
+              endLlmSpan(
+                {
+                  code: 'error',
+                  message: streamErr instanceof Error ? streamErr.message : 'stream failed',
+                },
+                streamErr
+              );
               throw streamErr;
             }
 
@@ -472,6 +540,20 @@ export class StreamingChatHandler {
               nextProvider: nextSlug,
               error: streamErr instanceof Error ? streamErr.message : String(streamErr),
             });
+
+            // Record the failover on the failed span so the OTEL trace
+            // shows which provider was tried next.
+            setSpanAttributes(llmSpan, {
+              [SUNRISE_PROVIDER_FAILOVER_FROM]: currentProviderSlug,
+              [SUNRISE_PROVIDER_FAILOVER_TO]: nextSlug,
+            });
+            endLlmSpan(
+              {
+                code: 'error',
+                message: streamErr instanceof Error ? streamErr.message : 'stream failed',
+              },
+              streamErr
+            );
 
             yield {
               type: 'warning',
@@ -1076,6 +1158,7 @@ export class StreamingChatHandler {
         yield errorEvent(err.code, err.message);
         return;
       }
+      chatSpanError = err;
       if (err instanceof ProviderError) {
         log.warn('Provider error during chat', {
           code: err.code,
@@ -1125,6 +1208,18 @@ export class StreamingChatHandler {
       // provider SDK details, and internal hostnames to the client. The
       // detailed error has already been logged via logger.error above.
       yield errorEvent('internal_error', 'An unexpected error occurred');
+    } finally {
+      if (chatSpanError !== undefined) {
+        endChatSpan(
+          {
+            code: 'error',
+            message: chatSpanError instanceof Error ? chatSpanError.message : 'chat failed',
+          },
+          chatSpanError
+        );
+      } else {
+        endChatSpan({ code: 'ok' });
+      }
     }
   }
 
