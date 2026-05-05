@@ -19,6 +19,7 @@ import {
 } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 
+import { computePatternNodeSize } from '@/components/admin/orchestration/workflow-builder/box-sizing';
 import type { PatternNode as PatternNodeType } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
 
 export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
@@ -30,11 +31,7 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
 
-  // Reserve a right-side gutter wide enough for the longest output label so
-  // labels never overlay the centred step name. ~5.5px per char at text-[9px]
-  // sans-serif, plus a little breathing room. Zero gutter when no labels.
-  const longestLabelLen = outputLabels?.reduce((m, l) => Math.max(m, (l ?? '').length), 0) ?? 0;
-  const labelGutterPx = longestLabelLen > 0 ? Math.ceil(longestLabelLen * 5.5) + 8 : 0;
+  const size = computePatternNodeSize(data.type, data.config);
 
   return (
     <div
@@ -48,10 +45,10 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
         hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
       )}
       style={{
-        paddingLeft: 12,
-        paddingRight: 12 + labelGutterPx,
-        minWidth: 140 + labelGutterPx,
-        maxWidth: 160 + labelGutterPx,
+        paddingLeft: size.paddingLeft,
+        paddingRight: size.paddingRight,
+        minWidth: size.minWidth,
+        maxWidth: size.maxWidth,
       }}
     >
       {hasError && <span className="sr-only">Step has validation errors</span>}

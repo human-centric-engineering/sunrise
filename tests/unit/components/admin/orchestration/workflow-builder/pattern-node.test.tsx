@@ -173,8 +173,10 @@ describe('PatternNode', () => {
       expect(node.style.paddingLeft).toBe('12px');
     });
 
-    it('grows the right gutter and width to fit the longest output label', () => {
-      // Route step with a long admin-defined label — must not overlay the centred name.
+    it('grows the gutter symmetrically (both sides) to fit the longest output label', () => {
+      // Route step with a long admin-defined label. Gutter is mirrored on
+      // both sides so the centred step name stays visually centred — the
+      // box looks balanced rather than lopsided.
       renderNode({
         label: 'Classify',
         type: 'route',
@@ -188,11 +190,12 @@ describe('PatternNode', () => {
       });
       const node = screen.getByTestId('pattern-node-route');
       // longest = 'control_plane' (13 chars). Gutter = ceil(13 * 5.5) + 8 = 80px.
-      // minWidth = 140 + 80 = 220, maxWidth = 160 + 80 = 240, paddingRight = 12 + 80 = 92.
-      expect(node.style.minWidth).toBe('220px');
-      expect(node.style.maxWidth).toBe('240px');
+      // minWidth = 140 + 80*2 = 300, maxWidth = 160 + 80*2 = 320,
+      // paddingLeft = paddingRight = 12 + 80 = 92.
+      expect(node.style.minWidth).toBe('300px');
+      expect(node.style.maxWidth).toBe('320px');
+      expect(node.style.paddingLeft).toBe('92px');
       expect(node.style.paddingRight).toBe('92px');
-      expect(node.style.paddingLeft).toBe('12px');
     });
 
     it('marks the container relative so output labels anchor to the box', () => {

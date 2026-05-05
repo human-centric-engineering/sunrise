@@ -12,6 +12,7 @@
 
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 
+import { computePatternNodeSize } from '@/components/admin/orchestration/workflow-builder/box-sizing';
 import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
 import type {
   ConditionalEdge,
@@ -36,7 +37,9 @@ export type PatternNode = Node<PatternNodeData, 'pattern'>;
 
 const NODE_TYPE = 'pattern' as const;
 const LAYOUT_KEY = '_layout';
-const AUTO_LAYOUT_X_STEP = 220;
+/** Horizontal gap between the right edge of one column and the left
+ *  edge of the next. Each column packs to the widest box at that level. */
+const AUTO_LAYOUT_X_GAP = 60;
 const AUTO_LAYOUT_Y_STEP = 150;
 /** Alternate vertical offset per level to create a zigzag effect. */
 const AUTO_LAYOUT_Y_STAGGER = 40;
@@ -72,8 +75,12 @@ export function stripLayout(config: Record<string, unknown>): Record<string, unk
 }
 
 /**
- * Simple BFS level assignment — nodes at level N are placed at
- * `x = N * 260`, stacked vertically by visit order.
+ * BFS level assignment with width-aware column spacing.
+ *
+ * Each node sits in a BFS level (column). Within a level, nodes stack
+ * vertically. The horizontal position of level N is the cumulative
+ * sum of (max box width at level K + AUTO_LAYOUT_X_GAP) for K < N —
+ * so a column with one wide route step doesn't crowd its neighbours.
  *
  * Used when a step has no persisted layout. Unreachable steps get a
  * trailing column of their own.
@@ -113,6 +120,22 @@ function autoLayout(definition: WorkflowDefinition): Map<string, XYPosition> {
     }
   }
 
+  // Compute the widest box per level, then derive cumulative column x.
+  const maxWidthByLevel = new Map<number, number>();
+  for (const step of definition.steps) {
+    const lvl = levels.get(step.id) ?? orphanLevel;
+    const { maxWidth } = computePatternNodeSize(step.type, step.config);
+    maxWidthByLevel.set(lvl, Math.max(maxWidthByLevel.get(lvl) ?? 0, maxWidth));
+  }
+
+  const sortedLevels = Array.from(maxWidthByLevel.keys()).sort((a, b) => a - b);
+  const xByLevel = new Map<number, number>();
+  let cumulativeX = 0;
+  for (const lvl of sortedLevels) {
+    xByLevel.set(lvl, cumulativeX);
+    cumulativeX += (maxWidthByLevel.get(lvl) ?? 0) + AUTO_LAYOUT_X_GAP;
+  }
+
   // Stack vertically within each level using first-seen order.
   // Odd levels are offset vertically to create a zigzag/staggered effect.
   const indexInLevel = new Map<number, number>();
@@ -121,7 +144,7 @@ function autoLayout(definition: WorkflowDefinition): Map<string, XYPosition> {
     const idx = indexInLevel.get(level) ?? 0;
     const stagger = level % 2 === 1 ? AUTO_LAYOUT_Y_STAGGER : 0;
     positions.set(step.id, {
-      x: level * AUTO_LAYOUT_X_STEP,
+      x: xByLevel.get(level) ?? 0,
       y: idx * AUTO_LAYOUT_Y_STEP + stagger,
     });
     indexInLevel.set(level, idx + 1);
