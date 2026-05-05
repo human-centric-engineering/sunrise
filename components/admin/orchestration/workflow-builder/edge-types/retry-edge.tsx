@@ -117,6 +117,10 @@ export function RetryEdge({
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
             pointerEvents: 'all',
             cursor: dragging ? 'grabbing' : 'grab',
+            // React Flow renders nodes above edge labels by default. Bump
+            // above the node z-range so the pill stays grabbable even when
+            // the curve passes through another step box.
+            zIndex: 1500,
           }}
           onMouseDown={(e): void => {
             e.stopPropagation();
