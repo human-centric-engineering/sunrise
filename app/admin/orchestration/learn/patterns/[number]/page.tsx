@@ -90,7 +90,7 @@ export default async function PatternDetailPage({ params }: PageProps) {
   }
 
   // Sections shown open at the top as cards
-  const HERO_SECTIONS = new Set(['overview', 'tldr', 'tl;dr summary']);
+  const HERO_SECTIONS = new Set(['overview', 'tldr', 'summary']);
 
   const heroChunks = detail.chunks.filter((c) =>
     HERO_SECTIONS.has((c.section ?? '').toLowerCase())

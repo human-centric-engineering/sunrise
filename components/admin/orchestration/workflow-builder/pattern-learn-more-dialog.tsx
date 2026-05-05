@@ -32,7 +32,7 @@ interface PatternDetail {
   totalTokens: number;
 }
 
-const HERO_SECTIONS = new Set(['overview', 'tldr', 'tl;dr summary']);
+const HERO_SECTIONS = new Set(['overview', 'tldr', 'summary']);
 
 function stripEmbeddingPrefix(content: string): string {
   const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);
