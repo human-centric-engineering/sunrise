@@ -45,11 +45,6 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
                   <Markdown>{p.description}</Markdown>
                 </div>
               )}
-              {p.chunkCount > 0 && (
-                <p className="text-muted-foreground mt-2 text-xs">
-                  {p.chunkCount} {p.chunkCount === 1 ? 'section' : 'sections'}
-                </p>
-              )}
             </CardContent>
           </Card>
         </Link>
