@@ -340,6 +340,13 @@ export class OrchestrationEngine {
                     ? JSON.stringify(failureReason)
                     : '';
               queue.push(fallbackEdge.targetStepId);
+              attachRetryToTrace(trace, step.id, {
+                attempt: retryEdge.maxRetries! + 1,
+                maxRetries: retryEdge.maxRetries!,
+                reason: reasonStr,
+                targetStepId: fallbackEdge.targetStepId,
+                exhausted: true,
+              });
               yield stepRetry(
                 step.id,
                 fallbackEdge.targetStepId,
@@ -391,24 +398,25 @@ export class OrchestrationEngine {
 
           queue.push(id);
 
-          yield stepRetry(
-            step.id,
-            id,
-            attempts + 1,
-            retryEdge.maxRetries!,
-            (() => {
-              if (
-                typeof ctx.variables.__retryContext === 'object' &&
-                ctx.variables.__retryContext !== null
-              ) {
-                const reason = (ctx.variables.__retryContext as Record<string, unknown>)
-                  .failureReason;
-                if (typeof reason === 'string') return reason;
-                if (reason !== undefined && reason !== null) return JSON.stringify(reason);
-              }
-              return '';
-            })()
-          );
+          const retryReason = (() => {
+            if (
+              typeof ctx.variables.__retryContext === 'object' &&
+              ctx.variables.__retryContext !== null
+            ) {
+              const reason = (ctx.variables.__retryContext as Record<string, unknown>)
+                .failureReason;
+              if (typeof reason === 'string') return reason;
+              if (reason !== undefined && reason !== null) return JSON.stringify(reason);
+            }
+            return '';
+          })();
+          attachRetryToTrace(trace, step.id, {
+            attempt: attempts + 1,
+            maxRetries: retryEdge.maxRetries!,
+            reason: retryReason,
+            targetStepId: id,
+          });
+          yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
         }
         continue;
       }
@@ -1564,6 +1572,24 @@ function sanitizeError(err: ExecutorError): string {
 
 function backoffDelayMs(attempt: number): number {
   return Math.min(500 * Math.pow(2, attempt), 5_000);
+}
+
+/**
+ * Append a retry record to the most recent trace entry written for
+ * `stepId` — that's the entry whose verdict triggered the retry.
+ */
+function attachRetryToTrace(
+  trace: ExecutionTraceEntry[],
+  stepId: string,
+  retry: NonNullable<ExecutionTraceEntry['retries']>[number]
+): void {
+  for (let i = trace.length - 1; i >= 0; i--) {
+    if (trace[i].stepId === stepId) {
+      const existing = trace[i].retries ?? [];
+      trace[i] = { ...trace[i], retries: [...existing, retry] };
+      return;
+    }
+  }
 }
 
 function sleep(ms: number): Promise<void> {

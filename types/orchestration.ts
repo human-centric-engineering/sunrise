@@ -294,6 +294,19 @@ export interface ExecutionTraceEntry {
    * approximates engine + tool I/O overhead. Absent for non-LLM steps.
    */
   llmDurationMs?: number;
+  /**
+   * Bounded-retry events fired from this step. Each entry corresponds to one
+   * `step_retry` event the engine yielded after the executor returned. When
+   * `exhausted` is true the retry budget was spent and `targetStepId` points
+   * at the sibling fallback edge instead of the retry target.
+   */
+  retries?: Array<{
+    attempt: number;
+    maxRetries: number;
+    reason: string;
+    targetStepId: string;
+    exhausted?: boolean;
+  }>;
 }
 
 /**

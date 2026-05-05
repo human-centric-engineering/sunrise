@@ -565,6 +565,7 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
                 outputTokens={entry.outputTokens}
                 llmDurationMs={entry.llmDurationMs}
                 costEntries={costEntriesByStep.get(entry.stepId)}
+                retries={entry.retries}
                 highlighted={highlightedStepId === entry.stepId}
               />
             ))}

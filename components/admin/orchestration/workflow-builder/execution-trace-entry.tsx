@@ -21,6 +21,9 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
+const RETRY_PILL_CLASS =
+  'rounded-md border border-dashed border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200';
+
 type Status = ExecutionTraceEntry['status'] | 'running';
 
 /**
@@ -58,6 +61,12 @@ export interface ExecutionTraceEntryRowProps {
   llmDurationMs?: number;
   /** Cost-log rows attributed to this step, for the per-call breakdown. */
   costEntries?: TraceCostEntry[];
+  /**
+   * Bounded-retry events emitted from this step. Rendered as amber
+   * sub-rows so users can see at a glance which step looped, how many
+   * attempts ran, and why each one failed.
+   */
+  retries?: ExecutionTraceEntry['retries'];
   /** When true, render with a highlighted background (used by timeline-strip clicks). */
   highlighted?: boolean;
   /** Fires when the user clicks "Retry" on a failed step. */
@@ -90,6 +99,7 @@ export function ExecutionTraceEntryRow({
   outputTokens,
   llmDurationMs,
   costEntries,
+  retries,
   highlighted,
   onRetry,
 }: ExecutionTraceEntryRowProps) {
@@ -159,6 +169,24 @@ export function ExecutionTraceEntryRow({
           <ChevronRight className="text-muted-foreground h-4 w-4" />
         )}
       </button>
+
+      {retries && retries.length > 0 && (
+        <ul className="mt-2 ml-6 space-y-1" data-testid={`trace-entry-retries-${stepId}`}>
+          {retries.map((r, i) => (
+            <li key={i} className={cn('flex items-start gap-2', RETRY_PILL_CLASS)}>
+              <RotateCcw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <div className="flex-1">
+                <p className="font-medium">
+                  {r.exhausted
+                    ? `Retry budget exhausted — routed to ${r.targetStepId}`
+                    : `Attempt ${r.attempt} of ${r.maxRetries} failed — re-running ${r.targetStepId}`}
+                </p>
+                {r.reason && <p className="mt-0.5 break-words opacity-80">Reason: {r.reason}</p>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">

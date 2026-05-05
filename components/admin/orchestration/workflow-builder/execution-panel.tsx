@@ -49,6 +49,7 @@ interface LiveTraceEntry {
   tokensUsed?: number;
   costUsd?: number;
   durationMs?: number;
+  retries?: ExecutionTraceEntry['retries'];
 }
 
 export interface ExecutionPanelProps {
@@ -191,6 +192,30 @@ export function ExecutionPanel({
           );
           setTotalTokens((prev) => prev + tokensUsed);
           setTotalCost((prev) => prev + costUsd);
+        }
+        break;
+      }
+      case 'step_retry': {
+        const fromStepId = typeof d.fromStepId === 'string' ? d.fromStepId : null;
+        const targetStepId = typeof d.targetStepId === 'string' ? d.targetStepId : null;
+        const attempt = typeof d.attempt === 'number' ? d.attempt : null;
+        const maxRetries = typeof d.maxRetries === 'number' ? d.maxRetries : null;
+        const reason = typeof d.reason === 'string' ? d.reason : '';
+        const exhausted = d.exhausted === true;
+        if (fromStepId && targetStepId && attempt !== null && maxRetries !== null) {
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.stepId === fromStepId
+                ? {
+                    ...e,
+                    retries: [
+                      ...(e.retries ?? []),
+                      { attempt, maxRetries, reason, targetStepId, exhausted },
+                    ],
+                  }
+                : e
+            )
+          );
         }
         break;
       }
@@ -464,6 +489,7 @@ export function ExecutionPanel({
               tokensUsed={entry.tokensUsed ?? 0}
               costUsd={entry.costUsd ?? 0}
               durationMs={entry.durationMs}
+              retries={entry.retries}
               onRetry={status === 'failed' ? (sid) => void handleRetryStep(sid) : undefined}
             />
           ))
