@@ -2,7 +2,7 @@
 
 Competitive assessment of Sunrise's agent orchestration against production-ready platforms. Covers functional capabilities, architectural gaps, and prioritised improvements.
 
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-05
 
 ## TL;DR
 
@@ -10,7 +10,7 @@ Sunrise is a **full-stack agent orchestration platform** embedded in a productio
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
-3 P0 improvements would block production under load (OTEL tracing, distributed circuit breaker/budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies), named-metric evaluation (Tier 2 #6 — faithfulness/groundedness/relevance scoring with re-score and per-agent trend), and widget customisation (Tier 2 #7 — per-agent colours, fonts, header/footer copy, conversation starters, exposed via a public `/widget-config` endpoint and a CSS-custom-property-driven Shadow DOM theme layer; bumps widget customisation from "Adequate" to "Strong" against Dify/Flowise) shipped May 2026.
+2 P0 improvements would block production under load (distributed circuit breaker / budget state). The approval queue UI (previously P0 #4) shipped April 2026; hybrid search (previously P1 #8), citation/source attribution (previously P1 #2 in `improvement-priorities.md`), background workflow execution (Tier 2 #8), document-ingestion robustness (Tier 1 #5 — CSV row-level retrieval, per-page scanned-PDF diagnostics, opt-in PDF table extraction, all without new third-party dependencies), named-metric evaluation (Tier 2 #6 — faithfulness/groundedness/relevance scoring with re-score and per-agent trend), widget customisation (Tier 2 #7 — per-agent colours, fonts, header/footer copy, conversation starters, exposed via a public `/widget-config` endpoint and a CSS-custom-property-driven Shadow DOM theme layer; bumps widget customisation from "Adequate" to "Strong" against Dify/Flowise), and the OTEL tracer plug-in (previously P0 #1, also Tier 3 #13 — vendor-neutral tracer interface with a no-op default and a first-party `OtelTracer` adapter; forks point any OTLP-compatible backend at the spans, with `AiCostLog` rows carrying nullable `traceId` / `spanId` for cost ↔ span join) shipped May 2026.
 
 ---
 
@@ -143,10 +143,10 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 | Capability                   | Sunrise  | Haystack | LangGraph | Semantic Kernel | Dify     | Bedrock  |
 | ---------------------------- | -------- | -------- | --------- | --------------- | -------- | -------- |
-| OTEL span emission           | None     | Strong   | None      | Strong          | None     | None     |
-| Langfuse integration         | None     | Strong   | None      | None            | None     | None     |
+| OTEL span emission           | Strong   | Strong   | None      | Strong          | None     | None     |
+| Langfuse integration         | Adequate | Strong   | None      | None            | None     | None     |
 | MLflow integration           | None     | Strong   | None      | None            | None     | None     |
-| Datadog / external APM       | None     | Strong   | None      | Adequate        | None     | Adequate |
+| Datadog / external APM       | Adequate | Strong   | None      | Adequate        | None     | Adequate |
 | Built-in trace UI            | Strong   | Adequate | Strong    | None            | Strong   | Adequate |
 | Per-step latency attribution | Adequate | Strong   | Strong    | None            | Strong   | Adequate |
 | Named evaluation metrics     | Adequate | Strong   | Strong    | None            | Adequate | None     |
@@ -154,7 +154,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | Cost attribution per step    | Strong   | Adequate | Weak      | None            | Adequate | Weak     |
 | Audit log (config changes)   | Strong   | None     | None      | None            | Adequate | None     |
 
-**External observability remains the gap.** No OTEL instrumentation, no integration with any external tracing platform — that's still Tier 3 work (item 13 in `improvement-priorities.md`) for forks that need ingestion into Langfuse / Datadog / Grafana. **In-product** observability narrowed materially in May 2026: named-metric evaluation scoring (faithfulness, groundedness, relevance — three metrics graded Adequate against Haystack's eight) shipped early in the month, then the trace viewer / latency attribution work (item 10) shipped at the end of the month. Per-step latency now decomposes into LLM time vs. engine + tool I/O overhead via a new `llmDurationMs` field; the execution detail page renders a Gantt-style timeline strip with slow-outlier highlighting, an aggregates card (p50 / p95 step duration, slowest step, LLM share, per-step-type breakdown), input/output side-by-side panels per step, a per-call cost sub-table for multi-turn executors, and six client-side filters (Failed / Slow / LLM only / Tool only / With approvals / All). Haystack is still the benchmark for external backends — 5+ integrations, 8 named evaluators, pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
+**External observability shipped in May 2026.** Item 13 (OTEL plug-in, Tier 3 in `improvement-priorities.md`) added a vendor-neutral tracer interface in `lib/orchestration/tracing/` with a no-op default and a first-party `OtelTracer` adapter; forks point any OTLP-compatible backend (Datadog Agent's OTLP receiver, Honeycomb, Grafana Tempo, Langfuse-via-OTLP) at the spans by constructing their own `TracerProvider` and calling `registerOtelTracer()`. Span attributes follow OpenTelemetry GenAI semantic conventions plus Sunrise extensions for execution / step / agent / cost correlation. `AiCostLog` rows gained nullable `traceId` / `spanId` columns so external trace backends can join cost data back to the originating span. The Langfuse and Datadog rows above are graded `Adequate` rather than `Strong` because Sunrise ships the OTLP path rather than first-party SDK integrations — Sunrise spans render correctly in either backend's UI without custom mapping, but Langfuse-specific features (prompt management, dataset linking) and Datadog APM-specific UI affordances would require additional work. **In-product** observability also narrowed materially earlier in May: named-metric evaluation scoring (faithfulness, groundedness, relevance — three metrics graded Adequate against Haystack's eight) shipped early in the month, then the trace viewer / latency attribution work (item 10) shipped at the end of the month. Per-step latency now decomposes into LLM time vs. engine + tool I/O overhead via a new `llmDurationMs` field; the execution detail page renders a Gantt-style timeline strip with slow-outlier highlighting, an aggregates card (p50 / p95 step duration, slowest step, LLM share, per-step-type breakdown), input/output side-by-side panels per step, a per-call cost sub-table for multi-turn executors, and six client-side filters (Failed / Slow / LLM only / Tool only / With approvals / All). Haystack is still the benchmark for external backends — 5+ integrations, 8 named evaluators, pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
 
 ### Knowledge Base
 
@@ -217,7 +217,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Where Sunrise Trails
 
-9. **External observability backends** — no OTEL spans, no Langfuse / Datadog / MLflow ingestion. In-product trace observability is now competitive (timeline strip, aggregates, per-step latency attribution shipped May 2026), but forks needing external backends still have to wire those themselves. Haystack remains the benchmark for backend integrations.
+9. **External observability backends — narrowed.** OTEL span emission shipped May 2026 (item 13) — forks point any OTLP-compatible backend at the spans by registering an OTEL `TracerProvider`. Langfuse, Datadog, Honeycomb, and Tempo all work via the OTLP path. Haystack still leads on first-party SDK integrations (Langfuse-native, MLflow-native), and Sunrise has no MLflow path at all — the gap moved from "no path at all" to "OTLP path with a curation tradeoff" but isn't fully closed.
 
 10. **Multi-agent semantics** — informal planner-driven coordination vs. explicit typed patterns (handoffs, swarm, round-robin). Behind LangGraph, AutoGen, Google ADK.
 
@@ -237,12 +237,13 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 Issues that would prevent recommending Sunrise orchestration for production workloads under load.
 
-| #   | Improvement                           | Current State                                                    | Target State                                                 | Benchmark              |
-| --- | ------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------- |
-| 1   | **OTEL tracing instrumentation**      | No span emission from engine or chat                             | Per-step spans with token/cost attributes, pluggable backend | Haystack (5+ backends) |
-| 2   | **Distributed circuit breaker state** | In-memory per instance                                           | Redis or Postgres-backed shared state                        | Standard practice      |
-| 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE` | Standard practice      |
+| #   | Improvement                           | Current State                                                    | Target State                                                 | Benchmark         |
+| --- | ------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------ | ----------------- |
+| 2   | **Distributed circuit breaker state** | In-memory per instance                                           | Redis or Postgres-backed shared state                        | Standard practice |
+| 3   | **Distributed budget mutex**          | In-memory per instance; concurrent instances can overspend by N× | Redis-based distributed lock or Postgres `SELECT FOR UPDATE` | Standard practice |
 
+> **Resolved:** OTEL tracing instrumentation (previously P0 #1, also Tier 3 #13 in `improvement-priorities.md`) — shipped May 2026. Vendor-neutral `Tracer` interface in `lib/orchestration/tracing/` with a no-op default (zero allocations, zero new deps for forks not opting in). Phase 2 wraps every LLM call site, capability dispatch, workflow step, agent-call turn, and chat turn through a single `withSpan` / `startManualSpan` helper that catches tracer failures at the wrap boundary so a broken tracer can never abort orchestration. Span attributes follow OpenTelemetry GenAI semantic conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, …) plus Sunrise extensions (`sunrise.execution_id`, `sunrise.step_id`, `sunrise.cost_usd`, `sunrise.provider.failover_from/to`, …). One first-party `OtelTracer` adapter ships, opted into via `registerOtelTracer()` after constructing a `TracerProvider`. Forks point any OTLP-compatible backend at the spans; sampling delegates entirely to OTEL. `AiCostLog` rows gained nullable `traceId` / `spanId` columns for cost ↔ span join.
+>
 > **Resolved:** Approval queue (previously P0 #4) — shipped April 2026. Admin UI with expandable rows, approve/reject actions, sidebar badge. External approval channels via HMAC-signed token endpoints, notification dispatcher with hook/webhook events, and approver scoping for delegated decisions.
 >
 > **Resolved:** Hybrid search (previously P1 #8) — shipped May 2026 (PR #139). Generated `searchVector` tsvector column with GIN index, opt-in `searchConfig.hybridEnabled`, blended ranking via `vectorWeight × vector_score + bm25Weight × keyword_score`, three-segment score breakdown, smoke test against real Postgres. `ts_rank_cd` documented honestly as a BM25 proxy.

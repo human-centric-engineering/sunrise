@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-05 (item 10 shipped)
+**Last updated:** 2026-05-05 (item 13 shipped)
 
 ---
 
@@ -246,22 +246,22 @@ OTEL/Langfuse/Datadog ingestion remains out of scope here — Tier 3 item 13 kee
 
 ## Tier 3 — Useful but lower priority for this profile
 
-| #   | Improvement                                                    | Status         |
-| --- | -------------------------------------------------------------- | -------------- |
-| 11  | Consumer-side (non-admin) approval flows in chat               | ⚪ Not started |
-| 12  | Workflow definition versioning (publish/draft/rollback)        | ⚪ Not started |
-| 13  | OTEL instrumentation as opt-in plug-in                         | ⚪ Not started |
-| 14  | Inbound triggers from third-party systems (email-in, Slack-in) | ⚪ Not started |
-| 15  | Better full checkpoint recovery beyond approval pauses         | ⚪ Not started |
-| 16  | `upload_to_storage` capability (S3 / Vercel Blob)              | ⚪ Not started |
-| 17  | Multipart/form-data construction in `lib/orchestration/http/`  | ⚪ Not started |
-| 18  | Env-var resolution for binding `customConfig` at admin save    | ⚪ Not started |
+| #   | Improvement                                                    | Status            |
+| --- | -------------------------------------------------------------- | ----------------- |
+| 11  | Consumer-side (non-admin) approval flows in chat               | ⚪ Not started    |
+| 12  | Workflow definition versioning (publish/draft/rollback)        | ⚪ Not started    |
+| 13  | OTEL instrumentation as opt-in plug-in                         | ✅ Done (this PR) |
+| 14  | Inbound triggers from third-party systems (email-in, Slack-in) | ⚪ Not started    |
+| 15  | Better full checkpoint recovery beyond approval pauses         | ⚪ Not started    |
+| 16  | `upload_to_storage` capability (S3 / Vercel Blob)              | ⚪ Not started    |
+| 17  | Multipart/form-data construction in `lib/orchestration/http/`  | ⚪ Not started    |
+| 18  | Env-var resolution for binding `customConfig` at admin save    | ⚪ Not started    |
 
 Brief rationale for each:
 
 - **11 — Consumer-side approval flows.** Some business applications (utility billing, e-commerce complaints, planning pre-screening) want the _end user_ to confirm an action, not an admin. Today's approval queue is admin-only. External HMAC tokens partially cover this but the UX expectation is a confirm step in the chat itself. Reuse external-approval token machinery, expose through chat SSE event types.
 - **12 — Workflow versioning.** DB-stored history exists; for small teams the gap is ergonomic — no easy diff, rollback, or branch. A "publish/draft/rollback" model with named versions covers most of the value without requiring git-native YAML files.
-- **13 — OTEL plug-in.** Lower-priority than its maturity-analysis P0 ranking suggests for this profile, but useful if a single customer wants to ship traces to Langfuse / Datadog. Treat as plug-in, not core requirement; prefer a Haystack-style pluggable tracer interface so it remains optional.
+- **13 — OTEL plug-in.** ✅ Done. A vendor-neutral `Tracer` interface in `lib/orchestration/tracing/` defaults to a no-op (zero allocations on the hot path, zero new deps for forks that don't enable tracing). Phase 2 wraps every LLM call site, capability dispatch, workflow step, agent-call turn, and chat turn with exception-safe spans through a single `withSpan` / `startManualSpan` helper — tracer failures are caught at the wrap boundary, logged at warn, and never abort orchestration. Span attributes follow OpenTelemetry GenAI semantic conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, …) plus Sunrise extensions (`sunrise.execution_id`, `sunrise.step_id`, `sunrise.cost_usd`, `sunrise.provider.failover_from/to`, …). One first-party adapter ships: `OtelTracer` against `@opentelemetry/api`, opted into via `registerOtelTracer()` in a server-only init file. Forks point any OTLP-compatible backend (Datadog, Honeycomb, Grafana Tempo, Langfuse-via-OTLP) at the spans by configuring their own `TracerProvider`. Sampling delegates entirely to OTEL — Sunrise's interface has no sampling concept. `AiCostLog` rows gained nullable `traceId` / `spanId` columns so external trace backends can join cost data back to the originating span. Critical files: `lib/orchestration/tracing/`, `prisma/migrations/20260505141318_add_cost_log_trace_correlation/`, `.context/orchestration/tracing.md`.
 - **14 — Inbound triggers.** Webhook subscriptions handle outbound; inbound from "things that happen elsewhere" is gappy. Several business-application examples (subscription-box churn outreach, mutual-aid coordination, complaints) benefit from email-in or Slack-in. Generic Postmark inbound parse covers most cases cheaply.
 - **15 — Full checkpoint recovery.** For single-tenant low-load deployments, crashes during long workflows are uncommon, and human-approval checkpointing already covers the highest-stakes pause case. Worth doing to make background execution (item 8) robust to deploys, but not urgent.
 - **16 — `upload_to_storage` capability.** The HTTP module wraps binary responses (PDFs from renderers, images from generators) as `{ encoding: 'base64', contentType, data }` — but there's nowhere useful for the agent to put base64 bytes inside a conversation. A complementary capability that takes the wrapper, uploads to S3 / Vercel Blob, and returns a public/signed URL closes the loop. Without it the document-render recipe leans on hosted-URL renderer modes (DocRaptor `async`, PDFShift `?response_type=url`); with it, any renderer that returns bytes inline becomes usable. Surfaced while writing `recipes/document-render.md`.

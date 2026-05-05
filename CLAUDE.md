@@ -283,6 +283,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Workflows                | `.context/orchestration/workflows.md`                  | DAG validator, step types, error codes                                 |
 | Patterns & Steps         | `.context/orchestration/patterns-and-steps.md`         | The 21 canonical patterns, step→pattern relationships, author guidance |
 | Orchestration Engine     | `.context/orchestration/engine.md`                     | Runtime executor, registry, events, strategies                         |
+| Tracing (OTEL plug-in)   | `.context/orchestration/tracing.md`                    | Tracer interface, no-op default, OTEL adapter, span tree, attributes   |
 | External Calls           | `.context/orchestration/external-calls.md`             | HTTP executor, outbound rate limits, auth, response caps               |
 | Resilience & Errors      | `.context/orchestration/resilience.md`                 | Circuit breaker, fallback, budget UX, input guard                      |
 | Output Guard             | `.context/orchestration/output-guard.md`               | Topic boundaries, PII detection, brand voice                           |

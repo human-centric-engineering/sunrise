@@ -174,6 +174,14 @@ Retries do **not** reset the buffer between attempts: failed-attempt turns are b
 
 A new executor that hits the LLM via `runLlmCall` gets telemetry capture **for free**; one that calls `provider.chat()` directly should push to `ctx.stepTelemetry?` itself (mirror the `agent_call` pattern).
 
+## OTEL tracing
+
+Every step + LLM call + capability dispatch is wrapped in an OTEL span via the helpers in `lib/orchestration/tracing/`. Default registration is a no-op (zero-cost when not used); forks opt into ingestion by calling `registerOtelTracer()` after constructing their own `TracerProvider`. The span tree is `workflow.execute` → `workflow.step` → `llm.call` / `agent_call.turn` / `capability.dispatch`. Span attributes follow OpenTelemetry GenAI semantic conventions plus Sunrise extensions for execution / step / agent / cost correlation.
+
+`AiCostLog` rows carry optional `traceId` / `spanId` columns so external trace backends can join cost data back to the originating span.
+
+See [`tracing.md`](tracing.md) for the full guide — span tree, attribute reference, sampling, bootstrap recipes (Datadog / Honeycomb / Tempo / Langfuse), span-status semantics, and anti-patterns.
+
 Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id.
 
 **Template limitations:** Interpolation supports one level of property access (`{{input.key}}`) but not deeper paths (`{{input.key.nested}}`). For nested data, flatten in an intermediate step or use an LLM step to extract the needed value. Interpolated values have no per-value size limit — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts. The workflow execution body is capped at 256 KB for `inputData` to prevent oversized payloads.
