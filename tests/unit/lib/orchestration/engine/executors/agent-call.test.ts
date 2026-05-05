@@ -608,4 +608,30 @@ describe('executeAgentCall', () => {
     expect(result.tokensUsed).toBe(180); // (50+20) + (80+30)
     expect(result.costUsd).toBe(0.03); // 0.01 + 0.02
   });
+
+  it('multi-turn: outer-loop accumulator survives an inner-turn failure', async () => {
+    // Outer turn 1 succeeds with a follow-up question (50+20 tokens, $0.01).
+    // Outer turn 2's runSingleTurn throws on provider.chat. The thrown
+    // ExecutorError must carry turn-1's partial cost on top of turn 2's
+    // own partial — otherwise the row total would only show turn 2.
+    mockChat
+      .mockResolvedValueOnce({
+        content: 'Could you provide more context?',
+        usage: { inputTokens: 50, outputTokens: 20 },
+        finishReason: 'stop',
+      })
+      .mockRejectedValueOnce(new Error('Provider 503'));
+
+    const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
+    const ctx = makeCtx({ stepOutputs: { prior: 'value' } });
+
+    await expect(executeAgentCall(step, ctx)).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'agent_call_failed',
+      // turn 1 billed 70 tokens / $0.01 (default calculateCost). Turn 2 threw
+      // before any successful chat() returned, so its partial is 0.
+      tokensUsed: 70,
+      costUsd: 0.01,
+    });
+  });
 });

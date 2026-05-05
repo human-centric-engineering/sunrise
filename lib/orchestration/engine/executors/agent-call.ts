@@ -269,17 +269,36 @@ export async function executeAgentCall(
   ];
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    // Run one turn (with tool loops)
-    const turnResult = await runSingleTurn(
-      step,
-      ctx,
-      agent,
-      currentMessages,
-      toolDefinitions,
-      provider,
-      usedSlug,
-      maxIterations
-    );
+    // Run one turn (with tool loops). On failure, propagate the
+    // outer-loop's accumulated cost so far PLUS any partial cost the
+    // failing turn carries on its ExecutorError. Without this wrap,
+    // outer turn 1's billed cost is lost when outer turn 2 throws.
+    let turnResult;
+    try {
+      turnResult = await runSingleTurn(
+        step,
+        ctx,
+        agent,
+        currentMessages,
+        toolDefinitions,
+        provider,
+        usedSlug,
+        maxIterations
+      );
+    } catch (err) {
+      if (err instanceof ExecutorError) {
+        throw new ExecutorError(
+          err.stepId,
+          err.code,
+          err.message,
+          err.cause,
+          err.retriable,
+          totalTokensUsed + err.tokensUsed,
+          totalCostUsd + err.costUsd
+        );
+      }
+      throw err;
+    }
 
     totalTokensUsed += turnResult.tokensUsed;
     totalCostUsd += turnResult.costUsd;
