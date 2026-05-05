@@ -94,6 +94,8 @@ export async function summarizeMessages(
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
           operation: CostOperation.CHAT,
+          traceId: span.traceId(),
+          spanId: span.spanId(),
         });
 
         return response.content.trim() || FALLBACK_MESSAGE;

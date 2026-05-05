@@ -168,6 +168,8 @@ export async function runLlmCall(
         outputTokens: response.usage.outputTokens,
         operation: CostOperation.CHAT,
         isLocal: cost.isLocal,
+        traceId: span.traceId(),
+        spanId: span.spanId(),
         metadata: { stepId: params.stepId },
       }).catch((err: unknown) => {
         logger.warn('runLlmCall: logCost rejected', {

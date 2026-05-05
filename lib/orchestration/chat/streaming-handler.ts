@@ -459,6 +459,11 @@ export class StreamingChatHandler {
         let streamSucceeded = false;
         let streamRetries = 0;
         const MAX_STREAM_RETRIES = 2;
+        // Captured before endLlmSpan so the post-stream logCost calls
+        // (lines 746 and 769 below) can correlate cost rows with the
+        // successful llm.call span. Empty strings under the no-op tracer.
+        let llmTraceId = '';
+        let llmSpanId = '';
 
         while (!streamSucceeded && streamRetries <= MAX_STREAM_RETRIES) {
           const { span: llmSpan, end: endLlmSpan } = startManualSpan(SPAN_LLM_CALL, {
@@ -497,6 +502,8 @@ export class StreamingChatHandler {
                 [GEN_AI_USAGE_TOTAL_TOKENS]: usage.inputTokens + usage.outputTokens,
               });
             }
+            llmTraceId = llmSpan.traceId();
+            llmSpanId = llmSpan.spanId();
             endLlmSpan({ code: 'ok' });
           } catch (streamErr) {
             streamRetries++;
@@ -751,6 +758,8 @@ export class StreamingChatHandler {
               inputTokens: usage.inputTokens,
               outputTokens: usage.outputTokens,
               operation: CostOperation.CHAT,
+              traceId: llmTraceId,
+              spanId: llmSpanId,
             });
           }
 
@@ -774,6 +783,8 @@ export class StreamingChatHandler {
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
             operation: CostOperation.CHAT,
+            traceId: llmTraceId,
+            spanId: llmSpanId,
           });
         }
 

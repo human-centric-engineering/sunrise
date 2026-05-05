@@ -24,6 +24,8 @@ export {
   truncateAttribute,
   withSpan,
 } from '@/lib/orchestration/tracing/with-span';
+export { OtelTracer } from '@/lib/orchestration/tracing/otel-adapter';
+export { registerOtelTracer } from '@/lib/orchestration/tracing/otel-bootstrap';
 
 export {
   GEN_AI_COMPLETION,

@@ -156,6 +156,8 @@ async function runSingleTurn(
           outputTokens: response.usage.outputTokens,
           operation: CostOperation.CHAT,
           isLocal: turnCost.isLocal,
+          traceId: span.traceId(),
+          spanId: span.spanId(),
           metadata: { stepId: step.id, iteration },
         }).catch((err: unknown) => {
           logger.warn('agent_call: logCost rejected', {

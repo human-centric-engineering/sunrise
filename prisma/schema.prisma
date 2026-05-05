@@ -675,6 +675,11 @@ model AiCostLog {
   isLocal             Boolean  @default(false)
   operation           String // "chat", "tool_call", "embedding", "evaluation"
   metadata            Json?
+  // OTEL trace correlation — set when an active tracer span exists at the
+  // logCost call site. Nullable for legacy rows and for code paths where
+  // tracing is not registered (default no-op tracer returns empty IDs).
+  traceId             String?
+  spanId              String?
   createdAt           DateTime @default(now())
 
   // Relations
@@ -689,6 +694,7 @@ model AiCostLog {
   @@index([operation])
   @@index([createdAt])
   @@index([agentId, createdAt])
+  @@index([traceId])
   @@map("ai_cost_log")
 }
 

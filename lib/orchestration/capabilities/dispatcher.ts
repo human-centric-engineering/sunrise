@@ -330,6 +330,8 @@ class CapabilityDispatcher {
           provider: 'capability',
           inputTokens: 0,
           outputTokens: 0,
+          traceId: span.traceId(),
+          spanId: span.spanId(),
           metadata: { slug, success: result.success },
         }).catch((err) => {
           logger.error('Capability dispatch: logCost rejected', {
