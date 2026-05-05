@@ -163,6 +163,20 @@ describe('executeAgentCall', () => {
     });
   });
 
+  it('pushes a telemetry entry per provider.chat() turn into ctx.stepTelemetry', async () => {
+    const telemetry: import('@/types/orchestration').LlmTelemetryEntry[] = [];
+    await executeAgentCall(makeStep(), makeCtx({ stepTelemetry: telemetry }));
+
+    expect(telemetry).toHaveLength(1);
+    expect(telemetry[0]).toMatchObject({
+      model: 'claude-sonnet-4-20250514',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+    });
+    expect(telemetry[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
   it('loads the agent by slug', async () => {
     await executeAgentCall(makeStep(), makeCtx());
 

@@ -2490,4 +2490,264 @@ describe('OrchestrationEngine', () => {
       })
     );
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Trace capture — Phase 1 of the trace-viewer / latency-attribution work.
+  //
+  // These cover the new optional `input`, `model`, `provider`, `inputTokens`,
+  // `outputTokens`, `llmDurationMs` fields the engine writes onto each
+  // ExecutionTraceEntry. Stub executors push synthetic telemetry into the
+  // provided ctx.stepTelemetry — same path the real `runLlmCall` and
+  // `agent_call` use.
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** Pull the persisted trace out of the most recent prisma.update call. */
+  function lastWrittenTrace(): unknown[] {
+    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const args = calls[i][0] as { data?: { executionTrace?: unknown } };
+      if (Array.isArray(args.data?.executionTrace)) {
+        return args.data.executionTrace as unknown[];
+      }
+    }
+    return [];
+  }
+
+  it('writes step.config to the input field on a completed sequential step', async () => {
+    registerStepType('llm_call', async () => ({
+      output: 'ok',
+      tokensUsed: 5,
+      costUsd: 0.01,
+    }));
+
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    const trace = lastWrittenTrace() as Array<{ stepId: string; input?: unknown }>;
+    expect(trace).toHaveLength(2);
+    // linearDefinition's first step has config { prompt: 'A' }
+    expect(trace[0].input).toEqual({ prompt: 'A' });
+    expect(trace[1].input).toEqual({ prompt: 'B' });
+  });
+
+  it('writes step.config to the input field on a failed step', async () => {
+    registerStepType('llm_call', async (step) => {
+      throw new ExecutorError(step.id, 'boom', 'forced failure', undefined, false);
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    const trace = lastWrittenTrace() as Array<{
+      stepId: string;
+      status: string;
+      input?: unknown;
+    }>;
+    expect(trace[0].status).toBe('failed');
+    expect(trace[0].input).toEqual({ prompt: 'A' });
+  });
+
+  it('rolls up pushed telemetry into model / provider / token / llmDuration fields', async () => {
+    registerStepType('llm_call', async (_step, ctx) => {
+      ctx.stepTelemetry?.push({
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        durationMs: 250,
+      });
+      return { output: 'ok', tokensUsed: 150, costUsd: 0.05 };
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    const trace = lastWrittenTrace() as Array<{
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      llmDurationMs?: number;
+    }>;
+    expect(trace[0].model).toBe('gpt-4o-mini');
+    expect(trace[0].provider).toBe('openai');
+    expect(trace[0].inputTokens).toBe(100);
+    expect(trace[0].outputTokens).toBe(50);
+    expect(trace[0].llmDurationMs).toBe(250);
+  });
+
+  it('omits telemetry fields when an executor pushes nothing', async () => {
+    registerStepType('llm_call', async () => ({
+      output: 'ok',
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    const trace = lastWrittenTrace() as Array<Record<string, unknown>>;
+    expect(trace[0]).not.toHaveProperty('model');
+    expect(trace[0]).not.toHaveProperty('provider');
+    expect(trace[0]).not.toHaveProperty('inputTokens');
+    expect(trace[0]).not.toHaveProperty('outputTokens');
+    expect(trace[0]).not.toHaveProperty('llmDurationMs');
+  });
+
+  it('sums telemetry across multiple turns inside a single step', async () => {
+    registerStepType('llm_call', async (_step, ctx) => {
+      ctx.stepTelemetry?.push({
+        model: 'a',
+        provider: 'p1',
+        inputTokens: 10,
+        outputTokens: 5,
+        durationMs: 100,
+      });
+      ctx.stepTelemetry?.push({
+        model: 'b',
+        provider: 'p2',
+        inputTokens: 20,
+        outputTokens: 8,
+        durationMs: 150,
+      });
+      return { output: 'ok', tokensUsed: 43, costUsd: 0.02 };
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+    const trace = lastWrittenTrace() as Array<{
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      llmDurationMs?: number;
+    }>;
+    // Last-turn wins for model/provider; tokens and duration are summed.
+    expect(trace[0].model).toBe('b');
+    expect(trace[0].provider).toBe('p2');
+    expect(trace[0].inputTokens).toBe(30);
+    expect(trace[0].outputTokens).toBe(13);
+    expect(trace[0].llmDurationMs).toBe(250);
+  });
+
+  it('isolates telemetry across parallel branches', async () => {
+    registerStepType('parallel', async () => ({
+      output: { parallel: true },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step, ctx) => {
+      // Each branch pushes a distinct entry. If isolation breaks, the
+      // engine would see both entries on each step's trace.
+      ctx.stepTelemetry?.push({
+        model: `model-${step.id}`,
+        provider: `provider-${step.id}`,
+        inputTokens: 10,
+        outputTokens: 5,
+        durationMs: 50,
+      });
+      return { output: `out:${step.id}`, tokensUsed: 15, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const trace = lastWrittenTrace() as Array<{
+      stepId: string;
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+    }>;
+    const aEntry = trace.find((e) => e.stepId === 'a');
+    const bEntry = trace.find((e) => e.stepId === 'b');
+    expect(aEntry?.model).toBe('model-a');
+    expect(aEntry?.provider).toBe('provider-a');
+    expect(aEntry?.inputTokens).toBe(10);
+    expect(bEntry?.model).toBe('model-b');
+    expect(bEntry?.provider).toBe('provider-b');
+    expect(bEntry?.inputTokens).toBe(10);
+  });
+
+  it('discards failed-attempt telemetry on retry success — only the successful attempt is persisted', async () => {
+    let attempt = 0;
+    registerStepType('llm_call', async (_step, ctx) => {
+      attempt++;
+      // Both attempts push, but the engine resets the buffer between
+      // attempts, so only the successful attempt's entries make it
+      // into the trace.
+      ctx.stepTelemetry?.push({
+        model: `model-attempt-${attempt}`,
+        provider: 'openai',
+        inputTokens: 10 * attempt,
+        outputTokens: 5 * attempt,
+        durationMs: 100 * attempt,
+      });
+      if (attempt === 1) {
+        throw new ExecutorError('a', 'transient', 'first attempt fails', undefined, true);
+      }
+      return { output: 'ok', tokensUsed: 15 * attempt, costUsd: 0.01 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'llm_call',
+          config: { prompt: 'A', errorStrategy: 'retry', retryCount: 1 },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const trace = lastWrittenTrace() as Array<{
+      status: string;
+      model?: string;
+      inputTokens?: number;
+    }>;
+    expect(trace[0].status).toBe('completed');
+    expect(trace[0].model).toBe('model-attempt-2');
+    expect(trace[0].inputTokens).toBe(20);
+  });
+
+  it('captures input on a paused-for-approval trace entry', async () => {
+    registerStepType('human_approval', async (step) => {
+      throw new PausedForApproval(step.id, { prompt: 'approve me?' });
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          type: 'human_approval',
+          config: { prompt: 'approve me?' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+    };
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const trace = lastWrittenTrace() as Array<{ status: string; input?: unknown }>;
+    expect(trace[0].status).toBe('awaiting_approval');
+    expect(trace[0].input).toEqual({ prompt: 'approve me?' });
+  });
 });

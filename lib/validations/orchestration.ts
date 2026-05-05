@@ -1883,6 +1883,15 @@ export const executionTraceEntrySchema = z.object({
   startedAt: z.string(),
   completedAt: z.string().optional(),
   durationMs: z.number(),
+  // Optional latency / model attribution fields. Added in the trace-viewer
+  // work; absent on rows written before that. All optional so historical
+  // executions parse cleanly.
+  input: z.unknown().optional(),
+  model: z.string().optional(),
+  provider: z.string().optional(),
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  llmDurationMs: z.number().int().nonnegative().optional(),
 });
 
 export const executionTraceSchema = z.array(executionTraceEntrySchema).catch((ctx) => {

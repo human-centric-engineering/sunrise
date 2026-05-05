@@ -50,10 +50,12 @@ import {
   WorkflowStatus,
   type ExecutionEvent,
   type ExecutionTraceEntry,
+  type LlmTelemetryEntry,
   type StepResult,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@/types/orchestration';
+import { rollupTelemetry } from '@/lib/orchestration/trace/aggregate';
 import {
   createContext,
   mergeStepResult,
@@ -516,7 +518,8 @@ export class OrchestrationEngine {
    */
   private async *runStepWithStrategy(
     step: WorkflowStep,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
+    telemetryOut: LlmTelemetryEntry[]
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -526,14 +529,18 @@ export class OrchestrationEngine {
     const stepTimeoutMs = errorConfig.timeoutMs;
 
     // Wrap the executor call with an optional per-step timeout.
+    // Each attempt resets the telemetry buffer so the final entries reflect
+    // only the successful (or terminally-failed) attempt — failed retry
+    // attempts are not surfaced through the trace's optional fields.
     const invokeExecutor = async (): Promise<StepResult> => {
+      telemetryOut.length = 0;
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx));
+        return executor(step, snapshotContext(ctx, telemetryOut));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx)),
+          executor(step, snapshotContext(ctx, telemetryOut)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>
@@ -656,11 +663,12 @@ export class OrchestrationEngine {
     await this.markCurrentStep(executionId, step.id);
 
     const started = Date.now();
+    const telemetryOut: LlmTelemetryEntry[] = [];
     let stepResult: StepResult | null = null;
     let stepError: ExecutorError | null = null;
 
     try {
-      stepResult = yield* this.runStepWithStrategy(step, ctx);
+      stepResult = yield* this.runStepWithStrategy(step, ctx, telemetryOut);
     } catch (err) {
       if (err instanceof PausedForApproval) {
         const durationMs = Date.now() - started;
@@ -675,6 +683,8 @@ export class OrchestrationEngine {
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         const approvalData =
           typeof err.payload === 'object' && err.payload !== null
@@ -730,6 +740,8 @@ export class OrchestrationEngine {
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
+        input: step.config,
+        ...rollupTelemetry(telemetryOut),
       });
       await this.checkpoint(executionId, ctx, trace);
       const reason = sanitizeError(stepError);
@@ -750,6 +762,8 @@ export class OrchestrationEngine {
       startedAt: new Date(started).toISOString(),
       completedAt: new Date().toISOString(),
       durationMs,
+      input: step.config,
+      ...rollupTelemetry(telemetryOut),
     });
     await this.checkpoint(executionId, ctx, trace);
 
@@ -843,12 +857,21 @@ export class OrchestrationEngine {
     // Node.js is single-threaded — each push() completes atomically between awaits.
     const promises = steps.map(async (step) => {
       const started = Date.now();
+      // Per-step telemetry buffer — isolated from sibling parallel branches.
+      const telemetryOut: LlmTelemetryEntry[] = [];
       allEvents.push(stepStarted(step.id, step.type, step.name));
 
       try {
-        const result = await this.runStepToCompletion(step, ctx);
+        const result = await this.runStepToCompletion(step, ctx, telemetryOut);
         const durationMs = Date.now() - started;
-        return { step, result, durationMs, started, error: null as ExecutorError | null };
+        return {
+          step,
+          result,
+          durationMs,
+          started,
+          telemetryOut,
+          error: null as ExecutorError | null,
+        };
       } catch (err) {
         const durationMs = Date.now() - started;
         if (err instanceof PausedForApproval) {
@@ -857,6 +880,7 @@ export class OrchestrationEngine {
             result: null,
             durationMs,
             started,
+            telemetryOut,
             paused: true,
             payload: err.payload,
             error: null,
@@ -871,7 +895,7 @@ export class OrchestrationEngine {
                 err instanceof Error ? err.message : 'Executor threw an unknown error',
                 err
               );
-        return { step, result: null, durationMs, started, error: execErr };
+        return { step, result: null, durationMs, started, telemetryOut, error: execErr };
       }
     });
 
@@ -883,7 +907,7 @@ export class OrchestrationEngine {
         // Should not happen — inner function catches all errors.
         continue;
       }
-      const { step, result, durationMs, started, error } = outcome.value;
+      const { step, result, durationMs, started, telemetryOut, error } = outcome.value;
 
       // Handle pause (rare in parallel — only if human_approval is in a branch)
       if ('paused' in outcome.value && outcome.value.paused) {
@@ -898,6 +922,8 @@ export class OrchestrationEngine {
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         const batchApprovalData =
           typeof outcome.value.payload === 'object' && outcome.value.payload !== null
@@ -932,6 +958,8 @@ export class OrchestrationEngine {
           startedAt: new Date(started).toISOString(),
           completedAt: new Date().toISOString(),
           durationMs,
+          input: step.config,
+          ...rollupTelemetry(telemetryOut),
         });
         await this.checkpoint(executionId, ctx, trace);
         allEvents.push(workflowFailed(sanitizeError(error), step.id));
@@ -954,6 +982,8 @@ export class OrchestrationEngine {
         startedAt: new Date(started).toISOString(),
         completedAt: new Date().toISOString(),
         durationMs,
+        input: step.config,
+        ...rollupTelemetry(telemetryOut),
       });
       await this.checkpoint(executionId, ctx, trace);
 
@@ -1004,7 +1034,8 @@ export class OrchestrationEngine {
    */
   private async runStepToCompletion(
     step: WorkflowStep,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
+    telemetryOut: LlmTelemetryEntry[]
   ): Promise<StepResult> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -1014,13 +1045,14 @@ export class OrchestrationEngine {
     const stepTimeoutMs = errorConfig.timeoutMs;
 
     const invokeExecutor = async (): Promise<StepResult> => {
+      telemetryOut.length = 0;
       if (!stepTimeoutMs) {
-        return executor(step, snapshotContext(ctx));
+        return executor(step, snapshotContext(ctx, telemetryOut));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         return await Promise.race([
-          executor(step, snapshotContext(ctx)),
+          executor(step, snapshotContext(ctx, telemetryOut)),
           new Promise<never>((_, reject) => {
             timer = setTimeout(
               () =>

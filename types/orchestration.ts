@@ -249,6 +249,12 @@ export type ExecutionEvent =
  * The engine writes one entry per completed step (or per terminally-failed
  * step). Survives process restarts and is the source of truth for the
  * execution detail view.
+ *
+ * The trailing optional fields (`input`, `model`, `provider`, `inputTokens`,
+ * `outputTokens`, `llmDurationMs`) were added in the trace-viewer / latency
+ * attribution work (item 10 of `improvement-priorities.md`). They are all
+ * optional so historical rows continue to parse cleanly — `executionTraceSchema`
+ * is back-compatible.
  */
 export interface ExecutionTraceEntry {
   stepId: string;
@@ -261,6 +267,50 @@ export interface ExecutionTraceEntry {
   costUsd: number;
   startedAt: string;
   completedAt?: string;
+  durationMs: number;
+  /**
+   * Snapshot of the step's resolved config at execution time. Mirrors
+   * `step.config` (post-validation) so the trace viewer can show what the
+   * step received without joining back through the workflow definition.
+   */
+  input?: unknown;
+  /**
+   * Resolved model id for the step's LLM work, if any. For multi-turn
+   * executors (`agent_call`, `orchestrator`) this is the model used for the
+   * final turn. Absent for non-LLM steps.
+   */
+  model?: string;
+  /** Resolved provider slug. Same shape rules as `model`. */
+  provider?: string;
+  /** Sum of input tokens across every LLM turn the step issued. */
+  inputTokens?: number;
+  /** Sum of output tokens across every LLM turn the step issued. */
+  outputTokens?: number;
+  /**
+   * Wall-clock spent inside LLM calls. The difference `durationMs - llmDurationMs`
+   * approximates engine + tool I/O overhead. Absent for non-LLM steps.
+   */
+  llmDurationMs?: number;
+}
+
+/**
+ * One LLM turn's telemetry, accumulated on `ExecutionContext.stepTelemetry`
+ * during step execution. The engine drains the array after the executor
+ * returns and rolls it into the step's trace entry.
+ *
+ * Each call site (`runLlmCall`, `agent_call`'s `runSingleTurn`) appends one
+ * entry per `provider.chat()` invocation.
+ */
+export interface LlmTelemetryEntry {
+  /** Model id used for this turn (resolved). */
+  model: string;
+  /** Provider slug used for this turn (resolved, may be a fallback). */
+  provider: string;
+  /** Input tokens reported by the provider for this turn. */
+  inputTokens: number;
+  /** Output tokens reported by the provider for this turn. */
+  outputTokens: number;
+  /** Wall-clock time spent inside `provider.chat()` for this turn, in ms. */
   durationMs: number;
 }
 

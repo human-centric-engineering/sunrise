@@ -59,6 +59,7 @@ async function runSingleTurn(
   let currentMessages = [...initialMessages];
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const turnStarted = Date.now();
     let response;
     try {
       response = await provider.chat(currentMessages, {
@@ -76,6 +77,15 @@ async function runSingleTurn(
         err
       );
     }
+    const turnDurationMs = Date.now() - turnStarted;
+
+    ctx.stepTelemetry?.push({
+      model: agent!.model,
+      provider: usedSlug,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      durationMs: turnDurationMs,
+    });
 
     const turnTokens = response.usage.inputTokens + response.usage.outputTokens;
     const turnCost = calculateCost(
