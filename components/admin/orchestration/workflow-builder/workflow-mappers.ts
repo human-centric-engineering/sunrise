@@ -73,7 +73,7 @@ export function stripLayout(config: Record<string, unknown>): Record<string, unk
 
 /**
  * Simple BFS level assignment — nodes at level N are placed at
- * `x = N * 260`, stacked vertically by visit order.
+ * `x = N * AUTO_LAYOUT_X_STEP`, stacked vertically by visit order.
  *
  * Used when a step has no persisted layout. Unreachable steps get a
  * trailing column of their own.
@@ -181,7 +181,16 @@ export function workflowDefinitionToFlow(definition: WorkflowDefinition): {
         sourceHandle,
         targetHandle: 'in-0',
         type: isRetry ? 'retry' : 'default',
-        data: { maxRetries: edge.maxRetries },
+        data: {
+          maxRetries: edge.maxRetries,
+          // Edge-layout round-trip: surface the persisted control-point
+          // position to the custom edge component so it can render the
+          // user's last drag exactly. Absent on first load \u2192 component
+          // computes a sensible default.
+          controlPoint: edge._layout
+            ? { x: edge._layout.controlPointX, y: edge._layout.controlPointY }
+            : undefined,
+        },
       });
     });
   }
@@ -242,10 +251,18 @@ export function flowToWorkflowDefinition(
         ) {
           maxRetries = node.data.config.maxRetries;
         }
+        const cp = (data as { controlPoint?: { x: unknown; y: unknown } } | undefined)
+          ?.controlPoint;
+        const controlPoint =
+          cp && typeof cp.x === 'number' && typeof cp.y === 'number'
+            ? { controlPointX: cp.x, controlPointY: cp.y }
+            : undefined;
+
         return {
           targetStepId: e.target,
           ...(condition ? { condition } : {}),
           ...(maxRetries ? { maxRetries } : {}),
+          ...(controlPoint ? { _layout: controlPoint } : {}),
         };
       });
 

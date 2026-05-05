@@ -156,6 +156,14 @@ export async function runLlmCall(
  *                                   (JSON-stringified if not a string).
  *   - `{{<stepId>.output}}`       → ctx.stepOutputs[stepId]
  *                                   (JSON-stringified if not a string).
+ *   - `{{vars.<path>}}`           → drills into ctx.variables along the
+ *                                   dotted path; e.g.
+ *                                   `vars.__retryContext.failureReason`.
+ *   - `{{#if vars.<path>}}body{{/if}}`
+ *                                 → body is included only when the
+ *                                   resolved value is truthy. Flat
+ *                                   conditionals only — bodies must not
+ *                                   contain another `{{#if ...}}`.
  *
  * Missing references expand to the empty string — mirrors the common
  * template-engine behaviour and keeps executors from needing to
@@ -166,7 +174,22 @@ export function interpolatePrompt(
   ctx: Readonly<ExecutionContext>,
   previousStepId?: string
 ): string {
-  return template.replace(/\{\{([^}]+)\}\}/g, (_match, rawExpr: string) => {
+  // First pass: resolve flat `{{#if EXPR}}BODY{{/if}}` conditionals.
+  // Body match is non-greedy so multiple flat conditionals on the same
+  // line each terminate at their own `{{/if}}`.
+  const withoutConditionals = template.replace(
+    /\{\{#if\s+([^}]+?)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+    (_match, rawExpr: string, body: string) => {
+      const expr = rawExpr.trim();
+      const value = expr.startsWith('vars.')
+        ? resolveDottedPath(ctx.variables, expr.slice('vars.'.length))
+        : undefined;
+      return isTruthy(value) ? body : '';
+    }
+  );
+
+  // Second pass: resolve single-token `{{...}}` references.
+  return withoutConditionals.replace(/\{\{([^}]+)\}\}/g, (_match, rawExpr: string) => {
     const expr = rawExpr.trim();
 
     if (expr === 'input') {
@@ -186,6 +209,10 @@ export function interpolatePrompt(
       return stringifyValue(ctx.stepOutputs[previousStepId]);
     }
 
+    if (expr.startsWith('vars.')) {
+      return stringifyValue(resolveDottedPath(ctx.variables, expr.slice('vars.'.length)));
+    }
+
     const dotIdx = expr.lastIndexOf('.');
     if (dotIdx > 0 && expr.slice(dotIdx + 1) === 'output') {
       const stepId = expr.slice(0, dotIdx);
@@ -194,6 +221,26 @@ export function interpolatePrompt(
 
     return '';
   });
+}
+
+function resolveDottedPath(root: unknown, path: string): unknown {
+  const parts = path.split('.');
+  let cur: unknown = root;
+  for (const part of parts) {
+    if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+function isTruthy(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.length > 0;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return Boolean(value);
 }
 
 function stringifyValue(value: unknown): string {

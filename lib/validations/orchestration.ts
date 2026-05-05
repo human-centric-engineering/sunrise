@@ -770,6 +770,12 @@ const conditionalEdgeSchema = z.object({
   targetStepId: z.string().min(1, 'Target step ID is required'),
   condition: z.string().max(1000).optional(),
   maxRetries: z.number().int().min(1).max(10).optional(),
+  _layout: z
+    .object({
+      controlPointX: z.number(),
+      controlPointY: z.number(),
+    })
+    .optional(),
 });
 
 /** Single workflow step */
@@ -1893,6 +1899,17 @@ export const executionTraceEntrySchema = z
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
     llmDurationMs: z.number().int().nonnegative().optional(),
+    retries: z
+      .array(
+        z.object({
+          attempt: z.number().int().nonnegative(),
+          maxRetries: z.number().int().nonnegative(),
+          reason: z.string(),
+          targetStepId: z.string(),
+          exhausted: z.boolean().optional(),
+        })
+      )
+      .optional(),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by

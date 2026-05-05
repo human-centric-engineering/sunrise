@@ -840,4 +840,87 @@ describe('ExecutionPanel', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/approval failed/i);
     });
   });
+
+  // ─── step_retry frames ────────────────────────────────────────────────────
+
+  it('attaches a step_retry frame to the source step as a retry sub-row', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-retry', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'guard', stepType: 'guard', label: 'Validate' }),
+      frame('step_completed', {
+        stepId: 'guard',
+        output: { verdict: 'fail', reason: 'bad enum' },
+        tokensUsed: 0,
+        costUsd: 0,
+      }),
+      frame('step_retry', {
+        fromStepId: 'guard',
+        targetStepId: 'producer',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'tierRole "supercomputer" is not valid',
+      }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText('Attempt 1 of 2 failed — re-running producer')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/tierRole "supercomputer" is not valid/)).toBeInTheDocument();
+  });
+
+  it('renders the exhaustion sub-row when step_retry frame has exhausted: true', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-exhaust', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'guard', stepType: 'guard', label: 'Validate' }),
+      frame('step_completed', {
+        stepId: 'guard',
+        output: { verdict: 'fail', reason: 'still bad' },
+        tokensUsed: 0,
+        costUsd: 0,
+      }),
+      frame('step_retry', {
+        fromStepId: 'guard',
+        targetStepId: 'report_validation_failure',
+        attempt: 3,
+        maxRetries: 2,
+        reason: 'still bad',
+        exhausted: true,
+      }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Retry budget exhausted — routed to report_validation_failure')
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('ignores step_retry frame when fromStepId is not a string', async () => {
+    const stream = makeSseStream([
+      frame('workflow_started', { executionId: 'exec-bad-retry', workflowId: WORKFLOW_ID }),
+      frame('step_started', { stepId: 'guard', stepType: 'guard', label: 'Validate' }),
+      frame('step_retry', {
+        fromStepId: null,
+        targetStepId: 'producer',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'bad data',
+      }),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    renderPanel();
+
+    // Step label appears, but no retry sub-row should ever render.
+    await waitFor(() => {
+      expect(screen.getByText('Validate')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Attempt \d+ of \d+ failed/)).not.toBeInTheDocument();
+  });
 });

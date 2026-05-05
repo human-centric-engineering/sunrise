@@ -368,6 +368,51 @@ describe('workflowDefinitionToFlow', () => {
         expect(edge.type).toBe('default');
       }
     });
+
+    it('surfaces edge _layout to React Flow edge.data.controlPoint', () => {
+      // Arrange — retry edge with a persisted control point
+      const definition: WorkflowDefinition = {
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [
+              {
+                targetStepId: 'a',
+                maxRetries: 2,
+                condition: 'fail',
+                _layout: { controlPointX: 250, controlPointY: -120 },
+              },
+            ],
+          },
+        ],
+      };
+
+      // Act
+      const { edges } = workflowDefinitionToFlow(definition);
+
+      // Assert — control point is surfaced for the custom edge component
+      const retryEdge = edges.find((e) => e.source === 'b' && e.target === 'a');
+      expect(retryEdge?.data?.controlPoint).toEqual({ x: 250, y: -120 });
+    });
+
+    it('omits controlPoint from edge.data when no _layout is present', () => {
+      const { edges } = workflowDefinitionToFlow(LINEAR_3_DEFINITION);
+      for (const edge of edges) {
+        expect(edge.data?.controlPoint).toBeUndefined();
+      }
+    });
   });
 });
 
@@ -606,6 +651,80 @@ describe('flowToWorkflowDefinition', () => {
       // Assert — no maxRetries key on a plain edge
       const stepA = result.steps.find((s) => s.id === 'a');
       expect(stepA?.nextSteps[0]).not.toHaveProperty('maxRetries');
+    });
+
+    it('writes ConditionalEdge._layout from edge.data.controlPoint', () => {
+      const nodeA = makeNode('a', 'A', 'llm_call');
+      const nodeB = makeNode('b', 'B', 'llm_call');
+      const edge = {
+        id: 'e1',
+        source: 'b',
+        target: 'a',
+        type: 'retry',
+        label: 'fail (retry ×2)',
+        data: { maxRetries: 2, controlPoint: { x: 320, y: -90 } },
+      };
+
+      const result = flowToWorkflowDefinition([nodeA, nodeB], [edge]);
+      const stepB = result.steps.find((s) => s.id === 'b');
+      expect(stepB?.nextSteps[0]._layout).toEqual({
+        controlPointX: 320,
+        controlPointY: -90,
+      });
+    });
+
+    it('omits _layout when edge.data has no controlPoint', () => {
+      const nodeA = makeNode('a', 'A', 'llm_call');
+      const nodeB = makeNode('b', 'B', 'llm_call');
+      const edge = {
+        id: 'e1',
+        source: 'b',
+        target: 'a',
+        type: 'retry',
+        label: 'fail (retry ×2)',
+        data: { maxRetries: 2 },
+      };
+
+      const result = flowToWorkflowDefinition([nodeA, nodeB], [edge]);
+      const stepB = result.steps.find((s) => s.id === 'b');
+      expect(stepB?.nextSteps[0]).not.toHaveProperty('_layout');
+    });
+
+    it('round-trips _layout through workflowDefinitionToFlow + flowToWorkflowDefinition', () => {
+      const definition: WorkflowDefinition = {
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [
+              {
+                targetStepId: 'a',
+                condition: 'fail',
+                maxRetries: 2,
+                _layout: { controlPointX: 200, controlPointY: -50 },
+              },
+            ],
+          },
+        ],
+      };
+
+      const { nodes, edges } = workflowDefinitionToFlow(definition);
+      const result = flowToWorkflowDefinition(nodes, edges);
+
+      const stepB = result.steps.find((s) => s.id === 'b');
+      const retryEdge = stepB?.nextSteps.find((e) => e.targetStepId === 'a');
+      expect(retryEdge?._layout).toEqual({ controlPointX: 200, controlPointY: -50 });
     });
   });
 

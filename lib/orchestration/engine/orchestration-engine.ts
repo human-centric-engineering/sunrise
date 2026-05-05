@@ -315,7 +315,49 @@ export class OrchestrationEngine {
 
           const edgeKey = `${step.id}\u2192${id}`;
           const attempts = retryCount.get(edgeKey) ?? 0;
-          if (attempts >= retryEdge.maxRetries!) continue;
+          if (attempts >= retryEdge.maxRetries!) {
+            // Retry budget exhausted. If the source step has a sibling
+            // edge with the same condition but no maxRetries, route
+            // there as the exhaustion handler. Otherwise fall through
+            // to the legacy silent-halt behaviour.
+            const fallbackEdge = step.nextSteps.find(
+              (e) =>
+                e.targetStepId !== id &&
+                e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
+                (!e.maxRetries || e.maxRetries === 0)
+            );
+            if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
+              const failureReason =
+                typeof singleResult.output === 'object' &&
+                singleResult.output !== null &&
+                'reason' in singleResult.output
+                  ? (singleResult.output as Record<string, unknown>).reason
+                  : singleResult.output;
+              const reasonStr =
+                typeof failureReason === 'string'
+                  ? failureReason
+                  : failureReason !== undefined && failureReason !== null
+                    ? JSON.stringify(failureReason)
+                    : '';
+              queue.push(fallbackEdge.targetStepId);
+              attachRetryToTrace(trace, step.id, {
+                attempt: retryEdge.maxRetries! + 1,
+                maxRetries: retryEdge.maxRetries!,
+                reason: reasonStr,
+                targetStepId: fallbackEdge.targetStepId,
+                exhausted: true,
+              });
+              yield stepRetry(
+                step.id,
+                fallbackEdge.targetStepId,
+                retryEdge.maxRetries! + 1,
+                retryEdge.maxRetries!,
+                reasonStr,
+                true
+              );
+            }
+            continue;
+          }
 
           // Under the retry limit — re-queue the target.
           retryCount.set(edgeKey, attempts + 1);
@@ -356,24 +398,25 @@ export class OrchestrationEngine {
 
           queue.push(id);
 
-          yield stepRetry(
-            step.id,
-            id,
-            attempts + 1,
-            retryEdge.maxRetries!,
-            (() => {
-              if (
-                typeof ctx.variables.__retryContext === 'object' &&
-                ctx.variables.__retryContext !== null
-              ) {
-                const reason = (ctx.variables.__retryContext as Record<string, unknown>)
-                  .failureReason;
-                if (typeof reason === 'string') return reason;
-                if (reason !== undefined && reason !== null) return JSON.stringify(reason);
-              }
-              return '';
-            })()
-          );
+          const retryReason = (() => {
+            if (
+              typeof ctx.variables.__retryContext === 'object' &&
+              ctx.variables.__retryContext !== null
+            ) {
+              const reason = (ctx.variables.__retryContext as Record<string, unknown>)
+                .failureReason;
+              if (typeof reason === 'string') return reason;
+              if (reason !== undefined && reason !== null) return JSON.stringify(reason);
+            }
+            return '';
+          })();
+          attachRetryToTrace(trace, step.id, {
+            attempt: attempts + 1,
+            maxRetries: retryEdge.maxRetries!,
+            reason: retryReason,
+            targetStepId: id,
+          });
+          yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
         }
         continue;
       }
@@ -1529,6 +1572,24 @@ function sanitizeError(err: ExecutorError): string {
 
 function backoffDelayMs(attempt: number): number {
   return Math.min(500 * Math.pow(2, attempt), 5_000);
+}
+
+/**
+ * Append a retry record to the most recent trace entry written for
+ * `stepId` — that's the entry whose verdict triggered the retry.
+ */
+function attachRetryToTrace(
+  trace: ExecutionTraceEntry[],
+  stepId: string,
+  retry: NonNullable<ExecutionTraceEntry['retries']>[number]
+): void {
+  for (let i = trace.length - 1; i >= 0; i--) {
+    if (trace[i].stepId === stepId) {
+      const existing = trace[i].retries ?? [];
+      trace[i] = { ...trace[i], retries: [...existing, retry] };
+      return;
+    }
+  }
 }
 
 function sleep(ms: number): Promise<void> {

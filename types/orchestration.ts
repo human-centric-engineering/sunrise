@@ -167,6 +167,17 @@ export interface ConditionalEdge {
    * carry this property; the engine tracks iteration count at runtime.
    */
   maxRetries?: number;
+  /**
+   * Authoring-only: absolute (x, y) of a quadratic-bezier control point
+   * in flow coordinates. Lets the canvas bow an edge around intervening
+   * nodes — important for retry back-edges that would otherwise cut
+   * through the forward steps. Persisted on save and re-applied on
+   * load. The engine ignores this field.
+   */
+  _layout?: {
+    controlPointX: number;
+    controlPointY: number;
+  };
 }
 
 /** A single step in a workflow DAG */
@@ -232,6 +243,9 @@ export type ExecutionEvent =
       attempt: number;
       maxRetries: number;
       reason: string;
+      // True when the retry budget is exhausted and `targetStepId`
+      // points to a sibling fallback edge instead of the retry target.
+      exhausted?: boolean;
     }
   | { type: 'approval_required'; stepId: string; payload: unknown }
   | { type: 'budget_warning'; usedUsd: number; limitUsd: number }
@@ -291,6 +305,19 @@ export interface ExecutionTraceEntry {
    * approximates engine + tool I/O overhead. Absent for non-LLM steps.
    */
   llmDurationMs?: number;
+  /**
+   * Bounded-retry events fired from this step. Each entry corresponds to one
+   * `step_retry` event the engine yielded after the executor returned. When
+   * `exhausted` is true the retry budget was spent and `targetStepId` points
+   * at the sibling fallback edge instead of the retry target.
+   */
+  retries?: Array<{
+    attempt: number;
+    maxRetries: number;
+    reason: string;
+    targetStepId: string;
+    exhausted?: boolean;
+  }>;
 }
 
 /**
