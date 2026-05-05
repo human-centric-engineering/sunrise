@@ -202,6 +202,11 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
   const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
 
   const handleSelectStep = useCallback((stepId: string) => {
+    // Reset the filter to "all" so the target row exists in the DOM. Without
+    // this, clicking a Completed bar while the Failed filter is active would
+    // silently no-op — the timeline strip renders all bars but the trace list
+    // below renders only filtered entries.
+    setFilter('all');
     setHighlightedStepId(stepId);
     // Defer to next paint so the highlighted row class is applied before scrolling.
     requestAnimationFrame(() => {

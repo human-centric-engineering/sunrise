@@ -235,6 +235,29 @@ describe('ExecutionDetailView', () => {
 
       expect(screen.getByRole('heading', { name: /step timeline/i })).toBeInTheDocument();
     });
+
+    it('clearing filter on timeline click: clicking a bar resets filter to "all" so the target row is in the DOM', async () => {
+      const user = userEvent.setup();
+      // Two entries → timeline strip + filter chips both render. Apply the
+      // "Failed" filter so the only completed step is hidden, then click its
+      // timeline bar — the row should reappear and we should be able to find
+      // it by testid.
+      const entries: ExecutionTraceEntry[] = [
+        { ...TRACE_ENTRY, stepId: 'step-ok', status: 'completed', label: 'OK' },
+        { ...TRACE_ENTRY, stepId: 'step-bad', status: 'failed', label: 'Bad' },
+      ];
+
+      render(<ExecutionDetailView execution={makeExecution()} trace={entries} />);
+
+      // Apply Failed filter — completed row should drop out of the list.
+      await user.click(screen.getByTestId('trace-filter-failed'));
+      expect(screen.queryByTestId('trace-entry-step-ok')).not.toBeInTheDocument();
+
+      // Click the OK bar in the timeline — handleSelectStep clears the filter,
+      // so step-ok's row is back in the DOM.
+      await user.click(screen.getByTestId('timeline-bar-step-ok'));
+      expect(screen.getByTestId('trace-entry-step-ok')).toBeInTheDocument();
+    });
   });
 
   describe('Approval prompt card', () => {
