@@ -45,6 +45,8 @@ import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
+import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
+import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 import { z } from 'zod';
 
@@ -155,6 +157,18 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  // Tracks which trace row was last clicked from the timeline strip so the
+  // matching row below can be highlighted and scrolled into view.
+  const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
+
+  const handleSelectStep = useCallback((stepId: string) => {
+    setHighlightedStepId(stepId);
+    // Defer to next paint so the highlighted row class is applied before scrolling.
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-testid="trace-entry-${stepId}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
 
   const handleCancel = useCallback(async () => {
     setActionLoading(true);
@@ -456,6 +470,14 @@ export function ExecutionDetailView({ execution, trace }: ExecutionDetailViewPro
         <CollapsibleJsonCard title="Input Data" data={execution.inputData} />
         <CollapsibleJsonCard title="Output Data" data={execution.outputData} />
       </div>
+
+      {/* Aggregates + timeline strip — both hidden when trace.length < 2. */}
+      <ExecutionAggregates trace={trace} />
+      <ExecutionTimelineStrip
+        trace={trace}
+        onSelectStep={handleSelectStep}
+        highlightedStepId={highlightedStepId ?? undefined}
+      />
 
       {/* Step timeline */}
       <section aria-label="Execution trace">
