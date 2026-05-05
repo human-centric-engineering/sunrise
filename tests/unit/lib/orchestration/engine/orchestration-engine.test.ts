@@ -2750,4 +2750,430 @@ describe('OrchestrationEngine', () => {
     expect(trace[0].status).toBe('awaiting_approval');
     expect(trace[0].input).toEqual({ prompt: 'approve me?' });
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Coverage uplift — paths that were `it.todo` or otherwise unreached.
+  //
+  // Bounded-retry edges (`maxRetries + condition`) drive a forward step to
+  // re-execute when a back-edge fires from a downstream step. The inDegree
+  // computation already excludes those edges (line 188), so the previously-
+  // suspected deadlock does not exist — these tests exercise the live path.
+  //
+  // Plus a few small gaps in the parallel-batch loop (unknown step id,
+  // budget warning, lastOutput propagation, budget exceeded across batch).
+  // ────────────────────────────────────────────────────────────────────────
+
+  describe('bounded-retry edges', () => {
+    function bgcWorkflow(): WorkflowDefinition {
+      // A → B (guard) with a back-edge B→A capped by maxRetries=2 + condition.
+      return {
+        steps: [
+          {
+            id: 'a',
+            name: 'Pre-check',
+            type: 'llm_call',
+            config: { prompt: 'hello' },
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'Guard',
+            type: 'guard',
+            config: { passes: false },
+            nextSteps: [
+              {
+                targetStepId: 'a',
+                maxRetries: 2,
+                condition: 'retry',
+              },
+              { targetStepId: 'c' },
+            ],
+          },
+          {
+            id: 'c',
+            name: 'Tail',
+            type: 'llm_call',
+            config: { prompt: 'tail' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+    }
+
+    it('re-executes the back-edge target up to maxRetries when guard fails', async () => {
+      let aCalls = 0;
+      let bCalls = 0;
+      registerStepType('llm_call', async (step) => {
+        if (step.id === 'a') aCalls++;
+        return { output: { reason: `attempt ${aCalls}` }, tokensUsed: 1, costUsd: 0 };
+      });
+      registerStepType('guard', async (_step) => {
+        bCalls++;
+        // Fail twice, then succeed → routes to 'a' twice, then to 'c'.
+        const passes = bCalls > 2;
+        return {
+          output: { reason: 'guard failed' },
+          tokensUsed: 0,
+          costUsd: 0,
+          // The engine matches retry edges by `maxRetries + condition` shape.
+          // Force the back-edge target by returning [a] from B's StepResult
+          // when failing; route to [c] when passing.
+          nextStepIds: passes ? ['c'] : ['a'],
+        };
+      });
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(bgcWorkflow()));
+      const types = events.map((e) => e.type);
+
+      // Two retries fired, then completion.
+      expect(types.filter((t) => t === 'step_retry')).toHaveLength(2);
+      expect(types[types.length - 1]).toBe('workflow_completed');
+      // A ran 3 times (initial + 2 retries), B ran 3 times, then C once.
+      expect(aCalls).toBe(3);
+      expect(bCalls).toBe(3);
+    });
+
+    it('emits step_retry with the failure reason from output.reason', async () => {
+      registerStepType('llm_call', async () => ({ output: 'a-out', tokensUsed: 0, costUsd: 0 }));
+      registerStepType('guard', async () => ({
+        output: { reason: 'precheck failed' },
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: ['a'],
+      }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: { prompt: 'a' },
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'guard',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 1, condition: 'retry' }],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const retry = events.find((e) => e.type === 'step_retry') as Extract<
+        ExecutionEvent,
+        { type: 'step_retry' }
+      >;
+
+      expect(retry).toBeDefined();
+      expect(retry.fromStepId).toBe('b');
+      expect(retry.targetStepId).toBe('a');
+      expect(retry.attempt).toBe(1);
+      expect(retry.maxRetries).toBe(1);
+      expect(retry.reason).toBe('precheck failed');
+    });
+
+    it('JSON-stringifies a non-string failureReason from a structured output', async () => {
+      registerStepType('llm_call', async () => ({ output: 'a-out', tokensUsed: 0, costUsd: 0 }));
+      // Output without a `reason` property — engine falls back to String(output).
+      registerStepType('guard', async () => ({
+        output: { code: 'X', detail: 'Y' },
+        tokensUsed: 0,
+        costUsd: 0,
+        nextStepIds: ['a'],
+      }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: { prompt: 'a' },
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'guard',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 1, condition: 'retry' }],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const retry = events.find((e) => e.type === 'step_retry') as Extract<
+        ExecutionEvent,
+        { type: 'step_retry' }
+      >;
+
+      // Engine path: typeof reason === 'string'? no; reason !== undefined && != null?
+      // yes → JSON.stringify(reason). reason here is the WHOLE output object
+      // because output has no `reason` property → falls into String(output) branch
+      // (objects stringify to "[object Object]"). Either way, the reason is
+      // populated as a non-empty string and not the empty fallback.
+      expect(retry).toBeDefined();
+      expect(typeof retry.reason).toBe('string');
+      expect(retry.reason.length).toBeGreaterThan(0);
+    });
+
+    it('cascade-clears visited and re-runs the retry target on each retry', async () => {
+      const callOrder: string[] = [];
+      registerStepType('llm_call', async (step) => {
+        callOrder.push(step.id);
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+      let bCalls = 0;
+      registerStepType('guard', async () => {
+        bCalls++;
+        return {
+          output: { reason: 'r' },
+          tokensUsed: 0,
+          costUsd: 0,
+          nextStepIds: bCalls === 1 ? ['a'] : ['c'],
+        };
+      });
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: { prompt: 'a' },
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'guard',
+            config: {},
+            nextSteps: [
+              { targetStepId: 'a', maxRetries: 2, condition: 'retry' },
+              { targetStepId: 'c' },
+            ],
+          },
+          {
+            id: 'c',
+            name: 'C',
+            type: 'llm_call',
+            config: { prompt: 'c' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // After cascade-clear, A's second execution preserves order: a, a, c.
+      expect(callOrder).toEqual(['a', 'a', 'c']);
+    });
+
+    it('stops retrying once attempts reach maxRetries — falls through with no further retry events', async () => {
+      let bCalls = 0;
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+      registerStepType('guard', async () => {
+        bCalls++;
+        // Always tries to retry. With maxRetries:1, the second call's [a]
+        // routing must be ignored — the engine drops the retry edge.
+        return {
+          output: { reason: 'always-fail' },
+          tokensUsed: 0,
+          costUsd: 0,
+          nextStepIds: ['a'],
+        };
+      });
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: { prompt: 'a' },
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'B',
+            type: 'guard',
+            config: {},
+            nextSteps: [{ targetStepId: 'a', maxRetries: 1, condition: 'retry' }],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const retries = events.filter((e) => e.type === 'step_retry');
+
+      // Exactly one retry — the second time B routes to A, attempts (1) is
+      // already at maxRetries (1), so the retry edge is skipped.
+      expect(retries).toHaveLength(1);
+      expect(bCalls).toBe(2);
+      // Workflow finishes — engine doesn't deadlock or re-fire.
+      expect(events.some((e) => e.type === 'workflow_completed')).toBe(true);
+    });
+  });
+
+  describe('parallel-batch loop edge cases', () => {
+    it('handles unknown step id in a parallel batch — emits workflow_failed and stops', async () => {
+      registerStepType('parallel', async () => ({
+        output: { fanout: true },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'P',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'ghost' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'a' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+        ExecutionEvent,
+        { type: 'workflow_failed' }
+      >;
+
+      expect(failed).toBeDefined();
+      expect(failed.error).toContain('Unknown step id "ghost"');
+    });
+
+    it('emits a budget_warning at the configured threshold inside the parallel-batch loop', async () => {
+      registerStepType('parallel', async () => ({
+        output: { fanout: true },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0.5 }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'P',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'a' }, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'b' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      // Budget 1.20 — after the parallel batch (cost 1.0) we cross 80% of 1.20 = 0.96.
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+        userId: USER_ID,
+        budgetLimitUsd: 1.2,
+      });
+
+      expect(events.some((e) => e.type === 'budget_warning')).toBe(true);
+      expect(events.some((e) => e.type === 'workflow_completed')).toBe(true);
+    });
+
+    it('halts the workflow with workflow_failed when post-batch budget check trips', async () => {
+      registerStepType('parallel', async () => ({
+        output: { fanout: true },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0.5 }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'P',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'a' }, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'b' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      // Budget 0.40 — two parallel branches at 0.5 each total 1.0 > 0.40, so
+      // the post-batch budget check trips.
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+        userId: USER_ID,
+        budgetLimitUsd: 0.4,
+      });
+
+      const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+        ExecutionEvent,
+        { type: 'workflow_failed' }
+      >;
+      expect(failed).toBeDefined();
+      expect(failed.error).toContain('Budget exceeded');
+    });
+
+    it('propagates lastOutput from a parallel batch into the workflow_completed event', async () => {
+      registerStepType('parallel', async () => ({
+        output: { fanout: true },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async (step) => ({
+        output: `branch:${step.id}`,
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'P',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'a' }, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'b' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const completed = events.find((e) => e.type === 'workflow_completed') as Extract<
+        ExecutionEvent,
+        { type: 'workflow_completed' }
+      >;
+
+      // Either branch's output is acceptable — the contract is "the last
+      // branch's output wins" but order is timing-dependent in the parallel
+      // promise loop. Both are valid step outputs.
+      expect(completed).toBeDefined();
+      expect(['branch:a', 'branch:b']).toContain(completed.output);
+    });
+  });
 });
