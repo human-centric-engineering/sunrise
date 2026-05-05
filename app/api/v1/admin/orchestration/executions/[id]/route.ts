@@ -30,6 +30,11 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 
+// `executionTraceSchema` is `z.array(...).catch([])` — parsing always succeeds,
+// returning `[]` for malformed rows. Don't add a "trace corrupted" error path
+// here: it would be unreachable and gives the wrong impression that this
+// route guards against bad data with a 400.
+
 interface CostEntry {
   stepId: string;
   model: string;
@@ -61,11 +66,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     throw new NotFoundError(`Execution ${id} not found`);
   }
 
-  const traceParse = executionTraceSchema.safeParse(execution.executionTrace);
-  if (!traceParse.success) {
-    throw new ValidationError('Execution trace is corrupted and cannot be displayed');
-  }
-  const trace = traceParse.data;
+  const trace = executionTraceSchema.parse(execution.executionTrace);
 
   // Pull every cost log attributed to this execution. Older rows in
   // production may have null metadata or no stepId — those are filtered
