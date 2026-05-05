@@ -30,17 +30,29 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
 
+  // Reserve a right-side gutter wide enough for the longest output label so
+  // labels never overlay the centred step name. ~5.5px per char at text-[9px]
+  // sans-serif, plus a little breathing room. Zero gutter when no labels.
+  const longestLabelLen = outputLabels?.reduce((m, l) => Math.max(m, (l ?? '').length), 0) ?? 0;
+  const labelGutterPx = longestLabelLen > 0 ? Math.ceil(longestLabelLen * 5.5) + 8 : 0;
+
   return (
     <div
       data-testid={`pattern-node-${data.type}`}
       className={cn(
-        'flex max-w-[160px] min-w-[140px] flex-col items-center gap-2 rounded-lg border-2 px-3 py-3 shadow-sm transition-shadow',
+        'relative flex flex-col items-center gap-2 rounded-lg border-2 py-3 shadow-sm transition-shadow',
         colours.bg,
         colours.border,
         colours.text,
         selected && !hasError && 'ring-primary shadow-md ring-2',
         hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
       )}
+      style={{
+        paddingLeft: 12,
+        paddingRight: 12 + labelGutterPx,
+        minWidth: 140 + labelGutterPx,
+        maxWidth: 160 + labelGutterPx,
+      }}
     >
       {hasError && <span className="sr-only">Step has validation errors</span>}
       {/* Input handles — stacked on the left side */}
