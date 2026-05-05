@@ -6,6 +6,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import type { PatternSummary } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -69,6 +70,7 @@ export default async function LearnPage({ searchParams }: PageProps) {
         <p className="text-muted-foreground text-sm">
           Explore agentic design patterns, get guidance from the advisor, and test your knowledge.
         </p>
+        <p className="text-muted-foreground mt-1 text-xs">{PATTERN_ATTRIBUTION_LINE}</p>
       </header>
 
       <LearningTabs

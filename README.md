@@ -115,6 +115,10 @@ claude mcp add next-devtools npx next-devtools-mcp@latest
 
 See the [Next.js DevTools MCP docs](https://github.com/vercel/next-devtools-mcp) for details.
 
+## Acknowledgements
+
+The 21 design patterns referenced throughout the orchestration learning area are adapted from _Agentic Design Patterns_ by Antonio Gullí.
+
 ## License
 
 MIT

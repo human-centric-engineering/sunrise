@@ -24,6 +24,7 @@ import { PatternContent } from '@/components/admin/orchestration/learn/pattern-c
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
 import type { AiKnowledgeChunk } from '@/types/orchestration';
 
@@ -143,7 +144,8 @@ export function PatternLearnMoreDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="sm:items-center sm:justify-between">
+          <p className="text-muted-foreground text-xs">{PATTERN_ATTRIBUTION_LINE}</p>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>

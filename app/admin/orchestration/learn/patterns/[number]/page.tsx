@@ -10,6 +10,7 @@ import { UsePatternButton } from '@/components/admin/orchestration/learn/use-pat
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
 import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
 import { stripEmbeddingPrefix } from '@/lib/orchestration/utils/strip-embedding-prefix';
@@ -159,6 +160,10 @@ export default async function PatternDetailPage({ params }: PageProps) {
 
       {/* Remaining sections — collapsible accordions */}
       {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}
+
+      <p className="text-muted-foreground border-border/50 mt-8 border-t pt-4 text-xs">
+        {PATTERN_ATTRIBUTION_LINE}
+      </p>
     </div>
   );
 }
