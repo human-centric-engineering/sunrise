@@ -167,6 +167,17 @@ export interface ConditionalEdge {
    * carry this property; the engine tracks iteration count at runtime.
    */
   maxRetries?: number;
+  /**
+   * Authoring-only: absolute (x, y) of a quadratic-bezier control point
+   * in flow coordinates. Lets the canvas bow an edge around intervening
+   * nodes — important for retry back-edges that would otherwise cut
+   * through the forward steps. Persisted on save and re-applied on
+   * load. The engine ignores this field.
+   */
+  _layout?: {
+    controlPointX: number;
+    controlPointY: number;
+  };
 }
 
 /** A single step in a workflow DAG */
