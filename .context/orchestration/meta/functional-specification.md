@@ -274,7 +274,7 @@ Each step can define its own error handling:
 ### 5.5 Execution Management
 
 - **Execution records**: `AiWorkflowExecution` tracks state, results, timing
-- **Executions list**: Admin page (`/admin/orchestration/executions`) listing all executions with status filter, workflow filter, and links to step-by-step trace detail. Accessible from the Operate sidebar section.
+- **Executions list**: Admin page (`/admin/orchestration/executions`) listing all executions with status filter, workflow filter, and links to the step-by-step trace detail (timeline strip, aggregates card, per-step input/output panels, per-call cost sub-table, and filter chips — see §10.3). Accessible from the Operate sidebar section.
 - **Approval queue**: Admin page listing `paused_for_approval` executions with expandable rows showing approval prompt, cost summary, previous steps, and input data. Approve with optional notes or reject with required reason. Sidebar badge shows pending count; Operate subgroup auto-opens when approvals are pending.
 - **Admin approval endpoints**: Session-authenticated approve/reject via admin API. Supports ownership check and approver delegation — non-owner admins can approve if their user ID is in the step's `approverUserIds` list.
 - **External approval endpoints**: Token-authenticated public endpoints (`/api/v1/orchestration/approvals/:id/{approve,reject}`) using stateless HMAC-SHA256 signed tokens. No session cookies required — the token IS the auth. Rate limited.
@@ -463,7 +463,18 @@ Admin dashboard with:
 - Cost trends
 - Recent execution status
 
-### 10.3 Audit Logging
+### 10.3 Execution Trace Viewer
+
+Per-execution detail page (`/admin/orchestration/executions/:id`) with:
+
+- **Aggregates card** — total wall-clock, p50 / p95 step duration, slowest step, LLM share (LLM ms / total ms), per-step-type breakdown (count · duration · tokens). Hidden for traces with fewer than 2 entries.
+- **Timeline strip** — Gantt-style horizontal bar per step, widths proportional to the slowest step. Slow outliers (≥ p90 in traces with ≥ 5 entries) and failed steps colour-coded; awaiting-approval bars amber-striped. Click → scroll-to + ring-highlight the matching trace row.
+- **Per-step row** — header carries provider · model chip and a latency breakdown ("LLM xxx ms · other yyy ms"). Expanded body shows input + output side-by-side and a per-call cost sub-table populated from `AiCostLog` rows attributed to the step (multi-turn executors like `tool_call` / `agent_call` / `orchestrator` produce several rows).
+- **Filter chips** — All / Failed / Slow / LLM only / Tool only / With approvals. Local state, not URL-persisted. Disabled chips show their zero count rather than vanishing.
+
+The engine writes `input` (snapshot of `step.config`), `model`, `provider`, `inputTokens`, `outputTokens`, `llmDurationMs` onto each `ExecutionTraceEntry` — all optional, back-compatible with historical rows. `GET /executions/:id` joins `AiCostLog` for the per-call detail.
+
+### 10.4 Audit Logging
 
 Immutable configuration change log (`AiAdminAuditLog`):
 
@@ -632,27 +643,27 @@ Covers approximately 6/10 OWASP Agentic Application Top 10 categories natively:
 
 20+ pages covering complete lifecycle management:
 
-| Section             | Pages                         | Functions                                        |
-| ------------------- | ----------------------------- | ------------------------------------------------ |
-| **Agents**          | List, Create, Edit (6 tabs)   | CRUD, capabilities, instructions, budget, export |
-| **Capabilities**    | List, Create, Edit            | CRUD, category filter, usage stats               |
-| **Providers**       | Card grid, Create, Edit       | CRUD, connection test, health status             |
-| **Provider Models** | Matrix view, Form             | Model configuration, tier assignment             |
-| **Workflows**       | List, Visual Builder          | React Flow canvas, palette, step registry        |
-| **Knowledge**       | Document list, Upload, Search | Document management, search testing              |
-| **Conversations**   | List, Trace viewer            | Review, tagging, export                          |
-| **Costs**           | Summary, Trends, Settings     | Budget configuration, cost breakdown             |
-| **Analytics**       | Usage, Topics, Gaps           | Engagement metrics, coverage analysis            |
-| **Observability**   | Dashboard                     | Health, latency, errors                          |
-| **Evaluations**     | Runner, Annotations           | Quality assessment, completion                   |
-| **Experiments**     | List, Run                     | A/B testing management                           |
-| **Executions**      | List, Detail (trace)          | Browse runs, filter by status/workflow, inspect  |
-| **Approvals**       | Queue page                    | Browse, approve/reject pending executions        |
-| **Audit Log**       | Filterable list               | Config change history                            |
-| **MCP**             | 7 sub-pages                   | Tools, resources, sessions, audit, keys          |
-| **Learning**        | Pattern explorer, Quiz        | 21 patterns, advisor chatbot                     |
-| **Settings**        | Global config                 | Defaults, guards, search tuning                  |
-| **Setup Wizard**    | 5-step flow                   | Guided initial configuration                     |
+| Section             | Pages                         | Functions                                                                                              |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Agents**          | List, Create, Edit (6 tabs)   | CRUD, capabilities, instructions, budget, export                                                       |
+| **Capabilities**    | List, Create, Edit            | CRUD, category filter, usage stats                                                                     |
+| **Providers**       | Card grid, Create, Edit       | CRUD, connection test, health status                                                                   |
+| **Provider Models** | Matrix view, Form             | Model configuration, tier assignment                                                                   |
+| **Workflows**       | List, Visual Builder          | React Flow canvas, palette, step registry                                                              |
+| **Knowledge**       | Document list, Upload, Search | Document management, search testing                                                                    |
+| **Conversations**   | List, Trace viewer            | Review, tagging, export                                                                                |
+| **Costs**           | Summary, Trends, Settings     | Budget configuration, cost breakdown                                                                   |
+| **Analytics**       | Usage, Topics, Gaps           | Engagement metrics, coverage analysis                                                                  |
+| **Observability**   | Dashboard                     | Health, latency, errors                                                                                |
+| **Evaluations**     | Runner, Annotations           | Quality assessment, completion                                                                         |
+| **Experiments**     | List, Run                     | A/B testing management                                                                                 |
+| **Executions**      | List, Detail (trace)          | Browse runs, filter by status/workflow, timeline strip, aggregates, latency attribution, per-call cost |
+| **Approvals**       | Queue page                    | Browse, approve/reject pending executions                                                              |
+| **Audit Log**       | Filterable list               | Config change history                                                                                  |
+| **MCP**             | 7 sub-pages                   | Tools, resources, sessions, audit, keys                                                                |
+| **Learning**        | Pattern explorer, Quiz        | 21 patterns, advisor chatbot                                                                           |
+| **Settings**        | Global config                 | Defaults, guards, search tuning                                                                        |
+| **Setup Wizard**    | 5-step flow                   | Guided initial configuration                                                                           |
 
 ### 18.2 Design Patterns
 
@@ -755,10 +766,11 @@ The Learning UI provides interactive exploration, an advisor chatbot for pattern
 5. **MCP server with audit** — one of very few platforms exposing capabilities via MCP (not just consuming); full audit trail
 6. **Triple safety guards** — input injection detection, output content filtering, and citation hygiene (under-citation / hallucinated-marker), all configurable per-agent
 7. **Inline citation pipeline** — RAG-grounded responses carry structured `Citation` envelopes from search through to the SSE client and persisted message metadata; the LLM cites via `[N]` markers, the admin chat / trace viewer / embed widget render a sources panel for verification
-8. **Platform-agnostic core** — zero Next.js imports in `lib/orchestration/`; testable and portable
-9. **Immutable audit trails** — config changes, instruction versions, and MCP requests all logged
-10. **Embeddable deployment** — Shadow DOM widget deployable on any website with a single script tag
-11. **Complete admin surface** — 20+ pages managing the full agent lifecycle without touching code
+8. **In-product trace viewer with latency attribution** — per-step input/output/model/provider capture, timeline strip with slow-outlier highlighting, aggregates card (p50/p95/slowest step/LLM share), per-call cost sub-table for multi-turn executors, six client-side filter chips. No external observability backend required.
+9. **Platform-agnostic core** — zero Next.js imports in `lib/orchestration/`; testable and portable
+10. **Immutable audit trails** — config changes, instruction versions, and MCP requests all logged
+11. **Embeddable deployment** — Shadow DOM widget deployable on any website with a single script tag
+12. **Complete admin surface** — 20+ pages managing the full agent lifecycle without touching code
 
 ---
 

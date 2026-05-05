@@ -2,7 +2,7 @@
 
 A plain-language record of the major technical and architectural choices behind Sunrise's agent orchestration layer. Each decision first explains the concept in everyday terms, then states what was chosen, lists the alternatives that were rejected, gives the rationale, and points to where the decision lives in the codebase.
 
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-05
 
 ---
 
@@ -1597,6 +1597,32 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 
 **Where it lives:** `lib/orchestration/evaluations/`, `prisma/schema.prisma` (`AiEvaluationSession`, `AiEvaluationLog`), `.context/admin/orchestration-evaluations.md`.
 
+### 9.5 In-product trace viewer over external observability backends
+
+**What is it?** When a workflow execution misbehaves — a step is slow, a multi-turn agent burns tokens, an LLM call returned the wrong shape — operators need a way to diagnose what happened, step by step. The market answer is to emit OpenTelemetry spans into a hosted backend (Langfuse, Datadog, LangSmith, Honeycomb) and use the backend's UI for the diagnosis. The in-product alternative is to capture the same per-step detail directly in the application's database and render it in the existing admin surface, with no external service in the loop.
+
+**What we chose:** Capture per-step latency / model / input / per-LLM-call cost in the existing `AiWorkflowExecution.executionTrace` JSON column and `AiCostLog` rows; render an in-product trace viewer (timeline strip, aggregates card, per-step detail with input/output/cost sub-table, filter chips) on the execution detail page. External backends remain a documented Tier 3 plug-in path.
+
+**Alternatives**
+
+| Option                                                                        | Why not                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OTEL spans into Langfuse / Datadog / LangSmith                                | Adds an external dependency, ops burden, and (for Langfuse / LangSmith) per-trace billing. Doesn't match the single-tenant small-project deployment profile. The thin trace API leaves room for a fork to add a pluggable tracer later (see §1.6) |
+| Separate `AiTraceSpan` table for per-LLM-turn telemetry                       | The JSON column already holds the per-step shape and parses cleanly with optional fields; a per-row table would force a migration plus a join on every detail-page render. The `AiCostLog` join already provides the per-LLM-call grain           |
+| Real-time streaming render of in-flight executions                            | Execution status already polls via `useExecutionStatusPoller`; a second push channel would be a separate transport with no commensurate diagnostic gain                                                                                           |
+| Capture full prompts on every step                                            | Inflates the trace JSON significantly per execution. Most workflows never need it. A future opt-in flag is an additive change                                                                                                                     |
+| Push new fields onto `StepResult` (so each LLM-bearing executor returns them) | Eight executors call into the LLM today; a future executor adding an LLM call would silently miss telemetry. The context-side accumulator picks up everything that goes through `runLlmCall` for free                                             |
+
+**Why this approach**
+
+- The deployment profile is single-tenant, one instance per project (see Section 10). External tracing backends add operational burden — auth, network reliability, cost — that the profile doesn't need. The diagnostic value lives in the same UI admins already use, with the same auth and ownership scoping.
+- The `executionTrace` JSON column already stores per-step entries; adding optional fields is back-compatible with historical rows. New shape parses; old shape parses. No backfill, no migration drama.
+- Per-LLM-turn telemetry flows through `ExecutionContext.stepTelemetry?` — a write channel that any LLM call site can push to. The engine pre-allocates per-snapshot arrays via `snapshotContext(ctx, telemetryOut?)` so concurrent parallel branches stay isolated. New executors that hit the LLM via `runLlmCall` get telemetry capture for free.
+- The aggregate computation (`rollupTelemetry`, `computeTraceAggregates`, `slowOutlierThresholdMs`) is a pure-function module shared between the engine (for the per-step rollup at write time) and the UI (for the timeline-strip / aggregates-card render). Edge cases (empty trace, single-entry, ties, missing optional fields) are exercised at source rather than in component tests.
+- Forks that need external observability can add an OTEL plug-in (Tier 3 item 13 in `improvement-priorities.md`) without changing this surface — the in-product viewer is additive, not exclusive.
+
+**Where it lives:** `lib/orchestration/trace/aggregate.ts` (pure helpers), `lib/orchestration/engine/orchestration-engine.ts` (telemetry threading + six trace.push sites), `lib/orchestration/engine/context.ts` (`stepTelemetry?` channel + `snapshotContext` overload), `app/api/v1/admin/orchestration/executions/[id]/route.ts` (cost-log join), `components/admin/orchestration/execution-{aggregates,timeline-strip,trace-filters}.tsx`, `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx`, `.context/admin/orchestration-observability.md`, `.context/orchestration/engine.md`.
+
 ---
 
 ## 10. Multi-Instance Deployment & Acknowledged Gaps
@@ -1759,6 +1785,7 @@ Alphabetical index of every decision in this document, with section reference. U
 | Immutable audit log                                            | 7.2     |
 | In-memory hook registry cache (60s TTL)                        | 7.5     |
 | In-memory state for circuit breaker and budget mutex           | 10.2    |
+| In-product trace viewer over external observability backends   | 9.5     |
 | In-process event hooks alongside outbound webhooks             | 2.4     |
 | JSON-RPC 2.0 over Streamable HTTP for the MCP server           | 2.2     |
 | Knowledge namespace scope: agent, not team                     | 5.9     |

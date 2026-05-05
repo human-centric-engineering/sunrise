@@ -6,7 +6,7 @@ Competitive assessment of Sunrise's agent orchestration against production-ready
 
 ## TL;DR
 
-Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026), and named-metric evaluation (faithfulness/groundedness/relevance, also May 2026). It **trails** on observability (no OTEL), multi-agent coordination patterns, and horizontal scaling (3 in-memory stores).
+Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026), named-metric evaluation (faithfulness/groundedness/relevance, also May 2026), and in-product trace observability (timeline strip, aggregates, per-step latency attribution, per-call cost breakdown — shipped late May 2026). It **trails** on external observability backends (no OTEL / Langfuse / Datadog ingestion), multi-agent coordination patterns, and horizontal scaling (3 in-memory stores).
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
@@ -147,14 +147,14 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 | Langfuse integration         | None     | Strong   | None      | None            | None     | None     |
 | MLflow integration           | None     | Strong   | None      | None            | None     | None     |
 | Datadog / external APM       | None     | Strong   | None      | Adequate        | None     | Adequate |
-| Built-in trace UI            | Adequate | Adequate | Strong    | None            | Strong   | Adequate |
-| Per-step latency attribution | Weak     | Strong   | Strong    | None            | Strong   | Adequate |
+| Built-in trace UI            | Strong   | Adequate | Strong    | None            | Strong   | Adequate |
+| Per-step latency attribution | Adequate | Strong   | Strong    | None            | Strong   | Adequate |
 | Named evaluation metrics     | Adequate | Strong   | Strong    | None            | Adequate | None     |
 | Regression testing           | Adequate | Strong   | Strong    | None            | None     | None     |
 | Cost attribution per step    | Strong   | Adequate | Weak      | None            | Adequate | Weak     |
 | Audit log (config changes)   | Strong   | None     | None      | None            | Adequate | None     |
 
-**Observability remains Sunrise's weakest area.** No OTEL instrumentation, no integration with any external tracing platform. Evaluation tooling improved materially in May 2026 with the named-metric scoring shipping (faithfulness, groundedness, relevance — three metrics graded Adequate against Haystack's eight; per-message scores persisted and surfaced through the runner UI; re-score after KB/prompt change gives basic regression coverage; per-agent trend chart visualises drift). Haystack is still the benchmark — 5+ backend integrations, 8 named evaluators, pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
+**External observability remains the gap.** No OTEL instrumentation, no integration with any external tracing platform — that's still Tier 3 work (item 13 in `improvement-priorities.md`) for forks that need ingestion into Langfuse / Datadog / Grafana. **In-product** observability narrowed materially in May 2026: named-metric evaluation scoring (faithfulness, groundedness, relevance — three metrics graded Adequate against Haystack's eight) shipped early in the month, then the trace viewer / latency attribution work (item 10) shipped at the end of the month. Per-step latency now decomposes into LLM time vs. engine + tool I/O overhead via a new `llmDurationMs` field; the execution detail page renders a Gantt-style timeline strip with slow-outlier highlighting, an aggregates card (p50 / p95 step duration, slowest step, LLM share, per-step-type breakdown), input/output side-by-side panels per step, a per-call cost sub-table for multi-turn executors, and six client-side filters (Failed / Slow / LLM only / Tool only / With approvals / All). Haystack is still the benchmark for external backends — 5+ integrations, 8 named evaluators, pluggable tracer interface. LangSmith (LangGraph's companion) is richer but proprietary.
 
 ### Knowledge Base
 
@@ -217,7 +217,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Where Sunrise Trails
 
-9. **Observability** — no OTEL spans, no external tracing integration, no named evaluation metrics. 3–4 generations behind Haystack.
+9. **External observability backends** — no OTEL spans, no Langfuse / Datadog / MLflow ingestion. In-product trace observability is now competitive (timeline strip, aggregates, per-step latency attribution shipped May 2026), but forks needing external backends still have to wire those themselves. Haystack remains the benchmark for backend integrations.
 
 10. **Multi-agent semantics** — informal planner-driven coordination vs. explicit typed patterns (handoffs, swarm, round-robin). Behind LangGraph, AutoGen, Google ADK.
 
@@ -252,6 +252,8 @@ Issues that would prevent recommending Sunrise orchestration for production work
 > **Resolved:** Inline citation grounding (Tier 1 #2 in `improvement-priorities.md`) — shipped May 2026. New `Citation` type and `citations` SSE event, `[N]` marker substitution in admin React + vanilla-JS embed widget, opt-in `citationGuardMode` with under-citation and hallucinated-marker detection, persisted on assistant message metadata and rehydrated by the trace viewer.
 >
 > **Resolved:** Sharpened HTTP fetcher + dependency-free recipes cookbook (Tier 1 #3 in `improvement-priorities.md`) — shipped May 2026. Extracted shared `lib/orchestration/http/` module from the workflow `external_call` executor; added HMAC request signing, Idempotency-Key header support, and Basic auth on top of existing auth modes. New `call_external_api` capability lets agents make outbound HTTP calls within the deployment allowlist; auth credentials, URL-prefix restrictions, and idempotency policy live in `AiAgentCapability.customConfig` so the LLM never sees secret env-var names. Five comprehensive recipes (transactional email, payment charge, chat notification, calendar event, document render) document common integration shapes without bundling vendor SDKs. Deliberately trades raw integration count for curation + extensibility.
+>
+> **Resolved:** In-product trace viewer + per-step latency attribution (Tier 2 #10 in `improvement-priorities.md`) — shipped May 2026. `ExecutionTraceEntry` gained optional `input` / `model` / `provider` / `inputTokens` / `outputTokens` / `llmDurationMs` fields populated by the engine after every step (back-compatible with historical rows). `GET /executions/:id` joins `AiCostLog` rows by `workflowExecutionId` and surfaces a per-call `costEntries[]` array. Execution detail page gains a Gantt-style timeline strip, an aggregates card (p50 / p95 / slowest step / LLM share / per-step-type breakdown), input-output side-by-side panels per step, a per-call cost sub-table, and six client-side filter chips (Failed / Slow / LLM only / Tool only / With approvals / All). External backends (OTEL / Langfuse) remain Tier 3 work — this resolves the in-product gap.
 
 ### P1 — Meaningful Quality Gaps
 
