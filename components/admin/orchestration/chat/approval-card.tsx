@@ -173,7 +173,11 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
 
           if (status === 'completed') {
             const output = extractFinalOutput(json.data?.executionTrace);
-            const followup = `Workflow approved. Result: ${safeStringify(output)}`;
+            const rendered = safeStringify(output);
+            const followup =
+              rendered.length > 0
+                ? `Workflow approved. Result: ${rendered}`
+                : 'Workflow approved successfully.';
             dispatch({ type: 'poll_completed' });
             onResolved('approved', followup);
             return;

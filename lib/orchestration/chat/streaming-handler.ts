@@ -1199,6 +1199,24 @@ export class StreamingChatHandler {
             invalidateContext(request.contextType, request.contextId);
           }
 
+          // Scan parallel results for any run_workflow pause. Each
+          // gets its own synthetic assistant message + approval_required
+          // event so the chat surface can render a card per pause. In
+          // practice the LLM rarely emits multiple run_workflow calls
+          // in one parallel batch, but we don't constrain it.
+          for (const r of results) {
+            const pa = extractPendingApproval(r.capabilitySlug, r.result);
+            if (pa) {
+              await this.persistMessage({
+                conversationId: conversation.id,
+                role: 'assistant',
+                content: '',
+                metadata: { pendingApproval: pa },
+              });
+              yield { type: 'approval_required', pendingApproval: pa };
+            }
+          }
+
           if (anySkipFollowup) {
             getBreaker(usedSlug).recordSuccess();
             if (citations.length > 0) {

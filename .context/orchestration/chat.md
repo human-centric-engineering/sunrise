@@ -131,7 +131,7 @@ start → content* → status (Executing run_workflow) → capability_result
 
 1. The `run_workflow` capability returns `{ status: 'pending_approval', executionId, stepId, prompt, expiresAt, approveToken, rejectToken }` with `skipFollowup: true`.
 2. The streaming handler emits a new `approval_required` ChatEvent carrying the same `PendingApproval` payload (`types/orchestration.ts:PendingApproval`).
-3. A synthetic empty-content assistant message is persisted with `metadata.pendingApproval` set, so a chat reload restores the card from history.
+3. A synthetic empty-content assistant message is persisted with `metadata.pendingApproval` set on the `AiMessage` row. **Note:** today's `<ChatInterface>` and the embed widget do NOT load conversation history on mount, so a hard reload of the chat loses the card even though the marker persists in the DB. The persistence is in place for future history-load paths, audit (the trace viewer renders the metadata raw), and the admin conversations detail view. Closing the gap is a separate piece of work.
 4. `done` fires with the partial-turn cost. **No LLM follow-up turn races the user click** — the next turn is initiated by the user submitting a follow-up message.
 
 The chat surface (admin chat or embed widget) renders an Approve / Reject card from the event and POSTs to the channel-specific public endpoint with the matching token:

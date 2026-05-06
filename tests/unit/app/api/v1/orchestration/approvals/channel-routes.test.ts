@@ -130,6 +130,15 @@ describe('chat sub-routes (same-origin CORS)', () => {
     expect(res.status).toBe(403);
   });
 
+  it('OPTIONS returns 403 when no origin header is present', () => {
+    const res = chatApproveModule.OPTIONS(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/chat`, {
+        method: 'OPTIONS',
+      })
+    );
+    expect(res.status).toBe(403);
+  });
+
   it('OPTIONS returns 403 when origin is a foreign site', () => {
     const res = chatApproveModule.OPTIONS(
       makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/chat`, {
@@ -242,6 +251,17 @@ describe('embed sub-routes (allowlist CORS)', () => {
       makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/embed`, {
         method: 'OPTIONS',
         origin: 'https://nopartner.com',
+      })
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('OPTIONS returns 403 when embedAllowedOrigins is the default empty array', async () => {
+    mockGetSettings.mockResolvedValueOnce({ embedAllowedOrigins: [] });
+    const res = await embedApproveModule.OPTIONS(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/embed`, {
+        method: 'OPTIONS',
+        origin: 'https://anywhere.com',
       })
     );
     expect(res.status).toBe(403);

@@ -167,6 +167,28 @@ describe('RunWorkflowCapability', () => {
     });
   });
 
+  describe('engine drain — intermediate events ignored', () => {
+    it('ignores step_started/step_completed/budget_warning between workflow_started and the terminal event', async () => {
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-noise', workflowId: 'wf-1' },
+        { type: 'step_started', stepId: 'step-1', stepType: 'human_approval', label: 'Approve' },
+        { type: 'budget_warning', usedUsd: 0.4, limitUsd: 0.5 },
+        {
+          type: 'approval_required',
+          stepId: 'step-1',
+          payload: { prompt: 'Approve?', timeoutMinutes: 60 },
+        },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      const result = await cap.execute({ workflowSlug: 'refund-flow' }, context);
+      expect(result.success).toBe(true);
+      expect((result.data as { status: string }).status).toBe('pending_approval');
+    });
+  });
+
   describe('engine drain — completed', () => {
     it('returns status:completed with output and totals', async () => {
       bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });

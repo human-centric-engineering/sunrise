@@ -104,6 +104,45 @@ describe('ApprovalCard', () => {
     expect(urls.some((u: string) => u.includes('/orchestration/executions/exec-1'))).toBe(true);
   }, 10_000);
 
+  it('approve completion with no usable output emits "approved successfully" follow-up (not "Result: ")', async () => {
+    const onResolved = vi.fn();
+    mockFetchSequence([
+      () => new Response(JSON.stringify({ success: true }), { status: 200 }),
+      () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              status: 'completed',
+              executionTrace: [
+                // Approval-only workflow: only the approval step, output is the approval payload.
+                // Treating null output as "no usable result" — see safeStringify guard.
+                { status: 'completed', output: null },
+              ],
+            },
+          }),
+          { status: 200 }
+        ),
+    ]);
+
+    const user = userEvent.setup();
+    render(<ApprovalCard pendingApproval={makePending()} onResolved={onResolved} />);
+
+    await user.click(screen.getByRole('button', { name: /approve action/i }));
+    const confirmBtn = await screen.findByRole('button', { name: 'Approve' });
+    await user.click(confirmBtn);
+
+    await waitFor(
+      () => {
+        expect(onResolved).toHaveBeenCalled();
+      },
+      { timeout: 6_000 }
+    );
+
+    const [, followup] = onResolved.mock.calls[0];
+    expect(followup).toBe('Workflow approved successfully.');
+    expect(followup).not.toContain('Result: ');
+  }, 10_000);
+
   it('reject flow: POSTs to /reject/chat with reason, surfaces as rejected', async () => {
     const onResolved = vi.fn();
     mockFetchSequence([

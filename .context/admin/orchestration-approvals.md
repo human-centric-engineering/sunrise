@@ -228,6 +228,7 @@ When an agent runs a workflow via the `run_workflow` capability and that workflo
 | Channel-specific approve    | `app/api/v1/orchestration/approvals/[id]/{approve,reject}/{chat,embed}/route.ts`                        |
 | Status polling endpoint     | `app/api/v1/orchestration/approvals/[id]/status/route.ts`                                               |
 | Shared route helper         | `lib/orchestration/approval-route-helpers.ts`                                                           |
+| Engine resumption helper    | `lib/orchestration/scheduling/scheduler.ts:resumeApprovedExecution`                                     |
 | Embed origin allowlist      | `OrchestrationSettings.embedAllowedOrigins` (Json column on the singleton row)                          |
 
 The chat card hits the channel-specific sub-route with the matching HMAC token; on a 200 it polls `GET /approvals/:id/status` (token-authenticated, permissive CORS) until the workflow reaches a terminal state, then synthesises a follow-up user message carrying the workflow output so the LLM gets a fresh turn to summarise.

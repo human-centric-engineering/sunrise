@@ -546,8 +546,12 @@ export function GET(request: NextRequest): Response {
               if (data.status === 'completed') {
                 settled = true;
                 var output = extractFinalOutput(data.executionTrace);
-                var followup = 'Workflow approved. Result: ' + safeStringify(output);
-                setStatus('Approved — workflow completed.');
+                var rendered = safeStringify(output);
+                var followup =
+                  rendered.length > 0
+                    ? 'Workflow approved. Result: ' + rendered
+                    : 'Workflow approved successfully.';
+                setStatus('Approved \\u2014 workflow completed.');
                 input.value = followup;
                 send();
                 return;
@@ -635,7 +639,12 @@ export function GET(request: NextRequest): Response {
         reasonField.addEventListener('input', function () {
           confirmBtn.disabled = !reasonField.value.trim();
         });
+        var confirmSubmitted = false;
         confirmBtn.addEventListener('click', function () {
+          if (confirmSubmitted) return;
+          confirmSubmitted = true;
+          confirmBtn.disabled = true;
+          reasonField.disabled = true;
           submit('reject', { reason: reasonField.value.trim() });
         });
         actions.appendChild(reasonField);
