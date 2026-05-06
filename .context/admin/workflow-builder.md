@@ -30,8 +30,8 @@ All three are async server components. The list page calls `serverFetch(API.ADMI
 ## Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  BuilderToolbar — back · name input · template · Validate · Execute ·  Save
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ BuilderToolbar — back · name · [pill] · template · Validate · Execute · Save draft · Discard · Publish…
 ├──────────┬────────────────────────────────────┬─────────────────────┤
 │          │                                    │                     │
 │ Pattern  │           Workflow Canvas          │   ConfigPanel       │
@@ -47,6 +47,37 @@ All three are async server components. The list page calls `serverFetch(API.ADMI
 ```
 
 When nothing is selected the right column collapses. In **create** mode the Execute button is disabled with a `title="Save the workflow before executing"` tooltip — you can only run a persisted workflow. In **edit** mode Execute opens an input dialog and then slides in an `ExecutionPanel` on the right.
+
+### Publish status pill (edit mode only)
+
+Sits between the workflow-name input and the action buttons. Three states:
+
+| State                       | When                                                 | Style   |
+| --------------------------- | ---------------------------------------------------- | ------- |
+| `Editing draft`             | `draftDefinition` is set (any unpublished work)      | Amber   |
+| `Up to date — vN published` | No draft, latest version is published                | Emerald |
+| `No version published`      | `publishedVersionId` is null (legacy workflows only) | Muted   |
+
+The pill's `title` attribute spells out what each state means: in particular,
+"Editing draft" carries the explicit note that scheduled and webhook-triggered
+executions still pin to the published version, so admins know iteration is
+safe.
+
+### Save draft / Publish… / Discard draft
+
+- **Save draft** — replaces the old "Save changes". PATCHes the canvas to
+  `draftDefinition`. Doesn't validate beyond Zod parse — half-built drafts
+  are intentionally allowed.
+- **Publish…** — opens `<PublishDialog>` with an optional change-summary
+  textarea (max 500 chars). On confirm, POSTs `/publish`, which validates
+  Zod + structural + semantic before writing the new version. Disabled when
+  there is no draft, when validation errors are present, or while a publish
+  is in flight.
+- **Discard draft** — only renders when a draft exists. Confirms via a native
+  `window.confirm`, POSTs `/discard-draft`, then reloads the canvas from the
+  published snapshot.
+
+Both actions update the status pill in place without a hard refresh.
 
 ## Step registry
 

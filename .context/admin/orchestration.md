@@ -90,10 +90,11 @@ Capabilities are tools an agent can call — function definitions with execution
 
 ### Workflows
 
-Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 12 step types are supported, and 5 built-in templates provide starting points.
+Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 12 step types are supported, and 5 built-in templates provide starting points. Definitions are versioned: PATCH writes to a draft, an explicit publish promotes the draft to a new immutable version, and executions pin to the published version at trigger time.
 
 - [How to design workflows](./orchestration-workflows-guide.md)
 - [Workflow builder UI](./workflow-builder.md)
+- [Workflow versioning model (publish / draft / rollback)](../orchestration/workflow-versioning.md)
 
 ### Patterns
 
@@ -117,7 +118,7 @@ Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with p
 | ---------------- | --------- | ------------------------------------------------------------------------------------- |
 | Agents           | 20 routes | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
 | Knowledge        | 16 routes | Documents, search, seed, embed, graph, retry, patterns                                |
-| Workflows        | 12 routes | CRUD, validate, dry-run, execute, definition history/revert                           |
+| Workflows        | 13 routes | CRUD, validate, dry-run, execute, versions, publish/discard-draft/rollback            |
 | MCP              | 11 routes | MCP server management, tools, resources, keys                                         |
 | Providers        | 6 routes  | CRUD, test connection, test model, health                                             |
 | Executions       | 6 routes  | List, read, approve, cancel, retry-step                                               |

@@ -62,6 +62,20 @@ Variant is derived from the action suffix in `actionBadgeVariant()`:
 | `.delete`     | `destructive` | `agent.delete`                    |
 | anything else | `outline`     | `experiment.run`, `backup.export` |
 
+### Workflow versioning actions
+
+Emitted by `lib/orchestration/workflows/version-service.ts`:
+
+| Action                   | Changes                              | Metadata                        | Notes                                               |
+| ------------------------ | ------------------------------------ | ------------------------------- | --------------------------------------------------- |
+| `workflow.draft.save`    | none                                 | `{ hasDraft: true }`            | PATCH wrote a new `draftDefinition`.                |
+| `workflow.draft.discard` | none                                 | none                            | Draft was thrown away; published version unchanged. |
+| `workflow.publish`       | `{ publishedVersion: { from, to } }` | `{ changeSummary }` if provided | Draft promoted to a new immutable version.          |
+| `workflow.rollback`      | `{ publishedVersion: { from, to } }` | `{ rolledBackToVersion }`       | New version created copied from a prior version.    |
+
+The legacy `workflow.definition_revert` action was removed alongside the
+`/definition-revert` route. See [`workflow-versioning.md`](../orchestration/workflow-versioning.md).
+
 ## Data source
 
 ### `GET /api/v1/admin/orchestration/audit-log`
