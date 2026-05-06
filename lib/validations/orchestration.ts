@@ -815,11 +815,24 @@ export const publishWorkflowSchema = z.object({
 });
 
 /**
+ * Workflow version IDs come from two sources: `cuid()` for rows inserted by
+ * the version-service, and `gen_random_uuid()::text` for rows backfilled
+ * from the legacy `workflowDefinitionHistory` column at migration time.
+ * Validate either format — strictly, but loose enough to accept both.
+ */
+export const workflowVersionIdSchema = z
+  .string()
+  .regex(
+    /^(c[a-z0-9]{24}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+    'Invalid version id'
+  );
+
+/**
  * Rollback request body
  * (POST /api/v1/admin/orchestration/workflows/:id/rollback).
  */
 export const rollbackWorkflowSchema = z.object({
-  targetVersionId: cuidSchema,
+  targetVersionId: workflowVersionIdSchema,
   changeSummary: z
     .string()
     .max(500, 'Change summary must be less than 500 characters')
@@ -838,7 +851,7 @@ export const dryRunWorkflowBodySchema = z
   .object({
     inputData: z.record(z.string(), z.unknown()),
     target: z.enum(['published', 'draft', 'version']).default('published'),
-    versionId: cuidSchema.optional(),
+    versionId: workflowVersionIdSchema.optional(),
   })
   .refine((v) => v.target !== 'version' || !!v.versionId, {
     message: 'versionId is required when target is "version"',

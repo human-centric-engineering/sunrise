@@ -128,6 +128,16 @@ before the first execute.
 The legacy `/definition-history` and `/definition-revert` routes have been
 removed.
 
+### Version IDs accept either format
+
+Routes that take a version id in the body or query string (`/rollback`'s
+`targetVersionId`, `/dry-run`'s `versionId`, `/versions`'s `cursor`)
+validate against `workflowVersionIdSchema` from
+`lib/validations/orchestration.ts`. It accepts **CUID** (`c` + 24 chars,
+inserted by `version-service`) **or** UUID (36 chars, inserted by the
+migration backfill). A naive `cuidSchema` would reject every backfilled
+v1..N — the regression test in `workflows.versioning.test.ts` locks this in.
+
 ## Audit events
 
 Emitted by `version-service` via the existing `logAdminAction` helper.

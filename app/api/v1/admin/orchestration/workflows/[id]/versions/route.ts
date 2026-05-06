@@ -20,10 +20,14 @@ import { getClientIP } from '@/lib/security/ip';
 import { prisma } from '@/lib/db/client';
 import { listVersions } from '@/lib/orchestration/workflows/version-service';
 import { cuidSchema } from '@/lib/validations/common';
+import { workflowVersionIdSchema } from '@/lib/validations/orchestration';
 
 const listVersionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  cursor: cuidSchema.optional(),
+  // Cursor is the id of the last version on the previous page — accepts the
+  // same id formats as a version row (cuid for fresh rows, uuid for
+  // migration-backfilled rows).
+  cursor: workflowVersionIdSchema.optional(),
 });
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {

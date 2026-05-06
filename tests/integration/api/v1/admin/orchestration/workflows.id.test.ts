@@ -32,6 +32,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
   },
@@ -294,6 +295,11 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
         errorStrategy: 'retry',
       };
       vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
+        makeWorkflow({ draftDefinition: updatedDef }) as never
+      );
+      // The route refetches with the published-version include after the
+      // saveDraft step before returning the response.
+      vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(
         makeWorkflow({ draftDefinition: updatedDef }) as never
       );
 

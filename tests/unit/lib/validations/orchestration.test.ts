@@ -488,16 +488,22 @@ describe('publishWorkflowSchema', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('rollbackWorkflowSchema', () => {
-  const VALID_TARGET = 'cmjbv4i3x00003wsloputvv01';
+  const VALID_CUID_TARGET = 'cmjbv4i3x00003wsloputvv01';
+  const VALID_UUID_TARGET = '8a2bd5ed-977e-4baa-a057-c85aeeff6cc4';
 
   it('accepts a valid CUID targetVersionId', () => {
-    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: VALID_TARGET });
+    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: VALID_CUID_TARGET });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a UUID targetVersionId (backfilled rows from the migration)', () => {
+    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: VALID_UUID_TARGET });
     expect(result.success).toBe(true);
   });
 
   it('accepts a body with both targetVersionId and changeSummary', () => {
     const result = rollbackWorkflowSchema.safeParse({
-      targetVersionId: VALID_TARGET,
+      targetVersionId: VALID_CUID_TARGET,
       changeSummary: 'Restoring the v3 wording',
     });
     expect(result.success).toBe(true);
@@ -508,8 +514,15 @@ describe('rollbackWorkflowSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects when targetVersionId is not a CUID', () => {
-    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: 'not-a-cuid' });
+  it('rejects an arbitrary string that is neither CUID nor UUID', () => {
+    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: 'not-a-version-id' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a CUID with the wrong prefix', () => {
+    const result = rollbackWorkflowSchema.safeParse({
+      targetVersionId: 'xjbv4i3x00003wsloputvv01',
+    });
     expect(result.success).toBe(false);
   });
 });

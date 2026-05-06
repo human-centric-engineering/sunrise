@@ -42,6 +42,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
     aiWorkflowVersion: {
@@ -186,6 +187,9 @@ beforeEach(() => {
 describe('PATCH /workflows/:id with draftDefinition', () => {
   it('writes to draftDefinition and emits workflow.draft.save', async () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF }) as never
+    );
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
       makeWorkflow({ draftDefinition: ALT_DEF }) as never
     );
@@ -208,6 +212,7 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
       makeWorkflow({ draftDefinition: ALT_DEF }) as never
     );
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(makeWorkflow() as never);
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
 
     const res = await WORKFLOW_PATCH(
@@ -218,6 +223,55 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     );
 
     expect(res.status).toBe(200);
+  });
+
+  it('does NOT emit a redundant workflow.update audit when only draftDefinition was sent', async () => {
+    // saveDraft fires workflow.draft.save; if the route then runs an empty
+    // prisma.aiWorkflow.update + workflow.update audit, the same change is
+    // logged twice. That regressed once before — lock the behaviour.
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    vi.mocked(prisma.aiWorkflow.findUniqueOrThrow).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF }) as never
+    );
+    vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF }) as never
+    );
+
+    const res = await WORKFLOW_PATCH(
+      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+        draftDefinition: ALT_DEF,
+      }),
+      makeParams()
+    );
+
+    expect(res.status).toBe(200);
+    const actions = vi
+      .mocked(logAdminAction)
+      .mock.calls.map((c) => (c[0] as { action: string }).action);
+    expect(actions).toContain('workflow.draft.save');
+    expect(actions).not.toContain('workflow.update');
+  });
+
+  it('emits BOTH audits when name and draftDefinition are sent together', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
+      makeWorkflow({ name: 'Renamed', draftDefinition: ALT_DEF }) as never
+    );
+
+    const res = await WORKFLOW_PATCH(
+      makeRequest('PATCH', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}`, {
+        name: 'Renamed',
+        draftDefinition: ALT_DEF,
+      }),
+      makeParams()
+    );
+
+    expect(res.status).toBe(200);
+    const actions = vi
+      .mocked(logAdminAction)
+      .mock.calls.map((c) => (c[0] as { action: string }).action);
+    expect(actions).toContain('workflow.draft.save');
+    expect(actions).toContain('workflow.update');
   });
 
   it('401s without admin session', async () => {
@@ -450,6 +504,40 @@ describe('POST /workflows/:id/rollback', () => {
   it('400s when targetVersionId is missing', async () => {
     const res = await ROLLBACK(
       makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/rollback`, {}),
+      makeParams()
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a UUID-format targetVersionId (backfilled rows from the migration)', async () => {
+    // Backfilled version rows have UUID ids from `gen_random_uuid()::text` in
+    // the migration's PL/pgSQL block. Validating with cuidSchema would reject
+    // them — workflowVersionIdSchema accepts both formats.
+    const UUID_VERSION_ID = '90740b81-9e64-4839-8036-e800bb2ed143';
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ publishedVersionId: VERSION_ID_V2 }) as never
+    );
+    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockImplementation((async (args: unknown) => {
+      const w = (args as { where: { id?: string } }).where.id;
+      if (w === UUID_VERSION_ID) return makeVersion({ id: UUID_VERSION_ID, version: 1 });
+      if (w === VERSION_ID_V2) return makeVersion({ id: VERSION_ID_V2, version: 2 });
+      return null;
+    }) as never);
+
+    const res = await ROLLBACK(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/rollback`, {
+        targetVersionId: UUID_VERSION_ID,
+      }),
+      makeParams()
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('400s for a malformed targetVersionId (neither CUID nor UUID)', async () => {
+    const res = await ROLLBACK(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/rollback`, {
+        targetVersionId: 'not-a-version-id',
+      }),
       makeParams()
     );
     expect(res.status).toBe(400);

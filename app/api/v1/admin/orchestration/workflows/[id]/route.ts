@@ -78,6 +78,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // Definition edits go to `draftDefinition` only — published versions are
   // promoted via POST /publish. The `saveDraft` service emits its own audit
   // entry; the `workflow.update` audit below covers other field changes.
+  let baseline = current;
   if (body.draftDefinition !== undefined) {
     if (body.draftDefinition === null) {
       await prisma.aiWorkflow.update({
@@ -92,6 +93,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         clientIp: clientIP,
       });
     }
+    // Re-read after the draft write so the workflow.update audit's
+    // computeChanges doesn't double-log draftDefinition (saveDraft already
+    // logged it via workflow.draft.save).
+    baseline = (await prisma.aiWorkflow.findUnique({ where: { id } })) ?? current;
   }
 
   const data: Prisma.AiWorkflowUpdateInput = {};
@@ -102,6 +107,18 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.isActive !== undefined) data.isActive = body.isActive;
   if (body.isTemplate !== undefined) data.isTemplate = body.isTemplate;
   if (body.metadata !== undefined) data.metadata = body.metadata as Prisma.InputJsonValue;
+
+  // Skip the workflow.update path entirely when only `draftDefinition` was
+  // sent — saveDraft / discardDraft has already emitted its own audit, and
+  // running an empty Prisma update + a redundant `workflow.update` audit
+  // double-logs the same change.
+  if (Object.keys(data).length === 0) {
+    const workflow = await prisma.aiWorkflow.findUniqueOrThrow({
+      where: { id },
+      include: { publishedVersion: true },
+    });
+    return successResponse(workflow);
+  }
 
   try {
     const workflow = await prisma.aiWorkflow.update({ where: { id }, data });
@@ -118,7 +135,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityId: id,
       entityName: workflow.name,
       changes: computeChanges(
-        current as unknown as Record<string, unknown>,
+        baseline as unknown as Record<string, unknown>,
         workflow as unknown as Record<string, unknown>
       ),
       clientIp: clientIP,

@@ -52,7 +52,24 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       publishedVersionId: ['Publish a draft before saving as template'],
     });
   }
-  const sourceDefinition = workflowDefinitionSchema.parse(workflow.publishedVersion.snapshot);
+  // The published snapshot was Zod-valid when published; re-parse defensively
+  // in case a manual DB edit / future schema change has invalidated it. A
+  // ValidationError surfaces as a 400 rather than the 500 a raw ZodError throw
+  // from `.parse()` would produce.
+  const sourceDefinitionParsed = workflowDefinitionSchema.safeParse(
+    workflow.publishedVersion.snapshot
+  );
+  if (!sourceDefinitionParsed.success) {
+    throw new ValidationError(
+      `Workflow ${id} has a malformed published definition — cannot save as template`,
+      {
+        publishedVersionId: sourceDefinitionParsed.error.issues.map(
+          (i) => `${i.path.join('.')}: ${i.message}`
+        ),
+      }
+    );
+  }
+  const sourceDefinition = sourceDefinitionParsed.data;
 
   const body = await validateRequestBody(request, saveAsTemplateSchema);
 
