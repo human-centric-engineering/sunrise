@@ -337,4 +337,16 @@ describe('Embed widget per-agent config (Phase 2)', () => {
     expect(body).toContain('var(--sw-surface-muted)');
     expect(body).toContain('var(--sw-primary)');
   });
+
+  it('approval card registers a teardown so newChat aborts in-flight polling', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Each card pushes a teardown into cardTeardowns; "New chat" iterates
+    // and runs them all, aborting the AbortController for that card's
+    // submit + poll fetches. Without this, polling would continue
+    // for the full 5-minute budget against an abandoned conversation.
+    expect(body).toContain('cardTeardowns');
+    expect(body).toContain('cardTeardowns.push');
+    expect(body).toContain('cardController.abort');
+    expect(body).toContain('signal: cardController.signal');
+  });
 });

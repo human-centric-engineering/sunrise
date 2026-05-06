@@ -297,6 +297,12 @@ export function GET(request: NextRequest): Response {
     var conversationId = null;
     var sending = false;
     var activeAbort = null;
+    // Approval cards each register a teardown function (aborts their
+    // submit + poll fetches). On "New chat" we run them all so the
+    // bandwidth from any pending polling stops, rather than continuing
+    // for the full 5-minute polling budget against a now-orphaned
+    // execution.
+    var cardTeardowns = [];
 
     function renderStarters() {
       // Clear existing chips on every call (cheap; list is at most 4).
@@ -331,6 +337,13 @@ export function GET(request: NextRequest): Response {
 
     newChatBtn.addEventListener('click', function() {
       if (activeAbort) { activeAbort.abort(); activeAbort = null; }
+      // Tear down any in-flight approval cards (aborts their polling
+      // and submit fetches). Detaching the bubble div via innerHTML='' below
+      // doesn't cancel network — closures hold the fetch references.
+      for (var t = 0; t < cardTeardowns.length; t++) {
+        try { cardTeardowns[t](); } catch (e) { /* best-effort */ }
+      }
+      cardTeardowns = [];
       conversationId = null;
       messagesEl.innerHTML = '';
       statusEl.style.display = 'none';
@@ -506,6 +519,11 @@ export function GET(request: NextRequest): Response {
       var POLL_MAX_MS = 5000;
       var POLL_BUDGET_MS = 5 * 60 * 1000;
       var settled = false;
+      var cardController = new AbortController();
+      cardTeardowns.push(function () {
+        settled = true;
+        try { cardController.abort(); } catch (e) { /* noop */ }
+      });
 
       function setStatus(text) {
         status.style.display = '';
@@ -536,7 +554,7 @@ export function GET(request: NextRequest): Response {
             encodeURIComponent(pa.executionId) +
             '/status?token=' +
             encodeURIComponent(pa.approveToken);
-          fetch(statusUrl, { method: 'GET' })
+          fetch(statusUrl, { method: 'GET', signal: cardController.signal })
             .then(function (res) {
               if (!res.ok) throw new Error('status ' + res.status);
               return res.json();
@@ -570,7 +588,8 @@ export function GET(request: NextRequest): Response {
               var delay = Math.min(POLL_BASE_MS * Math.pow(1.5, attempt - 1), POLL_MAX_MS);
               setTimeout(tick, delay);
             })
-            .catch(function () {
+            .catch(function (err) {
+              if (err && err.name === 'AbortError') return;
               // Transient — retry until the budget expires.
               attempt += 1;
               var delay2 = Math.min(POLL_BASE_MS * Math.pow(1.5, attempt - 1), POLL_MAX_MS);
@@ -596,6 +615,7 @@ export function GET(request: NextRequest): Response {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body || {}),
+          signal: cardController.signal,
         })
           .then(function (res) {
             if (!res.ok) {
@@ -612,6 +632,7 @@ export function GET(request: NextRequest): Response {
             pollExecution(action);
           })
           .catch(function (err) {
+            if (err && err.name === 'AbortError') return;
             settled = true;
             setStatus('Failed: ' + (err && err.message ? err.message : 'Unknown error'));
           });
