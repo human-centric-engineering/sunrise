@@ -286,4 +286,55 @@ describe('Embed widget per-agent config (Phase 2)', () => {
     // now follows whatever --sw-primary the loader assigned.
     expect(body).toContain('color-mix(in srgb, var(--sw-primary)');
   });
+
+  // ─── Approval card (Phase 4 of consumer-chat-approvals) ───────────────────
+
+  it('handles approval_required SSE event by calling renderApprovalCard', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("evt.type === 'approval_required'");
+    expect(body).toContain('renderApprovalCard');
+  });
+
+  it('approval card uses Shadow-DOM-safe DOM construction (no innerHTML in renderer)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // renderApprovalCard slice — must build with createElement/textContent only.
+    const start = body.indexOf('function renderApprovalCard');
+    expect(start).toBeGreaterThan(-1);
+    const end = body.indexOf('function extractFinalOutput', start);
+    const slice = body.slice(start, end > start ? end : start + 4000);
+    expect(slice).not.toContain('innerHTML');
+    expect(slice).toContain('createElement');
+    expect(slice).toContain('textContent');
+  });
+
+  it('approval card POSTs to /<action>/embed with the channel-specific token', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // URL is concatenated at runtime: ".../<id>/" + action + "/embed?token=...",
+    // so assert on the suffix and the channel-specific token field name.
+    expect(body).toContain("'/embed?token='");
+    expect(body).toContain('pa.approveToken');
+    expect(body).toContain('pa.rejectToken');
+  });
+
+  it('approval card polls /orchestration/approvals/<id>/status', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("'/api/v1/orchestration/approvals/'");
+    expect(body).toContain("'/status?token='");
+  });
+
+  it('approval card synthesises a follow-up message via input.value + send()', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // After terminal poll state, the card writes the follow-up into the
+    // existing input field and triggers the existing send() path so the
+    // LLM gets a fresh turn carrying the workflow output.
+    expect(body).toContain('Workflow approved.');
+    expect(body).toContain('Workflow rejected:');
+  });
+
+  it('approval-card CSS uses theme custom properties (--sw-primary, etc)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('.approval-card');
+    expect(body).toContain('var(--sw-surface-muted)');
+    expect(body).toContain('var(--sw-primary)');
+  });
 });

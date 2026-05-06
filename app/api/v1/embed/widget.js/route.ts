@@ -31,6 +31,7 @@ export function GET(request: NextRequest): Response {
   var position = script.getAttribute('data-position') || 'bottom-right';
   var theme = script.getAttribute('data-theme') || 'light';
   var apiBase = '${origin}/api/v1/embed';
+  var originBase = '${origin}';
 
   if (!token) {
     console.error('[SunriseWidget] data-token attribute is required');
@@ -183,6 +184,37 @@ export function GET(request: NextRequest): Response {
         .cite-name { font-weight: 500; }
         .cite-section { opacity: 0.7; }
         .cite-excerpt { margin-top: 4px; opacity: 0.75; line-height: 1.4; white-space: pre-wrap; }
+        .approval-card {
+          margin-top: 8px; padding: 10px;
+          border: 1px solid var(--sw-border); border-radius: 8px;
+          background: var(--sw-surface-muted);
+        }
+        .approval-card .approval-title { font-weight: 600; font-size: 13px; }
+        .approval-card .approval-prompt {
+          margin-top: 4px; font-size: 13px;
+          white-space: pre-wrap; word-wrap: break-word;
+        }
+        .approval-card .approval-actions { margin-top: 10px; display: flex; gap: 8px; }
+        .approval-card button {
+          padding: 6px 12px; border: 1px solid var(--sw-border); border-radius: 6px;
+          font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer;
+        }
+        .approval-card button.approve {
+          background: var(--sw-primary); color: #fff; border-color: var(--sw-primary);
+        }
+        .approval-card button.reject {
+          background: var(--sw-surface); color: var(--sw-text);
+        }
+        .approval-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .approval-card .approval-status {
+          margin-top: 8px; font-size: 12px; color: var(--sw-status);
+        }
+        .approval-card .approval-reason {
+          width: 100%; margin-top: 6px; padding: 6px 8px;
+          border: 1px solid var(--sw-border); border-radius: 6px;
+          background: var(--sw-input-bg); color: var(--sw-text);
+          font-family: inherit; font-size: 13px; resize: vertical;
+        }
         .status { font-size: 12px; color: var(--sw-status); font-style: italic; padding: 0 16px 4px; }
         .starters {
           padding: 0 12px 8px; display: flex; flex-wrap: wrap; gap: 6px;
@@ -420,6 +452,217 @@ export function GET(request: NextRequest): Response {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    // Renders an Approve / Reject card on a synthetic assistant bubble
+    // and drives the full state machine: idle → submitting → waiting →
+    // completed / failed / expired. Uses createElement + textContent
+    // throughout (no innerHTML); inherits the per-agent theme via the
+    // host CSS custom properties (--sw-primary, --sw-surface, etc).
+    function renderApprovalCard(pa) {
+      if (!pa || !pa.executionId || !pa.approveToken || !pa.rejectToken) return;
+      // Mount on a brand-new assistant bubble so the card sits below
+      // any preceding assistant text, mirroring the admin surface and
+      // the streaming-handler's persisted shape.
+      var span = addMsg('assistant', '');
+      var bubble = span.parentElement;
+      if (!bubble) return;
+      span.remove(); // empty span — the card is the visible content
+
+      var card = document.createElement('div');
+      card.className = 'approval-card';
+      var title = document.createElement('div');
+      title.className = 'approval-title';
+      title.textContent = 'Action requires your approval';
+      card.appendChild(title);
+      var promptEl = document.createElement('div');
+      promptEl.className = 'approval-prompt';
+      promptEl.textContent = pa.prompt || 'Please confirm.';
+      card.appendChild(promptEl);
+
+      var actions = document.createElement('div');
+      actions.className = 'approval-actions';
+      var approveBtn = document.createElement('button');
+      approveBtn.type = 'button';
+      approveBtn.className = 'approve';
+      approveBtn.textContent = 'Approve';
+      approveBtn.setAttribute('aria-label', 'Approve action');
+      var rejectBtn = document.createElement('button');
+      rejectBtn.type = 'button';
+      rejectBtn.className = 'reject';
+      rejectBtn.textContent = 'Reject';
+      rejectBtn.setAttribute('aria-label', 'Reject action');
+      actions.appendChild(approveBtn);
+      actions.appendChild(rejectBtn);
+      card.appendChild(actions);
+
+      var status = document.createElement('div');
+      status.className = 'approval-status';
+      status.style.display = 'none';
+      card.appendChild(status);
+
+      bubble.appendChild(card);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+
+      var POLL_BASE_MS = 2000;
+      var POLL_MAX_MS = 5000;
+      var POLL_BUDGET_MS = 5 * 60 * 1000;
+      var settled = false;
+
+      function setStatus(text) {
+        status.style.display = '';
+        status.textContent = text;
+      }
+
+      function disableActions() {
+        approveBtn.disabled = true;
+        rejectBtn.disabled = true;
+      }
+
+      function pollExecution(action) {
+        var startedAt = Date.now();
+        var attempt = 0;
+
+        function tick() {
+          if (settled) return;
+          if (Date.now() - startedAt > POLL_BUDGET_MS) {
+            setStatus('Lost connection waiting for approval. Refresh to retry.');
+            settled = true;
+            return;
+          }
+          var statusUrl =
+            originBase +
+            '/api/v1/orchestration/approvals/' +
+            encodeURIComponent(pa.executionId) +
+            '/status?token=' +
+            encodeURIComponent(pa.approveToken);
+          fetch(statusUrl, { method: 'GET' })
+            .then(function (res) {
+              if (!res.ok) throw new Error('status ' + res.status);
+              return res.json();
+            })
+            .then(function (json) {
+              var data = (json && json.data) || {};
+              if (data.status === 'completed') {
+                settled = true;
+                var output = extractFinalOutput(data.executionTrace);
+                var followup = 'Workflow approved. Result: ' + safeStringify(output);
+                setStatus('Approved — workflow completed.');
+                input.value = followup;
+                send();
+                return;
+              }
+              if (data.status === 'cancelled' || data.status === 'failed') {
+                settled = true;
+                var reason = data.errorMessage || 'Workflow ended';
+                var followup2 =
+                  action === 'reject'
+                    ? 'Workflow rejected: ' + reason
+                    : 'Workflow failed: ' + reason;
+                setStatus(action === 'reject' ? 'Rejected.' : 'Failed: ' + reason);
+                input.value = followup2;
+                send();
+                return;
+              }
+              attempt += 1;
+              var delay = Math.min(POLL_BASE_MS * Math.pow(1.5, attempt - 1), POLL_MAX_MS);
+              setTimeout(tick, delay);
+            })
+            .catch(function () {
+              // Transient — retry until the budget expires.
+              attempt += 1;
+              var delay2 = Math.min(POLL_BASE_MS * Math.pow(1.5, attempt - 1), POLL_MAX_MS);
+              setTimeout(tick, delay2);
+            });
+        }
+
+        tick();
+      }
+
+      function submit(action, body) {
+        disableActions();
+        setStatus('Submitting ' + (action === 'approve' ? 'approval' : 'rejection') + '\\u2026');
+        var url =
+          originBase +
+          '/api/v1/orchestration/approvals/' +
+          encodeURIComponent(pa.executionId) +
+          '/' +
+          action +
+          '/embed?token=' +
+          encodeURIComponent(action === 'approve' ? pa.approveToken : pa.rejectToken);
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        })
+          .then(function (res) {
+            if (!res.ok) {
+              return res.json().then(
+                function (j) {
+                  throw new Error((j && j.error && j.error.message) || 'Request failed');
+                },
+                function () {
+                  throw new Error('Request failed (' + res.status + ')');
+                }
+              );
+            }
+            setStatus('Waiting for the workflow to finish\\u2026');
+            pollExecution(action);
+          })
+          .catch(function (err) {
+            settled = true;
+            setStatus('Failed: ' + (err && err.message ? err.message : 'Unknown error'));
+          });
+      }
+
+      approveBtn.addEventListener('click', function () {
+        submit('approve', {});
+      });
+
+      rejectBtn.addEventListener('click', function () {
+        // Reject requires a reason — render a small inline textarea + confirm.
+        if (rejectBtn.dataset.confirming === '1') return;
+        rejectBtn.dataset.confirming = '1';
+        var reasonField = document.createElement('textarea');
+        reasonField.className = 'approval-reason';
+        reasonField.placeholder = 'Reason for rejecting';
+        reasonField.rows = 2;
+        var confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'reject';
+        confirmBtn.textContent = 'Confirm reject';
+        confirmBtn.disabled = true;
+        reasonField.addEventListener('input', function () {
+          confirmBtn.disabled = !reasonField.value.trim();
+        });
+        confirmBtn.addEventListener('click', function () {
+          submit('reject', { reason: reasonField.value.trim() });
+        });
+        actions.appendChild(reasonField);
+        actions.appendChild(confirmBtn);
+        rejectBtn.disabled = true;
+      });
+    }
+
+    function extractFinalOutput(trace) {
+      if (!Array.isArray(trace) || trace.length === 0) return null;
+      for (var i = trace.length - 1; i >= 0; i--) {
+        var entry = trace[i];
+        if (entry && typeof entry === 'object' && entry.status === 'completed') {
+          return entry.output != null ? entry.output : null;
+        }
+      }
+      return null;
+    }
+
+    function safeStringify(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'string') return value;
+      try {
+        return JSON.stringify(value);
+      } catch (e) {
+        return '[unserializable]';
+      }
+    }
+
     function parseSseBlocks(buffer) {
       var blocks = buffer.split('\\n\\n');
       var remaining = blocks.pop() || '';
@@ -505,6 +748,8 @@ export function GET(request: NextRequest): Response {
                 statusEl.style.display = '';
               } else if (evt.type === 'citations' && Array.isArray(evt.data.citations)) {
                 renderCitations(assistantSpan, fullText, evt.data.citations);
+              } else if (evt.type === 'approval_required' && evt.data.pendingApproval) {
+                renderApprovalCard(evt.data.pendingApproval);
               } else if (evt.type === 'error') {
                 assistantSpan.textContent = fullText || 'Something went wrong.';
                 // Drop any citations panel that may have been appended

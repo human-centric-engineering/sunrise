@@ -242,6 +242,8 @@ export const API = {
       `/api/v1/orchestration/approvals/${id}/approve/embed`,
     approvalRejectEmbed: (id: string): string =>
       `/api/v1/orchestration/approvals/${id}/reject/embed`,
+    /** Token-authenticated execution status read — used by chat-rendered approval cards to poll. */
+    approvalStatus: (id: string): string => `/api/v1/orchestration/approvals/${id}/status`,
   },
   PUBLIC: {
     HEALTH: '/api/health',
