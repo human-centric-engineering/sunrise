@@ -101,7 +101,13 @@ describe('ApprovalCard', () => {
       typeof c[0] === 'string' ? c[0] : (c[0] as Request).url
     );
     expect(urls.some((u: string) => u.includes('/approve/chat?token=approve-token-1'))).toBe(true);
-    expect(urls.some((u: string) => u.includes('/orchestration/executions/exec-1'))).toBe(true);
+    // Polls the public token-auth status endpoint (not the admin
+    // executions endpoint, which has a wrapped response shape).
+    expect(
+      urls.some((u: string) =>
+        u.includes('/orchestration/approvals/exec-1/status?token=approve-token-1')
+      )
+    ).toBe(true);
   }, 10_000);
 
   it('approve completion with no usable output emits "approved successfully" follow-up (not "Result: ")', async () => {

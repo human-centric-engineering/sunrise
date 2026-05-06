@@ -183,10 +183,16 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
           return;
         }
         try {
-          const res = await fetch(
-            API.ADMIN.ORCHESTRATION.executionById(pendingApproval.executionId),
-            { credentials: 'include', signal: controller.signal }
-          );
+          // Poll the public token-auth status endpoint (not the admin
+          // executions endpoint). The admin endpoint wraps execution
+          // fields under `data.execution.*` and the trace under
+          // `data.trace`, but this card reads `data.status` /
+          // `data.executionTrace` directly — the flat shape the public
+          // /approvals/:id/status endpoint already returns. Same
+          // endpoint the embed widget polls, so the contract is shared
+          // across surfaces.
+          const statusUrl = `${API.ORCHESTRATION.approvalStatus(pendingApproval.executionId)}?token=${encodeURIComponent(pendingApproval.approveToken)}`;
+          const res = await fetch(statusUrl, { signal: controller.signal });
           if (!res.ok) throw new Error(`Execution status fetch failed (${res.status})`);
           const json = (await res.json()) as ExecutionResponse;
           const status = json.data?.status;
