@@ -2,7 +2,7 @@
 
 What it takes to run Sunrise in production with the agentic layer enabled, the gotchas that bite first, and how the realistic deployment targets compare. Written for engineers picking a platform **and** for smart readers who haven't deployed much before.
 
-**Last updated:** 2026-05-05
+**Last updated:** 2026-05-06
 
 ---
 
@@ -38,11 +38,11 @@ If any of the words below are new, this section is the floor. None of these are 
 | **SSE**                | Server-Sent Events — a way for the server to keep a single HTTP connection open and push messages over it. Sunrise uses SSE so chats can stream tokens.                                             |
 | **pgvector**           | A PostgreSQL extension that adds vector similarity search. Sunrise needs it so agents can search your knowledge base by meaning, not just keyword.                                                  |
 | **Function timeout**   | On serverless platforms, each request runs inside a "function" with a maximum duration (e.g. 60 s). Long agent runs and SSE streams can hit this ceiling.                                           |
-| **Cron / cron tick**   | A scheduler that runs a command on a schedule (e.g. every minute). Sunrise expects something external to "tick" two URLs on a schedule.                                                             |
+| **Cron / cron tick**   | A scheduler that runs a command on a schedule (e.g. every minute). Sunrise expects something external to "tick" one URL every minute.                                                               |
 | **Migration**          | A change to the database schema. `prisma migrate deploy` applies any new migrations to the production DB. Must run before the new app starts.                                                       |
 | **Standalone build**   | A flag (`output: 'standalone'`) that makes Next.js bundle a small, self-contained Node server. Already enabled in `next.config.js`.                                                                 |
 
-If you remember one thing: **pick a platform, give it your repo, set the environment variables, point a cron at two URLs.** Everything below is the detail behind that sentence.
+If you remember one thing: **pick a platform, give it your repo, set the environment variables, point a cron at one URL.** Everything below is the detail behind that sentence.
 
 ---
 
@@ -85,6 +85,16 @@ In plain terms: Sunrise needs PostgreSQL with one extra extension installed (`pg
 - Plain managed Postgres (vanilla RDS, vanilla Cloud SQL, hand-installed Postgres on a VPS) **will not** have the extension — `migrate deploy` fails on first run
 
 Acceptable databases: Vercel Postgres (Neon-backed, pgvector available), Neon directly, Supabase, Railway, Render, Fly Postgres, or any self-managed Postgres where you can `apt install postgresql-XX-pgvector`. RDS supports pgvector since 15.2; Cloud SQL since PG 15.
+
+**Extension privileges.** The first run of `prisma migrate deploy` executes `CREATE EXTENSION vector`, which requires the DB role to have privilege to create extensions. Most managed Postgres services restrict this — pgvector must be **enabled in the platform UI before migration runs**:
+
+- **Neon / Vercel Postgres** — toggle in the Neon dashboard's "Extensions" panel
+- **Supabase** — enable in the dashboard "Database → Extensions" tab
+- **AWS RDS** — add `pgvector` to the parameter group's `shared_preload_libraries`, reboot the instance
+- **GCP Cloud SQL** — enable via the Cloud SQL flags UI; PG 15+ only
+- **Self-managed (VPS / Docker)** — `apt install postgresql-XX-pgvector` on the host, then connect as superuser to grant the app role CREATEEXTENSION (or run the first migration as a superuser role)
+
+If pgvector isn't pre-enabled, the migrate step fails with `extension "vector" is not available`, and the failure looks like a generic migration error rather than a config issue.
 
 Connection pooling: Prisma's adapter (`@prisma/adapter-pg`) holds its own pool. For serverless or many-instance deployments, front the DB with PgBouncer / Neon's pooler / Supabase's connection pooler to avoid connection storms.
 
@@ -139,6 +149,26 @@ Capabilities call out to LLM providers (OpenAI, Anthropic, others), Resend, S3, 
 
 The MCP server (`/api/v1/mcp`), embed widget endpoints, and self-service API keys (`.context/orchestration/api-keys.md`) accept inbound traffic from third parties. CORS, rate limiting, and bearer-token auth are already in code; hosts only need to permit the inbound traffic.
 
+### 2.4 Embed widget on partner sites
+
+In plain terms: the chat widget that ships into a customer's marketing site is loaded by **their** browser, fetched from **your** Sunrise host, and runs inside a Shadow DOM on their page. That cross-origin posture imposes requirements on both sides.
+
+**Customer-site CSP.** The partner page's Content-Security-Policy must allow your Sunrise origin in:
+
+- `script-src` — to load `/api/v1/embed/widget.js`
+- `connect-src` — for the chat SSE stream + REST calls back to `/api/v1/embed/*`
+
+If the partner site has a strict CSP and forgets these, the widget loads as a no-op or throws CSP errors in the browser console. This is something operators must brief partners about — Sunrise cannot configure it on their behalf.
+
+**`widget.js` is a dynamic API route, not a static file.** `app/api/v1/embed/widget.js/route.ts` regenerates the loader on each request. Per-platform implications:
+
+- **Vercel:** every partner page-view counts as a function invocation. High-traffic partner sites can move the cost needle; consider edge-cache headers on the route or a CDN in front.
+- **Render / Fly / VPS:** the route is just a regular HTTP handler — no extra cost, but still benefits from a CDN cache for partners with heavy traffic.
+
+The same applies to `/api/v1/embed/widget-config` (token-authed config fetch, called once per widget load).
+
+**Embed token + CORS allowlist.** Per-token CORS origins are configured in the admin UI and validated server-side via `AiAgentEmbedToken.allowedOrigins`. There is no host-level CORS to set up — the application handles it. The host **must not** strip or override CORS headers at the reverse-proxy or CDN layer (some cloud CDNs and firewall appliances do this by default), or per-token allowlists silently break.
+
 ---
 
 ## 3. Background work and scheduling
@@ -189,19 +219,35 @@ Several env vars are read during `next build` (env validation + `NEXT_PUBLIC_*` 
 
 `GET /api/health` returns `{ status, services: { database } }` with HTTP 503 when the database is unreachable. Any health-checking infrastructure (load balancer, container orchestrator, external monitor) should target this endpoint.
 
+### 4.4 Pre-flight configuration checklist
+
+A handful of config values are easy to forget but cause silent or hard-to-diagnose failures on first run. Set or verify each before the first production deploy:
+
+| Config                          | Why it matters                                                                                                                                                                                                                                                                                        | Failure mode if wrong                                                                                                                                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ORCHESTRATION_ALLOWED_HOSTS`   | Comma-separated hostname allowlist for `external_call` workflow steps and the `call_external_api` capability (`lib/orchestration/http/allowlist.ts`). Without it, every outbound HTTP step the platform makes on a workflow's behalf is rejected at runtime by the SSRF guard.                        | Workflows using HTTP integrations fail with `Host not in allowlist`; the LLM-call path still works, so failures look partial                                                                   |
+| `BETTER_AUTH_SECRET` stability  | Doubles as the HMAC signing key for stateless approval URLs (`lib/orchestration/approval-tokens.ts:34`). Rotating it invalidates **every in-flight approval URL** — emails sent yesterday no longer verify.                                                                                           | Partners click an approval link and get 401; the linked workflow stays paused indefinitely. Treat this secret as a long-lived signing key, not a per-deploy rotatable secret                   |
+| Build-time `DATABASE_URL`       | `next build` runs Zod env validation against a real connection. Vercel / Render / Railway run the build in a different network than the runtime — the URL must be reachable from the build environment, not just the running container.                                                               | Build fails with cryptic env-validation error. Private-VPC databases (RDS in private subnet, Cloud SQL via private IP) need a build-time bastion, proxy, or a public-pooled URL just for build |
+| `BETTER_AUTH_URL` host match    | Cookie domain and CORS posture key off this. For multi-host deployments where the admin UI lives on `admin.example.com` and the embed widget is served from `widget.example.com`, this needs to be set deliberately and the better-auth cookie domain configured to the parent domain.                | Admin login appears to succeed, but the cookie isn't sent on cross-subdomain calls; sessions look intermittent or "lost"                                                                       |
+| `STORAGE_PROVIDER` matches host | `local` storage works on a single VPS but **breaks on every serverless / multi-instance host** — uploads write to one container's ephemeral disk and the next request can land elsewhere. Vercel needs `vercel-blob` or `s3`; Render / Fly need `s3` or platform-native disks (single-instance only). | Document uploads succeed but reads return 404 on the next request; partial ingestion state is observable in the admin UI                                                                       |
+
+The first three are deployment blockers. The fourth bites only if you split subdomains. The fifth bites the moment you scale past one instance — pick the right driver up front.
+
 ---
 
 ## 5. Operational concerns specific to the agentic layer
 
-| Concern                | Why it's specific to orchestration                                         | What to plan for                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Cost spikes            | LLM calls are billed per token; a runaway tool loop can burn budget fast   | Provider-side budget alarms in addition to in-app budget enforcement                                |
-| Long execution windows | Autonomous orchestrator workflows can run for many minutes                 | Function-duration limits and proxy timeouts must clear the worst case                               |
-| Memory under load      | Document ingestion (large PDFs, EPUBs) and `sharp` transforms spike RSS    | Right-size containers; watch OOM kills; consider a dedicated worker if you split it later           |
-| Concurrency            | Multiple in-flight streams hold sockets and Node event-loop slots          | Plan max concurrent chats per instance; add instances before vertical limits hit                    |
-| In-memory state        | Some state (LRU caches, scheduler claim windows) is per-instance           | Acceptable single-instance; for multi-instance, add Redis and use sticky sessions only where needed |
-| Secrets surface        | Provider API keys, webhook signing keys, OAuth credentials all live in env | Use the host's secret manager; never commit `.env`                                                  |
-| Observability          | LLM tool loops are hard to debug without trace context                     | `lib/logging` is already structured; pipe to Sentry (already integrated) or your log aggregator     |
+| Concern                | Why it's specific to orchestration                                                                                                                                                                                                                         | What to plan for                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cost spikes            | LLM calls are billed per token; a runaway tool loop can burn budget fast                                                                                                                                                                                   | Provider-side budget alarms in addition to in-app budget enforcement                                                                                                                                      |
+| Long execution windows | Autonomous orchestrator workflows can run for many minutes                                                                                                                                                                                                 | Function-duration limits and proxy timeouts must clear the worst case                                                                                                                                     |
+| Memory under load      | Document ingestion (large PDFs, EPUBs, vector-grid table extraction) and `sharp` transforms spike RSS by hundreds of MB on big files                                                                                                                       | Right-size containers; watch OOM kills. Reference ceilings: Vercel Hobby 1 GB / Pro 3 GB; Render Starter 512 MB; Fly default Machine 256 MB. Move ingestion off the request path if it competes with chat |
+| Bundle / function size | Standalone build pulls in Prisma client, `pdf-parse`, `mammoth`, `epub2`, `sharp`, `gpt-tokenizer`, `@xyflow/react` — heavier than a typical Next.js app                                                                                                   | Vercel Hobby's 250 MB unzipped function size limit is at risk; verify with `vercel build` before committing to the plan. Long-lived Node servers (Render / Fly / VPS) don't have this ceiling             |
+| Concurrency            | Multiple in-flight streams hold sockets and Node event-loop slots                                                                                                                                                                                          | Plan max concurrent chats per instance; add instances before vertical limits hit                                                                                                                          |
+| In-memory state        | Per-instance state includes: LRU rate-limit counters, scheduler claim windows, circuit breaker, budget mutex, and the **MCP session map** (`lib/orchestration/mcp/session-manager.ts`). Embed-widget chat sessions persist via DB, but MCP sessions do not | Single-instance: fine. Multi-instance: add Redis for shared rate limits + circuit breaker, **and enable sticky sessions** so MCP and long-lived embed connections stick to one instance                   |
+| Outbound IP            | LLM providers and partner APIs may sit behind enterprise allowlists requiring a stable source IP                                                                                                                                                           | Vercel's IP pool is wide and shared; Render and Fly offer dedicated egress as paid add-ons; a VPS gives a single static IP. Plan for compliance customers up front — retrofitting is painful              |
+| Secrets surface        | Provider API keys, webhook signing keys, OAuth credentials all live in env                                                                                                                                                                                 | Use the host's secret manager; never commit `.env`. Note `BETTER_AUTH_SECRET` rotation invalidates in-flight approval URLs (see §4.4)                                                                     |
+| Observability          | LLM tool loops are hard to debug without trace context                                                                                                                                                                                                     | `lib/logging` is already structured; pipe to Sentry (already integrated) or your log aggregator                                                                                                           |
 
 ---
 
@@ -221,6 +267,10 @@ The table scores each option against the requirements above. "OK" means supporte
 | Redis (optional)               | Upstash add-on                                          | Render Redis                         | Upstash / Fly Redis              | Native Redis                   |
 | Native deps (`sharp`, parsers) | OK (bundle bloat)                                       | Yes                                  | Yes                              | Yes                            |
 | Build memory headroom          | Pro tier needed for bigger builds                       | Configurable                         | Configurable                     | Depends on box                 |
+| Runtime function-size cap      | Hobby 250 MB / Pro 500 MB unzipped                      | None (long-lived process)            | None (Machine)                   | None                           |
+| Runtime memory cap             | Hobby 1 GB / Pro 3 GB per function                      | 512 MB Starter / configurable        | 256 MB default / configurable    | Whatever the VPS has           |
+| Outbound egress IP             | Wide shared pool                                        | Static egress (paid add-on)          | Dedicated egress (paid)          | Single static IP               |
+| Sticky sessions (multi-inst)   | Not natively supported                                  | Yes                                  | Yes (via `fly-replay` / LB)      | Yes (nginx `ip_hash`)          |
 | Preview deploys per PR         | Yes                                                     | Yes                                  | Manual via apps                  | No                             |
 | Atomic / zero-downtime deploys | Yes (default)                                           | Yes                                  | Yes (rolling)                    | Manual (blue/green)            |
 | Global edge / multi-region     | Yes                                                     | Single region per service            | Yes (anycast)                    | Single VPS                     |
@@ -230,7 +280,7 @@ The table scores each option against the requirements above. "OK" means supporte
 
 ### 6.1 Vercel
 
-**Strengths.** Fastest path from repo to live URL. Connects to your Git provider and redeploys automatically on every push. Generates a unique preview URL for every pull request. Atomic rollbacks. Tightly integrated with Vercel Postgres (which is Neon under the hood and supports `pgvector`) and Vercel Blob (already supported by `lib/storage/providers/vercel-blob.ts`). Built-in Vercel Cron handles the tick endpoints with a single config block.
+**Strengths.** Fastest path from repo to live URL. Connects to your Git provider and redeploys automatically on every push. Generates a unique preview URL for every pull request. Atomic rollbacks. Tightly integrated with Vercel Postgres (which is Neon under the hood and supports `pgvector`) and Vercel Blob (already supported by `lib/storage/providers/vercel-blob.ts`). Built-in Vercel Cron handles the maintenance tick with a single config block.
 
 **Trade-offs.** Vercel runs your app as serverless functions, each with a maximum duration. On the Hobby plan this is 60 s; on Pro it's 5 minutes; "Fluid Compute" extends the streaming window but does not make it unbounded. Long autonomous orchestrator runs and large workflow execute-streams can be cut off mid-response. Document ingestion of very large PDFs can hit memory limits. The pricing climbs steeply if usage grows.
 
@@ -262,7 +312,7 @@ The table scores each option against the requirements above. "OK" means supporte
 - Editing Forge's deploy script to install Node 20, run `npm ci`, build, and run migrations
 - Editing the nginx vhost so SSE streams aren't buffered (`proxy_buffering off`, raised `proxy_read_timeout`)
 - Installing the `pgvector` extension on the system Postgres (`apt install postgresql-XX-pgvector`, then `CREATE EXTENSION vector` in the DB)
-- Wiring two Forge Scheduled Jobs to `curl` the tick endpoints
+- Wiring a Forge Scheduled Job to `curl` the maintenance tick endpoint
 
 No preview deploys per PR. Scaling is vertical (resize the VPS) until you put a load balancer in front and add Redis. **Forge is one of several VPS managers** — alternatives include Ploi, Cleavr, RunCloud, Coolify (open source), and Dokploy (open source). They differ in UI polish and pricing more than capability.
 
@@ -279,7 +329,7 @@ For a reader who hasn't deployed before, the difference between platforms is mos
 3. In the project settings, set the build command to `npm run build && npm run db:migrate:deploy`.
 4. Provision a database: in Vercel's Storage tab, click "Create Postgres" — it auto-fills `DATABASE_URL`. Or paste a connection string from Neon / Supabase.
 5. Add the other env vars from `.env.example` (`BETTER_AUTH_SECRET`, etc.).
-6. Add a Vercel Cron entry hitting the two tick endpoints.
+6. Add a Vercel Cron entry hitting `/api/v1/admin/orchestration/maintenance/tick` every minute.
 7. Push to `main`. It deploys.
 
 You do not need to know what nginx, Docker, or supervisord are.
@@ -291,7 +341,7 @@ You do not need to know what nginx, Docker, or supervisord are.
 3. Create a managed Postgres from Render's dashboard, copy the internal connection string into `DATABASE_URL`.
 4. Set the pre-deploy command to `npm run db:migrate:deploy`.
 5. Add env vars.
-6. Create two "Cron Jobs" hitting the tick endpoints.
+6. Create one "Cron Job" hitting `/api/v1/admin/orchestration/maintenance/tick` every minute.
 7. Push to `main`. It deploys.
 
 #### Fly.io (≈1–2 hours, 1 new concept: the `fly` CLI)
@@ -301,7 +351,7 @@ You do not need to know what nginx, Docker, or supervisord are.
 3. Run `fly postgres create` to provision a Postgres app; attach it. Enable `pgvector` (`fly pg connect`, then `CREATE EXTENSION vector`).
 4. Set env vars with `fly secrets set KEY=value`.
 5. Run `fly deploy`.
-6. For cron, the simplest path is an external pinger (cron-job.org) hitting the two tick endpoints. Or schedule a small machine.
+6. For cron, the simplest path is an external pinger (cron-job.org) hitting `/api/v1/admin/orchestration/maintenance/tick` every minute. Or schedule a small machine.
 
 You'll learn the CLI but you don't need to manage a server.
 
@@ -330,7 +380,7 @@ If you're new to deployment, the realistic pattern is "pick a platform, then ask
 - **"Generate a `fly.toml` for this repo with sensible defaults for a small Machine, plus the `fly secrets set` commands I need to run."**
 - **"Walk me through enabling `pgvector` on Render Postgres / Fly Postgres / a Forge-managed Postgres."**
 - **"Produce a checklist of every env var I need from `.env.example`, grouped by required / optional, with one-line descriptions."**
-- **"Wire up the two scheduler tick endpoints with bearer-token auth so my cron job can call them safely."** Claude can generate the auth check, the env var wiring, and the cron command.
+- **"Wire up the scheduler maintenance tick with bearer-token auth so my cron job can call it safely."** Claude can generate the auth check, the env var wiring, and the cron command.
 - **"Compare what my deploy will cost on Vercel, Render, Fly, and DigitalOcean for ~10k chats/month."**
 - **"Review my Dockerfile / nginx config / deploy script and tell me what would break under load or during an SSE stream."**
 
