@@ -33,6 +33,7 @@ import { ApplyAuditChangesCapability } from '@/lib/orchestration/capabilities/bu
 import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
 import { DeactivateProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/deactivate-provider-models';
 import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/built-in/call-external-api';
+import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in/run-workflow';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
@@ -53,6 +54,7 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new AddProviderModelsCapability());
   capabilityDispatcher.register(new DeactivateProviderModelsCapability());
   capabilityDispatcher.register(new CallExternalApiCapability());
+  capabilityDispatcher.register(new RunWorkflowCapability());
   registered = true;
 }
 
