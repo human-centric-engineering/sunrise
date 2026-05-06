@@ -143,18 +143,32 @@ The MCP server (`/api/v1/mcp`), embed widget endpoints, and self-service API key
 
 ## 3. Background work and scheduling
 
-In plain terms: Sunrise doesn't run its own internal cron. Instead, it expects something external (your platform's cron feature, or `cron` on a Linux box) to send a POST request to two URLs on a schedule. That's it — those POSTs are what wake the scheduler up.
+In plain terms: Sunrise doesn't run its own internal cron. It expects something external (your platform's cron feature, or `cron` on a Linux box) to POST to one URL every minute. That POST is what wakes the scheduler up.
 
 The scheduler is **stateless and pull-driven**:
 
-| Endpoint                                       | Suggested cadence | Purpose                                                              |
-| ---------------------------------------------- | ----------------- | -------------------------------------------------------------------- |
-| `/api/v1/admin/orchestration/schedules/tick`   | Every minute      | `processDueSchedules()` — claims due cron schedules, fires workflows |
-| `/api/v1/admin/orchestration/maintenance/tick` | Every 5–15 min    | Housekeeping (expiry, retries, cleanup)                              |
+| Endpoint                                       | Suggested cadence | Purpose                                                                                                                                                                                                                                              |
+| ---------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/admin/orchestration/maintenance/tick` | Every minute      | **Preferred — one entry covers everything.** Claims due schedules synchronously, then runs six housekeeping tasks in the background: webhook retries, hook retries, zombie reaper, embedding backfill, retention pruning, orphaned-pending recovery. |
+| `/api/v1/admin/orchestration/schedules/tick`   | Every minute      | **Legacy.** Only runs `processDueSchedules()`. Use only if you want the housekeeping tasks driven from a separate cron entry.                                                                                                                        |
 
-The endpoints are HTTP POSTs, idempotent within a tick window, and require admin/service auth. **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts:7-13`).
+A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints are HTTP POSTs, require admin auth (session or API key with admin scope), and are idempotent within a tick window. **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
+
+```bash
+* * * * * curl -fsS -X POST \
+  -H "Authorization: Bearer sk_..." \
+  https://yourdomain/api/v1/admin/orchestration/maintenance/tick
+```
+
+`/maintenance/tick` returns **`202 Accepted`** as soon as due schedules have been claimed; the housekeeping chain runs to completion in the background under a module-level overlap guard with a 5-minute watchdog. A short HTTP timeout on the cron caller (e.g. 30s) is therefore safe — the response never blocks on retention sweeps or embedding backfill — and a long-running tick will not stack up against the next minute's tick.
 
 The scheduler does **not** require a singleton instance — the optimistic-lock claim in `processDueSchedules()` makes it safe to fire from multiple ticks racing each other.
+
+**Cron expressions are evaluated in the server's system timezone** (typically UTC in production). There is no per-schedule timezone override; plan workflow schedules in UTC to avoid ambiguity.
+
+**What stops working if you forget to wire this up.** Scheduled workflows never fire. Webhook and event-hook delivery retries never drain. Stale `running` executions are never reaped. Conversation, cost-log, and audit-log retention is never enforced. Failed message embeddings are never re-tried. Orphaned `pending` executions sit forever. The app keeps serving traffic and `/api/health` reports OK — the failure is **silent**. Treat the cron entry as a deploy-time requirement, not an optional add-on.
+
+> **Per-platform note.** The platform deployment guides under `.context/deployment/platforms/` (Vercel, Render, Railway, Docker self-hosted) currently focus on web/DB setup and do not include cron wiring. Until they do, treat the cron entry as a manual step you must add in your platform's cron UI, in `vercel.json`, or via `crontab -e` on a VPS. The bundled `docker-compose.prod.yml` does **not** include a cron sidecar — run host `cron` against the published port, or add a sidecar.
 
 ---
 
@@ -302,7 +316,7 @@ You'll learn the CLI but you don't need to manage a server.
 7. Add a Forge **Daemon** running `node .next/standalone/server.js` from the deploy directory.
 8. Edit Forge's **nginx vhost** to proxy to `127.0.0.1:3000` with `proxy_buffering off` and `proxy_read_timeout 300s`.
 9. Click Forge's **SSL** button (Let's Encrypt).
-10. Add two Forge **Scheduled Jobs** running `curl -fsS -X POST -H "Authorization: Bearer $TOKEN" https://yourdomain/api/v1/admin/orchestration/schedules/tick` (and the maintenance one).
+10. Add a Forge **Scheduled Job** running every minute: `curl -fsS -X POST -H "Authorization: Bearer $TOKEN" https://yourdomain/api/v1/admin/orchestration/maintenance/tick`. One entry covers schedule firing and all housekeeping; the legacy `/schedules/tick` endpoint only exists for setups that split the two.
 11. Set env vars in Forge's "Environment" tab.
 
 This is the most rewarding path if you want to learn how a server actually works. It is the most painful if you don't.
