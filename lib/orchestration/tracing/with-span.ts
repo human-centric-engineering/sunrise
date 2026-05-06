@@ -249,21 +249,18 @@ export async function* withSpanGenerator<T, R = void>(
 
   const inner = innerGenFn(span);
   const skipActiveContext = span === NOOP_SPAN;
-  let done = false;
   try {
     while (true) {
       const result = skipActiveContext
         ? await inner.next()
         : await tracer.withActiveContext(span, () => inner.next());
       if (result.done) {
-        done = true;
         if (!opts?.manualStatus) safeSetStatus(span, { code: 'ok' }, name);
         return result.value;
       }
       yield result.value;
     }
   } catch (err) {
-    done = true;
     if (!opts?.manualStatus) {
       const message = err instanceof Error ? err.message : 'error';
       safeSetStatus(span, { code: 'error', message }, name);
@@ -271,18 +268,17 @@ export async function* withSpanGenerator<T, R = void>(
     safeRecordException(span, err, name);
     throw err;
   } finally {
-    if (!done) {
-      // Consumer broke early (or threw before the inner finished). Mirror
-      // the `yield*` desugaring by signalling `return()` to the inner so
-      // its own try/finally can run — otherwise it leaks open spans.
-      try {
-        await inner.return(undefined as R);
-      } catch (returnErr) {
-        logger.warn('Inner generator return() threw — continuing', {
-          span: name,
-          error: returnErr instanceof Error ? returnErr.message : String(returnErr),
-        });
-      }
+    // Always signal `return()` to the inner so its try/finally runs on every
+    // exit path — normal completion, helper-caught throw, consumer break,
+    // *and* consumer.throw(). Mirrors `yield*` desugaring; safe to call on an
+    // already-finished generator (the runtime treats it as a no-op).
+    try {
+      await inner.return(undefined as R);
+    } catch (returnErr) {
+      logger.warn('Inner generator return() threw — continuing', {
+        span: name,
+        error: returnErr instanceof Error ? returnErr.message : String(returnErr),
+      });
     }
     safeEnd(span, name);
   }
