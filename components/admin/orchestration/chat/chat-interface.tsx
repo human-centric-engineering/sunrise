@@ -385,6 +385,29 @@ export function ChatInterface({
     [sendMessage]
   );
 
+  // Read-only ref so callbacks can poll the latest `streaming` flag
+  // without becoming stale via closure capture. Used by the approval
+  // card's onResolved handler to defer the synthesised follow-up
+  // when another chat turn is mid-flight (otherwise sendMessage()
+  // would silently drop the follow-up because of its `if (streaming) return`
+  // guard, and the LLM would never get the workflow output).
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
+
+  const sendFollowupWhenIdle = useCallback(
+    (text: string) => {
+      const attempt = (): void => {
+        if (streamingRef.current) {
+          setTimeout(attempt, 500);
+          return;
+        }
+        void sendMessageWrapped(text);
+      };
+      attempt();
+    },
+    [sendMessageWrapped]
+  );
+
   const handleClear = useCallback(async () => {
     if (conversationId) {
       try {
@@ -494,7 +517,7 @@ export function ChatInterface({
                     {msg.pendingApproval && (
                       <ApprovalCard
                         pendingApproval={msg.pendingApproval}
-                        onResolved={(_action, followup) => void sendMessageWrapped(followup)}
+                        onResolved={(_action, followup) => sendFollowupWhenIdle(followup)}
                       />
                     )}
                     {/* Inline status during streaming — shown below content */}

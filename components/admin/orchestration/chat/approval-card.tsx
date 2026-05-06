@@ -54,7 +54,7 @@ type CardState =
   | { kind: 'idle' }
   | { kind: 'submitting'; action: 'approve' | 'reject' }
   | { kind: 'waiting'; action: 'approve' | 'reject' }
-  | { kind: 'completed' }
+  | { kind: 'completed'; action: 'approve' | 'reject' }
   | { kind: 'failed'; message: string }
   | { kind: 'expired' };
 
@@ -73,7 +73,11 @@ function reducer(state: CardState, event: ReducerEvent): CardState {
       if (state.kind !== 'submitting') return state;
       return { kind: 'waiting', action: state.action };
     case 'poll_completed':
-      return { kind: 'completed' };
+      // Carry the action forward so the rendered terminal-state copy
+      // says the right thing — "approved/completed" vs "rejected/cancelled".
+      // Without this, a successful reject path renders the approve copy.
+      if (state.kind !== 'waiting') return state;
+      return { kind: 'completed', action: state.action };
     case 'poll_failed':
       return { kind: 'failed', message: event.payload?.message ?? 'Workflow failed' };
     case 'poll_expired':
@@ -121,9 +125,25 @@ function extractFinalOutput(trace: unknown): unknown {
   return null;
 }
 
+/**
+ * Render a workflow output for the synthesised follow-up message.
+ * Empty values become empty strings (callers fall back to a generic
+ * "approved successfully" message). Large outputs are truncated so
+ * the follow-up doesn't blow past the LLM's context window on the
+ * next turn — workflows that produce structured data (refund
+ * receipts, document URLs) fit comfortably; ones that dump entire
+ * datasets get a stub the LLM can ask about.
+ */
+const MAX_FOLLOWUP_RENDER_CHARS = 8_000;
+
 function safeStringify(value: unknown): string {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
+  const raw = typeof value === 'string' ? value : tryStringify(value);
+  if (raw.length <= MAX_FOLLOWUP_RENDER_CHARS) return raw;
+  return `${raw.slice(0, MAX_FOLLOWUP_RENDER_CHARS)}… [truncated; ${raw.length} chars total]`;
+}
+
+function tryStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
   } catch {
@@ -271,7 +291,6 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
   }, [submit, rejectReason]);
 
   const expired = state.kind === 'expired';
-  const completed = state.kind === 'completed';
   const failed = state.kind === 'failed';
   const busy = state.kind === 'submitting' || state.kind === 'waiting';
 
@@ -320,8 +339,12 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
         </div>
       )}
 
-      {completed && (
-        <div className="text-muted-foreground mt-3 text-xs">Approved — workflow completed.</div>
+      {state.kind === 'completed' && (
+        <div className="text-muted-foreground mt-3 text-xs">
+          {state.action === 'reject'
+            ? 'Rejected — workflow cancelled.'
+            : 'Approved — workflow completed.'}
+        </div>
       )}
 
       {failed && state.kind === 'failed' && (

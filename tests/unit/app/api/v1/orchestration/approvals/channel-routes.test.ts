@@ -50,6 +50,7 @@ vi.mock('@/lib/orchestration/scheduling', () => ({
 
 const VALID_ID = 'cmexec99validid01234567890';
 
+const legacyApproveModule = await import('@/app/api/v1/orchestration/approvals/[id]/approve/route');
 const chatApproveModule =
   await import('@/app/api/v1/orchestration/approvals/[id]/approve/chat/route');
 const chatRejectModule =
@@ -210,6 +211,23 @@ describe('chat sub-routes (same-origin CORS)', () => {
     );
     await Promise.resolve();
     expect(mockResumeApprovedExecution).not.toHaveBeenCalled();
+  });
+
+  it('legacy /approve route does NOT trigger resumption (preserves email/Slack behaviour)', async () => {
+    const res = await legacyApproveModule.POST(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve?token=t`, {
+        method: 'POST',
+        body: {},
+      }),
+      { params: Promise.resolve({ id: VALID_ID }) }
+    );
+    expect(res.status).toBe(200);
+    await Promise.resolve();
+    expect(mockResumeApprovedExecution).not.toHaveBeenCalled();
+    expect(mockExecuteApproval).toHaveBeenCalledWith(
+      VALID_ID,
+      expect.objectContaining({ actorLabel: 'token:external' })
+    );
   });
 
   it('POST /reject/chat passes actorLabel "token:chat"', async () => {

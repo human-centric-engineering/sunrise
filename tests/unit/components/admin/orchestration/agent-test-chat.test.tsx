@@ -41,6 +41,14 @@ function warningFrame(code: string, message: string): string {
   return `event: warning\ndata: ${JSON.stringify({ code, message })}\n\n`;
 }
 
+function approvalRequiredFrame(pa: Record<string, unknown>): string {
+  return `event: approval_required\ndata: ${JSON.stringify({ pendingApproval: pa })}\n\n`;
+}
+
+function doneFrame(): string {
+  return `event: done\ndata: ${JSON.stringify({ tokenUsage: { input: 1, output: 1 }, costUsd: 0.001 })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('AgentTestChat', () => {
@@ -362,5 +370,34 @@ describe('AgentTestChat', () => {
 
     // Assert — fetch was only called once (no retries)
     expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('mounts an ApprovalCard when the SSE stream emits approval_required', async () => {
+    const user = userEvent.setup();
+    const pa = {
+      executionId: 'cmexec999validid01234567',
+      stepId: 'step-1',
+      prompt: 'Confirm the test action?',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      approveToken: 'tok-a',
+      rejectToken: 'tok-r',
+    };
+    const stream = makeSseStream([
+      contentFrame('Starting test workflow. '),
+      approvalRequiredFrame(pa),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Run test workflow" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Card prompt + Approve / Reject visible inside the test chat
+    await waitFor(() => {
+      expect(screen.getByText('Confirm the test action?')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /approve action/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject action/i })).toBeInTheDocument();
   });
 });

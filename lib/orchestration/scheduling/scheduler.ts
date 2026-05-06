@@ -332,11 +332,36 @@ export async function resumeApprovedExecution(executionId: string): Promise<void
       },
     },
   });
-  if (!execution || !execution.workflow.isActive) return;
+  if (!execution) return;
+
+  // Workflow deactivated between pause and approval. Without this
+  // explicit mark-failed, the run would sit in PENDING until the
+  // maintenance tick cleaned it up (2-min stale threshold + ~60s
+  // tick interval) — long enough for the chat card's polling budget
+  // to expire, leaving the user with no terminal signal.
+  if (!execution.workflow.isActive) {
+    logger.warn('resumeApprovedExecution: workflow deactivated, marking failed', {
+      executionId,
+      workflowSlug: execution.workflow.slug,
+    });
+    await prisma.aiWorkflowExecution
+      .updateMany({
+        where: { id: executionId, status: WorkflowStatus.PENDING },
+        data: {
+          status: WorkflowStatus.FAILED,
+          errorMessage: 'Workflow deactivated',
+          completedAt: new Date(),
+        },
+      })
+      .catch((err: unknown) => {
+        logger.error('resumeApprovedExecution: mark-failed update failed', err, { executionId });
+      });
+    return;
+  }
 
   const defParsed = workflowDefinitionSchema.safeParse(execution.workflow.workflowDefinition);
   if (!defParsed.success) {
-    logger.error('resumeApprovedExecution: invalid workflow definition', {
+    logger.error('resumeApprovedExecution: invalid workflow definition', undefined, {
       executionId,
       issues: defParsed.error.issues,
     });

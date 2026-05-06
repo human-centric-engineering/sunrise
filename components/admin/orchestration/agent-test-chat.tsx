@@ -27,10 +27,12 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
+import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
+import type { PendingApproval } from '@/types/orchestration';
 
 export interface AgentTestChatProps {
   /** Agent slug to hit via `POST /chat/stream`. Required. */
@@ -60,6 +62,8 @@ export function AgentTestChat({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const typing = useTypingAnimation({ chunkSize: 2 });
   const reply = typing.displayText;
@@ -79,6 +83,8 @@ export function AgentTestChat({
     setError(null);
     setWarning(null);
     setStatus(null);
+    setPendingApproval(null);
+    setApprovalNotice(null);
     typing.reset();
     setStreaming(true);
 
@@ -139,6 +145,18 @@ export function AgentTestChat({
             setWarning(parsed.data.message);
           } else if (parsed.type === 'content_reset') {
             typing.reset();
+          } else if (
+            parsed.type === 'approval_required' &&
+            parsed.data.pendingApproval &&
+            typeof parsed.data.pendingApproval === 'object'
+          ) {
+            // AgentTestChat is a single-turn surface — there's no
+            // message thread to carry the workflow output back into,
+            // so the card resolves to a static notice rather than
+            // synthesising a follow-up turn. Admins testing an
+            // approval-bearing agent should send a fresh message
+            // afterwards to see how the agent responds.
+            setPendingApproval(parsed.data.pendingApproval as PendingApproval);
           } else if (parsed.type === 'error') {
             const code = typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
             await ensureMinThinking();
@@ -225,8 +243,24 @@ export function AgentTestChat({
               <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
             )}
           </>
-        ) : (
+        ) : !pendingApproval ? (
           <span className="text-muted-foreground">Agent reply will appear here as it streams.</span>
+        ) : null}
+        {pendingApproval && (
+          <ApprovalCard
+            pendingApproval={pendingApproval}
+            onResolved={(action) => {
+              setPendingApproval(null);
+              setApprovalNotice(
+                action === 'approved'
+                  ? 'Workflow approved and completed. Send another message to see how the agent responds.'
+                  : 'Workflow rejected. Send another message to see how the agent responds.'
+              );
+            }}
+          />
+        )}
+        {approvalNotice && (
+          <div className="text-muted-foreground mt-2 text-xs">{approvalNotice}</div>
         )}
       </div>
 

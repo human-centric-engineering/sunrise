@@ -552,8 +552,7 @@ export function GET(request: NextRequest): Response {
                     ? 'Workflow approved. Result: ' + rendered
                     : 'Workflow approved successfully.';
                 setStatus('Approved \\u2014 workflow completed.');
-                input.value = followup;
-                send();
+                sendFollowupWhenIdle(followup);
                 return;
               }
               if (data.status === 'cancelled' || data.status === 'failed') {
@@ -564,8 +563,7 @@ export function GET(request: NextRequest): Response {
                     ? 'Workflow rejected: ' + reason
                     : 'Workflow failed: ' + reason;
                 setStatus(action === 'reject' ? 'Rejected.' : 'Failed: ' + reason);
-                input.value = followup2;
-                send();
+                sendFollowupWhenIdle(followup2);
                 return;
               }
               attempt += 1;
@@ -653,6 +651,25 @@ export function GET(request: NextRequest): Response {
       });
     }
 
+    // Send the synthesised follow-up only when no other chat turn is
+    // mid-flight. Without this guard, send() silently drops the message
+    // (its first line is "if (sending) return") and the LLM never gets
+    // the workflow output. Also preserves any text the user typed into
+    // the input while the workflow was running — send() clears
+    // input.value synchronously, so we restore it after.
+    function sendFollowupWhenIdle(text) {
+      if (sending) {
+        setTimeout(function () {
+          sendFollowupWhenIdle(text);
+        }, 500);
+        return;
+      }
+      var preserved = input.value;
+      input.value = text;
+      send();
+      if (preserved) input.value = preserved;
+    }
+
     function extractFinalOutput(trace) {
       if (!Array.isArray(trace) || trace.length === 0) return null;
       for (var i = trace.length - 1; i >= 0; i--) {
@@ -666,12 +683,22 @@ export function GET(request: NextRequest): Response {
 
     function safeStringify(value) {
       if (value === null || value === undefined) return '';
-      if (typeof value === 'string') return value;
-      try {
-        return JSON.stringify(value);
-      } catch (e) {
-        return '[unserializable]';
+      var raw;
+      if (typeof value === 'string') {
+        raw = value;
+      } else {
+        try {
+          raw = JSON.stringify(value);
+        } catch (e) {
+          raw = '[unserializable]';
+        }
       }
+      // Cap the rendered output so a workflow that returns a huge
+      // payload (entire dataset, large file blob) doesn't blow past
+      // the LLM context window on the follow-up turn.
+      var MAX_CHARS = 8000;
+      if (raw.length <= MAX_CHARS) return raw;
+      return raw.slice(0, MAX_CHARS) + '\\u2026 [truncated; ' + raw.length + ' chars total]';
     }
 
     function parseSseBlocks(buffer) {

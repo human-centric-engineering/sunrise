@@ -176,6 +176,12 @@ describe('ApprovalCard', () => {
     expect(action).toBe('rejected');
     expect(followup).toContain('Workflow rejected:');
 
+    // Rendered terminal-state copy must reflect the reject path —
+    // not "Approved — workflow completed." which used to leak through
+    // the shared `completed` state.
+    expect(screen.getByText(/Rejected — workflow cancelled/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Approved — workflow completed/i)).not.toBeInTheDocument();
+
     const calls = (fetch as unknown as ReturnType<typeof vi.spyOn>).mock.calls as unknown[][];
     const submitCall = calls.find((c: unknown[]) => {
       const u = typeof c[0] === 'string' ? c[0] : (c[0] as Request).url;

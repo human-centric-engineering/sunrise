@@ -67,6 +67,10 @@ function citationsFrame(citations: Array<Record<string, unknown>>): string {
   return `event: citations\ndata: ${JSON.stringify({ citations })}\n\n`;
 }
 
+function approvalRequiredFrame(pa: Record<string, unknown>): string {
+  return `event: approval_required\ndata: ${JSON.stringify({ pendingApproval: pa })}\n\n`;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ChatInterface', () => {
@@ -797,5 +801,40 @@ describe('ChatInterface', () => {
       },
       { timeout: 3000 }
     );
+  });
+
+  it('mounts an ApprovalCard from an approval_required SSE event', async () => {
+    const user = userEvent.setup();
+    const pa = {
+      executionId: 'cmexec999validid01234567',
+      stepId: 'step-1',
+      prompt: 'Refund £42.50?',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      approveToken: 'tok-a',
+      rejectToken: 'tok-r',
+    };
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Starting refund. '),
+      approvalRequiredFrame(pa),
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Refund order');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Card prompt + buttons render
+    await waitFor(() => {
+      expect(screen.getByText('Refund £42.50?')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /approve action/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reject action/i })).toBeInTheDocument();
+    // Streaming text from the same turn is also visible
+    expect(screen.getByText(/Starting refund\./)).toBeInTheDocument();
   });
 });

@@ -153,6 +153,15 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
 
   for (const row of truncated) {
     const role = normaliseRole(row.role);
+    // Skip empty-content assistant messages — these are persisted as
+    // markers for UI state (e.g. the synthetic message that carries
+    // `metadata.pendingApproval` when a workflow paused for approval).
+    // Anthropic's Messages API rejects content blocks with empty
+    // strings, so leaving them in the LLM history breaks the next
+    // turn after the user submits a follow-up.
+    if (role === 'assistant' && (!row.content || row.content.length === 0)) {
+      continue;
+    }
     if (role === 'tool' && row.toolCallId) {
       messages.push({ role: 'tool', content: row.content, toolCallId: row.toolCallId });
     } else {
