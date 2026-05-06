@@ -47,6 +47,7 @@ Each recipe follows the same 12-section template so they're scannable side-by-si
 | Post a message to a chat platform   | [chat-notification.md](./chat-notification.md)     | Slack, Discord, Microsoft Teams            |
 | Create a calendar event             | [calendar-event.md](./calendar-event.md)           | Google Calendar, Microsoft Graph, CalDAV   |
 | Render a PDF / HTML document        | [document-render.md](./document-render.md)         | DocRaptor, PDFShift, Gotenberg             |
+| In-chat user approval before action | [in-chat-approval.md](./in-chat-approval.md)       | (none — uses `run_workflow` capability)    |
 
 ## When to write a new recipe
 

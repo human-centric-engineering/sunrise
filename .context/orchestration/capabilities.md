@@ -277,6 +277,36 @@ Signals that the current conversation needs human attention. Dispatches a `conve
 
 Returns `{ escalated: true, reason, priority, metadata? }`. The `metadata` parameter is optional and passed through to the webhook payload, which also includes `agentId`, `userId`, `conversationId`, `reason`, and `priority`.
 
+### `run_workflow`
+
+Lets an agent trigger a named workflow on the user's behalf during a chat turn. Returns when the workflow either completes synchronously (the LLM gets the output as a normal tool result) or pauses on a `human_approval` step (the chat handler emits an `approval_required` SSE event, the user sees an Approve / Reject card inline, and `skipFollowup: true` prevents an LLM narration turn racing the click).
+
+```json
+{
+  "name": "run_workflow",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workflowSlug": { "type": "string", "maxLength": 120 },
+      "input": { "type": "object", "additionalProperties": true }
+    },
+    "required": ["workflowSlug"]
+  }
+}
+```
+
+Per-agent binding `customConfig`:
+
+- `allowedWorkflowSlugs: string[]` — required, min 1. The LLM may only invoke workflows on this list. Fail-closed if the binding is missing or malformed.
+- `defaultBudgetUsd?: number` — optional. Forwarded to the engine as `budgetLimitUsd` so chat-triggered workflows can't exceed a per-binding spend cap regardless of the system prompt.
+
+Result `data` is a discriminated union on `status`:
+
+- `'completed'` — `{ executionId, output, totalCostUsd, totalTokensUsed }`. LLM gets the output as a normal tool result.
+- `'pending_approval'` — `{ executionId, stepId, prompt, expiresAt, approveToken, rejectToken }`. Tokens are raw HMAC strings; the chat surface (admin or embed) constructs the channel-specific URL at POST time.
+
+Workflow failure surfaces as a capability error (`code: 'workflow_failed'`) so the LLM treats it as a tool failure rather than a sad-path success. See [Streaming Chat — In-chat approvals](./chat.md#in-chat-approvals) for the full event sequence.
+
 ## Consumer Contract (Chat Handler)
 
 The chat handler will eventually:

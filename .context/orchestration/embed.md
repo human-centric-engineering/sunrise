@@ -202,3 +202,28 @@ PATCH /api/v1/admin/orchestration/agents/:id/widget-config
 Both require admin auth + `adminLimiter`. PATCH validates the body via `updateWidgetConfigSchema` (a `partial()` of `widgetConfigSchema` that requires at least one known field) and merges over the current resolved config before writing. An audit row is written under action `agent.widget_config.update` with per-field `from` / `to` deltas.
 
 The PATCH response returns the resolved config (defaults filled in) so the UI can rebind to the canonical shape after saving.
+
+## In-chat approvals
+
+When the agent triggers a workflow (via the `run_workflow` capability) that pauses on a `human_approval` step, the widget renders an Approve / Reject card inside the conversation. The card is built with `createElement` + `textContent` only (no `innerHTML`), inherits the per-agent theme via the existing `--sw-*` CSS custom properties, and submits to the channel-specific public sub-routes.
+
+| What                  | Where                                                             |
+| --------------------- | ----------------------------------------------------------------- |
+| SSE event branch      | `evt.type === 'approval_required'` in the widget consumer switch  |
+| Render function       | `renderApprovalCard` inside `app/api/v1/embed/widget.js/route.ts` |
+| Approve POST          | `/api/v1/orchestration/approvals/:id/approve/embed?token=…`       |
+| Reject POST           | `/api/v1/orchestration/approvals/:id/reject/embed?token=…`        |
+| Status poll           | `/api/v1/orchestration/approvals/:id/status?token=…`              |
+| CORS allowlist source | `OrchestrationSettings.embedAllowedOrigins` (Json column)         |
+
+The `/approve/embed` and `/reject/embed` routes enforce CORS against `OrchestrationSettings.embedAllowedOrigins`. **Admins must populate this allowlist with the partner-site origin** before the embed widget can submit approvals — the default empty array means every embed-channel POST is rejected with a 403. Origin `null` is always rejected (sandboxed iframes, file:// loads).
+
+The `/status` endpoint uses permissive CORS (`*`) so the widget can poll from any partner origin. Token authentication is the gate: anyone with a valid HMAC token can read execution state, matching the audience model where the recipient is the end user themselves.
+
+After a terminal poll state, the card writes a synthesised follow-up message into the existing input field and triggers `send()` — the LLM gets a fresh turn carrying the workflow output as if the user typed `Workflow approved. Result: { … }` themselves.
+
+### embedAllowedOrigins setting
+
+`OrchestrationSettings.embedAllowedOrigins: Json` — array of origin strings (`https://` URLs, plus `http://localhost` and `http://127.0.0.1` for development). Read at the top of every `/embed` POST and validated against the request `Origin` header. Malformed entries are dropped at hydration time so a corrupt setting can't crash the approval routes.
+
+Configure via the global orchestration settings UI; updates take effect on the next request (no caching).

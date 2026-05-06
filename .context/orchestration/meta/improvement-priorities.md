@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-05 (item 13 shipped)
+**Last updated:** 2026-05-06 (items 11 and 13 shipped)
 
 ---
 
@@ -246,20 +246,51 @@ OTEL/Langfuse/Datadog ingestion remains out of scope here — Tier 3 item 13 kee
 
 ## Tier 3 — Useful but lower priority for this profile
 
-| #   | Improvement                                                    | Status            |
-| --- | -------------------------------------------------------------- | ----------------- |
-| 11  | Consumer-side (non-admin) approval flows in chat               | ⚪ Not started    |
-| 12  | Workflow definition versioning (publish/draft/rollback)        | ⚪ Not started    |
-| 13  | OTEL instrumentation as opt-in plug-in                         | ✅ Done (this PR) |
-| 14  | Inbound triggers from third-party systems (email-in, Slack-in) | ⚪ Not started    |
-| 15  | Better full checkpoint recovery beyond approval pauses         | ⚪ Not started    |
-| 16  | `upload_to_storage` capability (S3 / Vercel Blob)              | ⚪ Not started    |
-| 17  | Multipart/form-data construction in `lib/orchestration/http/`  | ⚪ Not started    |
-| 18  | Env-var resolution for binding `customConfig` at admin save    | ⚪ Not started    |
+| #   | Improvement                                                    | Status         |
+| --- | -------------------------------------------------------------- | -------------- |
+| 11  | Consumer-side (non-admin) approval flows in chat               | ✅ Done        |
+| 12  | Workflow definition versioning (publish/draft/rollback)        | ⚪ Not started |
+| 13  | OTEL instrumentation as opt-in plug-in                         | ✅ Done        |
+| 14  | Inbound triggers from third-party systems (email-in, Slack-in) | ⚪ Not started |
+| 15  | Better full checkpoint recovery beyond approval pauses         | ⚪ Not started |
+| 16  | `upload_to_storage` capability (S3 / Vercel Blob)              | ⚪ Not started |
+| 17  | Multipart/form-data construction in `lib/orchestration/http/`  | ⚪ Not started |
+| 18  | Env-var resolution for binding `customConfig` at admin save    | ⚪ Not started |
 
 Brief rationale for each:
 
-- **11 — Consumer-side approval flows.** Some business applications (utility billing, e-commerce complaints, planning pre-screening) want the _end user_ to confirm an action, not an admin. Today's approval queue is admin-only. External HMAC tokens partially cover this but the UX expectation is a confirm step in the chat itself. Reuse external-approval token machinery, expose through chat SSE event types.
+### 11. Consumer-side approval flows in chat — ✅ Done
+
+**Why it mattered.** Several business-application patterns — utility billing confirmation, e-commerce refund, planning pre-screening submission — need the **end user** themselves to confirm an action mid-conversation, not an admin from the queue. The HMAC token machinery already existed for external channels (Slack, email) but the chat surface couldn't render an Approve / Reject card — `requires_approval` failures from the capability dispatcher just surfaced to the LLM as tool errors with nothing actionable for the user.
+
+**What changed in scoping.** Three architectural choices resolved the design before implementation:
+
+1. **Workflow-bridged approvals, not capability-level.** Approvals route through workflow `human_approval` pauses rather than extending the capability dispatcher's `requires_approval` failure code. Reason: the HMAC token machinery is keyed on `executionId`, the audit trace is first-class for workflow executions, and extending the capability path would mean two parallel approval systems that inevitably drift. Side benefit: chat agents can now trigger workflows via the new `run_workflow` capability — useful beyond approvals.
+2. **Carry-the-output-back, not resume-the-stream.** After the user clicks Approve, the chat client polls `GET /executions/:id/status` until the workflow completes, then submits a follow-up user message containing the workflow output so the LLM gets a fresh turn. The chat handler is structured around one user message → one assistant reply; re-entering it from a non-chat path would require per-conversation pub/sub that doesn't exist. The `approval_required` ChatEvent contract is forward-compatible if a future server-pushed implementation is added.
+3. **Channel-specific sub-routes, not a body discriminator.** The chat-rendered Approve / Reject button hits new `…/approvals/:id/{approve,reject}/{chat,embed}` sub-routes. The server pins the `actorLabel` (`token:chat` / `token:embed` / `token:external`) on the route itself — never trusted from a body field. A leaked HMAC token can't be replayed under a misleading channel name in audit logs, and CORS scope differs cleanly per channel.
+
+**What shipped.**
+
+- New `run_workflow` capability (`lib/orchestration/capabilities/built-in/run-workflow.ts`) — args: `{ workflowSlug, input? }`. Per-agent binding requires `customConfig.allowedWorkflowSlugs` whitelist (fail-closed). Returns `{ status: 'pending_approval', executionId, stepId, prompt, expiresAt, approveToken, rejectToken }` with `skipFollowup: true` on pause; `{ status: 'completed', output, totalCostUsd, totalTokensUsed }` on synchronous completion. Workflow failure surfaces as a capability error so the LLM treats it as a tool failure rather than a sad-path success. Seeded as a system capability in `prisma/seeds/012-run-workflow.ts`; off-by-default for every agent.
+- New `approval_required` SSE ChatEvent variant + `PendingApproval` interface in `types/orchestration.ts`. Streaming handler (`lib/orchestration/chat/streaming-handler.ts:extractPendingApproval`) emits the event after a paused `run_workflow` capability_result and persists a synthetic empty-content assistant message with `metadata.pendingApproval` set so reload restores the card from history. `done` follows the existing `skipFollowup` short-circuit; no LLM follow-up turn races the user click.
+- Admin chat approval card (`components/admin/orchestration/chat/approval-card.tsx`) — full state machine (idle → submitting → waiting → completed / failed / expired), Approve / Reject with confirmation dialog, exponential-backoff polling on `GET /executions/:id`, synthesised follow-up message via `onResolved` so the LLM gets a fresh turn on approval.
+- Embed widget approval card (`app/api/v1/embed/widget.js/route.ts:renderApprovalCard`) — Shadow-DOM safe, `createElement` + `textContent` only, inherits the per-agent theme via the existing `--sw-*` CSS custom properties from item 7. Approve / Reject submit to the channel-specific embed sub-routes; on a 200 the card polls the new `/status` endpoint and synthesises a follow-up via the existing input.value + send() path.
+- Six new public routes:
+  - `app/api/v1/orchestration/approvals/[id]/approve/{chat,embed}/route.ts` and the `reject` siblings — channel-pinned `actorLabel`, channel-specific CORS (same-origin for `/chat`, allowlist for `/embed`).
+  - `app/api/v1/orchestration/approvals/[id]/status/route.ts` — token-authenticated execution status read with permissive CORS so the embed widget can poll from any partner origin.
+- Shared route helper at `lib/orchestration/approval-route-helpers.ts` — refactor of the existing `/approve` and `/reject` route bodies; the legacy routes are now 5-line wrappers, the four new sub-routes share the same plumbing.
+- Additive Prisma migration `20260506063640_add_embed_allowed_origins` — `embedAllowedOrigins: Json @default("[]")` on `AiOrchestrationSettings`. Settings hydration parses + filters to https / localhost URLs at read time so a corrupt setting can't crash the approval routes. Surfaced through the `OrchestrationSettings` type and admin settings UI.
+- New audit `actor` values: `token:chat` and `token:embed` distinguish chat-confirmed from email/Slack-confirmed approvals.
+- `.context/` updates: chat.md (In-chat approvals section), capabilities.md (`run_workflow`), embed.md (in-chat approvals + `embedAllowedOrigins`), orchestration-approvals.md (chat-rendered approvals + new actor values), and a new recipe `recipes/in-chat-approval.md`.
+
+**Critical files (for reference):** `lib/orchestration/capabilities/built-in/run-workflow.ts`, `lib/orchestration/chat/streaming-handler.ts` (extractPendingApproval + emit site), `lib/orchestration/approval-route-helpers.ts`, `app/api/v1/orchestration/approvals/[id]/{approve,reject}/{chat,embed}/route.ts`, `app/api/v1/orchestration/approvals/[id]/status/route.ts`, `components/admin/orchestration/chat/approval-card.tsx`, `app/api/v1/embed/widget.js/route.ts` (renderApprovalCard), `types/orchestration.ts` (ChatEvent + MessageMetadata + PendingApproval), `prisma/migrations/20260506063640_add_embed_allowed_origins/`.
+
+**Tradeoffs surfaced in the work.**
+
+- **Capability-level (non-workflow) approvals — explicitly out of scope.** The dispatcher's existing `requires_approval` failure code stays admin-only. Could be added later additively if a partner needs in-chat approval on a single capability call without authoring a workflow first.
+- **Embed status endpoint uses permissive CORS (`*`).** Token authentication is the gate — anyone with a valid HMAC token can read execution state, matching the threat model where the audience is the user themselves. Adding a per-origin allowlist would require coupling the HMAC token to an embed token (which it isn't today) and didn't earn its keep.
+- **Reload recovery for the embed widget is degraded.** No embed-side messages-history endpoint exists today, so a hard reload of a partner page mid-approval doesn't restore the card from `metadata.pendingApproval`. The session-level case (SSE stream still open) is fine. Adding a token-authenticated history endpoint would close this gap; deferred until a partner asks for it.
+- **The synthesised follow-up message is plain text.** A specialised "tool result" message-role would surface the workflow output more cleanly to the LLM, but that requires schema work. The current `"Workflow approved. Result: …"` user message is honest about what's happening and works on every existing model without prompt tuning.
 - **12 — Workflow versioning.** DB-stored history exists; for small teams the gap is ergonomic — no easy diff, rollback, or branch. A "publish/draft/rollback" model with named versions covers most of the value without requiring git-native YAML files.
 - **13 — OTEL plug-in.** ✅ Done. A vendor-neutral `Tracer` interface in `lib/orchestration/tracing/` defaults to a no-op (zero allocations on the hot path, zero new deps for forks that don't enable tracing). Every LLM call site, capability dispatch, workflow step, agent-call turn, and chat turn is wrapped in an exception-safe span through `withSpan` (callback-shaped sites) or `withSpanGenerator` (async-generator-shaped sites: engine `execute()`, `workflow.step`, chat `run()`, streaming `llm.call`). Both helpers activate the span as the OTEL active context via `AsyncLocalStorage`, so nested spans propagate parent/child correlation end-to-end — OTLP backends render one trace per execution / chat turn rather than fragmented roots. Tracer failures are caught at the wrap boundary, logged at warn, and never abort orchestration. Span attributes follow OpenTelemetry GenAI semantic conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, …) plus Sunrise extensions (`sunrise.execution_id`, `sunrise.step_id`, `sunrise.cost_usd`, `sunrise.provider.failover_from/to`, …). One first-party adapter ships: `OtelTracer` against `@opentelemetry/api`, opted into via `registerOtelTracer()` in a server-only init file. Forks point any OTLP-compatible backend (Datadog, Honeycomb, Grafana Tempo, Langfuse-via-OTLP) at the spans by configuring their own `TracerProvider`. Sampling delegates entirely to OTEL — Sunrise's interface has no sampling concept. `AiCostLog` rows gained nullable `traceId` / `spanId` columns so external trace backends can join cost data back to the originating span. Critical files: `lib/orchestration/tracing/`, `prisma/migrations/20260505141318_add_cost_log_trace_correlation/`, `.context/orchestration/tracing.md`.
 - **14 — Inbound triggers.** Webhook subscriptions handle outbound; inbound from "things that happen elsewhere" is gappy. Several business-application examples (subscription-box churn outreach, mutual-aid coordination, complaints) benefit from email-in or Slack-in. Generic Postmark inbound parse covers most cases cheaply.
