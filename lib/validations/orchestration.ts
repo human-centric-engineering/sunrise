@@ -1846,6 +1846,44 @@ export const updateOrchestrationSettingsSchema = z
       .nullable()
       .optional(),
     escalationConfig: escalationConfigSchema.nullable().optional(),
+    /**
+     * Allowlist of origins permitted to call the embed-channel approval
+     * routes. Each entry is validated as a URL and persisted as the
+     * canonical `.origin` form (`scheme://host[:port]` with default
+     * ports stripped, no path, no trailing slash) so it byte-matches
+     * what browsers send in the `Origin` header. Without normalisation,
+     * common admin inputs like `https://partner.com/` (trailing slash
+     * from copy-paste) or `https://partner.com:443` (explicit default
+     * port) silently never match.
+     *
+     * Read-side `parseEmbedAllowedOrigins` re-normalises defensively in
+     * case rows were written before this schema landed (or via import).
+     */
+    embedAllowedOrigins: z
+      .array(
+        z
+          .string()
+          .url()
+          .max(2048)
+          .refine(
+            (v) => {
+              try {
+                const u = new URL(v);
+                return (
+                  u.protocol === 'https:' ||
+                  u.hostname === 'localhost' ||
+                  u.hostname === '127.0.0.1'
+                );
+              } catch {
+                return false;
+              }
+            },
+            { message: 'Origin must be https or http://localhost / http://127.0.0.1' }
+          )
+          .transform((v) => new URL(v).origin)
+      )
+      .max(100, 'At most 100 allowed origins')
+      .optional(),
   })
   .refine(
     (v) =>
@@ -1862,7 +1900,8 @@ export const updateOrchestrationSettingsSchema = z
       v.auditLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
-      v.escalationConfig !== undefined,
+      v.escalationConfig !== undefined ||
+      v.embedAllowedOrigins !== undefined,
     {
       message: 'At least one field must be provided',
     }
@@ -2218,6 +2257,26 @@ const citationSchema = z.object({
   finalScore: z.number().optional(),
 });
 
+/**
+ * Pending-approval marker carried on `MessageMetadata.pendingApproval`
+ * and on the `approval_required` ChatEvent. Tokens are HMAC strings
+ * (see `lib/orchestration/approval-tokens.ts`); the chat surface
+ * builds the final URL at POST time using its channel sub-route.
+ *
+ * Validate on read-back from `AiMessage.metadata` so a tampered or
+ * stale row can't crash the rendering path. Treat `prompt` as plain
+ * text only — it originates from a workflow step config and must
+ * never be rendered with `dangerouslySetInnerHTML`.
+ */
+export const pendingApprovalSchema = z.object({
+  executionId: z.string().min(1).max(120),
+  stepId: z.string().min(1).max(120),
+  prompt: z.string().min(1).max(5000),
+  expiresAt: z.string().datetime(),
+  approveToken: z.string().min(1).max(2048),
+  rejectToken: z.string().min(1).max(2048),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2229,6 +2288,7 @@ export const messageMetadataSchema = z.object({
   latencyMs: z.number().optional(),
   costUsd: z.number().optional(),
   citations: z.array(citationSchema).optional(),
+  pendingApproval: pendingApprovalSchema.optional(),
 });
 
 // ============================================================================

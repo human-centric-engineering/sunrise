@@ -47,7 +47,8 @@ import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/ch
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
-import type { Citation } from '@/types/orchestration';
+import type { Citation, PendingApproval } from '@/types/orchestration';
+import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -95,6 +96,9 @@ interface ChatMessage {
   content: string;
   /** Source attributions surfaced via the `citations` SSE event. */
   citations?: Citation[];
+  /** In-chat approval card payload, set on synthetic assistant messages
+   * when a `run_workflow` capability paused on a `human_approval` step. */
+  pendingApproval?: PendingApproval;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -301,6 +305,19 @@ export function ChatInterface({
                   }
                   return updated;
                 });
+              } else if (
+                parsed.type === 'approval_required' &&
+                parsed.data.pendingApproval &&
+                typeof parsed.data.pendingApproval === 'object'
+              ) {
+                // Append a synthetic assistant message that mounts the
+                // ApprovalCard. Mirrors the streaming-handler's persistence
+                // shape so reload behaviour stays consistent.
+                const pa = parsed.data.pendingApproval as PendingApproval;
+                setMessages((prev) => [
+                  ...prev,
+                  { role: 'assistant', content: '', pendingApproval: pa },
+                ]);
               } else if (parsed.type === 'error') {
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
@@ -366,6 +383,29 @@ export function ChatInterface({
       }
     },
     [sendMessage]
+  );
+
+  // Read-only ref so callbacks can poll the latest `streaming` flag
+  // without becoming stale via closure capture. Used by the approval
+  // card's onResolved handler to defer the synthesised follow-up
+  // when another chat turn is mid-flight (otherwise sendMessage()
+  // would silently drop the follow-up because of its `if (streaming) return`
+  // guard, and the LLM would never get the workflow output).
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
+
+  const sendFollowupWhenIdle = useCallback(
+    (text: string) => {
+      const attempt = (): void => {
+        if (streamingRef.current) {
+          setTimeout(attempt, 500);
+          return;
+        }
+        void sendMessageWrapped(text);
+      };
+      attempt();
+    },
+    [sendMessageWrapped]
   );
 
   const handleClear = useCallback(async () => {
@@ -457,21 +497,29 @@ export function ChatInterface({
                 {msg.role === 'user' ? '❯' : ' '}
               </span>
               <div className="min-w-0 flex-1">
-                {isLastAssistantEmpty(i, msg) ? (
+                {isLastAssistantEmpty(i, msg) && !msg.pendingApproval ? (
                   <ThinkingIndicator message={status} />
                 ) : msg.role === 'assistant' ? (
                   <>
-                    <MessageWithCitations
-                      content={msg.content}
-                      citations={msg.citations}
-                      trailingInline={
-                        isStreamingTail ? (
-                          <span className="terminal-caret text-foreground" aria-hidden="true">
-                            █
-                          </span>
-                        ) : undefined
-                      }
-                    />
+                    {msg.content && (
+                      <MessageWithCitations
+                        content={msg.content}
+                        citations={msg.citations}
+                        trailingInline={
+                          isStreamingTail ? (
+                            <span className="terminal-caret text-foreground" aria-hidden="true">
+                              █
+                            </span>
+                          ) : undefined
+                        }
+                      />
+                    )}
+                    {msg.pendingApproval && (
+                      <ApprovalCard
+                        pendingApproval={msg.pendingApproval}
+                        onResolved={(_action, followup) => sendFollowupWhenIdle(followup)}
+                      />
+                    )}
                     {/* Inline status during streaming — shown below content */}
                     {streaming && msg.content && i === messages.length - 1 && status && (
                       <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>

@@ -23,7 +23,7 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent, Citation, MessageMetadata } from '@/types/orchestration';
+import type { ChatEvent, Citation, MessageMetadata, PendingApproval } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -989,6 +989,22 @@ export class StreamingChatHandler {
             invalidateContext(request.contextType, request.contextId);
           }
 
+          // run_workflow → pending approval: surface a card, persist a
+          // synthetic assistant message carrying the marker so a reload
+          // restores the pending state, then yield done. The user's
+          // next action (approve / reject) advances the conversation
+          // via a follow-up message; the LLM does not narrate here.
+          const pendingApproval = extractPendingApproval(tc.name, augmentedResult);
+          if (pendingApproval) {
+            await this.persistMessage({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: '',
+              metadata: { pendingApproval },
+            });
+            yield { type: 'approval_required', pendingApproval };
+          }
+
           if (result.skipFollowup) {
             getBreaker(usedSlug).recordSuccess();
             if (citations.length > 0) {
@@ -1181,6 +1197,24 @@ export class StreamingChatHandler {
 
           if (request.contextType && request.contextId) {
             invalidateContext(request.contextType, request.contextId);
+          }
+
+          // Scan parallel results for any run_workflow pause. Each
+          // gets its own synthetic assistant message + approval_required
+          // event so the chat surface can render a card per pause. In
+          // practice the LLM rarely emits multiple run_workflow calls
+          // in one parallel batch, but we don't constrain it.
+          for (const r of results) {
+            const pa = extractPendingApproval(r.capabilitySlug, r.result);
+            if (pa) {
+              await this.persistMessage({
+                conversationId: conversation.id,
+                role: 'assistant',
+                content: '',
+                metadata: { pendingApproval: pa },
+              });
+              yield { type: 'approval_required', pendingApproval: pa };
+            }
           }
 
           if (anySkipFollowup) {
@@ -1471,6 +1505,41 @@ export function streamChat(request: ChatRequest): ChatStream {
 
 function errorEvent(code: string, message: string): ChatEvent {
   return { type: 'error', code, message };
+}
+
+/**
+ * Narrow a `run_workflow` capability result to a `PendingApproval`.
+ * Returns null for any other capability or for a result that didn't
+ * pause. Defensive about shape — the LLM never sees this path so a
+ * malformed result indicates a code bug rather than untrusted input.
+ */
+function extractPendingApproval(slug: string, result: unknown): PendingApproval | null {
+  if (slug !== 'run_workflow') return null;
+  if (!result || typeof result !== 'object') return null;
+  const r = result as Record<string, unknown>;
+  if (r.success !== true) return null;
+  const data = r.data;
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  if (d.status !== 'pending_approval') return null;
+  if (
+    typeof d.executionId !== 'string' ||
+    typeof d.stepId !== 'string' ||
+    typeof d.prompt !== 'string' ||
+    typeof d.expiresAt !== 'string' ||
+    typeof d.approveToken !== 'string' ||
+    typeof d.rejectToken !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    executionId: d.executionId,
+    stepId: d.stepId,
+    prompt: d.prompt,
+    expiresAt: d.expiresAt,
+    approveToken: d.approveToken,
+    rejectToken: d.rejectToken,
+  };
 }
 
 function buildDoneEvent(

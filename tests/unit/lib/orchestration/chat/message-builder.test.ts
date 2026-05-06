@@ -576,4 +576,35 @@ describe('buildMessages', () => {
     expect(memIdx).toBeGreaterThan(-1);
     expect(histIdx).toBeGreaterThan(memIdx);
   });
+
+  it('skips empty-content assistant messages from history (synthetic approval markers)', () => {
+    // The chat handler persists an empty-content assistant message
+    // with `metadata.pendingApproval` set when a workflow paused for
+    // approval. Anthropic's Messages API rejects empty content blocks,
+    // so the next chat turn (after the user's follow-up) must NOT
+    // forward those rows to the LLM.
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [
+        { role: 'user', content: 'Refund order #1234' },
+        { role: 'assistant', content: 'Kicking off refund.' },
+        { role: 'tool', content: '{"ok":true}', toolCallId: 'tc-1' },
+        { role: 'assistant', content: '' }, // synthetic approval marker
+      ],
+      newUserMessage: 'Workflow approved. Result: { ... }',
+    });
+
+    // No empty-content messages in the output
+    for (const m of messages) {
+      if (m.role === 'assistant' && typeof m.content === 'string') {
+        expect(m.content.length).toBeGreaterThan(0);
+      }
+    }
+    // Non-empty assistant text from history is still present
+    const assistantTextRow = messages.find(
+      (m) => m.role === 'assistant' && m.content === 'Kicking off refund.'
+    );
+    expect(assistantTextRow).toBeDefined();
+  });
 });

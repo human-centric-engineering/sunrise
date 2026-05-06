@@ -865,6 +865,7 @@ model AiOrchestrationSettings {
   maxConversationsPerUser    Int?
   maxMessagesPerConversation Int?
   escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
+  embedAllowedOrigins        Json      @default("[]") // [string] — allowlist for the /approvals/:id/{approve,reject}/embed CORS scope
   createdAt                  DateTime  @default(now())
   updatedAt                  DateTime  @updatedAt
 

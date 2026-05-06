@@ -113,6 +113,7 @@ function makeSettingsRow(
     auditLogRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
+    embedAllowedOrigins: unknown;
   }> = {}
 ) {
   return {
@@ -589,6 +590,89 @@ describe('Admin Orchestration — /settings', () => {
     it('rejects empty payload (400)', async () => {
       const res = await PATCH(makePatch({}));
       expect(res.status).toBe(400);
+    });
+
+    it('rejects http://attacker.com in embedAllowedOrigins (400)', async () => {
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['http://attacker.com'] }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects malformed URL in embedAllowedOrigins (400)', async () => {
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['not-a-url'] }));
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects more than 100 origins in embedAllowedOrigins (400)', async () => {
+      const origins = Array.from({ length: 101 }, (_, i) => `https://partner${i}.com`);
+      const res = await PATCH(makePatch({ embedAllowedOrigins: origins }));
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('PATCH — embedAllowedOrigins (write-side normalisation)', () => {
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+    });
+
+    it('normalises trailing slash before persistence', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ embedAllowedOrigins: ['https://partner.com'] }) as never
+      );
+
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['https://partner.com/'] }));
+
+      expect(res.status).toBe(200);
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('strips explicit default ports before persistence', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ embedAllowedOrigins: ['https://partner.com'] }) as never
+      );
+
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['https://partner.com:443'] }));
+
+      expect(res.status).toBe(200);
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('strips paths before persistence', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ embedAllowedOrigins: ['https://partner.com'] }) as never
+      );
+
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['https://partner.com/widget'] }));
+
+      expect(res.status).toBe(200);
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('accepts http://localhost for development', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ embedAllowedOrigins: ['http://localhost:3000'] }) as never
+      );
+
+      const res = await PATCH(makePatch({ embedAllowedOrigins: ['http://localhost:3000'] }));
+
+      expect(res.status).toBe(200);
+    });
+
+    it('persists empty array (clear allowlist)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ embedAllowedOrigins: [] }) as never
+      );
+
+      const res = await PATCH(makePatch({ embedAllowedOrigins: [] }));
+
+      expect(res.status).toBe(200);
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.embedAllowedOrigins).toEqual([]);
     });
   });
 

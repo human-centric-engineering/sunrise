@@ -233,6 +233,17 @@ export const API = {
   ORCHESTRATION: {
     approvalApprove: (id: string): string => `/api/v1/orchestration/approvals/${id}/approve`,
     approvalReject: (id: string): string => `/api/v1/orchestration/approvals/${id}/reject`,
+    /** Chat-channel approval routes — server pins `actorLabel: 'token:chat'` and enforces same-origin CORS. */
+    approvalApproveChat: (id: string): string =>
+      `/api/v1/orchestration/approvals/${id}/approve/chat`,
+    approvalRejectChat: (id: string): string => `/api/v1/orchestration/approvals/${id}/reject/chat`,
+    /** Embed-channel approval routes — server pins `actorLabel: 'token:embed'` and enforces a configured origin allowlist. */
+    approvalApproveEmbed: (id: string): string =>
+      `/api/v1/orchestration/approvals/${id}/approve/embed`,
+    approvalRejectEmbed: (id: string): string =>
+      `/api/v1/orchestration/approvals/${id}/reject/embed`,
+    /** Token-authenticated execution status read — used by chat-rendered approval cards to poll. */
+    approvalStatus: (id: string): string => `/api/v1/orchestration/approvals/${id}/status`,
   },
   PUBLIC: {
     HEALTH: '/api/health',

@@ -131,6 +131,11 @@ export const PATCH = withAdminAuth(async (request, session) => {
         ? Prisma.JsonNull
         : (body.escalationConfig as unknown as Prisma.InputJsonValue);
   }
+  if (body.embedAllowedOrigins !== undefined) {
+    // Schema's `.transform` already normalised each entry to its
+    // canonical `.origin` form — write straight through.
+    updateData.embedAllowedOrigins = body.embedAllowedOrigins as unknown as Prisma.InputJsonValue;
+  }
 
   const row = await prisma.aiOrchestrationSettings.upsert({
     where: { slug: 'global' },

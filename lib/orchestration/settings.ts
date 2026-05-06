@@ -88,6 +88,7 @@ export function hydrateSettings(row: {
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   escalationConfig?: Prisma.JsonValue | null;
+  embedAllowedOrigins?: Prisma.JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -145,9 +146,39 @@ export function hydrateSettings(row: {
     maxConversationsPerUser: row.maxConversationsPerUser,
     maxMessagesPerConversation: row.maxMessagesPerConversation,
     escalationConfig: parseEscalationConfig(row.escalationConfig),
+    embedAllowedOrigins: parseEmbedAllowedOrigins(row.embedAllowedOrigins),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Narrow the `embedAllowedOrigins` JSON column into a normalised
+ * `string[]`. Defaults to an empty array if the row is missing the
+ * field (e.g. on first read after the migration but before the row is
+ * touched). Each entry is validated as an https / localhost URL and
+ * normalised to its canonical `.origin` form (no path, no trailing
+ * slash, default ports stripped) so it byte-matches what browsers
+ * send in the `Origin` header.
+ *
+ * The settings PATCH schema also normalises on write (Zod
+ * `.transform()`); this read-side parse is the safety net for rows
+ * written before the schema landed, or via paths that bypass the
+ * schema (direct DB write, future import/restore, etc.).
+ */
+function parseEmbedAllowedOrigins(raw: Prisma.JsonValue | null | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((v): string[] => {
+    if (typeof v !== 'string') return [];
+    try {
+      const u = new URL(v);
+      const allowed =
+        u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+      return allowed ? [u.origin] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 /**

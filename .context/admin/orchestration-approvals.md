@@ -210,7 +210,36 @@ Both result in `status: cancelled` on the execution. To tell them apart:
 The `actor` field follows the pattern `<source>:<identifier>`:
 
 - `admin:<userId>` — admin dashboard approval/rejection
-- `token:external` — token-authenticated endpoint (external channel)
+- `token:external` — public token endpoint (email / Slack / non-browser caller)
+- `token:chat` — channel-specific sub-route hit from the admin chat surface (`…/approve/chat`, `…/reject/chat`)
+- `token:embed` — channel-specific sub-route hit from the embed widget (`…/approve/embed`, `…/reject/embed`)
+
+## Chat-rendered approvals
+
+When an agent runs a workflow via the `run_workflow` capability and that workflow pauses on a `human_approval` step, the pause surfaces inline in the chat conversation as an Approve / Reject card — both on the admin chat surface and inside the embed widget — instead of the user having to wait for an admin to clear the queue.
+
+| What                        | Where                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| New SSE ChatEvent variant   | `approval_required` in `types/orchestration.ts:ChatEvent`                                               |
+| Pending-approval shape      | `PendingApproval` interface in `types/orchestration.ts`; persisted on `MessageMetadata.pendingApproval` |
+| Streaming-handler emit site | `lib/orchestration/chat/streaming-handler.ts:extractPendingApproval`                                    |
+| Admin chat card             | `components/admin/orchestration/chat/approval-card.tsx`                                                 |
+| Embed widget card           | `app/api/v1/embed/widget.js/route.ts:renderApprovalCard`                                                |
+| Channel-specific approve    | `app/api/v1/orchestration/approvals/[id]/{approve,reject}/{chat,embed}/route.ts`                        |
+| Status polling endpoint     | `app/api/v1/orchestration/approvals/[id]/status/route.ts`                                               |
+| Shared route helper         | `lib/orchestration/approval-route-helpers.ts`                                                           |
+| Engine resumption helper    | `lib/orchestration/scheduling/scheduler.ts:resumeApprovedExecution`                                     |
+| Embed origin allowlist      | `OrchestrationSettings.embedAllowedOrigins` (Json column on the singleton row)                          |
+
+The chat card hits the channel-specific sub-route with the matching HMAC token; on a 200 it polls `GET /approvals/:id/status` (token-authenticated, permissive CORS) until the workflow reaches a terminal state, then synthesises a follow-up user message carrying the workflow output so the LLM gets a fresh turn to summarise.
+
+**Resumption.** The `/chat` and `/embed` approve routes fire-and-forget call `resumeApprovedExecution` (`lib/orchestration/scheduling/scheduler.ts`) after `executeApproval` succeeds — that drains the engine immediately so the chat card's polling sees `completed` within seconds rather than waiting for the maintenance tick (which has a 2-minute stale threshold + ~60s tick interval). The legacy `/approve` and `/reject` routes don't trigger resumption — email/Slack approvers typically aren't watching, and the maintenance-tick fallback already covers them. Reject doesn't trigger resumption on any channel because rejection just cancels — there's no further engine work to do.
+
+The `actorLabel` is **route-pinned** server-side, never trusted from a body field. CORS posture differs per channel: same-origin only for `/chat` (rejects `null` Origin), allowlist (`embedAllowedOrigins`) for `/embed`, none for the legacy `/approve` and `/reject` routes that serve email and Slack callers.
+
+**Cross-channel token redemption — known limitation.** The HMAC token signs only `{ executionId, action, expiresAt }`; the channel is not part of the signature. A leaked email/Slack URL can therefore be redeemed against `/approve/chat` or `/approve/embed` from a same-origin admin session or an allowlisted partner site. The audit `actor` reflects the **route hit**, not the channel that originally issued the token, so a redemption from the wrong channel is detectable in the trace but the token itself is not channel-bound. Mitigations live at the CORS layer (chat = same-origin, embed = allowlist) and the standard token-leakage controls (HTTPS, expiry, revocation by `BETTER_AUTH_SECRET` rotation). Channel-binding the signature would require a token-format change and a migration window for in-flight tokens — deferred until a partner asks for it.
+
+See [Streaming Chat — In-chat approvals](../orchestration/chat.md#in-chat-approvals) for the SSE event sequence, and [Embed Widget](../orchestration/embed.md) for the partner-site setup.
 
 ## Anti-patterns
 
@@ -219,3 +248,5 @@ The `actor` field follows the pattern `<source>:<identifier>`:
 - **Don't poll for real-time updates.** The sidebar badge re-fetches on navigation. If real-time is needed later, add SSE or a lightweight polling interval — don't build it preemptively.
 - **Don't store approval tokens in the database.** Tokens are stateless HMAC signatures verified on the fly. Adding a token table would add migration complexity and cleanup jobs for no benefit.
 - **Don't build channel-specific SDKs into the app.** The notification dispatcher includes channel metadata in webhook payloads. Actual delivery (Slack API, SendGrid, Twilio) is handled by external webhook consumers.
+- **Don't trust an `actorLabel` body field from the client.** The chat-rendered approval card and the embed widget POST through their own sub-routes (`…/approve/chat`, `…/approve/embed`); the server pins the actor on the route itself. A body field would be theatre — anyone with the HMAC token can claim any value.
+- **Don't widen CORS on the legacy `/approve` and `/reject` routes.** They exist for non-browser callers (email links, Slack) and have no CORS by design. Use the channel-specific sub-routes for any browser-originated approval flow.

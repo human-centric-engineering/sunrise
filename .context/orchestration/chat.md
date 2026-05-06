@@ -118,6 +118,44 @@ Currently `search_knowledge_base` is the only citation-producing capability; the
 
 Citations are attached only to the **terminal** assistant message (the one that contains the `[N]` markers). Interim tool-call turns do not carry citations because the LLM has not yet produced grounded text.
 
+## In-chat approvals
+
+When an agent calls the `run_workflow` capability and the workflow pauses on a `human_approval` step, the chat handler surfaces the pause inline so the end user can Approve or Reject without leaving the conversation.
+
+Sequence on a paused workflow:
+
+```
+start → content* → status (Executing run_workflow) → capability_result
+      → approval_required → done
+```
+
+1. The `run_workflow` capability returns `{ status: 'pending_approval', executionId, stepId, prompt, expiresAt, approveToken, rejectToken }` with `skipFollowup: true`.
+2. The streaming handler emits a new `approval_required` ChatEvent carrying the same `PendingApproval` payload (`types/orchestration.ts:PendingApproval`).
+3. A synthetic empty-content assistant message is persisted with `metadata.pendingApproval` set on the `AiMessage` row. **Note:** today's `<ChatInterface>` and the embed widget do NOT load conversation history on mount, so a hard reload of the chat loses the card even though the marker persists in the DB. The persistence is in place for future history-load paths, audit (the trace viewer renders the metadata raw), and the admin conversations detail view. Closing the gap is a separate piece of work.
+4. `done` fires with the partial-turn cost. **No LLM follow-up turn races the user click** — the next turn is initiated by the user submitting a follow-up message.
+
+The chat surface (admin chat or embed widget) renders an Approve / Reject card from the event and POSTs to the channel-specific public endpoint with the matching token:
+
+| Surface       | Approve URL                                         | Reject URL       | `actorLabel`     |
+| ------------- | --------------------------------------------------- | ---------------- | ---------------- |
+| Email / Slack | `/api/v1/orchestration/approvals/:id/approve`       | `…/reject`       | `token:external` |
+| Admin chat    | `/api/v1/orchestration/approvals/:id/approve/chat`  | `…/reject/chat`  | `token:chat`     |
+| Embed widget  | `/api/v1/orchestration/approvals/:id/approve/embed` | `…/reject/embed` | `token:embed`    |
+
+The `actorLabel` is **server-set** by the route hit, never trusted from a body field. CORS is per-channel: same-origin only for `/chat`, allowlist (orchestration setting `embedAllowedOrigins`) for `/embed`, none for the legacy email/Slack route.
+
+After a successful POST, the card polls `GET /api/v1/orchestration/approvals/:id/status?token=…` (token-authenticated, permissive CORS) until the execution reaches a terminal state, then submits a synthesised follow-up message such as `"Workflow approved. Result: { ... }"` so the LLM gets a fresh turn carrying the workflow output.
+
+The chat / embed approve routes fire-and-forget call `resumeApprovedExecution` after the approval action succeeds, so the engine starts draining the resumed run immediately rather than waiting for the maintenance tick (~2 minute stale threshold). Without this, the chat card's 5-minute polling budget would often expire before the workflow had even started resuming. Rejection skips this — there's no further engine work to do.
+
+For approval-only workflows (a single `human_approval` step), the synthesised follow-up's "result" is the approval payload (`{ approved, notes, actor }`) rather than meaningful business data, since that's the workflow's only step output. Multi-step workflows where the last step is an external call or transformation surface that step's output instead. Output is capped at 8000 characters in the synthesised follow-up — workflows that emit larger payloads (full datasets, file blobs) get a `[truncated; N chars total]` stub the LLM can ask the user about.
+
+**Empty-content assistant messages and the LLM context.** The synthetic message persists with `content: ''` so the chat UI can mount the `<ApprovalCard>` without rendering a redundant text bubble. Anthropic's Messages API rejects empty content blocks, so `buildMessages` (`lib/orchestration/chat/message-builder.ts`) filters out empty-content assistant rows when constructing the LLM history for the next turn. Without that filter, the user's follow-up message would fail with a 400 from the provider.
+
+**Surfaces.** `<ChatInterface>` (the message-thread component used by setup-wizard, learn) renders the card inline with a synthesised follow-up via `sendFollowupWhenIdle`, which defers the send when another chat turn is mid-flight (otherwise `sendMessage`'s `if (streaming) return` guard would silently drop it). `<AgentTestChat>` (the single-turn component on the agent edit page Test tab and setup wizard's Test step) also mounts the card but resolves to a static notice — there's no message thread to carry the workflow output back into, so the admin sends a fresh message manually after approving. The embed widget mirrors `<ChatInterface>`'s queued-followup behaviour using its own `sending` flag.
+
+**Carry-the-output-back, not resume-the-stream.** The chat handler is structured around one user message → one assistant reply (with tool-call iterations); re-entering it from a non-chat path would require a per-conversation pub/sub layer that doesn't exist. The polled-then-follow-up flow uses primitives that already exist and the `approval_required` event contract is forward-compatible if a future server-pushed implementation is added.
+
 The [output guard](./output-guard.md) ships an opt-in `citationGuardMode` that flags two failure modes: under-citation (citations were retrieved but no marker appears in the response) and hallucinated markers (a marker referenced that no citation produced).
 
 ## Tool Loop Semantics

@@ -304,6 +304,80 @@ export interface PendingExecutionResult {
 }
 
 /**
+ * Fire-and-forget kick off the engine to resume an execution that was
+ * just transitioned out of `paused_for_approval` (typically by a
+ * channel-specific approval route — chat or embed — where the user is
+ * actively waiting for the workflow to complete).
+ *
+ * The standard admin-queue flow expects the client to reconnect via
+ * `?resumeFromExecutionId=` on the workflow execute route, which is
+ * why `executeApproval` doesn't auto-resume. Channel-specific routes
+ * call this so chat-rendered cards don't have to wait on the
+ * maintenance tick (`processPendingExecutions`, ~2 minute stale
+ * threshold + ~60s tick interval) before the workflow restarts.
+ *
+ * Race-safe with `processPendingExecutions`: by the time the
+ * maintenance tick fires, this run will have already transitioned
+ * status from `pending` to `running` (via `engine.execute`'s
+ * `initRun`), and the maintenance tick's `where: { status: PENDING }`
+ * filter excludes the row. If this drain crashes mid-run, the
+ * `reapZombieExecutions` task remains the safety net.
+ */
+export async function resumeApprovedExecution(executionId: string): Promise<void> {
+  const execution = await prisma.aiWorkflowExecution.findUnique({
+    where: { id: executionId },
+    include: {
+      workflow: {
+        select: { id: true, slug: true, isActive: true, workflowDefinition: true },
+      },
+    },
+  });
+  if (!execution) return;
+
+  // Workflow deactivated between pause and approval. Without this
+  // explicit mark-failed, the run would sit in PENDING until the
+  // maintenance tick cleaned it up (2-min stale threshold + ~60s
+  // tick interval) — long enough for the chat card's polling budget
+  // to expire, leaving the user with no terminal signal.
+  if (!execution.workflow.isActive) {
+    logger.warn('resumeApprovedExecution: workflow deactivated, marking failed', {
+      executionId,
+      workflowSlug: execution.workflow.slug,
+    });
+    await prisma.aiWorkflowExecution
+      .updateMany({
+        where: { id: executionId, status: WorkflowStatus.PENDING },
+        data: {
+          status: WorkflowStatus.FAILED,
+          errorMessage: 'Workflow deactivated',
+          completedAt: new Date(),
+        },
+      })
+      .catch((err: unknown) => {
+        logger.error('resumeApprovedExecution: mark-failed update failed', err, { executionId });
+      });
+    return;
+  }
+
+  const defParsed = workflowDefinitionSchema.safeParse(execution.workflow.workflowDefinition);
+  if (!defParsed.success) {
+    logger.error('resumeApprovedExecution: invalid workflow definition', undefined, {
+      executionId,
+      issues: defParsed.error.issues,
+    });
+    return;
+  }
+
+  void drainEngine(
+    executionId,
+    execution.workflow,
+    defParsed.data as WorkflowDefinition,
+    (execution.inputData ?? {}) as Record<string, unknown>,
+    execution.userId
+  );
+}
+
+/**
  * Recovery sweep: picks up AiWorkflowExecution rows stuck in 'pending'
  * (created by the scheduler but never started — e.g. due to a crash
  * between row creation and engine invocation) and invokes the engine.

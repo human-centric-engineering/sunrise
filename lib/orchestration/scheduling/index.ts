@@ -1,6 +1,7 @@
 export {
   processDueSchedules,
   processPendingExecutions,
+  resumeApprovedExecution,
   getNextRunAt,
   isValidCron,
   type ScheduleProcessResult,
