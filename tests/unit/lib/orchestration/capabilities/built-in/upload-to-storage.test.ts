@@ -263,6 +263,17 @@ describe('UploadToStorageCapability.execute()', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('invalid_binding');
     });
+
+    it('does not even attempt the upload when customConfig is malformed', async () => {
+      // Security: silently downgrading to default behaviour when the JSON
+      // column is malformed would let the LLM upload to an unguarded prefix
+      // with default content-type and size policy. Refuse the call until an
+      // admin repairs the column — and prove no side effect occurs.
+      bindCustomConfig({ keyPrefix: 'no-slash' });
+      const cap = new UploadToStorageCapability();
+      await cap.execute(BASE_ARGS, BASE_CONTEXT);
+      expect(mockUpload).not.toHaveBeenCalled();
+    });
   });
 
   // Case 12: Storage not configured

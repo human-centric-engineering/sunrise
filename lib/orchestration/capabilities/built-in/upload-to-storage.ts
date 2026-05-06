@@ -28,8 +28,12 @@
  * - The LLM cannot influence the storage path: prefix is admin-set,
  *   filename is sanitised to an extension only, the path segment is a
  *   random UUID.
- * - `validateStorageKey` is applied to the resolved prefix at admin
- *   binding load and again to the full key before upload.
+ * - `validateStorageKey` runs defensively on the resolved prefix and
+ *   the full key inside `execute()` before any upload. Admin-save-time
+ *   validation is a known gap — the PATCH route accepts customConfig
+ *   as `z.record(z.unknown())` and does not sanity-check the prefix
+ *   against the storage-key rules. The defensive check catches direct
+ *   DB edits and bindings written before this guard existed.
  * - Result returns the canonical key (for any future delete capability)
  *   alongside the URL the LLM hands to the user.
  */
