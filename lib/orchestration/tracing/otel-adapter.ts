@@ -78,6 +78,12 @@ class OtelSpan implements Span {
     private readonly inner: Otel.Span
   ) {}
 
+  /** @internal — used by `OtelTracer.withActiveContext` to set this span as
+   * the active OTEL context. Not part of the public `Span` interface. */
+  unwrap(): Otel.Span {
+    return this.inner;
+  }
+
   setAttribute(key: string, value: SpanAttributeValue): void {
     if (value === undefined) return;
     this.inner.setAttribute(key, value as Otel.AttributeValue);
@@ -163,5 +169,11 @@ export class OtelTracer implements Tracer {
         }
       }
     );
+  }
+
+  async withActiveContext<T>(span: Span, fn: () => Promise<T>): Promise<T> {
+    if (!(span instanceof OtelSpan)) return fn();
+    const ctx = this.otel.trace.setSpan(this.otel.context.active(), span.unwrap());
+    return this.otel.context.with(ctx, fn);
   }
 }

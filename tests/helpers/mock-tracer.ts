@@ -7,13 +7,16 @@
  * Key design decisions:
  * - IDs are deterministic counters rather than UUIDs so tests can assert
  *   exact values (e.g. `'span-1'`) without any string-matching tricks.
- * - Parent tracking uses a simple stack maintained through `withSpan`'s
- *   closure. `startSpan` (without `withSpan`) creates top-level spans because
- *   it does NOT push onto the stack — direct callers see no active parent
- *   unless they are already inside a `withSpan` callback.
+ * - Parent tracking uses Node's `AsyncLocalStorage` so context forks per
+ *   Promise — sibling parallel branches each see the same outer parent
+ *   without entanglement, matching the real `OtelTracer` behaviour.
+ * - `startSpan` reads the current ALS store; `withSpan` and
+ *   `withActiveContext` set it for the duration of `fn`.
  * - `reset()` clears `spans` AND the counter so every test starts from a
  *   clean, predictable baseline. Call it in `beforeEach`.
  */
+
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   NOOP_SPAN,
@@ -108,14 +111,12 @@ export class MockTracer implements Tracer {
   private _spanCounter = 0;
 
   /**
-   * Stack of currently-open withSpan frames. Each entry is the RecordedSpan
-   * that was opened by withSpan and not yet closed. The top of the stack
-   * is the immediate parent for the next startSpan call.
-   *
-   * startSpan (without withSpan) does NOT push — its spans are always
-   * children of whatever is currently on the stack (or top-level if empty).
+   * Per-async-chain active span. Mirrors `OtelTracer`'s
+   * `AsyncLocalStorageContextManager` so concurrent branches (e.g.
+   * `Promise.all` over `withSpan` callbacks) each see their own outer parent
+   * without entanglement.
    */
-  private readonly _activeStack: RecordedSpan[] = [];
+  private readonly _activeContext = new AsyncLocalStorage<RecordedSpan>();
 
   /**
    * NOTE — deterministic-but-non-isolating traceId assignment:
@@ -128,14 +129,14 @@ export class MockTracer implements Tracer {
   private _nextId(): { traceId: string; spanId: string } {
     this._spanCounter += 1;
     const spanId = `span-${this._spanCounter}`;
-    const parent = this._activeStack[this._activeStack.length - 1] ?? null;
+    const parent = this._activeContext.getStore() ?? null;
     const traceId = parent ? parent.traceId : 'trace-1';
     return { traceId, spanId };
   }
 
   startSpan(name: string, options?: StartSpanOptions): Span {
     const { traceId, spanId } = this._nextId();
-    const parent = this._activeStack[this._activeStack.length - 1] ?? null;
+    const parent = this._activeContext.getStore() ?? null;
 
     const recorded: RecordedSpan = {
       name,
@@ -159,37 +160,44 @@ export class MockTracer implements Tracer {
     options: StartSpanOptions,
     fn: (span: Span) => Promise<T>
   ): Promise<T> {
-    // Open the span; this call respects the current stack for parent linkage.
+    // Open the span; this call reads the ALS store for parent linkage.
     const span = this.startSpan(name, options);
-
-    // Find the RecordedSpan we just pushed (last in array).
     const recorded = this.spans[this.spans.length - 1];
 
-    // Push onto the active stack so nested startSpan / withSpan calls see
-    // this span as their parent.
-    this._activeStack.push(recorded);
+    // Run the callback with this span set as the active context, so any
+    // nested startSpan / withSpan / withActiveContext calls see it as
+    // parent. AsyncLocalStorage forks per Promise — concurrent branches
+    // each see the outer parent rather than each other.
+    return this._activeContext.run(recorded, async () => {
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: 'ok' });
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'error';
+        span.setStatus({ code: 'error', message });
+        span.recordException(err);
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
 
-    try {
-      const result = await fn(span);
-      span.setStatus({ code: 'ok' });
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'error';
-      span.setStatus({ code: 'error', message });
-      span.recordException(err);
-      throw err;
-    } finally {
-      // Always pop the stack and end the span.
-      this._activeStack.pop();
-      span.end();
-    }
+  async withActiveContext<T>(span: Span, fn: () => Promise<T>): Promise<T> {
+    // Find the RecordedSpan that corresponds to this Span by spanId so nested
+    // startSpan calls see it as their parent. If the span is foreign (e.g. a
+    // NOOP_SPAN passed in), fall through and just run fn.
+    const recorded = this.spans.find((s) => s.spanId === span.spanId());
+    if (!recorded) return fn();
+    return this._activeContext.run(recorded, fn);
   }
 
   /** Clear all recorded spans and reset the span counter. Call in beforeEach. */
   reset(): void {
     this.spans.length = 0;
     this._spanCounter = 0;
-    this._activeStack.length = 0;
+    // No need to clear _activeContext — ALS is request-scoped.
   }
 }
 
@@ -217,6 +225,10 @@ export class ThrowingTracer implements Tracer {
     fn: (span: Span) => Promise<T>
   ): Promise<T> {
     return fn(NOOP_SPAN);
+  }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
 }
 

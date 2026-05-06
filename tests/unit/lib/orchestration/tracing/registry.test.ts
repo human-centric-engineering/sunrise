@@ -37,6 +37,10 @@ class TestTracer implements Tracer {
     this.calls.push({ span });
     return fn(span);
   }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
+  }
 }
 
 // A second subclass with a distinct constructor name — used for the replacement-warning test.

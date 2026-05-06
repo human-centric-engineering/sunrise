@@ -349,13 +349,6 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     expect(doneEvent).toBeDefined();
 
     // Assert — chat.turn span: ok status, documented attributes
-    //
-    // Note on parent/child tracking: startManualSpan uses getTracer().startSpan()
-    // directly rather than withSpan, so MockTracer's _activeStack is not populated.
-    // Both chat.turn and llm.call are top-level in the MockTracer's span list.
-    // Real OTEL context propagation via AsyncLocalStorage would give them a parent
-    // link — the MockTracer's stack-based approach only captures withSpan nesting.
-    // These tests assert individual span attributes rather than tree shape.
     const chatSpan = findSpan(tracer.spans, 'chat.turn');
     expect(chatSpan.status?.code).toBe('ok');
     expect(chatSpan.attributes['sunrise.user_id']).toBe(USER_ID);
@@ -374,6 +367,11 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
 
     // Assert — exactly one llm.call span was recorded
     expect(tracer.spans.filter((s) => s.name === 'llm.call')).toHaveLength(1);
+
+    // Assert — llm.call nests under chat.turn so OTLP backends render the
+    // turn as one trace rather than fragmented roots.
+    expect(chatSpan.parentSpanId).toBeNull();
+    expect(llmSpan.parentSpanId).toBe(chatSpan.spanId);
   });
 
   // -------------------------------------------------------------------------
@@ -436,11 +434,6 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     expect(events.find((e) => e.type === 'done')).toBeDefined();
 
     // Assert — chat.turn span: ok status
-    //
-    // Note: startManualSpan uses startSpan (not withSpan), so MockTracer's
-    // _activeStack is not updated. Spans are asserted individually by name
-    // rather than via assertSpanTree parent/child links. Real OTEL context
-    // propagation (AsyncLocalStorage) produces the parent linkage at runtime.
     const chatSpan = findSpan(tracer.spans, 'chat.turn');
     expect(chatSpan.status?.code).toBe('ok');
 
@@ -457,6 +450,10 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     // Second call consumed the tool result
     expect(llmCalls[1].attributes['gen_ai.usage.input_tokens']).toBe(20);
     expect(llmCalls[1].attributes['gen_ai.usage.output_tokens']).toBe(30);
+
+    // Assert — both llm.call spans nest under chat.turn (siblings).
+    expect(llmCalls[0].parentSpanId).toBe(chatSpan.spanId);
+    expect(llmCalls[1].parentSpanId).toBe(chatSpan.spanId);
   });
 
   // -------------------------------------------------------------------------
@@ -515,9 +512,6 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     expect(events.find((e) => e.type === 'done')).toBeDefined();
 
     // Assert — exactly two llm.call spans were emitted (failed attempt + retry)
-    //
-    // Note: startManualSpan uses startSpan (not withSpan), so parent/child links
-    // are not tracked in MockTracer's stack. Spans are asserted individually.
     const llmCalls = tracer.spans.filter((s) => s.name === 'llm.call');
     expect(llmCalls).toHaveLength(2);
 
@@ -538,6 +532,11 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     // Assert — chat.turn span is ok (the turn ultimately succeeded)
     const chatSpan = findSpan(tracer.spans, 'chat.turn');
     expect(chatSpan.status?.code).toBe('ok');
+
+    // Assert — both failed and successful llm.call spans nest under chat.turn
+    // as siblings; failover doesn't break trace correlation.
+    expect(failedSpan.parentSpanId).toBe(chatSpan.spanId);
+    expect(successSpan.parentSpanId).toBe(chatSpan.spanId);
 
     // Assert — logCost was called with the SECOND (successful) span's IDs, not the first
     // (failed) span's IDs. A regression that captured span IDs before the retry attempt

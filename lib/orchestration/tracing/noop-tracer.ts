@@ -38,6 +38,10 @@ class NoopTracerImpl implements Tracer {
   ): Promise<T> {
     return fn(NOOP_SPAN);
   }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
+  }
 }
 
 /**

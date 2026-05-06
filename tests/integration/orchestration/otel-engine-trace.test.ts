@@ -1,13 +1,13 @@
 /**
  * Integration test — OTEL span tree emitted by OrchestrationEngine.execute.
  *
- * Approach: stubbed executors (the simpler path). The engine uses
- * `startManualSpan` (not `withSpan`), so all spans are emitted via
- * `getTracer().startSpan(...)` directly. MockTracer's active-stack is only
- * populated by `withSpan` calls, which means every span produced by the engine
- * has `parentSpanId === null` — there is no automated parent/child nesting via
- * context propagation at this level. Tests assert on the flat span list rather
- * than a nested tree via `assertSpanTree`.
+ * Approach: stubbed executors (the simpler path). The engine wraps every
+ * span site (workflow.execute, sequential workflow.step, parallel
+ * workflow.step) in `withSpanGenerator` / `withSpan`, which activate the
+ * span as the OTEL active context across yields. MockTracer's
+ * `withActiveContext` mirrors this by pushing/popping its `_activeStack`,
+ * so nested spans pick up the active span as their parent — tests assert on
+ * the parent/child tree via `parentSpanId`.
  *
  * Bonus test 6 (production runLlmCall path) is omitted — the full LLM provider
  * mocking infrastructure would be required to avoid hitting real endpoints, and
@@ -244,6 +244,13 @@ describe('OTEL engine span tree — integration', () => {
     );
     expect(stepC.attributes['sunrise.step_type']).toBe('llm_call');
     expect(stepC.status?.code).toBe('ok');
+
+    // Assert: every workflow.step nests under workflow.execute — one trace
+    // per execution, end-to-end, in OTLP backends.
+    expect(execSpan.parentSpanId).toBeNull();
+    for (const step of stepSpans) {
+      expect(step.parentSpanId).toBe(execSpan.spanId);
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -294,13 +301,16 @@ describe('OTEL engine span tree — integration', () => {
     // Assert: workflow.execute also ends with error status
     const execSpan = findSpan(tracer.spans, 'workflow.execute');
     expect(execSpan.status?.code).toBe('error');
+
+    // Assert: failing step still nests under workflow.execute
+    expect(stepSpan.parentSpanId).toBe(execSpan.spanId);
   });
 
   // -----------------------------------------------------------------------
   // Test 3: Parallel branches
   // -----------------------------------------------------------------------
 
-  it('parallel branches produce two workflow.step spans that are independent (not parent/child of each other)', async () => {
+  it('parallel branches both nest under workflow.execute as siblings (not parent/child of each other)', async () => {
     // Arrange: entry step fans out to two parallel branches
     registerStepType('entry', async () => ({
       output: { fanned: true },
@@ -366,9 +376,13 @@ describe('OTEL engine span tree — integration', () => {
     expect(branchA.status?.code).toBe('ok');
     expect(branchB.status?.code).toBe('ok');
 
-    // Assert: branches are independent — neither is a child of the other
-    // (both have the same parentSpanId, which may be null or the execution span,
-    // but they are definitely not parent/child with respect to each other)
+    // Assert: both branches are direct children of workflow.execute — they
+    // share a parent (siblings) but are not parent/child of each other.
+    // AsyncLocalStorage forks per Promise (Node ≥ 18), so each branch sees
+    // workflow.execute as its parent without entanglement.
+    const execSpan = findSpan(tracer.spans, 'workflow.execute');
+    expect(branchA.parentSpanId).toBe(execSpan.spanId);
+    expect(branchB.parentSpanId).toBe(execSpan.spanId);
     expect(branchA.spanId).not.toBe(branchB.parentSpanId);
     expect(branchB.spanId).not.toBe(branchA.parentSpanId);
   });
@@ -430,6 +444,9 @@ describe('OTEL engine span tree — integration', () => {
     // Assert: workflow.execute ends with error because the run failed
     const execSpan = findSpan(tracer.spans, 'workflow.execute');
     expect(execSpan.status?.code).toBe('error');
+
+    // Assert: budget-failed step still nests under workflow.execute
+    expect(stepSpan.parentSpanId).toBe(execSpan.spanId);
   });
 
   // -----------------------------------------------------------------------
@@ -490,5 +507,8 @@ describe('OTEL engine span tree — integration', () => {
     // Assert: workflow.execute ends with ok status
     const execSpan = findSpan(tracer.spans, 'workflow.execute');
     expect(execSpan.status?.code).toBe('ok');
+
+    // Assert: paused step still nests under workflow.execute
+    expect(stepSpan.parentSpanId).toBe(execSpan.spanId);
   });
 });

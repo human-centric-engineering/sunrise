@@ -35,7 +35,7 @@ lib/orchestration/tracing/
 ├── noop-tracer.ts       # NOOP_TRACER + NOOP_SPAN — singleton zero-cost defaults
 ├── registry.ts          # getTracer / registerTracer / resetTracer (module-level singleton)
 ├── attributes.ts        # GenAI semantic-convention keys + Sunrise extensions + span name constants
-├── with-span.ts         # withSpan, startManualSpan, setSpanAttributes — the single point of exception safety
+├── with-span.ts         # withSpan, withSpanGenerator, startManualSpan, setSpanAttributes/Status, recordSpanException — the single point of exception safety
 ├── otel-adapter.ts      # OtelTracer — implements Tracer against @opentelemetry/api
 ├── otel-bootstrap.ts    # registerOtelTracer() — server-only opt-in helper
 └── index.ts             # barrel export
@@ -47,9 +47,9 @@ The orchestration layer emits the following span tree per workflow / chat invoca
 
 ```
 chat.turn                          (streaming-handler.ts → run())
-├── llm.call (tool_iteration=0)    (currentProvider.chatStream — first turn)
+├── llm.call (tool_iteration=1)    (currentProvider.chatStream — first turn)
 │   └── capability.dispatch        (auto-attached when the LLM's tool call dispatches)
-└── llm.call (tool_iteration=1)    (after the tool result is fed back)
+└── llm.call (tool_iteration=2)    (after the tool result is fed back)
 
 workflow.execute                   (orchestration-engine.ts → execute())
 ├── workflow.step                  (one per single sequential step)
@@ -61,7 +61,9 @@ workflow.execute                   (orchestration-engine.ts → execute())
 └── workflow.step (parallel)       (one per concurrent branch — siblings of workflow.execute)
 ```
 
-`agent_call.turn` is opened once per iteration of `runSingleTurn` in `executors/agent-call.ts` — its `sunrise.tool_iteration` attribute distinguishes the iterations. Mid-stream provider failover in the chat handler does **not** open a new span tier; the failed `llm.call` span records `sunrise.provider.failover_from` / `sunrise.provider.failover_to` attributes plus a recorded exception, and the next attempt opens a fresh `llm.call` sibling.
+`agent_call.turn` is opened once per iteration of `runSingleTurn` in `executors/agent-call.ts` — its `sunrise.tool_iteration` attribute distinguishes the iterations (1-indexed). Mid-stream provider failover in the chat handler does **not** open a new span tier; the failed `llm.call` span records `sunrise.provider.failover_from` / `sunrise.provider.failover_to` attributes plus a recorded exception, and the next attempt opens a fresh `llm.call` sibling.
+
+The full tree above is what every OTLP backend (Honeycomb, Datadog, Tempo, Langfuse) sees — one trace per execution / chat turn, with all spans nested as a waterfall. Two helpers wire this up: `withSpan` for callback-shaped sites (LLM runner, capability dispatcher, agent-call turn) and `withSpanGenerator` for async-generator-shaped sites (engine `execute()` and `workflow.step`, chat handler `run()` and the streaming `llm.call`). Both activate the span as the OTEL active context via `AsyncLocalStorage`, so nested span creation sees the outer span as parent automatically.
 
 ## Span name constants
 
@@ -208,10 +210,10 @@ Langfuse accepts OTLP traces; configure their OTLP endpoint per Langfuse docs. T
 - **Don't import `otel-bootstrap.ts` from a client component.** The dynamic `import('@opentelemetry/api')` is server-only. The module is listed in `next.config.js`'s `serverExternalPackages` to silence Next.js bundling warnings, but importing it client-side is a bug regardless.
 - **Don't set `gen_ai.prompt` / `gen_ai.completion` without explicit consent.** Prompts often contain PII or secret data. The current code never sets these attributes; the constants exist for a future opt-in flag (`SUNRISE_OTEL_RECORD_PROMPTS=true`) that is not yet wired up.
 - **Don't bypass `withSpan` / `startManualSpan` for new instrumentation sites.** The exception-safety guarantees rest on every span going through these helpers. Calling `getTracer().startSpan(...)` directly skips the tracer-failure fallback.
-- **Don't mix `withSpan` in async generators.** Async generators don't compose with `withSpan`'s callback shape — use `startManualSpan` with a `try/finally` that calls `end({ code: ... })` on every exit path. The engine and chat handler do this for their top-level generators.
+- **Use `withSpanGenerator`, not `startManualSpan`, in async generators.** `withSpan`'s callback shape doesn't compose with `yield`, but `withSpanGenerator` drives the inner generator inside `tracer.withActiveContext(span, …)` per iteration so the span is the active OTEL context across yields. Nested span creation between yields then sees the outer span as parent in OTLP backends. `startManualSpan` is still exported for fork-authors who want raw lifecycle control, but Sunrise's own engine and chat handler use `withSpanGenerator` so every span correlates correctly. If your inner needs to map application state (e.g. a step descriptor's `failed` flag) to span status without throwing, pass `manualStatus: true` and call `setSpanStatus(span, …)` from the inner.
 
 ## Testing
 
-The tracing module has 66 unit tests covering: no-op tracer, registry, attribute constants, `with-span` exception safety (including `ThrowingTracer` and `FlakySpanTracer` resilience), the OTEL adapter against a real `BasicTracerProvider` + `InMemorySpanExporter`, and the bootstrap helper. Plus 4 integration test files (`tests/integration/orchestration/otel-*.test.ts`) verifying span emission end-to-end through the engine and chat handler.
+The tracing module has 78 unit tests covering: no-op tracer, registry, attribute constants, `with-span` exception safety (including `ThrowingTracer` and `FlakySpanTracer` resilience), the OTEL adapter against a real `BasicTracerProvider` + `InMemorySpanExporter` (with regression tests for `withSpan` and `withSpanGenerator` parent/child propagation), and the bootstrap helper. Plus 4 integration test files (`tests/integration/orchestration/otel-*.test.ts`) verifying span emission end-to-end through the engine and chat handler — every nested span asserts its `parentSpanId` resolves to the expected outer span.
 
 Test fixtures live in `tests/helpers/mock-tracer.ts` (`MockTracer`, `ThrowingTracer`, `assertSpanTree`, `findSpan`).

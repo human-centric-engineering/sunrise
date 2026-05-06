@@ -86,6 +86,10 @@ class RecordingTracer implements Tracer {
   ): Promise<T> {
     return fn(NOOP_SPAN);
   }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
+  }
 }
 
 /** Tracer whose startSpan always throws — simulates a broken OTEL provider. */
@@ -100,6 +104,10 @@ class ThrowingTracer implements Tracer {
     fn: (span: Span) => Promise<T>
   ): Promise<T> {
     return fn(NOOP_SPAN);
+  }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
 }
 
@@ -142,6 +150,10 @@ class FlakySpanTracer implements Tracer {
     fn: (span: Span) => Promise<T>
   ): Promise<T> {
     return fn(NOOP_SPAN);
+  }
+
+  async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
 }
 
@@ -601,6 +613,7 @@ describe('option defaults and edge cases', () => {
         throw 'string tracer error';
       },
       withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+      withActiveContext: async (_s, fn) => fn(),
     };
     registerTracer(nonErrorThrowingTracer);
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -628,6 +641,7 @@ describe('option defaults and edge cases', () => {
         throw 42;
       },
       withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+      withActiveContext: async (_s, fn) => fn(),
     };
     registerTracer(nonErrorThrowingTracer);
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -665,6 +679,7 @@ describe('option defaults and edge cases', () => {
     const stringThrowTracer: Tracer = {
       startSpan: () => stringThrowSpan,
       withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+      withActiveContext: async (_s, fn) => fn(),
     };
     registerTracer(stringThrowTracer);
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -701,6 +716,7 @@ describe('option defaults and edge cases', () => {
     const recordThrowTracer: Tracer = {
       startSpan: () => recordThrowSpan,
       withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+      withActiveContext: async (_s, fn) => fn(),
     };
     registerTracer(recordThrowTracer);
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -741,6 +757,7 @@ describe('option defaults and edge cases', () => {
     const endThrowTracer: Tracer = {
       startSpan: () => endThrowSpan,
       withSpan: async (_n, _o, fn) => fn(NOOP_SPAN),
+      withActiveContext: async (_s, fn) => fn(),
     };
     registerTracer(endThrowTracer);
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});

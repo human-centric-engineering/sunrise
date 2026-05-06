@@ -53,4 +53,12 @@ export interface Tracer {
    * `AsyncLocalStorage` (OTEL adapter) or a no-op (default).
    */
   withSpan<T>(name: string, options: StartSpanOptions, fn: (span: Span) => Promise<T>): Promise<T>;
+
+  /**
+   * Run `fn` with `span` as the active OTEL context. Used by `with-span.ts`'s
+   * `withSpan` helper (which manages span lifecycle directly) so nested span
+   * creation sees the outer span as their parent. No-op for tracers without
+   * async-context support.
+   */
+  withActiveContext<T>(span: Span, fn: () => Promise<T>): Promise<T>;
 }

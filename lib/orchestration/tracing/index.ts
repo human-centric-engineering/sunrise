@@ -19,10 +19,13 @@ export type {
 export { NOOP_SPAN, NOOP_TRACER } from '@/lib/orchestration/tracing/noop-tracer';
 export { getTracer, registerTracer } from '@/lib/orchestration/tracing/registry';
 export {
+  recordSpanException,
   setSpanAttributes,
+  setSpanStatus,
   startManualSpan,
   truncateAttribute,
   withSpan,
+  withSpanGenerator,
 } from '@/lib/orchestration/tracing/with-span';
 export { OtelTracer } from '@/lib/orchestration/tracing/otel-adapter';
 export { registerOtelTracer } from '@/lib/orchestration/tracing/otel-bootstrap';

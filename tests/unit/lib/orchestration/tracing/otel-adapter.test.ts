@@ -34,7 +34,10 @@ import { beforeAll, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { OtelTracer } from '@/lib/orchestration/tracing/otel-adapter';
 import { MAX_ATTRIBUTE_STRING_LENGTH } from '@/lib/orchestration/tracing/attributes';
 import { resetTracer, registerTracer } from '@/lib/orchestration/tracing/registry';
-import { withSpan as withSpanHelper } from '@/lib/orchestration/tracing/with-span';
+import {
+  withSpan as withSpanHelper,
+  withSpanGenerator,
+} from '@/lib/orchestration/tracing/with-span';
 
 // ─── Test infrastructure ────────────────────────────────────────────────────
 
@@ -191,6 +194,116 @@ describe('OtelTracer', () => {
     const spans = exporter.getFinishedSpans();
     expect(spans[0].attributes['kept']).toBe('real-value');
     expect(Object.prototype.hasOwnProperty.call(spans[0].attributes, 'skipped')).toBe(false);
+  });
+
+  // Case 6b: Parent/child propagation via the with-span.ts helper.
+  // Regression guard for the helper bug: the helper used to call
+  // getTracer().startSpan() without activating the span as the OTEL context,
+  // so nested helper calls produced flat root spans in OTLP backends.
+  // It now wraps fn inside getTracer().withActiveContext(span, ...) which
+  // calls context.with(setSpan(active(), inner), fn) — restoring AsyncLocalStorage
+  // propagation. This test must verify against a real BasicTracerProvider; a
+  // unit-style mock could pass without exercising the actual context manager.
+  it('helper withSpan establishes parent/child via withActiveContext (real provider)', async () => {
+    // Arrange
+    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+    registerTracer(otelTracer);
+
+    // Act — nested calls through the public helper
+    await withSpanHelper('outer', {}, async () => {
+      await withSpanHelper('inner', {}, async () => 'done');
+    });
+
+    // Assert — child's parentSpanContext.spanId must equal the outer span's spanId.
+    const spans = exporter.getFinishedSpans();
+    const outer = spans.find((s) => s.name === 'outer');
+    const inner = spans.find((s) => s.name === 'inner');
+    expect(outer).toBeDefined();
+    expect(inner).toBeDefined();
+    expect(inner?.parentSpanContext?.spanId).toBe(outer?.spanContext().spanId);
+  });
+
+  // Case 6c: Parent/child propagation via the with-span.ts generator helper.
+  // Regression guard for the manual-span context-propagation gap: spans created
+  // inside an async generator's body must see the outer span as their parent
+  // even across yields. `withSpanGenerator` drives `inner.next()` inside
+  // `tracer.withActiveContext(span, …)` per iteration so AsyncLocalStorage
+  // captures the span as the active OTEL context for the synchronous body up
+  // to each yield. This test must run against a real BasicTracerProvider — a
+  // mock could pass without exercising the actual context manager.
+  it('withSpanGenerator establishes parent/child across yields (real provider)', async () => {
+    // Arrange
+    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+    registerTracer(otelTracer);
+
+    async function* outer(): AsyncGenerator<string, void, unknown> {
+      yield 'outer-event-1';
+      // Nested helper-withSpan call; expected parent: outer span
+      await withSpanHelper('nested-helper', {}, async () => {});
+      yield 'outer-event-2';
+      // Nested withSpanGenerator call; expected parent: outer span
+      yield* withSpanGenerator('nested-gen', {}, async function* (_innerSpan) {
+        yield 'inner-event';
+      });
+      yield 'outer-event-3';
+    }
+
+    // Act — drain the generator the same way SSE consumers would
+    const events: string[] = [];
+    for await (const event of withSpanGenerator('outer', {}, outer)) {
+      events.push(event);
+    }
+
+    // Assert — events flowed correctly
+    expect(events).toEqual(['outer-event-1', 'outer-event-2', 'inner-event', 'outer-event-3']);
+
+    // Span tree: outer (root) → [nested-helper, nested-gen]
+    const spans = exporter.getFinishedSpans();
+    const outerSpan = spans.find((s) => s.name === 'outer');
+    const nestedHelper = spans.find((s) => s.name === 'nested-helper');
+    const nestedGen = spans.find((s) => s.name === 'nested-gen');
+
+    expect(outerSpan).toBeDefined();
+    expect(nestedHelper).toBeDefined();
+    expect(nestedGen).toBeDefined();
+
+    expect(nestedHelper?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
+    expect(nestedGen?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
+
+    // All three share the outer's traceId — proves single-trace correlation
+    expect(nestedHelper?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
+    expect(nestedGen?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
+  });
+
+  // Case 6d: withSpanGenerator with manualStatus=true defers status setting
+  // to the inner generator. Verifies the inner can mark error status without
+  // throwing (the engine's `singleResult.failed` and chat handler's
+  // `chatSpanError` paths rely on this).
+  it('withSpanGenerator manualStatus=true lets inner control status without throwing', async () => {
+    // Arrange
+    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+    registerTracer(otelTracer);
+
+    // Act — inner sets error status manually then returns normally
+    await (async () => {
+      for await (const _ of withSpanGenerator(
+        'manual-status-span',
+        {},
+        async function* (span) {
+          span.setStatus({ code: 'error', message: 'inner-marked-error' });
+          yield 'event';
+        },
+        { manualStatus: true }
+      )) {
+        // drain
+      }
+    })();
+
+    // Assert — span ended with error status (helper did NOT overwrite to ok)
+    const spans = exporter.getFinishedSpans();
+    expect(spans).toHaveLength(1);
+    expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.ERROR);
+    expect(spans[0].status.message).toBe('inner-marked-error');
   });
 
   // Case 7: Long string attributes are truncated by withSpan (regression guard)

@@ -79,12 +79,13 @@ export async function withSpan<T>(
   name: string,
   attributes: SpanAttributes,
   fn: (span: Span) => Promise<T>,
-  opts?: { kind?: StartSpanOptions['kind']; recordException?: boolean }
+  opts?: { kind?: StartSpanOptions['kind']; recordException?: boolean; manualStatus?: boolean }
 ): Promise<T> {
   const truncated = truncateAttributes(attributes);
+  const tracer = getTracer();
   let span: Span;
   try {
-    span = getTracer().startSpan(name, { attributes: truncated, kind: opts?.kind ?? 'INTERNAL' });
+    span = tracer.startSpan(name, { attributes: truncated, kind: opts?.kind ?? 'INTERNAL' });
   } catch (tracerErr) {
     logger.warn('Tracer.startSpan threw — proceeding without span', {
       span: name,
@@ -93,18 +94,25 @@ export async function withSpan<T>(
     return fn(NOOP_SPAN);
   }
 
-  try {
-    const result = await fn(span);
-    safeSetStatus(span, { code: 'ok' }, name);
-    return result;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'error';
-    safeSetStatus(span, { code: 'error', message }, name);
-    if (opts?.recordException !== false) safeRecordException(span, err, name);
-    throw err;
-  } finally {
-    safeEnd(span, name);
-  }
+  // Activate `span` as the OTEL context so any nested `withSpan` calls
+  // (or direct OTEL `startSpan` calls) see it as their parent. No-op for
+  // tracers without async-context support (e.g. NoopTracer).
+  return tracer.withActiveContext(span, async () => {
+    try {
+      const result = await fn(span);
+      if (!opts?.manualStatus) safeSetStatus(span, { code: 'ok' }, name);
+      return result;
+    } catch (err) {
+      if (!opts?.manualStatus) {
+        const message = err instanceof Error ? err.message : 'error';
+        safeSetStatus(span, { code: 'error', message }, name);
+      }
+      if (opts?.recordException !== false) safeRecordException(span, err, name);
+      throw err;
+    } finally {
+      safeEnd(span, name);
+    }
+  });
 }
 
 /**
@@ -153,5 +161,129 @@ export function setSpanAttributes(span: Span, attrs: SpanAttributes): void {
     logger.warn('Tracer.setAttributes threw — continuing', {
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+}
+
+/**
+ * Set status on a span. Tracer failures are logged at warn and swallowed —
+ * never rethrown to the caller. Use this from callers driving
+ * `withSpanGenerator(..., { manualStatus: true })` to set the inner span's
+ * success/error status without depending on uncaught throws.
+ */
+export function setSpanStatus(span: Span, status: SpanStatus): void {
+  try {
+    span.setStatus(status);
+  } catch (err) {
+    logger.warn('Tracer.setStatus threw — continuing', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Record an exception on a span. Tracer failures are logged at warn and
+ * swallowed — never rethrown to the caller. Use this from callers running
+ * with `manualStatus: true` that swallow an error in the inner generator
+ * (e.g. a recoverable provider failover) but still want the failed span
+ * to carry the exception in OTLP backends.
+ */
+export function recordSpanException(span: Span, error: unknown): void {
+  try {
+    span.recordException(error);
+  } catch (err) {
+    logger.warn('Tracer.recordException threw — continuing', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Run an inner async generator inside a span, propagating OTEL active context
+ * across each yield so nested spans (helper-`withSpan` or further
+ * `withSpanGenerator` calls) become children of this span.
+ *
+ * Use in async-generator-shaped callers where `withSpan`'s callback shape
+ * doesn't compose with `yield` — the orchestration engine's `execute()`,
+ * the streaming chat handler's `run()`, and any per-iteration LLM call.
+ *
+ * The helper drives `inner.next()` per iteration inside
+ * `tracer.withActiveContext(span, …)`, so AsyncLocalStorage captures the span
+ * as the active OTEL context for the synchronous body up to each yield.
+ * V8's `await` resumption preserves the captured store, so nested
+ * `tracer.startSpan(…)` calls between yields see this span as their parent.
+ *
+ * Behaviour:
+ * - `tracer.startSpan` failure → log warn, fall back to `NOOP_SPAN`; inner
+ *   generator still runs (without active-context wrap).
+ * - Inner returns normally → set `ok` status (skip if `manualStatus`); return
+ *   the inner's return value so `yield*` callers receive it.
+ * - Inner throws → set `error` status (skip if `manualStatus`),
+ *   `safeRecordException`, rethrow.
+ * - Consumer breaks early → `inner.return(undefined as R)` is called in the
+ *   `finally` to release inner-side resources, mirroring `yield*` desugaring.
+ * - Always `safeEnd(span)`.
+ *
+ * `manualStatus: true` lets the inner generator set its own success/error
+ * status via `safeSetStatus(span, …)` — useful when the workflow outcome
+ * (e.g. `singleResult.failed`) determines status without the inner throwing.
+ * `safeRecordException` is still called on uncaught throws regardless.
+ */
+export async function* withSpanGenerator<T, R = void>(
+  name: string,
+  attributes: SpanAttributes,
+  innerGenFn: (span: Span) => AsyncGenerator<T, R, unknown>,
+  opts?: { kind?: StartSpanOptions['kind']; manualStatus?: boolean }
+): AsyncGenerator<T, R, unknown> {
+  const truncated = truncateAttributes(attributes);
+  const tracer = getTracer();
+  let span: Span;
+  try {
+    span = tracer.startSpan(name, { attributes: truncated, kind: opts?.kind ?? 'INTERNAL' });
+  } catch (tracerErr) {
+    logger.warn('Tracer.startSpan threw — proceeding without span', {
+      span: name,
+      error: tracerErr instanceof Error ? tracerErr.message : String(tracerErr),
+    });
+    span = NOOP_SPAN;
+  }
+
+  const inner = innerGenFn(span);
+  const skipActiveContext = span === NOOP_SPAN;
+  let done = false;
+  try {
+    while (true) {
+      const result = skipActiveContext
+        ? await inner.next()
+        : await tracer.withActiveContext(span, () => inner.next());
+      if (result.done) {
+        done = true;
+        if (!opts?.manualStatus) safeSetStatus(span, { code: 'ok' }, name);
+        return result.value;
+      }
+      yield result.value;
+    }
+  } catch (err) {
+    done = true;
+    if (!opts?.manualStatus) {
+      const message = err instanceof Error ? err.message : 'error';
+      safeSetStatus(span, { code: 'error', message }, name);
+    }
+    safeRecordException(span, err, name);
+    throw err;
+  } finally {
+    if (!done) {
+      // Consumer broke early (or threw before the inner finished). Mirror
+      // the `yield*` desugaring by signalling `return()` to the inner so
+      // its own try/finally can run — otherwise it leaks open spans.
+      try {
+        await inner.return(undefined as R);
+      } catch (returnErr) {
+        logger.warn('Inner generator return() threw — continuing', {
+          span: name,
+          error: returnErr instanceof Error ? returnErr.message : String(returnErr),
+        });
+      }
+    }
+    safeEnd(span, name);
   }
 }

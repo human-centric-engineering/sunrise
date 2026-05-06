@@ -92,7 +92,10 @@ import {
   SUNRISE_STEP_TYPE,
   SUNRISE_USER_ID,
   SUNRISE_WORKFLOW_ID,
-  startManualSpan,
+  setSpanStatus,
+  withSpan,
+  withSpanGenerator,
+  type Span,
 } from '@/lib/orchestration/tracing';
 
 // Ensure every executor self-registers before the engine touches the
@@ -168,17 +171,56 @@ export class OrchestrationEngine {
       userId: options.userId,
     });
 
-    const { span: workflowSpan, end: endWorkflowSpan } = startManualSpan(SPAN_WORKFLOW_EXECUTE, {
-      [SUNRISE_EXECUTION_ID]: executionId,
-      [SUNRISE_WORKFLOW_ID]: workflow.id,
-      [SUNRISE_USER_ID]: options.userId,
-    });
-    // Span outcome is decided in the `finally` after the DAG walk + finalize.
-    // `workflowSpan` is unused beyond bookkeeping by `endWorkflowSpan`.
-    void workflowSpan;
+    // `withSpanGenerator` activates the workflow.execute span as the OTEL
+    // active context across yields. Nested workflow.step spans (sequential
+    // and parallel) and any deeper helper-`withSpan` calls automatically
+    // see workflow.execute as their parent in OTLP backends — one trace
+    // per execution, end-to-end.
+    yield* withSpanGenerator(
+      SPAN_WORKFLOW_EXECUTE,
+      {
+        [SUNRISE_EXECUTION_ID]: executionId,
+        [SUNRISE_WORKFLOW_ID]: workflow.id,
+        [SUNRISE_USER_ID]: options.userId,
+      },
+      (workflowSpan) =>
+        this.executeInner(
+          workflowSpan,
+          workflow,
+          executionId,
+          trace,
+          budgetLimitUsd,
+          ctx,
+          resumeAfterStepId,
+          baseLogger,
+          options
+        ),
+      { manualStatus: true }
+    );
+  }
+
+  /**
+   * Inner body of `execute()` — owns the DAG walk, finalize, and terminal
+   * event yields. Lives behind `withSpanGenerator` so the workflow.execute
+   * span is active OTEL context across every yield. Sets the span's status
+   * directly via `setSpanStatus` (the helper opts out via `manualStatus`)
+   * because the failed-but-no-throw path must map `failureReason` to error
+   * status without relying on an uncaught throw.
+   */
+  private async *executeInner(
+    workflowSpan: Span,
+    workflow: ExecuteWorkflowArg,
+    executionId: string,
+    trace: ExecutionTraceEntry[],
+    budgetLimitUsd: number | undefined,
+    ctx: ExecutionContext,
+    resumeAfterStepId: string | undefined,
+    baseLogger: Logger,
+    options: ExecuteOptions
+  ): AsyncGenerator<ExecutionEvent, void, unknown> {
     let workflowSpanError: unknown = undefined;
-    // Hoisted so the `finally` block at the bottom of `execute()` can read
-    // them when computing the span's terminal status.
+    // Hoisted so the `finally` block can read them when computing the
+    // span's terminal status.
     let failed = false;
     let failureReason: string | null = null;
 
@@ -304,46 +346,20 @@ export class OrchestrationEngine {
           }
           visited.add(stepId);
 
-          const { end: endStepSpan } = startManualSpan(SPAN_WORKFLOW_STEP, {
-            [SUNRISE_STEP_ID]: step.id,
-            [SUNRISE_STEP_TYPE]: step.type,
-            [SUNRISE_EXECUTION_ID]: executionId,
-          });
-          let singleResult: {
-            failed: boolean;
-            paused: boolean;
-            terminal: boolean;
-            failureReason?: string;
-            output?: unknown;
-            nextIds: string[];
-          };
-          try {
-            singleResult = yield* this.executeSingleStep(
-              step,
-              ctx,
-              trace,
-              executionId,
-              budgetLimitUsd,
-              baseLogger
-            );
-          } catch (err) {
-            endStepSpan(
-              {
-                code: 'error',
-                message: err instanceof Error ? err.message : 'step threw',
-              },
-              err
-            );
-            throw err;
-          }
-          if (singleResult.failed) {
-            endStepSpan({
-              code: 'error',
-              message: singleResult.failureReason ?? 'step failed',
-            });
-          } else {
-            endStepSpan({ code: 'ok' });
-          }
+          // `withSpanGenerator` activates the workflow.step span as the
+          // OTEL active context across yields, so nested helper-`withSpan`
+          // calls inside `executeSingleStep` (LLM runner, agent-call turn,
+          // capability dispatcher) become children of this step in OTLP
+          // backends. `manualStatus: true` lets us map the step descriptor's
+          // `failed` flag to span status without throwing.
+          const singleResult = yield* this.runSingleStepWithSpan(
+            step,
+            ctx,
+            trace,
+            executionId,
+            budgetLimitUsd,
+            baseLogger
+          );
 
           if (singleResult.paused) return;
           if (singleResult.failed) {
@@ -580,18 +596,22 @@ export class OrchestrationEngine {
       workflowSpanError = err;
       throw err;
     } finally {
+      // `withSpanGenerator` opts out of auto-status via `manualStatus: true`
+      // and handles `safeRecordException` + `safeEnd` itself on rethrow.
+      // We map the failed-but-no-throw path (DAG walk set `failed = true`,
+      // generator returned normally) to error status here.
       if (workflowSpanError !== undefined) {
-        endWorkflowSpan(
-          {
-            code: 'error',
-            message: workflowSpanError instanceof Error ? workflowSpanError.message : 'error',
-          },
-          workflowSpanError
-        );
+        setSpanStatus(workflowSpan, {
+          code: 'error',
+          message: workflowSpanError instanceof Error ? workflowSpanError.message : 'error',
+        });
       } else if (failed) {
-        endWorkflowSpan({ code: 'error', message: failureReason ?? 'workflow failed' });
+        setSpanStatus(workflowSpan, {
+          code: 'error',
+          message: failureReason ?? 'workflow failed',
+        });
       } else {
-        endWorkflowSpan({ code: 'ok' });
+        setSpanStatus(workflowSpan, { code: 'ok' });
       }
     }
   }
@@ -819,6 +839,98 @@ export class OrchestrationEngine {
   // ================================================================
   // Step execution helpers
   // ================================================================
+
+  /**
+   * Wrap `executeSingleStep` in the workflow.step span. Drives the inner
+   * generator inside `tracer.withActiveContext(span, …)` per iteration so
+   * AsyncLocalStorage propagates `span` as the active OTEL context — any
+   * helper-`withSpan` calls during step execution (LLM runner, agent-call
+   * turn, capability dispatcher) become children of this span in OTLP
+   * backends. Maps `singleResult.failed` to span status without throwing.
+   */
+  private async *runSingleStepWithSpan(
+    step: WorkflowStep,
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): AsyncGenerator<
+    ExecutionEvent,
+    {
+      failed: boolean;
+      paused: boolean;
+      terminal: boolean;
+      failureReason?: string;
+      output?: unknown;
+      nextIds: string[];
+    },
+    unknown
+  > {
+    return yield* withSpanGenerator(
+      SPAN_WORKFLOW_STEP,
+      {
+        [SUNRISE_STEP_ID]: step.id,
+        [SUNRISE_STEP_TYPE]: step.type,
+        [SUNRISE_EXECUTION_ID]: executionId,
+      },
+      (span) =>
+        this.executeSingleStepWithStatus(
+          span,
+          step,
+          ctx,
+          trace,
+          executionId,
+          budgetLimitUsd,
+          baseLogger
+        ),
+      { manualStatus: true }
+    );
+  }
+
+  /**
+   * `executeSingleStep` adapter that sets the workflow.step span's status
+   * from the step descriptor before returning. Lives separately from
+   * `executeSingleStep` so the latter remains tracing-agnostic.
+   */
+  private async *executeSingleStepWithStatus(
+    span: Span,
+    step: WorkflowStep,
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): AsyncGenerator<
+    ExecutionEvent,
+    {
+      failed: boolean;
+      paused: boolean;
+      terminal: boolean;
+      failureReason?: string;
+      output?: unknown;
+      nextIds: string[];
+    },
+    unknown
+  > {
+    const result = yield* this.executeSingleStep(
+      step,
+      ctx,
+      trace,
+      executionId,
+      budgetLimitUsd,
+      baseLogger
+    );
+    if (result.failed) {
+      setSpanStatus(span, {
+        code: 'error',
+        message: result.failureReason ?? 'step failed',
+      });
+    } else {
+      setSpanStatus(span, { code: 'ok' });
+    }
+    return result;
+  }
 
   /**
    * Execute a single step with full lifecycle: start event, strategy
@@ -1056,63 +1168,76 @@ export class OrchestrationEngine {
     // (including retries) independently.
     // Note: allEvents.push() from concurrent callbacks is safe because
     // Node.js is single-threaded — each push() completes atomically between awaits.
-    const promises = steps.map(async (step) => {
-      const { end: endParallelSpan } = startManualSpan(SPAN_WORKFLOW_STEP, {
-        [SUNRISE_STEP_ID]: step.id,
-        [SUNRISE_STEP_TYPE]: step.type,
-        [SUNRISE_EXECUTION_ID]: executionId,
-      });
-      const started = Date.now();
-      // Per-step telemetry buffer — isolated from sibling parallel branches.
-      const telemetryOut: LlmTelemetryEntry[] = [];
-      allEvents.push(stepStarted(step.id, step.type, step.name));
+    const promises = steps.map(async (step) =>
+      // `withSpan` activates the parallel-branch span as the OTEL active
+      // context; AsyncLocalStorage forks per Promise (Node ≥ 18), so each
+      // branch sees the outer workflow.execute as parent without entanglement
+      // with sibling branches. `manualStatus: true` lets us set the span
+      // status from the inner — necessary because the existing parallel-batch
+      // contract requires errors to be collected into a descriptor for the
+      // post-`Promise.allSettled` merge rather than rethrown.
+      withSpan(
+        SPAN_WORKFLOW_STEP,
+        {
+          [SUNRISE_STEP_ID]: step.id,
+          [SUNRISE_STEP_TYPE]: step.type,
+          [SUNRISE_EXECUTION_ID]: executionId,
+        },
+        async (span) => {
+          const started = Date.now();
+          // Per-step telemetry buffer — isolated from sibling parallel branches.
+          const telemetryOut: LlmTelemetryEntry[] = [];
+          allEvents.push(stepStarted(step.id, step.type, step.name));
 
-      try {
-        const result = await this.runStepToCompletion(step, ctx, telemetryOut);
-        const durationMs = Date.now() - started;
-        endParallelSpan({ code: 'ok' });
-        return {
-          step,
-          result,
-          durationMs,
-          started,
-          telemetryOut,
-          error: null as ExecutorError | null,
-        };
-      } catch (err) {
-        const durationMs = Date.now() - started;
-        if (err instanceof PausedForApproval) {
-          // Pause is not a tracer-level error — workflow continues from the
-          // pause point after admin approval.
-          endParallelSpan({ code: 'ok' });
-          return {
-            step,
-            result: null,
-            durationMs,
-            started,
-            telemetryOut,
-            paused: true,
-            payload: err.payload,
-            // Carry partial cost (set by the retry loop's accumulator-aware
-            // PausedForApproval rethrow) so the trace entry below records it.
-            tokensUsed: err.tokensUsed,
-            costUsd: err.costUsd,
-            error: null,
-          };
-        }
-        const execErr =
-          err instanceof ExecutorError
-            ? err
-            : new ExecutorError(
-                step.id,
-                'executor_threw',
-                err instanceof Error ? err.message : 'Executor threw an unknown error',
-                err
-              );
-        endParallelSpan({ code: 'error', message: execErr.message }, execErr);
-        return { step, result: null, durationMs, started, telemetryOut, error: execErr };
-      }
-    });
+          try {
+            const result = await this.runStepToCompletion(step, ctx, telemetryOut);
+            const durationMs = Date.now() - started;
+            setSpanStatus(span, { code: 'ok' });
+            return {
+              step,
+              result,
+              durationMs,
+              started,
+              telemetryOut,
+              error: null as ExecutorError | null,
+            };
+          } catch (err) {
+            const durationMs = Date.now() - started;
+            if (err instanceof PausedForApproval) {
+              // Pause is not a tracer-level error — workflow continues from the
+              // pause point after admin approval.
+              setSpanStatus(span, { code: 'ok' });
+              return {
+                step,
+                result: null,
+                durationMs,
+                started,
+                telemetryOut,
+                paused: true,
+                payload: err.payload,
+                // Carry partial cost (set by the retry loop's accumulator-aware
+                // PausedForApproval rethrow) so the trace entry below records it.
+                tokensUsed: err.tokensUsed,
+                costUsd: err.costUsd,
+                error: null,
+              };
+            }
+            const execErr =
+              err instanceof ExecutorError
+                ? err
+                : new ExecutorError(
+                    step.id,
+                    'executor_threw',
+                    err instanceof Error ? err.message : 'Executor threw an unknown error',
+                    err
+                  );
+            setSpanStatus(span, { code: 'error', message: execErr.message });
+            return { step, result: null, durationMs, started, telemetryOut, error: execErr };
+          }
+        },
+        { manualStatus: true }
+      )
+    );
 
     const settled = await Promise.allSettled(promises);
 
