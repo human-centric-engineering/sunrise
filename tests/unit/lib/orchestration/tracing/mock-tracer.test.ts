@@ -322,6 +322,10 @@ describe('concurrent siblings get distinct monotonically increasing spanIds', ()
     // Counter is strictly increasing; ids are 'span-1', 'span-2', 'span-3'.
     // (The outer starts first, then branch-a and branch-b are started in
     // microtask order determined by Promise.all).
+    // test-review:accept brittleness — Promise.all microtask ordering is stable for
+    // this test's scope: V8 always resolves Promise.all branches in registration order
+    // within a single microtask tick. The exact-order assertion is intentional; it
+    // locks in the determinism people expect from concurrent withSpan calls.
     expect(ids).toEqual(['span-1', 'span-2', 'span-3']);
 
     // Branches' ids are distinguishable — no aliasing.

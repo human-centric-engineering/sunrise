@@ -24,7 +24,23 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Model registry — use real implementations by default so existing calculateCost
+// tests continue to use the static fallback map. getAvailableModels is also
+// wrapped in a vi.fn() so the calculateLocalSavings "no non-local ref" test can
+// temporarily override it per-test.
+vi.mock('@/lib/orchestration/llm/model-registry', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/orchestration/llm/model-registry')>(
+    '@/lib/orchestration/llm/model-registry'
+  );
+  return {
+    ...actual,
+    getAvailableModels: vi.fn(actual.getAvailableModels),
+    getModel: vi.fn(actual.getModel),
+  };
+});
+
 const { prisma } = await import('@/lib/db/client');
+const { getAvailableModels } = await import('@/lib/orchestration/llm/model-registry');
 const {
   calculateCost,
   logCost,
@@ -674,5 +690,42 @@ describe('calculateLocalSavings', () => {
       'calculateLocalSavings: query failed, returning zero savings',
       expect.objectContaining({ error: 'db timeout' })
     );
+  });
+
+  // Finding 17: the `if (!ref) continue` branch at cost-tracker.ts:381 was uncovered.
+  // When getAvailableModels() returns only local-tier models, findCheapestNonLocalInTier
+  // returns null for every tier, so ref is null and the row is silently skipped —
+  // totalUsd stays 0 and contributing stays 0.
+  it('skips rows with no non-local reference and returns zero savings and sampleSize=0', async () => {
+    // Arrange: DB returns one local-model row
+    const dateFrom = new Date('2024-01-01T00:00:00Z');
+    const dateTo = new Date('2024-01-31T23:59:59Z');
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { model: 'local:llama-3', inputTokens: 1000, outputTokens: 500 },
+    ]);
+
+    // Override getAvailableModels to return only local-tier models —
+    // findCheapestNonLocalInTier filters out local, so ref is null for every tier.
+    vi.mocked(getAvailableModels).mockReturnValue([
+      {
+        id: 'local:llama-3',
+        name: 'Llama 3',
+        tier: 'local',
+        provider: 'ollama',
+        maxContext: 4096,
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        supportsTools: false,
+        available: true,
+      },
+    ]);
+
+    // Act
+    const result = await calculateLocalSavings({ dateFrom, dateTo });
+
+    // Assert: row was silently skipped; totalUsd=0, sampleSize=0
+    expect(result.usd).toBe(0);
+    expect(result.sampleSize).toBe(0);
+    expect(result.methodology).toBe('tier_fallback');
   });
 });

@@ -333,8 +333,8 @@ describe('executeAgentCall', () => {
     // Second call should include tool result in messages
     const secondCallMessages = mockChat.mock.calls[1][0];
     const toolMessage = secondCallMessages.find((m: { role: string }) => m.role === 'tool');
-    expect(toolMessage).toBeDefined();
-    expect(toolMessage.toolCallId).toBe('tc_1');
+    // Assert specific value directly — avoids a misleading TypeError if find() returns undefined
+    expect(toolMessage?.toolCallId).toBe('tc_1');
   });
 
   it('tool with skipFollowup returns tool result as output', async () => {

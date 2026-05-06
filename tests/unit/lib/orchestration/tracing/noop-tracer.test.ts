@@ -6,6 +6,7 @@
  * - Every `Span` method is callable with any input without throwing
  * - `traceId()` / `spanId()` return empty strings (sentinel for "no real tracer")
  * - `withSpan` invokes fn exactly once, returns its value, propagates errors
+ * - `withActiveContext` invokes fn and returns its value (transparent passthrough)
  *
  * No mocking required — this module is purely synchronous with no dependencies.
  */
@@ -147,5 +148,18 @@ describe('NOOP_TRACER.withSpan', () => {
         throw downstreamError;
       })
     ).rejects.toThrow(downstreamError);
+  });
+});
+
+describe('NOOP_TRACER.withActiveContext', () => {
+  it('invokes fn and returns its value (transparent passthrough)', async () => {
+    // Arrange — fn returns a sentinel value; span arg is NOOP_SPAN
+    const expectedValue = { result: 'context-result' };
+
+    // Act — withActiveContext must not wrap, transform, or intercept the return value
+    const result = await NOOP_TRACER.withActiveContext(NOOP_SPAN, async () => expectedValue);
+
+    // Assert — return value forwarded unchanged; no throw, no wrapping
+    expect(result).toBe(expectedValue);
   });
 });

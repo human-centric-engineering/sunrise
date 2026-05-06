@@ -209,8 +209,6 @@ describe('AiCostLog trace correlation — MockTracer', () => {
       definition: SINGLE_LLM_WORKFLOW,
     });
 
-    // The fire-and-forget void logCost().catch(...) is a microtask — flush it
-    await vi.runAllTimersAsync().catch(() => {});
     // Allow any pending microtasks (Promise resolution) to settle
     await new Promise((resolve) => setTimeout(resolve, 0));
 

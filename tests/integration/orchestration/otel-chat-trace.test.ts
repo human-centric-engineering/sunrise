@@ -66,6 +66,11 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', async () => {
   );
   return {
     ...actual,
+    // test-review:accept mock-realism — chat trace-id threading is B2/B3 followup. logCost is
+    // stubbed here because the correlation tests (traceId/spanId threading through logCost args)
+    // require the mock-tracer infrastructure already in this file; the actual logCost span-ID
+    // threading is verified in cost-log-trace-correlation.test.ts (engine path) and the
+    // streaming-handler.ts lifting-into-outer-scope is noted as a B2/B3 item in that file.
     logCost: vi.fn().mockResolvedValue(null),
     checkBudget: vi.fn(),
   };
@@ -242,7 +247,10 @@ function makeMockProvider(
   return {
     name: slug,
     isLocal: false,
-    chatStream: vi.fn().mockReturnValue(
+    // Use mockImplementation so each call creates a fresh generator instance.
+    // mockReturnValue would share a single exhausted iterator across multiple
+    // chatStream calls (e.g. tool-call tests that call chatStream twice).
+    chatStream: vi.fn().mockImplementation(() =>
       (async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -541,9 +549,10 @@ describe('StreamingChatHandler — OTEL span tree (integration)', () => {
     // Assert — logCost was called with the SECOND (successful) span's IDs, not the first
     // (failed) span's IDs. A regression that captured span IDs before the retry attempt
     // would silently misattribute the cost row.
-    const failoverLlmCalls = tracer.spans.filter((s) => s.name === 'llm.call');
-    expect(failoverLlmCalls).toHaveLength(2);
-    const successfulSpan = failoverLlmCalls[1]; // second span is the successful retry
+    // Guard before index access: if a regression reduces span count the next line
+    // would TypeError otherwise, obscuring the real failure.
+    expect(llmCalls[1]).toBeDefined();
+    const successfulSpan = llmCalls[1]; // second span is the successful retry
     expect(vi.mocked(logCost).mock.calls[0]?.[0]?.spanId).toBe(successfulSpan.spanId);
   });
 

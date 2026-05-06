@@ -391,7 +391,7 @@ describe('OTEL engine span tree — integration', () => {
   // Test 4: BudgetExceeded mid-run → workflow.execute is error
   // -----------------------------------------------------------------------
 
-  it('BudgetExceeded mid-run ends workflow.execute with error status; the triggering step span is ok', async () => {
+  it('BudgetExceeded mid-run ends workflow.execute with error status; the triggering step span is error', async () => {
     // Arrange: executor returns a high cost that exceeds the budget limit
     registerStepType('expensive_call', async () => ({
       output: { text: 'result' },

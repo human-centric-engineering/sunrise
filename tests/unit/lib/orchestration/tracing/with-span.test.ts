@@ -321,6 +321,38 @@ describe('withSpan — error path', () => {
     expect(span.exceptions).toHaveLength(0);
     expect(span.ended).toBe(true);
   });
+
+  // Finding 16: withSpan catch path with manualStatus=true — the `if (!opts?.manualStatus)`
+  // false-arm at with-span.ts:106 was uncovered. When manualStatus=true and the fn throws,
+  // withSpan must NOT set error status (inner code already did it or chose not to), but
+  // MUST still record the exception and rethrow.
+  it('with manualStatus=true: does not override status on throw but still records exception and rethrows', async () => {
+    // Arrange — the inner function sets a custom status then throws
+    const originalError = new Error('manual-status error');
+
+    // Act
+    await expect(
+      withSpan(
+        'manual-status-throw-span',
+        {},
+        async (span) => {
+          // Inner marks the status explicitly (simulating the engine's chatSpanError path)
+          span.setStatus({ code: 'error', message: 'inner-set-status' });
+          throw originalError;
+        },
+        { manualStatus: true }
+      )
+    ).rejects.toThrow('manual-status error');
+
+    // Assert — status was set by the inner function; withSpan did NOT overwrite it
+    const { span } = tracer.spans[0];
+    // Status must be what the inner set, not overwritten by withSpan's catch block
+    expect(span.status).toEqual({ code: 'error', message: 'inner-set-status' });
+    // Exception is still recorded (safeRecordException runs regardless of manualStatus)
+    expect(span.exceptions).toHaveLength(1);
+    expect(span.exceptions[0]).toBe(originalError);
+    expect(span.ended).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1519,5 +1551,62 @@ describe('withSpanGenerator — tracer resilience', () => {
     );
     // Span still ends via safeEnd (even after inner.return() threw)
     expect(tracer.spans[0].span.ended).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withSpanGenerator — withActiveContext call-count mechanic (Finding 22)
+// ---------------------------------------------------------------------------
+// The core mechanic of withSpanGenerator is that it drives inner.next() inside
+// tracer.withActiveContext(span, …) on every iteration so AsyncLocalStorage
+// captures the span for each synchronous body segment up to the yield.
+// Integration tests (otel-adapter.test.ts, otel-engine-trace) verify the
+// parent/child outcome in a real OTEL provider; this test verifies the mechanic
+// itself via a call counter so a regression (e.g. skipActiveContext becoming
+// always-true, or the loop being refactored away) is caught at the unit level.
+
+describe('withSpanGenerator — withActiveContext call mechanic', () => {
+  afterEach(() => {
+    resetTracer();
+  });
+
+  it('calls withActiveContext once per inner.next() iteration when span is not NOOP_SPAN', async () => {
+    // Arrange — a test-double tracer with a real startSpan (returns a non-NOOP span)
+    // and an instrumented withActiveContext that counts invocations.
+    let withActiveContextCalls = 0;
+    const recordedSpan = new RecordingSpan();
+
+    const countingTracer: import('@/lib/orchestration/tracing/tracer').Tracer = {
+      startSpan(_name, _opts) {
+        // Return a non-NOOP span so skipActiveContext is false
+        return recordedSpan;
+      },
+      async withSpan(_n, _o, fn) {
+        return fn(recordedSpan);
+      },
+      async withActiveContext<T>(_span: Span, fn: () => Promise<T>): Promise<T> {
+        withActiveContextCalls++;
+        return fn();
+      },
+    };
+    registerTracer(countingTracer);
+
+    // Act — inner yields 3 times; withActiveContext should be called 4 times:
+    // 3 yield iterations + 1 final next() call that returns { done: true }.
+    const yieldCount = 3;
+    async function* inner(_span: Span): AsyncGenerator<number, void, unknown> {
+      for (let i = 0; i < yieldCount; i++) {
+        yield i;
+      }
+    }
+
+    for await (const _ of withSpanGenerator('context-mechanic-test', {}, inner)) {
+      // drain
+    }
+
+    // Assert — withActiveContext was called exactly once per inner.next() invocation.
+    // inner.next() is called yieldCount times (each yields a value) plus one final
+    // call that returns { done: true } — total = yieldCount + 1.
+    expect(withActiveContextCalls).toBe(yieldCount + 1);
   });
 });

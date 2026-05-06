@@ -272,16 +272,18 @@ describe('completeEvaluationSession', () => {
       });
     mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
 
-    await expect(
-      completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
-    ).rejects.toThrow(/Failed to generate evaluation analysis/);
-    // Ensure the thrown error message does NOT contain the raw LLM output.
-    try {
-      await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
-    } catch (err) {
-      expect((err as Error).message).not.toContain('SECRET_TOKEN');
-      expect((err as Error).message).not.toContain('leaked');
-    }
+    // Capture the rejection from the first (and only) call — the mock provides
+    // exactly two responses for that call. A second invocation would hit a missing
+    // mockResolvedValueOnce and throw a NotFoundError from the wrong path.
+    const err = await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' }).catch(
+      (e) => e
+    );
+
+    // Assert: error is the sanitized message, NOT the raw LLM output
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/Failed to generate evaluation analysis/);
+    expect((err as Error).message).not.toContain('SECRET_TOKEN');
+    expect((err as Error).message).not.toContain('leaked');
   });
 
   it('strips ```json code fences from the model response', async () => {
@@ -497,8 +499,9 @@ describe('per-turn metric scoring', () => {
 
     expect(result.status).toBe('completed');
     expect(result.metricSummary).toBeNull();
-    // No per-log update, no scoring cost log
+    // No per-log update when judge provider fails — scoring is skipped entirely
     expect(updateLog).not.toHaveBeenCalled();
+    // No scoring cost logged — only the summary LLM call cost is recorded
     expect(mockedLogCost).toHaveBeenCalledTimes(1); // summary only
   });
 

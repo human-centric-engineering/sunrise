@@ -196,137 +196,146 @@ describe('OtelTracer', () => {
     expect(Object.prototype.hasOwnProperty.call(spans[0].attributes, 'skipped')).toBe(false);
   });
 
-  // Case 6b: Parent/child propagation via the with-span.ts helper.
-  // Regression guard for the helper bug: the helper used to call
-  // getTracer().startSpan() without activating the span as the OTEL context,
-  // so nested helper calls produced flat root spans in OTLP backends.
-  // It now wraps fn inside getTracer().withActiveContext(span, ...) which
-  // calls context.with(setSpan(active(), inner), fn) — restoring AsyncLocalStorage
-  // propagation. This test must verify against a real BasicTracerProvider; a
-  // unit-style mock could pass without exercising the actual context manager.
-  it('helper withSpan establishes parent/child via withActiveContext (real provider)', async () => {
-    // Arrange
-    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
-    registerTracer(otelTracer);
+  // Cases 6b–6d and 7: helper-integration tests that require OtelTracer in the
+  // Sunrise registry. Grouped into a nested describe so registerTracer / resetTracer
+  // form a symmetric beforeEach/afterEach pair (per project pattern in
+  // otel-engine-trace.test.ts:108-128 and otel-chat-trace.test.ts:311-325).
+  describe('with-span.ts helper integration (real provider)', () => {
+    let otelTracer: OtelTracer;
 
-    // Act — nested calls through the public helper
-    await withSpanHelper('outer', {}, async () => {
-      await withSpanHelper('inner', {}, async () => 'done');
+    beforeEach(() => {
+      otelTracer = new OtelTracer(otelApi, 'test-tracer');
+      registerTracer(otelTracer);
     });
 
-    // Assert — child's parentSpanContext.spanId must equal the outer span's spanId.
-    const spans = exporter.getFinishedSpans();
-    const outer = spans.find((s) => s.name === 'outer');
-    const inner = spans.find((s) => s.name === 'inner');
-    expect(outer).toBeDefined();
-    expect(inner).toBeDefined();
-    expect(inner?.parentSpanContext?.spanId).toBe(outer?.spanContext().spanId);
-  });
+    afterEach(() => {
+      resetTracer();
+    });
 
-  // Case 6c: Parent/child propagation via the with-span.ts generator helper.
-  // Regression guard for the manual-span context-propagation gap: spans created
-  // inside an async generator's body must see the outer span as their parent
-  // even across yields. `withSpanGenerator` drives `inner.next()` inside
-  // `tracer.withActiveContext(span, …)` per iteration so AsyncLocalStorage
-  // captures the span as the active OTEL context for the synchronous body up
-  // to each yield. This test must run against a real BasicTracerProvider — a
-  // mock could pass without exercising the actual context manager.
-  it('withSpanGenerator establishes parent/child across yields (real provider)', async () => {
-    // Arrange
-    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
-    registerTracer(otelTracer);
+    // Case 6b: Parent/child propagation via the with-span.ts helper.
+    // Regression guard for the helper bug: the helper used to call
+    // getTracer().startSpan() without activating the span as the OTEL context,
+    // so nested helper calls produced flat root spans in OTLP backends.
+    // It now wraps fn inside getTracer().withActiveContext(span, ...) which
+    // calls context.with(setSpan(active(), inner), fn) — restoring AsyncLocalStorage
+    // propagation. This test must verify against a real BasicTracerProvider; a
+    // unit-style mock could pass without exercising the actual context manager.
+    it('helper withSpan establishes parent/child via withActiveContext (real provider)', async () => {
+      // Arrange — otelTracer registered in beforeEach
 
-    async function* outer(): AsyncGenerator<string, void, unknown> {
-      yield 'outer-event-1';
-      // Nested helper-withSpan call; expected parent: outer span
-      await withSpanHelper('nested-helper', {}, async () => {});
-      yield 'outer-event-2';
-      // Nested withSpanGenerator call; expected parent: outer span
-      yield* withSpanGenerator('nested-gen', {}, async function* (_innerSpan) {
-        yield 'inner-event';
+      // Act — nested calls through the public helper
+      await withSpanHelper('outer', {}, async () => {
+        await withSpanHelper('inner', {}, async () => 'done');
       });
-      yield 'outer-event-3';
-    }
 
-    // Act — drain the generator the same way SSE consumers would
-    const events: string[] = [];
-    for await (const event of withSpanGenerator('outer', {}, outer)) {
-      events.push(event);
-    }
+      // Assert — child's parentSpanContext.spanId must equal the outer span's spanId.
+      const spans = exporter.getFinishedSpans();
+      const outer = spans.find((s) => s.name === 'outer');
+      const inner = spans.find((s) => s.name === 'inner');
+      expect(outer).toBeDefined();
+      expect(inner).toBeDefined();
+      expect(inner?.parentSpanContext?.spanId).toBe(outer?.spanContext().spanId);
+    });
 
-    // Assert — events flowed correctly
-    expect(events).toEqual(['outer-event-1', 'outer-event-2', 'inner-event', 'outer-event-3']);
+    // Case 6c: Parent/child propagation via the with-span.ts generator helper.
+    // Regression guard for the manual-span context-propagation gap: spans created
+    // inside an async generator's body must see the outer span as their parent
+    // even across yields. `withSpanGenerator` drives `inner.next()` inside
+    // `tracer.withActiveContext(span, …)` per iteration so AsyncLocalStorage
+    // captures the span as the active OTEL context for the synchronous body up
+    // to each yield. This test must run against a real BasicTracerProvider — a
+    // mock could pass without exercising the actual context manager.
+    it('withSpanGenerator establishes parent/child across yields (real provider)', async () => {
+      // Arrange — otelTracer registered in beforeEach
 
-    // Span tree: outer (root) → [nested-helper, nested-gen]
-    const spans = exporter.getFinishedSpans();
-    const outerSpan = spans.find((s) => s.name === 'outer');
-    const nestedHelper = spans.find((s) => s.name === 'nested-helper');
-    const nestedGen = spans.find((s) => s.name === 'nested-gen');
-
-    expect(outerSpan).toBeDefined();
-    expect(nestedHelper).toBeDefined();
-    expect(nestedGen).toBeDefined();
-
-    expect(nestedHelper?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
-    expect(nestedGen?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
-
-    // All three share the outer's traceId — proves single-trace correlation
-    expect(nestedHelper?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
-    expect(nestedGen?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
-  });
-
-  // Case 6d: withSpanGenerator with manualStatus=true defers status setting
-  // to the inner generator. Verifies the inner can mark error status without
-  // throwing (the engine's `singleResult.failed` and chat handler's
-  // `chatSpanError` paths rely on this).
-  it('withSpanGenerator manualStatus=true lets inner control status without throwing', async () => {
-    // Arrange
-    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
-    registerTracer(otelTracer);
-
-    // Act — inner sets error status manually then returns normally
-    await (async () => {
-      for await (const _ of withSpanGenerator(
-        'manual-status-span',
-        {},
-        async function* (span) {
-          span.setStatus({ code: 'error', message: 'inner-marked-error' });
-          yield 'event';
-        },
-        { manualStatus: true }
-      )) {
-        // drain
+      async function* outer(): AsyncGenerator<string, void, unknown> {
+        yield 'outer-event-1';
+        // Nested helper-withSpan call; expected parent: outer span
+        await withSpanHelper('nested-helper', {}, async () => {});
+        yield 'outer-event-2';
+        // Nested withSpanGenerator call; expected parent: outer span
+        yield* withSpanGenerator('nested-gen', {}, async function* (_innerSpan) {
+          yield 'inner-event';
+        });
+        yield 'outer-event-3';
       }
-    })();
 
-    // Assert — span ended with error status (helper did NOT overwrite to ok)
-    const spans = exporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
-    expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.ERROR);
-    expect(spans[0].status.message).toBe('inner-marked-error');
-  });
+      // Act — drain the generator the same way SSE consumers would
+      const events: string[] = [];
+      for await (const event of withSpanGenerator('outer', {}, outer)) {
+        events.push(event);
+      }
 
-  // Case 7: Long string attributes are truncated by withSpan (regression guard)
-  it('truncates string attributes longer than MAX_ATTRIBUTE_STRING_LENGTH before forwarding to the exporter', async () => {
-    // Arrange — a prompt that exceeds the 1024-char cap.
-    // Truncation lives in with-span.ts's truncateAttributes. This test verifies
-    // the integration between with-span.ts and OtelTracer: with-span.ts truncates
-    // the attribute before passing it to OtelTracer.startSpan, and the truncated
-    // value must actually reach the OTEL exporter correctly.
-    // We go through with-span.ts's withSpan (not OtelTracer.withSpan directly)
-    // because that is where truncation happens in production code.
-    const otelTracer = new OtelTracer(otelApi, 'test-tracer');
-    registerTracer(otelTracer);
-    const longPrompt = 'x'.repeat(MAX_ATTRIBUTE_STRING_LENGTH + 500);
+      // Assert — events flowed correctly
+      expect(events).toEqual(['outer-event-1', 'outer-event-2', 'inner-event', 'outer-event-3']);
 
-    // Act — withSpanHelper uses getTracer() from registry, which is OtelTracer
-    await withSpanHelper('llm.call', { prompt: longPrompt }, async () => {});
+      // Span tree: outer (root) → [nested-helper, nested-gen]
+      const spans = exporter.getFinishedSpans();
+      const outerSpan = spans.find((s) => s.name === 'outer');
+      const nestedHelper = spans.find((s) => s.name === 'nested-helper');
+      const nestedGen = spans.find((s) => s.name === 'nested-gen');
 
-    // Assert — exported attribute length must be exactly MAX_ATTRIBUTE_STRING_LENGTH
-    const spans = exporter.getFinishedSpans();
-    const promptValue = spans[0].attributes['prompt'];
-    expect(typeof promptValue).toBe('string');
-    expect((promptValue as string).length).toBe(MAX_ATTRIBUTE_STRING_LENGTH);
+      expect(outerSpan).toBeDefined();
+      expect(nestedHelper).toBeDefined();
+      expect(nestedGen).toBeDefined();
+
+      expect(nestedHelper?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
+      expect(nestedGen?.parentSpanContext?.spanId).toBe(outerSpan?.spanContext().spanId);
+
+      // All three share the outer's traceId — proves single-trace correlation
+      expect(nestedHelper?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
+      expect(nestedGen?.spanContext().traceId).toBe(outerSpan?.spanContext().traceId);
+    });
+
+    // Case 6d: withSpanGenerator with manualStatus=true defers status setting
+    // to the inner generator. Verifies the inner can mark error status without
+    // throwing (the engine's `singleResult.failed` and chat handler's
+    // `chatSpanError` paths rely on this).
+    it('withSpanGenerator manualStatus=true lets inner control status without throwing', async () => {
+      // Arrange — otelTracer registered in beforeEach
+
+      // Act — inner sets error status manually then returns normally
+      await (async () => {
+        for await (const _ of withSpanGenerator(
+          'manual-status-span',
+          {},
+          async function* (span) {
+            span.setStatus({ code: 'error', message: 'inner-marked-error' });
+            yield 'event';
+          },
+          { manualStatus: true }
+        )) {
+          // drain
+        }
+      })();
+
+      // Assert — span ended with error status (helper did NOT overwrite to ok)
+      const spans = exporter.getFinishedSpans();
+      expect(spans).toHaveLength(1);
+      expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.ERROR);
+      expect(spans[0].status.message).toBe('inner-marked-error');
+    });
+
+    // Case 7: Long string attributes are truncated by withSpan (regression guard)
+    it('truncates string attributes longer than MAX_ATTRIBUTE_STRING_LENGTH before forwarding to the exporter', async () => {
+      // Arrange — a prompt that exceeds the 1024-char cap.
+      // Truncation lives in with-span.ts's truncateAttributes. This test verifies
+      // the integration between with-span.ts and OtelTracer: with-span.ts truncates
+      // the attribute before passing it to OtelTracer.startSpan, and the truncated
+      // value must actually reach the OTEL exporter correctly.
+      // We go through with-span.ts's withSpan (not OtelTracer.withSpan directly)
+      // because that is where truncation happens in production code.
+      const longPrompt = 'x'.repeat(MAX_ATTRIBUTE_STRING_LENGTH + 500);
+
+      // Act — withSpanHelper uses getTracer() from registry, which is OtelTracer
+      await withSpanHelper('llm.call', { prompt: longPrompt }, async () => {});
+
+      // Assert — exported attribute length must be exactly MAX_ATTRIBUTE_STRING_LENGTH
+      const spans = exporter.getFinishedSpans();
+      const promptValue = spans[0].attributes['prompt'];
+      expect(typeof promptValue).toBe('string');
+      expect((promptValue as string).length).toBe(MAX_ATTRIBUTE_STRING_LENGTH);
+    });
   });
 
   // Case 8: mapKind covers every literal
@@ -351,9 +360,7 @@ describe('OtelTracer', () => {
         // Assert — the exported span's kind numeric value matches the OTEL enum
         const spans = exporter.getFinishedSpans();
         expect(spans[0].kind).toBe(expectedOtelKind);
-
-        // Reset exporter within the loop so each kind case starts clean
-        exporter.reset();
+        // Exporter isolation is handled by the module-level beforeEach; no reset needed here.
       });
     }
   });
@@ -405,6 +412,101 @@ describe('OtelTracer', () => {
       // Assert
       const spans = exporter.getFinishedSpans();
       expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.UNSET);
+    });
+
+    // Finding 15: mapStatus 'error' with no message — the cond-expr at L58 false-arm
+    // (no message field) was previously uncovered. Existing 'error' test always
+    // supplied status.message; this one exercises the omitted-message branch.
+    it("maps status code 'error' with no message to SpanStatusCode.ERROR and omits the message field", () => {
+      // Arrange
+      const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+
+      // Act — omit the optional message field
+      const span = otelTracer.startSpan('test-error-no-msg', {});
+      span.setStatus({ code: 'error' });
+      span.end();
+
+      // Assert — status code is ERROR; message is absent (undefined) on the span
+      const spans = exporter.getFinishedSpans();
+      expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.ERROR);
+      expect(spans[0].status.message).toBeUndefined();
+    });
+  });
+
+  // Case 10: OtelSpan.setAttributes() — verifies dropUndefined inside setAttributes
+  // (anonymous_6 at otel-adapter.ts:92-95, previously 0 hits)
+  describe('OtelSpan.setAttributes', () => {
+    it('forwards defined attributes to the OTEL span and drops keys with undefined values', async () => {
+      // Arrange
+      const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+
+      // Act — set multiple attributes via startSpan to get an OtelSpan, then call setAttributes
+      await otelTracer.withSpan('attr-test', {}, async (span) => {
+        // setAttributes is the batch variant; it calls dropUndefined internally
+        span.setAttributes({ key: 'val', skip: undefined });
+      });
+
+      // Assert — 'key' lands on the exported span; 'skip' must not appear
+      const spans = exporter.getFinishedSpans();
+      expect(spans[0].attributes['key']).toBe('val');
+      expect(Object.prototype.hasOwnProperty.call(spans[0].attributes, 'skip')).toBe(false);
+    });
+  });
+
+  // Case 11: OtelSpan.recordException() — both arms (Error instance and non-Error)
+  // were uncovered because existing tests threw inside withSpan callbacks,
+  // which the OTEL SDK records via its own internals rather than OtelSpan.recordException().
+  // Calling recordException() directly on a startSpan-obtained span exercises the
+  // Sunrise wrapper's two branches at otel-adapter.ts:101-107.
+  describe('OtelSpan.recordException', () => {
+    it('records an Error instance as an OTEL exception event', () => {
+      // Arrange
+      const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+      const err = new Error('record-exception-error');
+
+      // Act — call recordException directly (not via a throwing callback)
+      const span = otelTracer.startSpan('rec-err', {});
+      span.recordException(err);
+      span.end();
+
+      // Assert — an exception event with the correct message is present
+      const spans = exporter.getFinishedSpans();
+      const exceptionEvent = spans[0].events.find((e) => e.name === 'exception');
+      expect(exceptionEvent?.attributes?.['exception.message']).toBe('record-exception-error');
+    });
+
+    it('wraps a plain string in { message: String(error) } for the exception event', () => {
+      // Arrange
+      const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+
+      // Act — non-Error value exercises the else-branch at otel-adapter.ts:105
+      const span = otelTracer.startSpan('rec-plain', {});
+      span.recordException('plain string error');
+      span.end();
+
+      // Assert — the exception event's message is the stringified value
+      const spans = exporter.getFinishedSpans();
+      const exceptionEvent = spans[0].events.find((e) => e.name === 'exception');
+      expect(exceptionEvent?.attributes?.['exception.message']).toBe('plain string error');
+    });
+  });
+
+  // Case 12: withActiveContext fallback — if span is NOT an OtelSpan instance
+  // (e.g. NOOP_SPAN from a different tracer), fn() is called directly without
+  // OTEL context wrapping (the `if (!(span instanceof OtelSpan)) return fn()` guard
+  // at otel-adapter.ts:175 was previously uncovered).
+  describe('OtelTracer.withActiveContext — non-OtelSpan fallback', () => {
+    it('invokes fn and returns its value when the span is not an OtelSpan instance', async () => {
+      // Arrange — import NOOP_SPAN which is not an OtelSpan instance
+      const { NOOP_SPAN } = await import('@/lib/orchestration/tracing/noop-tracer');
+      const otelTracer = new OtelTracer(otelApi, 'test-tracer');
+      const expectedValue = { result: 'fallback-ran' };
+
+      // Act — pass NOOP_SPAN (non-OtelSpan) to withActiveContext; fn must still run
+      const result = await otelTracer.withActiveContext(NOOP_SPAN, async () => expectedValue);
+
+      // Assert — fn ran and its value was returned; no throw, no wrapping
+      expect(result).toBe(expectedValue);
     });
   });
 });

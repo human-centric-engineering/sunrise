@@ -57,7 +57,7 @@ function makeCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
       error: vi.fn(),
       debug: vi.fn(),
       withContext: vi.fn().mockReturnThis(),
-    } as any,
+    } as unknown as ExecutionContext['logger'],
     ...overrides,
   };
 }
