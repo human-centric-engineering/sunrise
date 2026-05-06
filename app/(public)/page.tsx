@@ -9,24 +9,26 @@ import {
   Package,
   Rocket,
   FileCode,
+  Brain,
+  Search,
 } from 'lucide-react';
 import { Hero, Section, Features, Pricing, FAQ, CTA } from '@/components/marketing';
 
+const heroDescription =
+  'Build production-ready applications faster with Sunrise. A Next.js 16 starter template with authentication, database, email, Docker — plus a complete AI agent orchestration layer for building agents, workflows, and knowledge bases.';
+
 export const metadata: Metadata = {
   title: 'Sunrise - Production-Ready Next.js Starter Template',
-  description:
-    'Build production-ready applications faster with Sunrise. A Next.js 16 starter template featuring authentication, database, email, Docker deployment, and AI-optimized development.',
+  description: heroDescription,
   openGraph: {
     title: 'Sunrise - Production-Ready Next.js Starter Template',
-    description:
-      'Build production-ready applications faster with Sunrise. A Next.js 16 starter template featuring authentication, database, email, Docker deployment, and AI-optimized development.',
+    description: heroDescription,
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Sunrise - Production-Ready Next.js Starter Template',
-    description:
-      'Build production-ready applications faster with Sunrise. A Next.js 16 starter template featuring authentication, database, email, Docker deployment, and AI-optimized development.',
+    description: heroDescription,
   },
 };
 
@@ -62,6 +64,18 @@ const features = [
     icon: Package,
     title: 'Docker-Ready',
     description: 'Multi-stage Docker builds for optimized production deployments anywhere.',
+  },
+  {
+    icon: Brain,
+    title: 'Agent Orchestration',
+    description:
+      'Design, deploy, and monitor AI agents with capabilities, workflows, and provider fallback — all admin-configured.',
+  },
+  {
+    icon: Search,
+    title: 'Knowledge Base & RAG',
+    description:
+      'Upload documents, chunk, embed (pgvector), and let agents answer grounded questions via semantic search.',
   },
 ];
 
@@ -151,7 +165,12 @@ const faqItems = [
   {
     question: 'How is Sunrise optimized for AI development?',
     answer:
-      'Sunrise includes comprehensive documentation in CLAUDE.md and a .context/ substrate with domain-specific guides. This helps AI assistants understand the codebase structure and follow established patterns when generating code.',
+      'Two ways. First, AI-assisted development: comprehensive documentation in CLAUDE.md and the .context/ substrate helps AI assistants understand the codebase and follow established patterns when generating code. Second, AI agent capabilities for the apps you build: a complete orchestration layer for designing, deploying, and monitoring AI agents.',
+  },
+  {
+    question: 'Can I build AI agents with Sunrise?',
+    answer:
+      'Yes. Sunrise ships with a full agent orchestration layer at /admin/orchestration: configure LLM providers, define agents with system instructions and budgets, create custom capabilities (tools), build multi-step workflows as DAGs, ingest documents into pgvector-backed knowledge bases for RAG, expose agents via an MCP server or embed widget, and monitor everything with execution tracing, evaluations, and an audit log. Built on the 21 agentic design patterns from Antonio Gullí.',
   },
   {
     question: 'Can I use Sunrise for commercial projects?',
@@ -180,7 +199,7 @@ export default function LandingPage() {
       <Hero
         badge="Next.js 16 Ready"
         title="Build Production Apps Faster"
-        description="Sunrise is a production-ready Next.js starter template designed for rapid application development. Authentication, database, email, Docker — all pre-configured and ready to go."
+        description="Sunrise is a production-ready Next.js starter template designed for rapid application development. Authentication, database, email, Docker — all pre-configured and ready to go, plus a production AI agent orchestration layer for building agents, workflows, and knowledge bases."
         primaryAction={{ label: 'Get Started', href: '/signup' }}
         secondaryAction={{
           label: 'View on GitHub',

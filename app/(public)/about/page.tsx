@@ -10,24 +10,27 @@ import {
   Paintbrush,
   Code,
   CheckCircle2,
+  Bot,
+  Network,
+  Search,
 } from 'lucide-react';
 import { Hero, Section, Features, CTA } from '@/components/marketing';
 import { Card, CardContent } from '@/components/ui/card';
 
+const aboutDescription =
+  'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance — including a complete AI agent orchestration layer.';
+
 export const metadata: Metadata = {
   title: 'About',
-  description:
-    'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
+  description: aboutDescription,
   openGraph: {
     title: 'About - Sunrise',
-    description:
-      'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
+    description: aboutDescription,
   },
   twitter: {
     card: 'summary_large_image',
     title: 'About - Sunrise',
-    description:
-      'Learn about Sunrise, a production-ready Next.js starter template designed for rapid application development with AI assistance.',
+    description: aboutDescription,
   },
 };
 
@@ -42,6 +45,18 @@ const principles = [
     title: 'AI-Optimized',
     description:
       'Comprehensive documentation and clear patterns enable AI assistants to generate high-quality code.',
+  },
+  {
+    icon: Bot,
+    title: 'Agent-Ready',
+    description:
+      'Full agent orchestration built in: providers, agents, capabilities, workflows, knowledge bases.',
+  },
+  {
+    icon: Network,
+    title: 'API-First',
+    description:
+      'Every action is accessible via versioned APIs, an MCP server, and agent capabilities — ready for integrations.',
   },
   {
     icon: Package,
@@ -62,10 +77,13 @@ const techStack = [
   { name: 'TypeScript', category: 'Language', icon: Code },
   { name: 'PostgreSQL', category: 'Database', icon: Database },
   { name: 'Prisma', category: 'ORM', icon: Database },
+  { name: 'pgvector', category: 'Vector Search', icon: Search },
   { name: 'better-auth', category: 'Authentication', icon: Shield },
   { name: 'Tailwind CSS', category: 'Styling', icon: Paintbrush },
   { name: 'shadcn/ui', category: 'Components', icon: Paintbrush },
   { name: 'React Email', category: 'Email', icon: Mail },
+  { name: 'Agent Orchestration', category: 'AI', icon: Brain },
+  { name: 'MCP Server', category: 'AI', icon: Network },
   { name: 'Docker', category: 'Deployment', icon: Package },
   { name: 'Sentry', category: 'Monitoring', icon: Shield },
 ];
@@ -83,7 +101,7 @@ export default function AboutPage() {
       {/* Hero Section */}
       <Hero
         title="About Sunrise"
-        description="A production-ready Next.js starter template built to help developers ship faster while maintaining high standards for code quality, security, and maintainability."
+        description="A production-ready Next.js starter template built to help developers ship faster while maintaining high standards for code quality, security, and maintainability — including a complete AI agent orchestration layer."
         variant="centered"
         className="py-12 md:py-16"
       />
@@ -97,11 +115,17 @@ export default function AboutPage() {
             databases, deployment, testing, and more. Each choice requires research, implementation,
             and debugging. This takes time away from building the features that matter most.
           </p>
-          <p className="text-muted-foreground text-lg leading-relaxed">
+          <p className="text-muted-foreground mb-6 text-lg leading-relaxed">
             <strong className="text-foreground">Sunrise solves this problem</strong> by providing a
             complete, production-ready foundation. We&apos;ve made the hard decisions, implemented
             best practices, and documented everything thoroughly. You get a head start measured in
             weeks, not hours.
+          </p>
+          <p className="text-muted-foreground text-lg leading-relaxed">
+            And because modern apps increasingly include AI agents, Sunrise ships with a complete
+            orchestration layer too: providers, agents, capabilities, workflows, knowledge bases,
+            and observability. The boring stuff done well — plus the modern agentic primitives so
+            your app can include AI agents from day one.
           </p>
         </div>
       </Section>
@@ -111,7 +135,7 @@ export default function AboutPage() {
         title="Design Principles"
         description="The guiding principles that shape every decision in Sunrise."
       >
-        <Features features={principles} columns={4} variant="card" />
+        <Features features={principles} columns={3} variant="card" />
       </Section>
 
       {/* Tech Stack Section */}
@@ -150,6 +174,9 @@ export default function AboutPage() {
             'Structured logging with environment-aware output',
             'Error monitoring with Sentry integration',
             'AI-friendly documentation in CLAUDE.md and .context/ substrate',
+            'AI agent orchestration: providers, agents, capabilities, workflows',
+            'Knowledge base with document ingestion and pgvector semantic search',
+            'MCP server for Claude Code integration and AI-assisted development',
             'MIT licensed for commercial and personal use',
           ].map((item) => (
             <div key={item} className="flex items-start gap-3">
