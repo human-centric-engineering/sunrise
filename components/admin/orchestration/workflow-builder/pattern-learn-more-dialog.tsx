@@ -24,6 +24,8 @@ import { PatternContent } from '@/components/admin/orchestration/learn/pattern-c
 import { PatternDetailSections } from '@/components/admin/orchestration/learn/pattern-detail-sections';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
+import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
 import type { AiKnowledgeChunk } from '@/types/orchestration';
 
 interface PatternDetail {
@@ -32,7 +34,7 @@ interface PatternDetail {
   totalTokens: number;
 }
 
-const HERO_SECTIONS = new Set(['overview', 'tldr', 'tl;dr summary']);
+const HERO_SECTIONS = new Set(['tldr', 'summary']);
 
 function stripEmbeddingPrefix(content: string): string {
   const withDash = content.match(/^.+ — .+\n\n([\s\S]*)$/);
@@ -79,17 +81,37 @@ export function PatternLearnMoreDialog({
     }
   }, [open, patternNumber, fetchPattern]);
 
-  const heroChunks =
-    detail?.chunks.filter((c) => HERO_SECTIONS.has((c.section ?? '').toLowerCase())) ?? [];
-  const restChunks =
-    detail?.chunks.filter((c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())) ?? [];
+  const overviewChunk =
+    detail?.chunks.find((c) => (c.section ?? '').toLowerCase() === 'overview') ?? null;
+  const overview = overviewChunk ? parseOverviewContent(overviewChunk.content) : null;
+
+  const nonOverviewChunks =
+    detail?.chunks.filter((c) => (c.section ?? '').toLowerCase() !== 'overview') ?? [];
+  const heroChunks = nonOverviewChunks.filter((c) =>
+    HERO_SECTIONS.has((c.section ?? '').toLowerCase())
+  );
+  const restChunks = nonOverviewChunks.filter(
+    (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{detail?.patternName ?? `Pattern #${patternNumber}`}</DialogTitle>
-          <DialogDescription>Design pattern reference from the knowledge base.</DialogDescription>
+          <DialogDescription>
+            {overview?.parallels ? (
+              <>
+                <span className="font-medium">Software-engineering parallels:</span>{' '}
+                {overview.parallels}
+              </>
+            ) : (
+              'Design pattern reference from the knowledge base.'
+            )}
+          </DialogDescription>
+          {overview?.example && (
+            <p className="text-muted-foreground mt-1 text-sm italic">{overview.example}</p>
+          )}
         </DialogHeader>
 
         {loading && (
@@ -122,7 +144,8 @@ export function PatternLearnMoreDialog({
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="sm:items-center sm:justify-between">
+          <p className="text-muted-foreground text-xs">{PATTERN_ATTRIBUTION_LINE}</p>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>

@@ -877,4 +877,46 @@ describe('ManageTab', () => {
       expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
     });
   });
+
+  // ── Modal triggers (open the comparison + chunks modals) ──────────────────
+
+  it('opens the embedding-providers comparison modal when its link is clicked', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+    // The CompareProvidersModal renders its dialog only after the trigger fires.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /compare embedding providers/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
+
+  it('opens the chunks modal when a document name is clicked', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: USER_DOC.name }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
+
+  it('opens the chunks modal when the Review button on a pending_review document is clicked', async () => {
+    const user = userEvent.setup();
+    const reviewDoc = makeDocument({
+      id: 'doc-review',
+      name: 'Pending PDF',
+      status: 'pending_review',
+      chunkCount: 3,
+    });
+    render(<ManageTab documents={[reviewDoc]} onRefresh={vi.fn()} />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /review/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
 });

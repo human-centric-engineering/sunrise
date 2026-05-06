@@ -420,7 +420,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     prisma.aiKnowledgeChunk.findMany({
       where: {
         patternNumber: { in: patternNumbers },
-        section: 'TL;DR Summary',
+        section: 'Summary',
       },
       select: { patternNumber: true, content: true },
     }),
@@ -477,7 +477,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
 const SECTION_ORDER = [
   'overview',
   'tldr',
-  'TL;DR Summary',
+  'Summary',
   'definition',
   'Definition & Core Concept',
   'Agentic Definition',
@@ -487,8 +487,7 @@ const SECTION_ORDER = [
   'code_example',
   'Code Examples',
   'swe_parallels',
-  'SWE Parallels',
-  'Traditional SWE Parallels',
+  'Traditional Software Engineering Parallels',
   'when_to_use',
   'When to Use',
   'pitfalls',

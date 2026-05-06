@@ -200,10 +200,66 @@ describe('PatternLearnMoreDialog', () => {
     });
 
     it('renders hero chunk content via PatternContent', async () => {
-      vi.mocked(apiClient.get).mockResolvedValue(MOCK_DETAIL);
+      // Hero sections are "tldr" and "summary" — overview is now a labelled
+      // subtitle in the dialog description, not a PatternContent card.
+      const detailWithHero = {
+        ...MOCK_DETAIL,
+        chunks: [
+          makeChunk({
+            id: 'chunk-summary',
+            section: 'summary',
+            content: 'Summary content for the pattern.',
+          }),
+        ],
+      };
+      vi.mocked(apiClient.get).mockResolvedValue(detailWithHero);
       renderDialog();
       await waitFor(() => {
         expect(screen.getByTestId('pattern-content')).toBeInTheDocument();
+      });
+    });
+
+    it('renders parsed overview parallels as a labelled description', async () => {
+      // Bold line in the overview chunk is parsed into `parallels` and shown
+      // alongside a "Software-engineering parallels:" label.
+      const detailWithOverview = {
+        ...MOCK_DETAIL,
+        chunks: [
+          makeChunk({
+            id: 'chunk-overview',
+            section: 'overview',
+            content: 'Chain of Thought\n\n**Like a structured proof.**',
+          }),
+        ],
+      };
+      vi.mocked(apiClient.get).mockResolvedValue(detailWithOverview);
+      renderDialog();
+      await waitFor(() => {
+        expect(screen.getByText(/software-engineering parallels/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/like a structured proof/i)).toBeInTheDocument();
+    });
+
+    it('renders the parsed overview example as an italic caption', async () => {
+      // Italic line in the overview chunk is parsed into `example` and shown
+      // as a separate italic paragraph below the description.
+      const detailWithExample = {
+        ...MOCK_DETAIL,
+        chunks: [
+          makeChunk({
+            id: 'chunk-overview',
+            section: 'overview',
+            content:
+              'Chain of Thought\n\n**Like a structured proof.**\n\n*See: a developer thinking aloud while debugging.*',
+          }),
+        ],
+      };
+      vi.mocked(apiClient.get).mockResolvedValue(detailWithExample);
+      renderDialog();
+      await waitFor(() => {
+        expect(
+          screen.getByText(/see: a developer thinking aloud while debugging/i)
+        ).toBeInTheDocument();
       });
     });
 

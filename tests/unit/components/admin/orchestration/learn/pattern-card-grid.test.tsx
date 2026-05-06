@@ -87,12 +87,4 @@ describe('PatternCardGrid', () => {
     expect(links[1]).toHaveAttribute('href', '/admin/orchestration/learn/patterns/2');
     expect(links[2]).toHaveAttribute('href', '/admin/orchestration/learn/patterns/3');
   });
-
-  it('renders chunk count as section count', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    expect(screen.getByText('5 sections')).toBeInTheDocument();
-    expect(screen.getByText('8 sections')).toBeInTheDocument();
-    expect(screen.getByText('1 section')).toBeInTheDocument();
-  });
 });

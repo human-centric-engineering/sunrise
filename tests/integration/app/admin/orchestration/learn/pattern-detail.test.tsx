@@ -62,7 +62,9 @@ const MOCK_DETAIL = {
       id: 'chunk-1',
       chunkKey: 'pattern-1-overview',
       documentId: 'doc-1',
-      content: 'Overview content about Chain of Thought',
+      // Bold line is parsed as the "parallels" caption; italic line as the example.
+      content:
+        'Pattern 1 — Chain of Thought\n\n**Step-by-step reasoning, like a structured proof.**\n\n*See: a developer thinking aloud while debugging.*',
       chunkType: 'pattern_overview',
       patternNumber: 1,
       patternName: 'Chain of Thought',
@@ -146,8 +148,11 @@ describe('PatternDetailPage (server component)', () => {
 
     render(await PatternDetailPage({ params: Promise.resolve({ number: '1' }) }));
 
-    // Hero section content is always visible
-    expect(screen.getByText(/overview content/i)).toBeInTheDocument();
+    // Overview chunk is rendered as a labelled subtitle (not a hero card).
+    expect(screen.getByText(/software-engineering parallels/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/step-by-step reasoning, like a structured proof/i)
+    ).toBeInTheDocument();
     // Non-hero sections render as collapsed accordion items — trigger text is visible
     expect(screen.getByText(/how it works/i)).toBeInTheDocument();
   });

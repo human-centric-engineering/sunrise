@@ -10,7 +10,9 @@ import { UsePatternButton } from '@/components/admin/orchestration/learn/use-pat
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribution';
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
+import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
 import { stripEmbeddingPrefix } from '@/lib/orchestration/utils/strip-embedding-prefix';
 import type { AiKnowledgeChunk, PatternSummary } from '@/types/orchestration';
 
@@ -89,13 +91,23 @@ export default async function PatternDetailPage({ params }: PageProps) {
     );
   }
 
-  // Sections shown open at the top as cards
-  const HERO_SECTIONS = new Set(['overview', 'tldr', 'tl;dr summary']);
+  // Sections shown open at the top as cards. The overview chunk is rendered
+  // separately as a labelled caption under the page heading rather than as a
+  // hero card — its body is just a list of software-engineering parallels and
+  // doesn't warrant peer visual weight with the Summary.
+  const HERO_SECTIONS = new Set(['tldr', 'summary']);
 
-  const heroChunks = detail.chunks.filter((c) =>
+  const overviewChunk =
+    detail.chunks.find((c) => (c.section ?? '').toLowerCase() === 'overview') ?? null;
+  const overview = overviewChunk ? parseOverviewContent(overviewChunk.content) : null;
+
+  const nonOverviewChunks = detail.chunks.filter(
+    (c) => (c.section ?? '').toLowerCase() !== 'overview'
+  );
+  const heroChunks = nonOverviewChunks.filter((c) =>
     HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
-  const restChunks = detail.chunks.filter(
+  const restChunks = nonOverviewChunks.filter(
     (c) => !HERO_SECTIONS.has((c.section ?? '').toLowerCase())
   );
 
@@ -124,12 +136,19 @@ export default async function PatternDetailPage({ params }: PageProps) {
             <UsePatternButton patternNumber={num} />
           </div>
         </div>
+        {overview?.parallels && (
+          <div className="text-muted-foreground mt-2 text-sm">
+            <span className="font-medium">Software-engineering parallels:</span>{' '}
+            {overview.parallels}
+            {overview.example && <p className="mt-1 italic">{overview.example}</p>}
+          </div>
+        )}
       </header>
 
       {/* Hero sections — always visible in cards */}
       {heroChunks.map((chunk) => (
         <div key={chunk.id} className="bg-card rounded-lg border p-6">
-          {chunk.section && chunk.section.toLowerCase() !== 'overview' && (
+          {chunk.section && (
             <h2 className="mb-3 text-lg font-medium">{chunk.section.replace(/_/g, ' ')}</h2>
           )}
           <PatternContent content={stripEmbeddingPrefix(chunk.content)} />
@@ -141,6 +160,10 @@ export default async function PatternDetailPage({ params }: PageProps) {
 
       {/* Remaining sections — collapsible accordions */}
       {restChunks.length > 0 && <PatternDetailSections chunks={restChunks} />}
+
+      <p className="text-muted-foreground border-border/50 mt-8 border-t pt-4 text-xs">
+        {PATTERN_ATTRIBUTION_LINE}
+      </p>
     </div>
   );
 }

@@ -467,6 +467,9 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                 provider needed.
               </p>
               <p className="mt-2">
+                Adapted from <em>Agentic Design Patterns</em> by Antonio Gullí.
+              </p>
+              <p className="mt-2">
                 If the patterns are already loaded, clicking again has no effect.
               </p>
             </FieldHelp>
