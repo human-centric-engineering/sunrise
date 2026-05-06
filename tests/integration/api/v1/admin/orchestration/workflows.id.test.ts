@@ -76,20 +76,27 @@ const VALID_DEFINITION = {
 };
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  // Compatibility shim: legacy `workflowDefinition` overrides translate to
+  // either the published-version relation or the in-progress draft column.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride === undefined ? VALID_DEFINITION : snapshotOverride;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
     slug: 'test-workflow',
     description: 'A test workflow',
-    workflowDefinition: VALID_DEFINITION,
+    draftDefinition: null,
+    publishedVersionId: snapshot === null ? null : 'wfv-1',
+    publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },
     patternsUsed: [1],
     isActive: true,
     isTemplate: false,
+    isSystem: false,
     metadata: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -278,7 +285,7 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       });
     });
 
-    it('accepts a new workflowDefinition with valid schema', async () => {
+    it('accepts a new draftDefinition with valid schema (writes to draft, not published)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
       const updatedDef = {
@@ -287,11 +294,11 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
         errorStrategy: 'retry',
       };
       vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
-        makeWorkflow({ workflowDefinition: updatedDef }) as never
+        makeWorkflow({ draftDefinition: updatedDef }) as never
       );
 
       const response = await PATCH(
-        makeRequest('PATCH', { workflowDefinition: updatedDef }),
+        makeRequest('PATCH', { draftDefinition: updatedDef }),
         makeParams(WORKFLOW_ID)
       );
 
@@ -334,14 +341,14 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       expect(response.status).toBe(409);
     });
 
-    it('returns 400 when updating workflowDefinition with invalid schema', async () => {
+    it('returns 400 when updating draftDefinition with invalid schema', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
 
       // Missing entryStepId — schema validation should reject
       const response = await PATCH(
         makeRequest('PATCH', {
-          workflowDefinition: { steps: [], errorStrategy: 'fail' },
+          draftDefinition: { steps: [], errorStrategy: 'fail' },
         }),
         makeParams(WORKFLOW_ID)
       );

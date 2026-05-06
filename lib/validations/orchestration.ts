@@ -828,11 +828,22 @@ export const rollbackWorkflowSchema = z.object({
 });
 
 /**
- * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run)
+ * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run).
+ *
+ * `target` selects which definition to validate. Defaults to the currently
+ * published version (back-compat). `'draft'` validates `draftDefinition`
+ * — errors if no draft exists. `'version'` requires `versionId`.
  */
-export const dryRunWorkflowBodySchema = z.object({
-  inputData: z.record(z.string(), z.unknown()),
-});
+export const dryRunWorkflowBodySchema = z
+  .object({
+    inputData: z.record(z.string(), z.unknown()),
+    target: z.enum(['published', 'draft', 'version']).default('published'),
+    versionId: cuidSchema.optional(),
+  })
+  .refine((v) => v.target !== 'version' || !!v.versionId, {
+    message: 'versionId is required when target is "version"',
+    path: ['versionId'],
+  });
 
 /**
  * Create workflow schema (POST /api/v1/admin/orchestration/workflows)

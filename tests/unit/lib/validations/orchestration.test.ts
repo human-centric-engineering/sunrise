@@ -70,9 +70,8 @@ import {
   evaluationLogsQuerySchema,
   completeEvaluationBodySchema,
   workflowDefinitionSchema,
-  workflowDefinitionHistoryEntrySchema,
-  workflowDefinitionHistorySchema,
-  workflowDefinitionRevertSchema,
+  publishWorkflowSchema,
+  rollbackWorkflowSchema,
   executionStatusSchema,
   executionTraceEntrySchema,
   executionTraceSchema,
@@ -401,19 +400,24 @@ describe('updateWorkflowSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should accept "skip" as a valid errorStrategy in workflowDefinition update', () => {
+  it('should accept "skip" as a valid errorStrategy in draftDefinition update', () => {
     const result = updateWorkflowSchema.safeParse({
-      workflowDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'skip' },
+      draftDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'skip' },
     });
     // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
 
-  it('should reject unknown errorStrategy values in workflowDefinition update', () => {
+  it('should reject unknown errorStrategy values in draftDefinition update', () => {
     const result = updateWorkflowSchema.safeParse({
-      workflowDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'explode' },
+      draftDefinition: { ...VALID_WORKFLOW_DEF, errorStrategy: 'explode' },
     });
     expect(result.success).toBe(false);
+  });
+
+  it('should accept null draftDefinition (clears the draft via PATCH)', () => {
+    const result = updateWorkflowSchema.safeParse({ draftDefinition: null });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -452,134 +456,60 @@ describe('workflowDefinitionSchema', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// workflowDefinitionHistoryEntrySchema
+// publishWorkflowSchema
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('workflowDefinitionHistoryEntrySchema', () => {
-  const VALID_ENTRY = {
-    definition: {
-      steps: [
-        {
-          id: 'step-1',
-          name: 'Step One',
-          type: 'llm_call',
-          config: {},
-          nextSteps: [],
-        },
-      ],
-      entryStepId: 'step-1',
-      errorStrategy: 'fail',
-    },
-    changedAt: '2025-06-01T00:00:00.000Z',
-    changedBy: 'cmjbv4i3x00003wsloputgwul',
-  };
-
-  it('accepts a valid history entry', () => {
-    const result = workflowDefinitionHistoryEntrySchema.safeParse(VALID_ENTRY);
-    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+describe('publishWorkflowSchema', () => {
+  it('accepts an empty body', () => {
+    const result = publishWorkflowSchema.safeParse({});
     expect(result.success).toBe(true);
   });
 
-  it('rejects when definition is missing', () => {
-    const { definition: _def, ...rest } = VALID_ENTRY;
-    const result = workflowDefinitionHistoryEntrySchema.safeParse(rest);
+  it('accepts a body with a changeSummary', () => {
+    const result = publishWorkflowSchema.safeParse({ changeSummary: 'Tweaked the prompt' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.changeSummary).toBe('Tweaked the prompt');
+  });
+
+  it('rejects a changeSummary longer than 500 chars', () => {
+    const result = publishWorkflowSchema.safeParse({ changeSummary: 'a'.repeat(501) });
     expect(result.success).toBe(false);
   });
 
-  it('rejects when changedAt is not a datetime string', () => {
-    const result = workflowDefinitionHistoryEntrySchema.safeParse({
-      ...VALID_ENTRY,
-      changedAt: 'not-a-date',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects when changedBy is empty', () => {
-    const result = workflowDefinitionHistoryEntrySchema.safeParse({
-      ...VALID_ENTRY,
-      changedBy: '',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects when changedBy is missing', () => {
-    const { changedBy: _cb, ...rest } = VALID_ENTRY;
-    const result = workflowDefinitionHistoryEntrySchema.safeParse(rest);
-    expect(result.success).toBe(false);
+  it('trims whitespace on changeSummary', () => {
+    const result = publishWorkflowSchema.safeParse({ changeSummary: '  notes  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.changeSummary).toBe('notes');
   });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// workflowDefinitionHistorySchema
+// rollbackWorkflowSchema
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('workflowDefinitionHistorySchema', () => {
-  const VALID_ENTRY = {
-    definition: {
-      steps: [
-        {
-          id: 'step-1',
-          name: 'Step One',
-          type: 'llm_call',
-          config: {},
-          nextSteps: [],
-        },
-      ],
-      entryStepId: 'step-1',
-      errorStrategy: 'fail',
-    },
-    changedAt: '2025-06-01T00:00:00.000Z',
-    changedBy: 'cmjbv4i3x00003wsloputgwul',
-  };
+describe('rollbackWorkflowSchema', () => {
+  const VALID_TARGET = 'cmjbv4i3x00003wsloputvv01';
 
-  it('accepts an empty array', () => {
-    const result = workflowDefinitionHistorySchema.safeParse([]);
-    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+  it('accepts a valid CUID targetVersionId', () => {
+    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: VALID_TARGET });
     expect(result.success).toBe(true);
   });
 
-  it('accepts an array of valid entries', () => {
-    const result = workflowDefinitionHistorySchema.safeParse([VALID_ENTRY, VALID_ENTRY]);
-    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+  it('accepts a body with both targetVersionId and changeSummary', () => {
+    const result = rollbackWorkflowSchema.safeParse({
+      targetVersionId: VALID_TARGET,
+      changeSummary: 'Restoring the v3 wording',
+    });
     expect(result.success).toBe(true);
   });
 
-  it('rejects when any entry has a missing changedAt', () => {
-    const bad = { definition: {}, changedBy: 'user-abc' };
-    const result = workflowDefinitionHistorySchema.safeParse([VALID_ENTRY, bad]);
-    expect(result.success).toBe(false);
-  });
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// workflowDefinitionRevertSchema
-// ────────────────────────────────────────────────────────────────────────────
-
-describe('workflowDefinitionRevertSchema', () => {
-  it('accepts versionIndex of 0', () => {
-    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 0 });
-    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts a positive integer versionIndex', () => {
-    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 5 });
-    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects a negative versionIndex', () => {
-    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: -1 });
+  it('rejects when targetVersionId is missing', () => {
+    const result = rollbackWorkflowSchema.safeParse({ changeSummary: 'oops' });
     expect(result.success).toBe(false);
   });
 
-  it('rejects a non-integer versionIndex', () => {
-    const result = workflowDefinitionRevertSchema.safeParse({ versionIndex: 1.5 });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects when versionIndex is missing', () => {
-    const result = workflowDefinitionRevertSchema.safeParse({});
+  it('rejects when targetVersionId is not a CUID', () => {
+    const result = rollbackWorkflowSchema.safeParse({ targetVersionId: 'not-a-cuid' });
     expect(result.success).toBe(false);
   });
 });

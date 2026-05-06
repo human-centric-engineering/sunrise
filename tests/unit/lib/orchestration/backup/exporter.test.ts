@@ -68,7 +68,10 @@ const workflowRow = {
   name: 'Onboarding Flow',
   slug: 'onboarding-flow',
   description: 'New user onboarding',
-  workflowDefinition: { steps: [] },
+  // Definition is now sourced from the published version relation, not a
+  // top-level column. The exporter flattens this back to `workflowDefinition`
+  // in the wire payload.
+  publishedVersion: { snapshot: { steps: [] } },
   patternsUsed: [],
   isActive: true,
   isTemplate: false,

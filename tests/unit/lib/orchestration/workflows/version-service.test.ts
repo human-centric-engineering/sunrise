@@ -18,7 +18,7 @@
  * @see lib/orchestration/workflows/version-service.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 
 // ─── Mocks (must come before module imports) ───────────────────────────────
 
@@ -282,7 +282,7 @@ describe('publishDraft', () => {
     );
     vi.mocked(semanticValidateWorkflow).mockResolvedValueOnce({
       ok: false,
-      errors: [{ stepId: 'step-1', code: 'AGENT_NOT_FOUND', message: 'Missing agent' }],
+      errors: [{ stepId: 'step-1', code: 'INACTIVE_AGENT', message: 'Missing agent' }],
     });
     await expect(
       publishDraft({ workflowId: WORKFLOW_ID, userId: ADMIN_ID })
@@ -451,7 +451,7 @@ describe('rollback', () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
       makeWorkflow({ publishedVersionId: VERSION_ID_V2 }) as never
     );
-    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockImplementation(async (args) => {
+    (prisma.aiWorkflowVersion.findUnique as unknown as Mock).mockImplementation(async (args) => {
       if (
         (args as { where: { id?: string } }).where.id === VERSION_ID_V1 ||
         (args as { where: { workflowId_version?: unknown } }).where.workflowId_version
@@ -487,7 +487,7 @@ describe('rollback', () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
       makeWorkflow({ publishedVersionId: VERSION_ID_V2 }) as never
     );
-    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockImplementation(async (args) => {
+    (prisma.aiWorkflowVersion.findUnique as unknown as Mock).mockImplementation(async (args) => {
       const w = (args as { where: { id?: string } }).where.id;
       if (w === VERSION_ID_V1) return makeVersion({ id: VERSION_ID_V1, version: 1 }) as never;
       if (w === VERSION_ID_V2) return makeVersion({ id: VERSION_ID_V2, version: 2 }) as never;

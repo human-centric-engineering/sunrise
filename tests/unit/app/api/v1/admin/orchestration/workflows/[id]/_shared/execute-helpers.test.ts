@@ -74,6 +74,11 @@ const VALID_DEFINITION = {
  * present so we can assert structural side-effects without type coercion hacks.
  */
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  // Compatibility shim: `workflowDefinition` overrides translate to a
+  // synthetic published-version snapshot — that's where prepareWorkflowExecution
+  // now reads the definition from.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride === undefined ? VALID_DEFINITION : snapshotOverride;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
@@ -81,15 +86,16 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: snapshot === null ? null : 'wfv-1',
+    publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },
     patternsUsed: [],
     templateSource: null,
     metadata: {},
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -127,9 +133,11 @@ describe('prepareWorkflowExecution', () => {
       // Act
       await prepareWorkflowExecution(WORKFLOW_ID);
 
-      // Assert — the helper calls prisma with the exact validated id
+      // Assert — the helper calls prisma with the exact validated id and
+      // joins the published version so the snapshot is available.
       expect(prisma.aiWorkflow.findUnique).toHaveBeenCalledWith({
         where: { id: WORKFLOW_ID },
+        include: { publishedVersion: true },
       });
     });
 

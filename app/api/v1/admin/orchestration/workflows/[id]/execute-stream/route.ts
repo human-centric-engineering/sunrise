@@ -72,15 +72,16 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   }
 
   // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
-  const { workflow, definition } = await prepareWorkflowExecution(rawId);
+  const { workflow, definition, version } = await prepareWorkflowExecution(rawId);
 
   log.info('workflow execute-stream started', {
     workflowId: workflow.id,
+    versionId: version.id,
     userId: session.user.id,
   });
 
   const engine = new OrchestrationEngine();
-  const events = engine.execute({ id: workflow.id, definition }, inputData, {
+  const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     userId: session.user.id,
     budgetLimitUsd,
     signal: request.signal,

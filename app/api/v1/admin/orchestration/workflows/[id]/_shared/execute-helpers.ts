@@ -18,6 +18,7 @@ import type { WorkflowDefinition } from '@/types/orchestration';
 
 interface PrepareResult {
   workflow: { id: string };
+  version: { id: string; version: number };
   definition: WorkflowDefinition;
 }
 
@@ -25,12 +26,15 @@ interface PrepareResult {
  * Validate and load a workflow for execution.
  *
  * 1. Parse `rawId` as a CUID
- * 2. Look up the workflow from the database
- * 3. Assert `isActive`
- * 4. Parse `workflowDefinition` with `workflowDefinitionSchema`
+ * 2. Look up the workflow + its published version from the database
+ * 3. Assert `isActive` and that a published version exists
+ * 4. Parse `version.snapshot` with `workflowDefinitionSchema`
  * 5. Run structural (`validateWorkflow`) and semantic validation
  *
- * @throws {ValidationError} if the ID format, active check, or definition validation fails
+ * The returned `version` is stamped onto `AiWorkflowExecution.versionId`
+ * by the calling route so each execution is pinned to the snapshot it ran.
+ *
+ * @throws {ValidationError} if the ID format, active check, no-published-version, or definition validation fails
  * @throws {NotFoundError} if the workflow does not exist
  */
 export async function prepareWorkflowExecution(rawId: string): Promise<PrepareResult> {
@@ -40,7 +44,10 @@ export async function prepareWorkflowExecution(rawId: string): Promise<PrepareRe
   }
   const id = parsed.data;
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  const workflow = await prisma.aiWorkflow.findUnique({
+    where: { id },
+    include: { publishedVersion: true },
+  });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
   if (!workflow.isActive) {
@@ -49,7 +56,13 @@ export async function prepareWorkflowExecution(rawId: string): Promise<PrepareRe
     });
   }
 
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  if (!workflow.publishedVersion) {
+    throw new ValidationError(`Workflow ${id} has no published version`, {
+      publishedVersionId: ['Publish a draft before executing the workflow'],
+    });
+  }
+
+  const defParsed = workflowDefinitionSchema.safeParse(workflow.publishedVersion.snapshot);
   if (!defParsed.success) {
     throw new ValidationError(`Workflow ${id} has a malformed definition`, {
       workflowDefinition: defParsed.error.issues.map((i) => i.message),
@@ -71,5 +84,12 @@ export async function prepareWorkflowExecution(rawId: string): Promise<PrepareRe
     });
   }
 
-  return { workflow: { id: workflow.id }, definition };
+  return {
+    workflow: { id: workflow.id },
+    version: {
+      id: workflow.publishedVersion.id,
+      version: workflow.publishedVersion.version,
+    },
+    definition,
+  };
 }

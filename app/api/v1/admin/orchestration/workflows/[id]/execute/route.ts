@@ -54,7 +54,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const { resumeFromExecutionId } = queryParsed.data;
 
   // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
-  const { workflow, definition } = await prepareWorkflowExecution(rawId);
+  const { workflow, definition, version } = await prepareWorkflowExecution(rawId);
 
   // Resume-path ownership guard — cross-user resume returns 404 (not 403)
   // to avoid confirming existence of another user's execution.
@@ -76,12 +76,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   });
 
   const engine = new OrchestrationEngine();
-  const events = engine.execute({ id: workflow.id, definition }, body.inputData, {
-    userId: session.user.id,
-    budgetLimitUsd: body.budgetLimitUsd,
-    signal: request.signal,
-    resumeFromExecutionId,
-  });
+  const events = engine.execute(
+    { id: workflow.id, definition, versionId: version.id },
+    body.inputData,
+    {
+      userId: session.user.id,
+      budgetLimitUsd: body.budgetLimitUsd,
+      signal: request.signal,
+      resumeFromExecutionId,
+    }
+  );
 
   return sseResponse(events, { signal: request.signal });
 });

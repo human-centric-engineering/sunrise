@@ -76,7 +76,13 @@ function existingWorkflow(
     ],
     ...definition,
   };
-  const row = { id: `wf-${slug}`, slug, workflowDefinition: fullDefinition };
+  // The capability now resolves the definition from the published version
+  // relation, not from a top-level workflowDefinition column.
+  const row = {
+    id: `wf-${slug}`,
+    slug,
+    publishedVersion: { id: `wfv-${slug}`, snapshot: fullDefinition },
+  };
   findWorkflow.mockResolvedValue(row);
   return { id: row.id, slug, definition: fullDefinition };
 }
@@ -158,7 +164,10 @@ describe('RunWorkflowCapability', () => {
       findWorkflow.mockResolvedValue({
         id: 'wf-1',
         slug: 'refund-flow',
-        workflowDefinition: { entryStepId: 'x' /* missing steps */ },
+        publishedVersion: {
+          id: 'wfv-1',
+          snapshot: { entryStepId: 'x' /* missing steps */ },
+        },
       });
       const cap = new RunWorkflowCapability();
       const result = await cap.execute({ workflowSlug: 'refund-flow' }, context);

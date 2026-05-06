@@ -14,15 +14,31 @@ import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { z } from 'zod';
 
-const templateItemSchema = z.object({
-  slug: z.string(),
-  name: z.string(),
-  description: z.string(),
-  workflowDefinition: z.unknown(),
-  patternsUsed: z.array(z.number()),
-  isTemplate: z.boolean(),
-  metadata: z.unknown(),
-});
+/**
+ * Templates fetched from the workflows list endpoint now carry their
+ * definition inside `publishedVersion.snapshot` rather than a top-level
+ * `workflowDefinition` column. The schema flattens that back to the shape
+ * the builder expects.
+ */
+const templateItemSchema = z
+  .object({
+    slug: z.string(),
+    name: z.string(),
+    description: z.string(),
+    publishedVersion: z.object({ snapshot: z.unknown() }).nullable(),
+    patternsUsed: z.array(z.number()),
+    isTemplate: z.boolean(),
+    metadata: z.unknown(),
+  })
+  .transform((row) => ({
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    workflowDefinition: row.publishedVersion?.snapshot,
+    patternsUsed: row.patternsUsed,
+    isTemplate: row.isTemplate,
+    metadata: row.metadata,
+  }));
 
 const templateListSchema = z.array(templateItemSchema);
 

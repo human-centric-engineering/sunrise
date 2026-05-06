@@ -86,6 +86,8 @@ const mockWorkflow = {
   id: 'wf_1',
   slug: 'my-workflow',
   isActive: true,
+  // Webhook trigger now refuses to fire when no version is published.
+  publishedVersionId: 'wfv_1',
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

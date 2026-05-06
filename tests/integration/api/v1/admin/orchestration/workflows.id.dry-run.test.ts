@@ -100,14 +100,21 @@ function makeValidDefinition() {
 }
 
 function makeWorkflowRow(overrides: { workflowDefinition?: unknown } = {}) {
+  // The dry-run route now reads the snapshot from `publishedVersion`, not a
+  // top-level `workflowDefinition` column. The fixture keeps the override
+  // ergonomics by translating the legacy field name into the new shape.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride === undefined ? makeValidDefinition() : snapshotOverride;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
     slug: 'test-workflow',
-    workflowDefinition: makeValidDefinition(),
+    draftDefinition: null,
+    publishedVersionId: snapshot === null ? null : 'wfv-1',
+    publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 

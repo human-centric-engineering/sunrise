@@ -327,7 +327,13 @@ describe('WorkflowsTable', () => {
       } as ReturnType<typeof useRouter>);
 
       vi.mocked(apiClient.get).mockResolvedValue({
-        workflowDefinition: { steps: [], entryStepId: '', errorStrategy: 'fail' },
+        // GET /workflows/:id now returns the published version on a relation;
+        // the duplicate handler reads from `draftDefinition` (preferred) or
+        // `publishedVersion.snapshot`.
+        draftDefinition: null,
+        publishedVersion: {
+          snapshot: { steps: [], entryStepId: '', errorStrategy: 'fail' },
+        },
         patternsUsed: [1, 2],
         isTemplate: false,
         metadata: null,

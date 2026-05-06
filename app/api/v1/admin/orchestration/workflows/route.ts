@@ -22,6 +22,7 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { createWorkflowSchema, listWorkflowsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const clientIP = getClientIP(request);
@@ -56,7 +57,12 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { executions: true } } },
+      include: {
+        _count: { select: { executions: true } },
+        // Templates list page hydrates the canvas from the published snapshot;
+        // the regular workflows table doesn't read it but the cost is small.
+        publishedVersion: { select: { id: true, version: true, snapshot: true } },
+      },
     }),
     prisma.aiWorkflow.count({ where }),
   ]);
@@ -74,18 +80,32 @@ export const POST = withAdminAuth(async (request, session) => {
   const body = await validateRequestBody(request, createWorkflowSchema);
 
   try {
-    const workflow = await prisma.aiWorkflow.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        description: body.description,
-        workflowDefinition: body.workflowDefinition as unknown as Prisma.InputJsonValue,
-        patternsUsed: body.patternsUsed,
-        isActive: body.isActive,
-        isTemplate: body.isTemplate,
-        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        createdBy: session.user.id,
-      },
+    // Create the workflow row + its v1 version atomically. The workflow is
+    // immediately runnable: the publish/draft model does not require an
+    // explicit publish step on initial creation.
+    const workflow = await prisma.$transaction(async (tx) => {
+      const created = await tx.aiWorkflow.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          description: body.description,
+          patternsUsed: body.patternsUsed,
+          isActive: body.isActive,
+          isTemplate: body.isTemplate,
+          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          createdBy: session.user.id,
+        },
+      });
+      await createInitialVersion({
+        tx,
+        workflowId: created.id,
+        definition: body.workflowDefinition,
+        userId: session.user.id,
+      });
+      return tx.aiWorkflow.findUniqueOrThrow({
+        where: { id: created.id },
+        include: { publishedVersion: true },
+      });
     });
 
     log.info('Workflow created', {

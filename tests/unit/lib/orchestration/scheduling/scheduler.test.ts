@@ -104,7 +104,7 @@ function makeSchedule(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
-      workflowDefinition: VALID_DEFINITION,
+      publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
     ...overrides,
   };
@@ -114,6 +114,7 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
   return {
     id: 'exec_1',
     workflowId: 'wf_1',
+    versionId: 'wfv_1',
     status: 'pending',
     inputData: { topic: 'test' },
     executionTrace: [],
@@ -123,8 +124,9 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
-      workflowDefinition: VALID_DEFINITION,
+      publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
+    version: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     ...overrides,
   };
 }
@@ -284,7 +286,7 @@ describe('processDueSchedules', () => {
         id: 'wf_1',
         slug: 'inactive-wf',
         isActive: false,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
@@ -348,7 +350,7 @@ describe('processDueSchedules', () => {
         id: 'wf_2',
         slug: 'wf-two',
         isActive: true,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_2', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([s1, s2] as never);
@@ -405,7 +407,7 @@ describe('processDueSchedules', () => {
     expect(logger.info).not.toHaveBeenCalledWith('Scheduler: tick complete', expect.anything());
   });
 
-  it('includes workflowDefinition in findMany select', async () => {
+  it('includes the published version snapshot in findMany select', async () => {
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([]);
 
     await processDueSchedules();
@@ -414,7 +416,9 @@ describe('processDueSchedules', () => {
       expect.objectContaining({
         include: {
           workflow: {
-            select: expect.objectContaining({ workflowDefinition: true }),
+            select: expect.objectContaining({
+              publishedVersion: { select: { id: true, snapshot: true } },
+            }),
           },
         },
       })
@@ -448,7 +452,7 @@ describe('processPendingExecutions', () => {
         id: 'wf_1',
         slug: 'inactive',
         isActive: false,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);

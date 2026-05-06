@@ -10,6 +10,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { backupSchema } from '@/lib/orchestration/backup/schema';
+import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
+import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
 export interface ImportResult {
   agents: { created: number; updated: number };
@@ -121,31 +123,64 @@ export async function importOrchestrationConfig(
       }
     }
 
-    // Import workflows by slug upsert
+    // Import workflows by slug upsert. The wire format carries one
+    // `workflowDefinition` per workflow — on import it becomes either a
+    // new published version (update path: published draft promoted to vN+1)
+    // or the initial v1 (create path).
     for (const wf of parsed.data.workflows) {
+      const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
+      if (!defParsed.success) {
+        result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
+        continue;
+      }
       const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
       if (existing) {
+        // Promote the imported snapshot to a new version on the existing workflow.
+        const lastVersion = await tx.aiWorkflowVersion.findFirst({
+          where: { workflowId: existing.id },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        const newVersion = await tx.aiWorkflowVersion.create({
+          data: {
+            workflowId: existing.id,
+            version: (lastVersion?.version ?? 0) + 1,
+            snapshot: defParsed.data as unknown as Prisma.InputJsonValue,
+            changeSummary: 'Imported from backup',
+            createdBy: userId,
+          },
+        });
         await tx.aiWorkflow.update({
-          where: { slug: wf.slug },
+          where: { id: existing.id },
           data: {
             name: wf.name,
             description: wf.description,
-            workflowDefinition: wf.workflowDefinition as Prisma.InputJsonValue,
             patternsUsed: wf.patternsUsed,
             isActive: wf.isActive,
             isTemplate: wf.isTemplate,
             metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            publishedVersionId: newVersion.id,
           },
         });
         result.workflows.updated++;
       } else {
-        await tx.aiWorkflow.create({
+        const created = await tx.aiWorkflow.create({
           data: {
-            ...wf,
-            workflowDefinition: wf.workflowDefinition as Prisma.InputJsonValue,
+            name: wf.name,
+            slug: wf.slug,
+            description: wf.description,
+            patternsUsed: wf.patternsUsed,
+            isActive: wf.isActive,
+            isTemplate: wf.isTemplate,
             metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             createdBy: userId,
           },
+        });
+        await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: defParsed.data,
+          userId,
         });
         result.workflows.created++;
       }

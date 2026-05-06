@@ -154,7 +154,11 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
 
     const workflowRow = await prisma.aiWorkflow.findFirst({
       where: { slug: args.workflowSlug, isActive: true },
-      select: { id: true, slug: true, workflowDefinition: true },
+      select: {
+        id: true,
+        slug: true,
+        publishedVersion: { select: { id: true, snapshot: true } },
+      },
     });
     if (!workflowRow) {
       return this.error(
@@ -162,8 +166,16 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
         'workflow_not_found'
       );
     }
+    if (!workflowRow.publishedVersion) {
+      return this.error(
+        `Workflow ${args.workflowSlug} has no published version`,
+        'workflow_not_published'
+      );
+    }
 
-    const definitionParsed = workflowDefinitionSchema.safeParse(workflowRow.workflowDefinition);
+    const definitionParsed = workflowDefinitionSchema.safeParse(
+      workflowRow.publishedVersion.snapshot
+    );
     if (!definitionParsed.success) {
       logger.error('run_workflow: workflow definition failed validation', {
         agentId: context.agentId,
@@ -176,6 +188,7 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
       );
     }
     const definition = definitionParsed.data as WorkflowDefinition;
+    const pinnedVersionId = workflowRow.publishedVersion.id;
 
     const engine = new OrchestrationEngine();
 
@@ -185,7 +198,7 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
 
     try {
       for await (const event of engine.execute(
-        { id: workflowRow.id, definition },
+        { id: workflowRow.id, definition, versionId: pinnedVersionId },
         args.input ?? {},
         {
           userId: context.userId,

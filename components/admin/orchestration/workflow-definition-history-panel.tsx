@@ -3,13 +3,13 @@
 /**
  * WorkflowDefinitionHistoryPanel
  *
- * Collapsible audit-log panel for the workflow builder (edit mode).
- * Adapted from `InstructionsHistoryPanel` — same UX, different data shape.
+ * Collapsible version-history panel for the workflow builder (edit mode).
  *
- *   - Lazy-fetches `GET /workflows/:id/definition-history` on first expand.
- *   - Renders history rows newest-first with step count preview.
- *   - "Diff" dialog shows JSON pretty-print diff.
- *   - "Revert" AlertDialog posts to `/workflows/:id/definition-revert`.
+ *   - Lazy-fetches `GET /workflows/:id/versions` on first expand.
+ *   - Renders versions newest-first with step count preview.
+ *   - "Diff" dialog compares the historical snapshot to the currently-published one.
+ *   - "Rollback" AlertDialog posts to `/workflows/:id/rollback` — creates a NEW
+ *     version copied from the target so the audit chain stays monotonic.
  */
 
 import { useCallback, useState } from 'react';
@@ -39,18 +39,24 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 
-interface DefinitionHistoryEntry {
-  definition: Record<string, unknown>;
-  changedAt: string;
-  changedBy: string;
-  versionIndex: number;
+interface VersionRow {
+  id: string;
+  version: number;
+  snapshot: Record<string, unknown>;
+  changeSummary: string | null;
+  createdAt: string;
+  createdBy: string;
 }
 
-interface DefinitionHistoryResponse {
-  workflowId: string;
-  slug: string;
-  current: Record<string, unknown>;
-  history: DefinitionHistoryEntry[];
+interface VersionsListResponse {
+  versions: VersionRow[];
+  publishedVersionId: string | null;
+  nextCursor: string | null;
+}
+
+interface DerivedHistory {
+  publishedSnapshot: Record<string, unknown> | null;
+  entries: VersionRow[];
 }
 
 export interface WorkflowDefinitionHistoryPanelProps {
@@ -71,11 +77,11 @@ export function WorkflowDefinitionHistoryPanel({
 }: WorkflowDefinitionHistoryPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<DefinitionHistoryResponse | null>(null);
+  const [data, setData] = useState<DerivedHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [diffOpen, setDiffOpen] = useState<DefinitionHistoryEntry | null>(null);
-  const [revertTarget, setRevertTarget] = useState<DefinitionHistoryEntry | null>(null);
+  const [diffOpen, setDiffOpen] = useState<VersionRow | null>(null);
+  const [revertTarget, setRevertTarget] = useState<VersionRow | null>(null);
   const [reverting, setReverting] = useState(false);
   const [revertError, setRevertError] = useState<string | null>(null);
 
@@ -83,10 +89,14 @@ export function WorkflowDefinitionHistoryPanel({
     setLoading(true);
     setError(null);
     try {
-      const body = await apiClient.get<DefinitionHistoryResponse>(
-        API.ADMIN.ORCHESTRATION.workflowDefinitionHistory(workflowId)
+      const body = await apiClient.get<VersionsListResponse>(
+        API.ADMIN.ORCHESTRATION.workflowVersions(workflowId)
       );
-      setData(body);
+      const publishedSnapshot =
+        body.versions.find((v) => v.id === body.publishedVersionId)?.snapshot ?? null;
+      // Show non-current versions, newest first.
+      const entries = body.versions.filter((v) => v.id !== body.publishedVersionId);
+      setData({ publishedSnapshot, entries });
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Could not load definition history.');
     } finally {
@@ -105,15 +115,15 @@ export function WorkflowDefinitionHistoryPanel({
     setReverting(true);
     setRevertError(null);
     try {
-      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowDefinitionRevert(workflowId), {
-        body: { versionIndex: revertTarget.versionIndex },
+      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowRollback(workflowId), {
+        body: { targetVersionId: revertTarget.id },
       });
       setRevertTarget(null);
       await fetchHistory();
       onReverted?.();
     } catch (err) {
       setRevertError(
-        err instanceof APIClientError ? err.message : 'Revert failed. Try again in a moment.'
+        err instanceof APIClientError ? err.message : 'Rollback failed. Try again in a moment.'
       );
     } finally {
       setReverting(false);
@@ -136,7 +146,7 @@ export function WorkflowDefinitionHistoryPanel({
         </FieldHelp>
         {data && (
           <span className="text-muted-foreground ml-1 text-xs">
-            ({data.history.length} {data.history.length === 1 ? 'version' : 'versions'})
+            ({data.entries.length} {data.entries.length === 1 ? 'version' : 'versions'})
           </span>
         )}
       </button>
@@ -145,30 +155,36 @@ export function WorkflowDefinitionHistoryPanel({
         <div className="border-t px-3 py-3">
           {loading && <p className="text-muted-foreground text-sm">Loading history…</p>}
           {error && <p className="text-destructive text-sm">{error}</p>}
-          {!loading && !error && data && data.history.length === 0 && (
+          {!loading && !error && data && data.entries.length === 0 && (
             <p className="text-muted-foreground text-sm">
               No previous versions yet. This workflow&apos;s definition hasn&apos;t been changed
               since it was created.
             </p>
           )}
-          {!loading && !error && data && data.history.length > 0 && (
+          {!loading && !error && data && data.entries.length > 0 && (
             <ul className="space-y-2">
-              {data.history.map((entry) => (
+              {data.entries.map((entry) => (
                 <li
-                  key={`${entry.changedAt}-${entry.versionIndex}`}
+                  key={entry.id}
                   className="bg-muted/30 flex items-start justify-between gap-3 rounded-md p-2"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-xs">
-                      <span className="font-medium">{entry.changedBy}</span>
+                      <span className="font-medium">v{entry.version}</span>
                       <span className="text-muted-foreground">
                         {' · '}
-                        {new Date(entry.changedAt).toLocaleString()}
+                        {new Date(entry.createdAt).toLocaleString()}
                       </span>
+                      <span className="text-muted-foreground"> · {entry.createdBy}</span>
                     </div>
                     <p className="text-muted-foreground mt-1 font-mono text-xs">
-                      {definitionPreview(entry.definition)}
+                      {definitionPreview(entry.snapshot)}
                     </p>
+                    {entry.changeSummary && (
+                      <p className="text-muted-foreground mt-1 text-xs italic">
+                        {entry.changeSummary}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <Button
@@ -187,7 +203,7 @@ export function WorkflowDefinitionHistoryPanel({
                       onClick={() => setRevertTarget(entry)}
                     >
                       <RotateCcw className="mr-1 h-3 w-3" />
-                      Revert
+                      Rollback
                     </Button>
                   </div>
                 </li>
@@ -209,21 +225,21 @@ export function WorkflowDefinitionHistoryPanel({
             <DialogTitle>Compare definitions</DialogTitle>
             <DialogDescription>
               Red lines were removed; green lines were added going from this historical version to
-              the current definition.
+              the currently published definition.
             </DialogDescription>
           </DialogHeader>
           {diffOpen && data && (
             <div className="max-h-[60vh] overflow-auto rounded-md border">
               <DiffView
-                oldText={JSON.stringify(diffOpen.definition, null, 2)}
-                newText={JSON.stringify(data.current, null, 2)}
+                oldText={JSON.stringify(diffOpen.snapshot, null, 2)}
+                newText={JSON.stringify(data.publishedSnapshot ?? {}, null, 2)}
               />
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* Revert confirm */}
+      {/* Rollback confirm */}
       <AlertDialog
         open={!!revertTarget}
         onOpenChange={(open) => {
@@ -235,17 +251,18 @@ export function WorkflowDefinitionHistoryPanel({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revert to this definition?</AlertDialogTitle>
+            <AlertDialogTitle>Roll back to this version?</AlertDialogTitle>
             <AlertDialogDescription>
-              The current definition will be pushed onto the history stack before being overwritten,
-              so nothing is lost — you can revert again later.
+              A new published version will be created with this snapshot. The audit chain is
+              monotonic — no historical version is mutated, and rolling forward is just another
+              rollback.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {revertError && <p className="text-destructive text-sm">{revertError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => void handleRevert()} disabled={reverting}>
-              {reverting ? 'Reverting…' : 'Revert'}
+              {reverting ? 'Rolling back…' : 'Rollback'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

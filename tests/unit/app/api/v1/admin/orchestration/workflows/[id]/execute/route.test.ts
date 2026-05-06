@@ -121,6 +121,10 @@ const VALID_DEFINITION = {
 };
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  // Compatibility shim — translates the legacy `workflowDefinition` override
+  // to the published-version relation that the route now reads from.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride === undefined ? VALID_DEFINITION : snapshotOverride;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
@@ -128,15 +132,16 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: snapshot === null ? null : 'wfv-1',
+    publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },
     patternsUsed: [],
     templateSource: null,
     metadata: {},
     createdBy: 'admin-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 

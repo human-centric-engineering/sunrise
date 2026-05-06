@@ -48,10 +48,39 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
 
   const body = await validateRequestBody(request, dryRunWorkflowBodySchema);
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  const workflow = await prisma.aiWorkflow.findUnique({
+    where: { id },
+    include: { publishedVersion: true },
+  });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  // Pick the snapshot to dry-run against per the requested target.
+  let rawDefinition: unknown;
+  if (body.target === 'draft') {
+    if (workflow.draftDefinition === null || workflow.draftDefinition === undefined) {
+      throw new ValidationError(`Workflow ${id} has no draft to dry-run`, {
+        draftDefinition: ['Workflow has no draft'],
+      });
+    }
+    rawDefinition = workflow.draftDefinition;
+  } else if (body.target === 'version') {
+    const versionRow = await prisma.aiWorkflowVersion.findUnique({
+      where: { id: body.versionId! },
+    });
+    if (!versionRow || versionRow.workflowId !== id) {
+      throw new NotFoundError(`Workflow ${id} has no version ${body.versionId}`);
+    }
+    rawDefinition = versionRow.snapshot;
+  } else {
+    if (!workflow.publishedVersion) {
+      throw new ValidationError(`Workflow ${id} has no published version`, {
+        publishedVersionId: ['Publish a draft before dry-running'],
+      });
+    }
+    rawDefinition = workflow.publishedVersion.snapshot;
+  }
+
+  const defParsed = workflowDefinitionSchema.safeParse(rawDefinition);
   if (!defParsed.success) {
     throw new ValidationError(`Workflow ${id} has a malformed definition`, {
       workflowDefinition: defParsed.error.issues.map((i) => i.message),

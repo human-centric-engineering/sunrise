@@ -28,12 +28,34 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// Shared transaction-internal mocks so tests can assert on the tx writes.
+const txMocks = {
+  workflowCreate: vi.fn(),
+  workflowUpdate: vi.fn(),
+  workflowFindUniqueOrThrow: vi.fn(),
+  versionCreate: vi.fn(),
+};
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    aiWorkflowVersion: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
+      cb({
+        aiWorkflow: {
+          create: txMocks.workflowCreate,
+          update: txMocks.workflowUpdate,
+          findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
+        },
+        aiWorkflowVersion: { create: txMocks.versionCreate },
+      })
+    ),
   },
 }));
 
@@ -104,8 +126,9 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-1',
+    publishedVersion: { id: 'wfv-1', version: 1, snapshot: VALID_DEFINITION },
     patternsUsed: [],
     templateSource: null,
     metadata: {},
@@ -125,8 +148,8 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
     isActive: true,
     isTemplate: true,
     templateSource: 'custom',
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-tpl-1',
     patternsUsed: [],
     metadata: {},
     createdBy: 'cmjbv4i3x00003wsloputgwul',
@@ -197,8 +220,10 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       return null;
     }) as never);
 
-    // Default: create succeeds and returns a template
-    vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeTemplate() as never);
+    // Default: transaction succeeds — clone is created + v1 seeded.
+    txMocks.workflowCreate.mockResolvedValue({ id: TEMPLATE_ID });
+    txMocks.versionCreate.mockResolvedValue({ id: 'wfv-tpl-1', version: 1 });
+    txMocks.workflowFindUniqueOrThrow.mockResolvedValue(makeTemplate());
   });
 
   // ─── Rate limiting ──────────────────────────────────────────────────
@@ -315,16 +340,18 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       expect(body.data.isTemplate).toBe(true);
       expect(body.data.templateSource).toBe('custom');
 
-      // Assert — prisma.create was called with the correct shape
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      // Assert — the transactional create was called with the correct shape.
+      // workflowDefinitionHistory is no longer a column — versions replace it.
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             isTemplate: true,
             templateSource: 'custom',
-            workflowDefinitionHistory: [],
           }),
         })
       );
+      // The transaction also seeds v1 of the new template.
+      expect(txMocks.versionCreate).toHaveBeenCalledOnce();
     });
 
     it('should use provided name and description overrides when supplied', async () => {
@@ -340,7 +367,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       );
 
       // Assert — create was called with the overridden name/description
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             name: overrideName,
@@ -358,7 +385,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       await POST(makeRequest(), makeParams());
 
       // Assert — name defaults to "<source name> (Template)"
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             name: 'My Workflow (Template)',
@@ -379,7 +406,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
         'Unique constraint failed on the fields: (`slug`)',
         { code: 'P2002', clientVersion: '7.0.0', meta: { target: ['slug'] } }
       );
-      vi.mocked(prisma.aiWorkflow.create).mockRejectedValue(p2002Error);
+      txMocks.workflowCreate.mockRejectedValue(p2002Error);
 
       // Act
       const response = await POST(makeRequest(), makeParams());
@@ -412,7 +439,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       await POST(makeRequest(), makeParams());
 
       // Assert — create was called with the suffixed slug (e.g. "my-workflow-template-1")
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             slug: 'my-workflow-template-1',

@@ -1,4 +1,5 @@
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
+import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
 
 /**
@@ -43,20 +44,38 @@ const unit: SeedUnit = {
         useCases: template.useCases,
         patterns: template.patterns,
       };
-      await prisma.aiWorkflow.upsert({
+      const existing = await prisma.aiWorkflow.findUnique({
         where: { slug: template.slug },
-        update: { metadata: templateMetadata as unknown as object },
-        create: {
-          slug: template.slug,
-          name: template.name,
-          description: template.shortDescription,
-          workflowDefinition: template.workflowDefinition as unknown as object,
-          patternsUsed,
-          isActive: true,
-          isTemplate: true,
-          metadata: templateMetadata as unknown as object,
-          createdBy,
-        },
+        select: { id: true },
+      });
+      if (existing) {
+        await prisma.aiWorkflow.update({
+          where: { slug: template.slug },
+          data: { metadata: templateMetadata as unknown as object },
+        });
+        continue;
+      }
+      // First-time seed: create the workflow + its v1 version atomically so the
+      // template is immediately runnable.
+      await prisma.$transaction(async (tx) => {
+        const created = await tx.aiWorkflow.create({
+          data: {
+            slug: template.slug,
+            name: template.name,
+            description: template.shortDescription,
+            patternsUsed,
+            isActive: true,
+            isTemplate: true,
+            metadata: templateMetadata as unknown as object,
+            createdBy,
+          },
+        });
+        await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: template.workflowDefinition,
+          userId: createdBy,
+        });
       });
     }
 

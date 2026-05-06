@@ -106,25 +106,29 @@ import { apiClient } from '@/lib/api/client';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
+const TWO_STEP_DEFINITION = {
+  entryStepId: 'step-1',
+  errorStrategy: 'fail' as const,
+  steps: [
+    {
+      id: 'step-1',
+      name: 'Step 1',
+      type: 'llm_call',
+      config: { prompt: 'original prompt' },
+      nextSteps: [{ targetStepId: 'step-2' }],
+    },
+    { id: 'step-2', name: 'Step 2', type: 'chain', config: {}, nextSteps: [] },
+  ],
+};
+
 const TWO_STEP_WORKFLOW = {
   id: 'wf-1',
   name: 'My Workflow',
   slug: 'my-workflow',
   description: 'Test',
-  workflowDefinition: {
-    entryStepId: 'step-1',
-    errorStrategy: 'fail',
-    steps: [
-      {
-        id: 'step-1',
-        name: 'Step 1',
-        type: 'llm_call',
-        config: { prompt: 'original prompt' },
-        nextSteps: [{ targetStepId: 'step-2' }],
-      },
-      { id: 'step-2', name: 'Step 2', type: 'chain', config: {}, nextSteps: [] },
-    ],
-  },
+  draftDefinition: null,
+  publishedVersionId: 'wfv-1',
+  publishedVersion: { id: 'wfv-1', version: 1, snapshot: TWO_STEP_DEFINITION },
   patternsUsed: [1, 2],
   isActive: true,
   isTemplate: false,
@@ -234,7 +238,7 @@ describe('EditWorkflowPage (server component)', () => {
     expect(screen.queryByText(/workflow details/i)).not.toBeInTheDocument();
   });
 
-  it('5.1b: PATCH body workflowDefinition contains the serialised steps', async () => {
+  it('5.1b: PATCH body draftDefinition contains the serialised steps', async () => {
     const user = userEvent.setup();
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
@@ -257,7 +261,8 @@ describe('EditWorkflowPage (server component)', () => {
 
     const [, options] = vi.mocked(apiClient.patch).mock.calls[0];
     const body = options?.body as Record<string, unknown>;
-    const def = body.workflowDefinition as { steps: Array<{ id: string; type: string }> };
+    // PATCH writes to the draft, leaving the published version untouched.
+    const def = body.draftDefinition as { steps: Array<{ id: string; type: string }> };
     expect(Array.isArray(def.steps)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     expect(def.steps).toHaveLength(2);
   });

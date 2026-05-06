@@ -15,6 +15,7 @@ const mockTx = {
   aiAgent: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiCapability: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiWorkflow: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  aiWorkflowVersion: { findFirst: vi.fn(), create: vi.fn() },
   aiWebhookSubscription: { findFirst: vi.fn(), create: vi.fn() },
   aiOrchestrationSettings: { upsert: vi.fn() },
 };
@@ -94,7 +95,21 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     name: 'Onboarding Flow',
     slug: 'onboarding-flow',
     description: 'New user onboarding',
-    workflowDefinition: { steps: [] },
+    // Wire payload still uses `workflowDefinition` (the legacy column name).
+    // The importer reseeds v1 from this snapshot via createInitialVersion.
+    workflowDefinition: {
+      steps: [
+        {
+          id: 'step-1',
+          name: 'Step One',
+          type: 'chain',
+          config: { prompt: 'hi' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'step-1',
+      errorStrategy: 'fail',
+    },
     patternsUsed: [],
     isActive: true,
     isTemplate: false,
@@ -147,6 +162,8 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflow.findUnique.mockReset();
     mockTx.aiWorkflow.create.mockReset();
     mockTx.aiWorkflow.update.mockReset();
+    mockTx.aiWorkflowVersion.findFirst.mockReset();
+    mockTx.aiWorkflowVersion.create.mockReset();
     mockTx.aiWebhookSubscription.findFirst.mockReset();
     mockTx.aiWebhookSubscription.create.mockReset();
     mockTx.aiOrchestrationSettings.upsert.mockReset();
@@ -211,12 +228,15 @@ describe('importOrchestrationConfig', () => {
 
   it('creates a new workflow → workflows.created = 1', async () => {
     mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
-    mockTx.aiWorkflow.create.mockResolvedValue({});
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
     const result = await importOrchestrationConfig(payload, 'user-1');
 
     expect(mockTx.aiWorkflow.create).toHaveBeenCalledOnce();
+    expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledOnce();
     expect(result.workflows.created).toBe(1);
   });
 

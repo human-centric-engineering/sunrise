@@ -31,7 +31,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 
-import type { AiWorkflow } from '@/types/orchestration';
+import type { AiWorkflowWithVersion } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -81,7 +81,7 @@ export type WorkflowBuilderMode = 'create' | 'edit';
 
 export interface WorkflowBuilderProps {
   mode: WorkflowBuilderMode;
-  workflow?: AiWorkflow | null;
+  workflow?: AiWorkflowWithVersion | null;
   /** Pre-populate the canvas from a WorkflowDefinition (e.g. from advisor). */
   initialDefinition?: WorkflowDefinition;
   /** Server-prefetched capabilities for the Tool Call block editor. */
@@ -107,8 +107,20 @@ interface InitialState {
   details: WorkflowDetails | null;
 }
 
+/**
+ * Pick the definition to load onto the canvas.
+ * Prefer the in-progress `draftDefinition`; fall back to the published version's
+ * snapshot. Returns `unknown` so the caller can run its own Zod parse.
+ */
+function pickEditableDefinition(workflow: AiWorkflowWithVersion): unknown {
+  if (workflow.draftDefinition !== null && workflow.draftDefinition !== undefined) {
+    return workflow.draftDefinition;
+  }
+  return workflow.publishedVersion?.snapshot ?? null;
+}
+
 function initialState(
-  workflow: AiWorkflow | null | undefined,
+  workflow: AiWorkflowWithVersion | null | undefined,
   initialDefinition?: WorkflowDefinition
 ): InitialState {
   if (!workflow && initialDefinition && Array.isArray(initialDefinition.steps)) {
@@ -120,7 +132,7 @@ function initialState(
     return { nodes: [], edges: [], name: 'Untitled workflow', details: null };
   }
 
-  const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const defResult = workflowDefinitionSchema.safeParse(pickEditableDefinition(workflow));
   const def = defResult.success ? (defResult.data as WorkflowDefinition) : null;
   const baseDetails: WorkflowDetails = {
     slug: workflow.slug,
@@ -518,10 +530,10 @@ function WorkflowBuilderInner({
   const handleHistoryRevert = useCallback(async () => {
     if (!workflow) return;
     try {
-      const fresh = await apiClient.get<AiWorkflow>(
+      const fresh = await apiClient.get<AiWorkflowWithVersion>(
         API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
       );
-      const parsed = workflowDefinitionSchema.safeParse(fresh.workflowDefinition);
+      const parsed = workflowDefinitionSchema.safeParse(pickEditableDefinition(fresh));
       if (parsed.success) {
         const { nodes: revertedNodes, edges: revertedEdges } = workflowDefinitionToFlow(
           parsed.data
@@ -574,7 +586,7 @@ function WorkflowBuilderInner({
               | undefined) ?? null
           }
           workflowDefinition={
-            (workflowDefinitionSchema.safeParse(workflow.workflowDefinition).data as
+            (workflowDefinitionSchema.safeParse(pickEditableDefinition(workflow)).data as
               | WorkflowDefinition
               | undefined) ?? null
           }

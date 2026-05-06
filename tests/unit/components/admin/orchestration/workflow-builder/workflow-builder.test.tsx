@@ -161,8 +161,8 @@ vi.mock('@/components/admin/orchestration/workflow-definition-history-panel', ()
 
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
-import type { AiWorkflow } from '@prisma/client';
-import type { WorkflowDefinition } from '@/types/orchestration';
+import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
+import type { AiWorkflowWithVersion, WorkflowDefinition } from '@/types/orchestration';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -223,23 +223,51 @@ const MOCK_TEMPLATES = [
   },
 ];
 
-function makeWorkflow(overrides: Partial<AiWorkflow> = {}): AiWorkflow {
+type AiWorkflowOverrides = Partial<AiWorkflow> & {
+  /**
+   * Convenience override — set the published-version snapshot directly.
+   * The fixture wraps it into the `publishedVersion` relation shape.
+   */
+  workflowDefinition?: unknown;
+  publishedVersion?: AiWorkflowVersion | null;
+};
+
+function makeWorkflow(overrides: AiWorkflowOverrides = {}): AiWorkflowWithVersion {
+  const { workflowDefinition: defOverride, publishedVersion: pvOverride, ...rest } = overrides;
+  // Resolve the published version: explicit override wins; otherwise build a
+  // default v1 from `workflowDefinition` (or the canonical fixture).
+  const snapshot = defOverride ?? TWO_STEP_DEFINITION;
+  const publishedVersion: AiWorkflowVersion | null =
+    pvOverride !== undefined
+      ? pvOverride
+      : ({
+          id: 'wfv-1',
+          workflowId: 'wf-1',
+          version: 1,
+          snapshot: snapshot as AiWorkflowVersion['snapshot'],
+          changeSummary: null,
+          createdBy: 'user-1',
+          createdAt: new Date('2025-01-01'),
+        } as AiWorkflowVersion);
   return {
     id: 'wf-1',
     name: 'Test Workflow',
     slug: 'test-workflow',
     description: 'A test workflow',
-    workflowDefinition: TWO_STEP_DEFINITION as unknown as AiWorkflow['workflowDefinition'],
+    draftDefinition: null,
+    publishedVersionId: publishedVersion?.id ?? null,
+    publishedVersion,
     patternsUsed: [1, 2],
     isActive: true,
     isTemplate: false,
     isSystem: false,
+    templateSource: null,
     metadata: null,
     createdBy: 'user-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
-  } as AiWorkflow;
+    ...rest,
+  } as AiWorkflowWithVersion;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -331,33 +359,26 @@ describe('WorkflowBuilder', () => {
   });
 
   describe('malformed workflowDefinition', () => {
-    it('seeds empty nodes when workflowDefinition is null', () => {
+    it('seeds empty nodes when published-version snapshot is null', () => {
       lastNodesStateArg = ['placeholder'];
-      const workflow = makeWorkflow({
-        workflowDefinition: null as unknown as AiWorkflow['workflowDefinition'],
-      });
+      const workflow = makeWorkflow({ publishedVersion: null });
 
       expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(lastNodesStateArg).toEqual([]);
     });
 
-    it('seeds empty nodes when workflowDefinition is a plain string', () => {
+    it('seeds empty nodes when published-version snapshot is a plain string', () => {
       lastNodesStateArg = ['placeholder'];
-      const workflow = makeWorkflow({
-        workflowDefinition: 'invalid' as unknown as AiWorkflow['workflowDefinition'],
-      });
+      const workflow = makeWorkflow({ workflowDefinition: 'invalid' });
 
       expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
       expect(lastNodesStateArg).toEqual([]);
     });
 
-    it('seeds empty nodes when workflowDefinition has no steps array', () => {
+    it('seeds empty nodes when published-version snapshot has no steps array', () => {
       lastNodesStateArg = ['placeholder'];
       const workflow = makeWorkflow({
-        workflowDefinition: {
-          entryStepId: '',
-          errorStrategy: 'fail',
-        } as unknown as AiWorkflow['workflowDefinition'],
+        workflowDefinition: { entryStepId: '', errorStrategy: 'fail' },
       });
 
       expect(() => render(<WorkflowBuilder mode="edit" workflow={workflow} />)).not.toThrow(); // test-review:accept empty_not_throw — component robustness: must not crash on edge input;
@@ -416,7 +437,8 @@ describe('WorkflowBuilder', () => {
       expect(url).toContain('wf-1');
       const body = options?.body as Record<string, unknown>;
       expect(body.name).toBeDefined();
-      expect(body.workflowDefinition).toBeDefined();
+      // PATCH writes to the draft, not the published definition.
+      expect(body.draftDefinition).toBeDefined();
     });
   });
 
@@ -677,9 +699,7 @@ describe('WorkflowBuilder', () => {
           },
         ],
       };
-      const workflow = makeWorkflow({
-        workflowDefinition: brokenDef as unknown as AiWorkflow['workflowDefinition'],
-      });
+      const workflow = makeWorkflow({ workflowDefinition: brokenDef });
 
       render(<WorkflowBuilder mode="edit" workflow={workflow} />);
 
@@ -863,9 +883,7 @@ describe('WorkflowBuilder', () => {
         errorStrategy: 'fail',
         steps: [{ id: 's1', name: 'Reverted', type: 'llm_call', config: {}, nextSteps: [] }],
       };
-      const freshWorkflow = makeWorkflow({
-        workflowDefinition: freshDef as unknown as AiWorkflow['workflowDefinition'],
-      });
+      const freshWorkflow = makeWorkflow({ workflowDefinition: freshDef });
       vi.mocked(apiClient.get).mockImplementation((url: string) => {
         if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
         return Promise.resolve(freshWorkflow);

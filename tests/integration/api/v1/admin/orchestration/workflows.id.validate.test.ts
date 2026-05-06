@@ -115,12 +115,18 @@ const CYCLE_DEFINITION = {
 };
 
 function makeWorkflow(definition: unknown = VALID_DEFINITION) {
+  // The validate route now reads from `publishedVersion.snapshot`, not a
+  // top-level workflowDefinition column. Pass `null` as the definition to
+  // simulate "no published version".
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
     slug: 'test-workflow',
     description: 'A test workflow',
-    workflowDefinition: definition,
+    draftDefinition: null,
+    publishedVersionId: definition === null ? null : 'wfv-1',
+    publishedVersion:
+      definition === null ? null : { id: 'wfv-1', version: 1, snapshot: definition },
     patternsUsed: [],
     isActive: true,
     isTemplate: false,

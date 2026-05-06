@@ -13,18 +13,30 @@ import { WorkflowSchedulesTab } from '@/components/admin/orchestration/workflow-
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import type { AiWorkflow } from '@/types/prisma';
+import type { AiWorkflowWithVersion } from '@/types/orchestration';
 import { z } from 'zod';
 
-const templateItemSchema = z.object({
-  slug: z.string(),
-  name: z.string(),
-  description: z.string(),
-  workflowDefinition: z.unknown(),
-  patternsUsed: z.array(z.number()),
-  isTemplate: z.boolean(),
-  metadata: z.unknown(),
-});
+// Templates carry their definition inside `publishedVersion.snapshot`; flatten
+// to the legacy `workflowDefinition` shape the builder expects.
+const templateItemSchema = z
+  .object({
+    slug: z.string(),
+    name: z.string(),
+    description: z.string(),
+    publishedVersion: z.object({ snapshot: z.unknown() }).nullable(),
+    patternsUsed: z.array(z.number()),
+    isTemplate: z.boolean(),
+    metadata: z.unknown(),
+  })
+  .transform((row) => ({
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    workflowDefinition: row.publishedVersion?.snapshot,
+    patternsUsed: row.patternsUsed,
+    isTemplate: row.isTemplate,
+    metadata: row.metadata,
+  }));
 
 const templateListSchema = z.array(templateItemSchema);
 
@@ -37,15 +49,15 @@ export const metadata: Metadata = {
  * Admin — Edit workflow builder page (Phase 5 Session 5.1a).
  *
  * Fetches the workflow by id and hydrates the builder. A missing or
- * failed fetch produces a 404 via `notFound()`. The builder reads the
- * `workflowDefinition` JSON and lays the DAG out via the pure-TS
- * `workflowDefinitionToFlow` mapper.
+ * failed fetch produces a 404 via `notFound()`. The builder reads
+ * `draftDefinition` (or falls back to `publishedVersion.snapshot`) and
+ * lays the DAG out via the pure-TS `workflowDefinitionToFlow` mapper.
  */
-async function getWorkflow(id: string): Promise<AiWorkflow | null> {
+async function getWorkflow(id: string): Promise<AiWorkflowWithVersion | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.workflowById(id));
     if (!res.ok) return null;
-    const body = await parseApiResponse<AiWorkflow>(res);
+    const body = await parseApiResponse<AiWorkflowWithVersion>(res);
     return body.success ? body.data : null;
   } catch (err) {
     logger.error('edit workflow page: fetch failed', err, { id });

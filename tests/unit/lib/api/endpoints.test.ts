@@ -708,14 +708,29 @@ describe('API Endpoints', () => {
       expect(path).toBe('/api/v1/admin/orchestration/executions/exec-1/retry-step');
     });
 
-    it('workflowDefinitionHistory produces correct path', () => {
-      const path = API.ADMIN.ORCHESTRATION.workflowDefinitionHistory(workflowId);
-      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/definition-history');
+    it('workflowVersions produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowVersions(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/versions');
     });
 
-    it('workflowDefinitionRevert produces correct path', () => {
-      const path = API.ADMIN.ORCHESTRATION.workflowDefinitionRevert(workflowId);
-      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/definition-revert');
+    it('workflowVersionById produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowVersionById(workflowId, 3);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/versions/3');
+    });
+
+    it('workflowPublish produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowPublish(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/publish');
+    });
+
+    it('workflowDiscardDraft produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowDiscardDraft(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/discard-draft');
+    });
+
+    it('workflowRollback produces correct path', () => {
+      const path = API.ADMIN.ORCHESTRATION.workflowRollback(workflowId);
+      expect(path).toBe('/api/v1/admin/orchestration/workflows/wf-1/rollback');
     });
 
     it('conversationById produces correct path', () => {

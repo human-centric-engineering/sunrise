@@ -102,12 +102,18 @@ const VALID_BODY = {
 };
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  // Compatibility shim: legacy `workflowDefinition` overrides translate to
+  // the published-version relation that prepareWorkflowExecution now reads.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride === undefined ? VALID_DEFINITION : snapshotOverride;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
     slug: 'test-workflow',
     description: 'A test workflow',
-    workflowDefinition: VALID_DEFINITION,
+    draftDefinition: null,
+    publishedVersionId: snapshot === null ? null : 'wfv-1',
+    publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },
     patternsUsed: [],
     isActive: true,
     isTemplate: false,
@@ -115,7 +121,7 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 

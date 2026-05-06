@@ -94,14 +94,19 @@ async function drainEngine(
   workflow: { id: string; slug: string },
   definition: WorkflowDefinition,
   inputData: Record<string, unknown>,
-  userId: string
+  userId: string,
+  versionId: string | null
 ): Promise<void> {
   const engine = new OrchestrationEngine();
   try {
-    for await (const _event of engine.execute({ id: workflow.id, definition }, inputData, {
-      userId,
-      resumeFromExecutionId: executionId,
-    })) {
+    for await (const _event of engine.execute(
+      { id: workflow.id, definition, versionId: versionId ?? undefined },
+      inputData,
+      {
+        userId,
+        resumeFromExecutionId: executionId,
+      }
+    )) {
       // Events consumed for side-effects only (DB checkpoints).
     }
   } catch (err) {
@@ -178,7 +183,12 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
     },
     include: {
       workflow: {
-        select: { id: true, slug: true, isActive: true, workflowDefinition: true },
+        select: {
+          id: true,
+          slug: true,
+          isActive: true,
+          publishedVersion: { select: { id: true, snapshot: true } },
+        },
       },
     },
     take: 50, // Process at most 50 per tick to prevent overload
@@ -219,10 +229,28 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         continue;
       }
 
-      // Create execution row
+      // Resolve the published version; bail before the execution row is
+      // created if no version is pinned. Without this guard the row would be
+      // inserted then immediately marked FAILED.
+      const publishedVersion = schedule.workflow.publishedVersion;
+      if (!publishedVersion) {
+        logger.error('Scheduler: workflow has no published version', {
+          scheduleId: schedule.id,
+          workflowSlug: schedule.workflow.slug,
+        });
+        result.failed++;
+        result.errors.push({
+          scheduleId: schedule.id,
+          error: 'Workflow has no published version',
+        });
+        continue;
+      }
+
+      // Create execution row, pinned to the resolved version
       const execution = await prisma.aiWorkflowExecution.create({
         data: {
           workflowId: schedule.workflow.id,
+          versionId: publishedVersion.id,
           status: WorkflowStatus.PENDING,
           inputData: schedule.inputTemplate ?? {},
           executionTrace: [],
@@ -235,10 +263,11 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         scheduleName: schedule.name,
         workflowSlug: schedule.workflow.slug,
         executionId: execution.id,
+        versionId: publishedVersion.id,
       });
 
       // Parse the workflow definition; mark execution failed if invalid
-      const defParsed = workflowDefinitionSchema.safeParse(schedule.workflow.workflowDefinition);
+      const defParsed = workflowDefinitionSchema.safeParse(publishedVersion.snapshot);
       if (!defParsed.success) {
         logger.error('Scheduler: invalid workflow definition', {
           scheduleId: schedule.id,
@@ -267,7 +296,8 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         schedule.workflow,
         defParsed.data as WorkflowDefinition,
         (execution.inputData ?? {}) as Record<string, unknown>,
-        schedule.createdBy
+        schedule.createdBy,
+        publishedVersion.id
       );
 
       result.succeeded++;
@@ -328,8 +358,14 @@ export async function resumeApprovedExecution(executionId: string): Promise<void
     where: { id: executionId },
     include: {
       workflow: {
-        select: { id: true, slug: true, isActive: true, workflowDefinition: true },
+        select: {
+          id: true,
+          slug: true,
+          isActive: true,
+          publishedVersion: { select: { id: true, snapshot: true } },
+        },
       },
+      version: { select: { id: true, snapshot: true } },
     },
   });
   if (!execution) return;
@@ -359,7 +395,19 @@ export async function resumeApprovedExecution(executionId: string): Promise<void
     return;
   }
 
-  const defParsed = workflowDefinitionSchema.safeParse(execution.workflow.workflowDefinition);
+  // Prefer the pinned version on the execution row; fall back to the workflow's
+  // current published version for legacy rows that pre-date pinning.
+  const pinnedSnapshot =
+    execution.version?.snapshot ?? execution.workflow.publishedVersion?.snapshot;
+  const pinnedVersionId = execution.versionId ?? execution.workflow.publishedVersion?.id ?? null;
+  if (!pinnedSnapshot) {
+    logger.error('resumeApprovedExecution: no version snapshot to resume', undefined, {
+      executionId,
+    });
+    return;
+  }
+
+  const defParsed = workflowDefinitionSchema.safeParse(pinnedSnapshot);
   if (!defParsed.success) {
     logger.error('resumeApprovedExecution: invalid workflow definition', undefined, {
       executionId,
@@ -373,7 +421,8 @@ export async function resumeApprovedExecution(executionId: string): Promise<void
     execution.workflow,
     defParsed.data as WorkflowDefinition,
     (execution.inputData ?? {}) as Record<string, unknown>,
-    execution.userId
+    execution.userId,
+    pinnedVersionId
   );
 }
 
@@ -398,8 +447,14 @@ export async function processPendingExecutions(
     },
     include: {
       workflow: {
-        select: { id: true, slug: true, isActive: true, workflowDefinition: true },
+        select: {
+          id: true,
+          slug: true,
+          isActive: true,
+          publishedVersion: { select: { id: true, snapshot: true } },
+        },
       },
+      version: { select: { id: true, snapshot: true } },
     },
     take: 20,
   });
@@ -419,7 +474,25 @@ export async function processPendingExecutions(
         continue;
       }
 
-      const defParsed = workflowDefinitionSchema.safeParse(execution.workflow.workflowDefinition);
+      // Prefer the pinned version snapshot; legacy rows fall back to current published.
+      const pinnedSnapshot =
+        execution.version?.snapshot ?? execution.workflow.publishedVersion?.snapshot;
+      const pinnedVersionId =
+        execution.versionId ?? execution.workflow.publishedVersion?.id ?? null;
+      if (!pinnedSnapshot) {
+        await prisma.aiWorkflowExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage: 'No published version to resume',
+            completedAt: new Date(),
+          },
+        });
+        result.failed++;
+        continue;
+      }
+
+      const defParsed = workflowDefinitionSchema.safeParse(pinnedSnapshot);
       if (!defParsed.success) {
         await prisma.aiWorkflowExecution.update({
           where: { id: execution.id },
@@ -443,7 +516,8 @@ export async function processPendingExecutions(
         execution.workflow,
         defParsed.data as WorkflowDefinition,
         (execution.inputData ?? {}) as Record<string, unknown>,
-        execution.userId
+        execution.userId,
+        pinnedVersionId
       );
 
       result.recovered++;
