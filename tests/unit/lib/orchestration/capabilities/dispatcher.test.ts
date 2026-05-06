@@ -3,7 +3,7 @@
  * rate limiting, approval gating, arg validation, execution, and cost logging.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,10 @@ const { CostOperation } = await import('@/types/orchestration');
 const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
 const { SearchKnowledgeCapability } =
   await import('@/lib/orchestration/capabilities/built-in/search-knowledge');
+const { registerTracer, resetTracer } = await import('@/lib/orchestration/tracing/registry');
+const { SPAN_CAPABILITY_DISPATCH, SUNRISE_CAPABILITY_SUCCESS } =
+  await import('@/lib/orchestration/tracing/attributes');
+const { MockTracer, findSpan } = await import('@/tests/helpers/mock-tracer');
 
 // ---------------------------------------------------------------------------
 // Inline test capability subclasses
@@ -602,6 +606,92 @@ describe('CapabilityDispatcher', () => {
         ],
       });
       expect(mockSearchKnowledge).toHaveBeenCalledWith('ReAct pattern', undefined, 10, 0.7);
+    });
+  });
+
+  describe('OTEL span attributes on dispatch outcomes', () => {
+    // Findings 3, 4, 11: Phase 2 added setSpanAttributes calls on invalid_args,
+    // execution_error, and success paths. The shared MockTracer fixture validates
+    // that the attribute is set correctly for each path.
+
+    const tracer = new MockTracer();
+
+    beforeEach(() => {
+      tracer.reset();
+      registerTracer(tracer);
+    });
+
+    afterEach(() => {
+      resetTracer();
+    });
+
+    it('sets sunrise.capability.success=false on the capability.dispatch span for invalid_args', async () => {
+      // Arrange: OkCapability expects z.number() — passing a string triggers invalid_args
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      // Act
+      const result = await capabilityDispatcher.dispatch(
+        'ok',
+        { n: 'not-a-number' }, // invalid arg — triggers validation error
+        ctx
+      );
+
+      // Assert: dispatch returned invalid_args
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
+
+      // Assert: the capability.dispatch span has sunrise.capability.success=false
+      const dispatchSpan = findSpan(tracer.spans, SPAN_CAPABILITY_DISPATCH);
+      expect(dispatchSpan.attributes[SUNRISE_CAPABILITY_SUCCESS]).toBe(false);
+    });
+
+    it('sets sunrise.capability.success=false on the capability.dispatch span for execution_error', async () => {
+      // Arrange: ThrowingCapability.execute always throws
+      capabilityDispatcher.register(new ThrowingCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'throws' })]);
+
+      // Act
+      const result = await capabilityDispatcher.dispatch('throws', {}, ctx);
+
+      // Assert: dispatch returned execution_error
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('execution_error');
+
+      // Assert: the capability.dispatch span has sunrise.capability.success=false
+      const dispatchSpan = findSpan(tracer.spans, SPAN_CAPABILITY_DISPATCH);
+      expect(dispatchSpan.attributes[SUNRISE_CAPABILITY_SUCCESS]).toBe(false);
+    });
+
+    it('threads non-empty traceId and spanId from the capability.dispatch span into logCost', async () => {
+      // Arrange: happy-path dispatch with a real MockTracer registered
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockLogCost.mockResolvedValue(null);
+
+      // Act
+      const result = await capabilityDispatcher.dispatch('ok', { n: 3 }, ctx);
+
+      // Flush fire-and-forget logCost microtasks
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Assert: dispatch succeeded
+      expect(result.success).toBe(true);
+
+      // Assert: the capability.dispatch span was recorded and has non-empty IDs
+      const dispatchSpan = findSpan(tracer.spans, SPAN_CAPABILITY_DISPATCH);
+      expect(dispatchSpan.traceId.length).toBeGreaterThan(0);
+      expect(dispatchSpan.spanId.length).toBeGreaterThan(0);
+
+      // Assert: logCost was called with the span's IDs (not empty strings)
+      expect(mockLogCost).toHaveBeenCalledTimes(1);
+      const logCostArgs = mockLogCost.mock.calls[0][0] as {
+        traceId?: string;
+        spanId?: string;
+      };
+      expect(logCostArgs.traceId).toBe(dispatchSpan.traceId);
+      expect(logCostArgs.spanId).toBe(dispatchSpan.spanId);
     });
   });
 

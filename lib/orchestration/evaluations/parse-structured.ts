@@ -16,6 +16,20 @@
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_REQUEST_MAX_TOKENS,
+  GEN_AI_REQUEST_MODEL,
+  GEN_AI_REQUEST_TEMPERATURE,
+  GEN_AI_RESPONSE_MODEL,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  GEN_AI_USAGE_OUTPUT_TOKENS,
+  GEN_AI_USAGE_TOTAL_TOKENS,
+  SPAN_LLM_CALL,
+  SUNRISE_EVALUATION_PHASE,
+  setSpanAttributes,
+  withSpan,
+} from '@/lib/orchestration/tracing';
 
 type LlmProvider = Awaited<ReturnType<typeof getProvider>>;
 
@@ -31,6 +45,12 @@ export interface StructuredCompletionOptions<T> {
   timeoutMs?: number;
   /** Optional caller-supplied error to throw when both attempts fail. */
   onFinalFailure?: () => Error;
+  /**
+   * Evaluation phase tag for OTEL spans and cost logs (e.g. `'summary'` for
+   * the completion summary, `'scoring'` for metric scoring). Surfaces as
+   * `gen_ai.operation.name` and `sunrise.evaluation.phase` on the spans.
+   */
+  phase?: 'summary' | 'scoring';
 }
 
 export interface StructuredCompletionResult<T> {
@@ -50,13 +70,36 @@ export async function runStructuredCompletion<T>(
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  const phaseAttrs = {
+    [GEN_AI_OPERATION_NAME]: opts.phase ?? 'evaluation',
+    [GEN_AI_REQUEST_MODEL]: opts.model,
+    ...(opts.phase ? { [SUNRISE_EVALUATION_PHASE]: opts.phase } : {}),
+  };
+
   const firstSignal = AbortSignal.timeout(timeoutMs);
-  const first = await opts.provider.chat(opts.messages, {
-    model: opts.model,
-    temperature,
-    maxTokens,
-    signal: firstSignal,
-  });
+  const first = await withSpan(
+    SPAN_LLM_CALL,
+    {
+      ...phaseAttrs,
+      [GEN_AI_REQUEST_TEMPERATURE]: temperature,
+      [GEN_AI_REQUEST_MAX_TOKENS]: maxTokens,
+    },
+    async (span) => {
+      const response = await opts.provider.chat(opts.messages, {
+        model: opts.model,
+        temperature,
+        maxTokens,
+        signal: firstSignal,
+      });
+      setSpanAttributes(span, {
+        [GEN_AI_RESPONSE_MODEL]: opts.model,
+        [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
+        [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
+        [GEN_AI_USAGE_TOTAL_TOKENS]: response.usage.inputTokens + response.usage.outputTokens,
+      });
+      return response;
+    }
+  );
 
   const firstParsed = opts.parse(first.content);
   if (firstParsed !== null) {
@@ -73,13 +116,30 @@ export async function runStructuredCompletion<T>(
   // the malformed prior response — never trust output that just
   // misbehaved as part of a subsequent prompt.
   const retrySignal = AbortSignal.timeout(timeoutMs);
-  const retry = await opts.provider.chat(
-    [...opts.messages, { role: 'user', content: opts.retryUserMessage }],
+  const retry = await withSpan(
+    SPAN_LLM_CALL,
     {
-      model: opts.model,
-      temperature: 0,
-      maxTokens,
-      signal: retrySignal,
+      ...phaseAttrs,
+      [GEN_AI_REQUEST_TEMPERATURE]: 0,
+      [GEN_AI_REQUEST_MAX_TOKENS]: maxTokens,
+    },
+    async (span) => {
+      const response = await opts.provider.chat(
+        [...opts.messages, { role: 'user', content: opts.retryUserMessage }],
+        {
+          model: opts.model,
+          temperature: 0,
+          maxTokens,
+          signal: retrySignal,
+        }
+      );
+      setSpanAttributes(span, {
+        [GEN_AI_RESPONSE_MODEL]: opts.model,
+        [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
+        [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
+        [GEN_AI_USAGE_TOTAL_TOKENS]: response.usage.inputTokens + response.usage.outputTokens,
+      });
+      return response;
     }
   );
 

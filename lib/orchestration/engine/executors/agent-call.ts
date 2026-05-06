@@ -34,6 +34,25 @@ import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
+import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_REQUEST_MODEL,
+  GEN_AI_REQUEST_TEMPERATURE,
+  GEN_AI_RESPONSE_MODEL,
+  GEN_AI_SYSTEM,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  GEN_AI_USAGE_OUTPUT_TOKENS,
+  GEN_AI_USAGE_TOTAL_TOKENS,
+  SPAN_AGENT_CALL_TURN,
+  SUNRISE_AGENT_ID,
+  SUNRISE_AGENT_SLUG,
+  SUNRISE_COST_USD,
+  SUNRISE_EXECUTION_ID,
+  SUNRISE_STEP_ID,
+  SUNRISE_TOOL_ITERATION,
+  setSpanAttributes,
+  withSpan,
+} from '@/lib/orchestration/tracing';
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 5;
 const DEFAULT_MAX_TURNS = 3;
@@ -59,92 +78,122 @@ async function runSingleTurn(
   let currentMessages = [...initialMessages];
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
-    const turnStarted = Date.now();
-    let response;
-    try {
-      response = await provider.chat(currentMessages, {
-        model: agent!.model,
-        ...(agent!.temperature !== null ? { temperature: agent!.temperature } : {}),
-        ...(agent!.maxTokens !== null ? { maxTokens: agent!.maxTokens } : {}),
-        ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
-        signal: ctx.signal,
-      });
-    } catch (err) {
-      // Carry partial cost from earlier successful turns through the error
-      // so the engine's retry/fallback accumulator can surface it on the
-      // trace entry. Without this, prior turns' tokens are billed via
-      // AiCostLog but invisible in the row-level totals.
-      throw new ExecutorError(
-        step.id,
-        'agent_call_failed',
-        err instanceof Error ? err.message : 'Agent LLM call failed',
-        err,
-        true,
-        totalTokensUsed,
-        totalCostUsd
-      );
-    }
-    const turnDurationMs = Date.now() - turnStarted;
+    const turnOutcome = await withSpan(
+      SPAN_AGENT_CALL_TURN,
+      {
+        [GEN_AI_OPERATION_NAME]: 'chat',
+        [GEN_AI_REQUEST_MODEL]: agent!.model,
+        [GEN_AI_SYSTEM]: usedSlug,
+        [SUNRISE_AGENT_ID]: agent!.id,
+        [SUNRISE_AGENT_SLUG]: agent!.slug,
+        [SUNRISE_STEP_ID]: step.id,
+        [SUNRISE_EXECUTION_ID]: ctx.executionId,
+        [SUNRISE_TOOL_ITERATION]: iteration,
+        ...(agent!.temperature !== null
+          ? { [GEN_AI_REQUEST_TEMPERATURE]: agent!.temperature }
+          : {}),
+      },
+      async (span) => {
+        const turnStarted = Date.now();
+        let response;
+        try {
+          response = await provider.chat(currentMessages, {
+            model: agent!.model,
+            ...(agent!.temperature !== null ? { temperature: agent!.temperature } : {}),
+            ...(agent!.maxTokens !== null ? { maxTokens: agent!.maxTokens } : {}),
+            ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
+            signal: ctx.signal,
+          });
+        } catch (err) {
+          // Carry partial cost from earlier successful turns through the error
+          // so the engine's retry/fallback accumulator can surface it on the
+          // trace entry. Without this, prior turns' tokens are billed via
+          // AiCostLog but invisible in the row-level totals.
+          throw new ExecutorError(
+            step.id,
+            'agent_call_failed',
+            err instanceof Error ? err.message : 'Agent LLM call failed',
+            err,
+            true,
+            totalTokensUsed,
+            totalCostUsd
+          );
+        }
+        const turnDurationMs = Date.now() - turnStarted;
 
-    ctx.stepTelemetry?.push({
-      model: agent!.model,
-      provider: usedSlug,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      durationMs: turnDurationMs,
-    });
+        ctx.stepTelemetry?.push({
+          model: agent!.model,
+          provider: usedSlug,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          durationMs: turnDurationMs,
+        });
 
-    const turnTokens = response.usage.inputTokens + response.usage.outputTokens;
-    const turnCost = calculateCost(
-      agent!.model,
-      response.usage.inputTokens,
-      response.usage.outputTokens
+        const turnTokens = response.usage.inputTokens + response.usage.outputTokens;
+        const turnCost = calculateCost(
+          agent!.model,
+          response.usage.inputTokens,
+          response.usage.outputTokens
+        );
+
+        totalTokensUsed += turnTokens;
+        totalCostUsd += turnCost.totalCostUsd;
+
+        setSpanAttributes(span, {
+          [GEN_AI_RESPONSE_MODEL]: agent!.model,
+          [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
+          [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
+          [GEN_AI_USAGE_TOTAL_TOKENS]: turnTokens,
+          [SUNRISE_COST_USD]: turnCost.totalCostUsd,
+        });
+
+        void logCost({
+          agentId: agent!.id,
+          workflowExecutionId: ctx.executionId,
+          model: agent!.model,
+          provider: usedSlug,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          operation: CostOperation.CHAT,
+          isLocal: turnCost.isLocal,
+          traceId: span.traceId(),
+          spanId: span.spanId(),
+          metadata: { stepId: step.id, iteration },
+        }).catch((err: unknown) => {
+          logger.warn('agent_call: logCost rejected', {
+            executionId: ctx.executionId,
+            stepId: step.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+        finalContent = response.content;
+
+        if (!response.toolCalls || response.toolCalls.length === 0) {
+          return 'break' as const;
+        }
+
+        const toolCall: LlmToolCall = response.toolCalls[0];
+
+        const capResult = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
+          userId: ctx.userId,
+          agentId: agent!.id,
+        });
+
+        if (capResult.skipFollowup) {
+          finalContent = JSON.stringify(capResult.data ?? capResult);
+          return 'break' as const;
+        }
+
+        currentMessages = [
+          ...currentMessages,
+          { role: 'assistant' as const, content: response.content, toolCalls: [toolCall] },
+          { role: 'tool' as const, content: JSON.stringify(capResult), toolCallId: toolCall.id },
+        ];
+        return 'continue' as const;
+      }
     );
-
-    totalTokensUsed += turnTokens;
-    totalCostUsd += turnCost.totalCostUsd;
-
-    void logCost({
-      agentId: agent!.id,
-      workflowExecutionId: ctx.executionId,
-      model: agent!.model,
-      provider: usedSlug,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      operation: CostOperation.CHAT,
-      isLocal: turnCost.isLocal,
-      metadata: { stepId: step.id, iteration },
-    }).catch((err: unknown) => {
-      logger.warn('agent_call: logCost rejected', {
-        executionId: ctx.executionId,
-        stepId: step.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
-    finalContent = response.content;
-
-    if (!response.toolCalls || response.toolCalls.length === 0) {
-      break;
-    }
-
-    const toolCall: LlmToolCall = response.toolCalls[0];
-
-    const capResult = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
-      userId: ctx.userId,
-      agentId: agent!.id,
-    });
-
-    if (capResult.skipFollowup) {
-      finalContent = JSON.stringify(capResult.data ?? capResult);
-      break;
-    }
-
-    currentMessages = [
-      ...currentMessages,
-      { role: 'assistant' as const, content: response.content, toolCalls: [toolCall] },
-      { role: 'tool' as const, content: JSON.stringify(capResult), toolCallId: toolCall.id },
-    ];
+    if (turnOutcome === 'break') break;
   }
 
   return { output: finalContent, tokensUsed: totalTokensUsed, costUsd: totalCostUsd };

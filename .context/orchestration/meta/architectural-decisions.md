@@ -26,7 +26,7 @@ A plain-language record of the major technical and architectural choices behind 
 
 **The dependency-minimalism stance.** Several "Why not" cells say _"a fork can add this later"_ or _"the same artifact wraps in [X]"_ rather than rejecting an option outright. That phrasing is deliberate — it reflects the foundational principle in §1.6: ship the smallest sensible default, keep architectural seams narrow, and leave downstream developers free to layer in the libraries and infrastructure their use cases demand. When you read those cells, the door is open; the default is just not bundled.
 
-**Acknowledged gaps.** Section 10 collects decisions that explicitly accept a current-state limitation (in-memory state, no distributed tracing, partial checkpoint recovery). These are not omissions — they are choices, with the trade-off named.
+**Acknowledged gaps.** Section 10 collects decisions that explicitly accept a current-state limitation (in-memory state for circuit breaker / budget mutex, partial checkpoint recovery). These are not omissions — they are choices, with the trade-off named.
 
 ---
 
@@ -154,7 +154,7 @@ These are the outermost decisions: what kind of system Sunrise is, what runtime 
 
 **What is bundled (the lean baseline):** Next.js, React, Prisma, `better-auth`, Tailwind 4, shadcn-pattern components on Radix primitives, Zod, `cron-parser`, `lucide-react`, `@xyflow/react`. That is roughly the floor.
 
-**What is not bundled (deliberately):** state management library (no Redux/Zustand/Jotai), data-fetching library (no TanStack Query/SWR), form library (no Formik), router beyond Next.js App Router, monitoring SDK, analytics SDK, queue client (no Bull/BullMQ/Sidekiq), distributed cache, dedicated vector database, OpenTelemetry, e2e framework. Each of these can be added in a fork when the use case appears.
+**What is not bundled (deliberately):** state management library (no Redux/Zustand/Jotai), data-fetching library (no TanStack Query/SWR), form library (no Formik), router beyond Next.js App Router, monitoring SDK, analytics SDK, queue client (no Bull/BullMQ/Sidekiq), distributed cache, dedicated vector database, e2e framework. Each of these can be added in a fork when the use case appears. (OpenTelemetry was originally on this list; an opt-in `OtelTracer` adapter shipped in May 2026 — the runtime SDK and `TracerProvider` setup remain the fork's responsibility, so the principle still holds: nothing fires unless you wire it.)
 
 **Alternatives**
 
@@ -167,7 +167,7 @@ These are the outermost decisions: what kind of system Sunrise is, what runtime 
 **Why this approach**
 
 - Every downstream fork starts from the same lean baseline; teams add what they actually need rather than removing what we forced on them.
-- Several existing decisions in this document are concrete applications of this principle: the platform-agnostic core (§1.2), the Postgres + Prisma boundary (§7.1), the auth-guard abstraction (§6.2), the in-memory caches that swap to Redis later (§7.5, §10.2), and the absence of OpenTelemetry today (§9.1).
+- Several existing decisions in this document are concrete applications of this principle: the platform-agnostic core (§1.2), the Postgres + Prisma boundary (§7.1), the auth-guard abstraction (§6.2), the in-memory caches that swap to Redis later (§7.5, §10.2), and the OTEL plug-in path described in §9.5 (vendor-neutral `Tracer` interface, no-op default, opt-in `OtelTracer` adapter).
 - **How this shows up in alternatives tables:** when a "Why not" cell says "you can add this later" or "wraps the same artifact," that's this principle. The alternative isn't wrong — it just isn't the default we ship.
 
 **Where it lives:** `package.json` (the lean dependency list), `CLAUDE.md` ("search before creating" rule). The principle is reinforced anywhere a contained boundary lives over a swappable implementation — see §1.2, §6.2, §7.1, §7.5, §10.2.
@@ -1517,11 +1517,11 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 
 **Alternatives**
 
-| Option                     | Why not                                                                                                                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `console.log` everywhere   | No structure; can't filter; no context propagation; production parsing nightmare                                                                                                            |
-| Pino / Winston / Bunyan    | Heavy; the project's needs are modest enough that a thin wrapper is sufficient. A fork can swap the logger module for any of these without changing call sites (see §1.6)                   |
-| OpenTelemetry from day one | OTEL is the right answer at scale (Section 10) but premature for current deployments. The thin logger interface lets a fork wire OTEL when distributed tracing becomes necessary (see §1.6) |
+| Option                           | Why not                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `console.log` everywhere         | No structure; can't filter; no context propagation; production parsing nightmare                                                                                                                                                                                                                                                                |
+| Pino / Winston / Bunyan          | Heavy; the project's needs are modest enough that a thin wrapper is sufficient. A fork can swap the logger module for any of these without changing call sites (see §1.6)                                                                                                                                                                       |
+| OpenTelemetry as the only logger | OTEL handles distributed tracing well but is heavier than this project needs for plain logs. Logging stays on the thin custom module; orchestration tracing is a separate, opt-in OTEL plug-in (see §9.5). The two coexist — request IDs in log lines join up with `traceId` / `spanId` on `AiCostLog` rows when the OTEL adapter is registered |
 
 **Why this approach**
 
@@ -1605,13 +1605,13 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 
 **Alternatives**
 
-| Option                                                                        | Why not                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OTEL spans into Langfuse / Datadog / LangSmith                                | Adds an external dependency, ops burden, and (for Langfuse / LangSmith) per-trace billing. Doesn't match the single-tenant small-project deployment profile. The thin trace API leaves room for a fork to add a pluggable tracer later (see §1.6) |
-| Separate `AiTraceSpan` table for per-LLM-turn telemetry                       | The JSON column already holds the per-step shape and parses cleanly with optional fields; a per-row table would force a migration plus a join on every detail-page render. The `AiCostLog` join already provides the per-LLM-call grain           |
-| Real-time streaming render of in-flight executions                            | Execution status already polls via `useExecutionStatusPoller`; a second push channel would be a separate transport with no commensurate diagnostic gain                                                                                           |
-| Capture full prompts on every step                                            | Inflates the trace JSON significantly per execution. Most workflows never need it. A future opt-in flag is an additive change                                                                                                                     |
-| Push new fields onto `StepResult` (so each LLM-bearing executor returns them) | Eight executors call into the LLM today; a future executor adding an LLM call would silently miss telemetry. The context-side accumulator picks up everything that goes through `runLlmCall` for free                                             |
+| Option                                                                        | Why not                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OTEL spans into Langfuse / Datadog / LangSmith as the only viewer             | Adds an external dependency, ops burden, and (for Langfuse / LangSmith) per-trace billing. Doesn't match the single-tenant small-project deployment profile. The opt-in `OtelTracer` adapter ships alongside the in-product viewer for forks that want both (see §1.6); the default is the in-product surface |
+| Separate `AiTraceSpan` table for per-LLM-turn telemetry                       | The JSON column already holds the per-step shape and parses cleanly with optional fields; a per-row table would force a migration plus a join on every detail-page render. The `AiCostLog` join already provides the per-LLM-call grain                                                                       |
+| Real-time streaming render of in-flight executions                            | Execution status already polls via `useExecutionStatusPoller`; a second push channel would be a separate transport with no commensurate diagnostic gain                                                                                                                                                       |
+| Capture full prompts on every step                                            | Inflates the trace JSON significantly per execution. Most workflows never need it. A future opt-in flag is an additive change                                                                                                                                                                                 |
+| Push new fields onto `StepResult` (so each LLM-bearing executor returns them) | Eight executors call into the LLM today; a future executor adding an LLM call would silently miss telemetry. The context-side accumulator picks up everything that goes through `runLlmCall` for free                                                                                                         |
 
 **Why this approach**
 
@@ -1619,7 +1619,7 @@ How problems are detected, diagnosed, and prevented from reoccurring.
 - The `executionTrace` JSON column already stores per-step entries; adding optional fields is back-compatible with historical rows. New shape parses; old shape parses. No backfill, no migration drama.
 - Per-LLM-turn telemetry flows through `ExecutionContext.stepTelemetry?` — a write channel that any LLM call site can push to. The engine pre-allocates per-snapshot arrays via `snapshotContext(ctx, telemetryOut?)` so concurrent parallel branches stay isolated. New executors that hit the LLM via `runLlmCall` get telemetry capture for free.
 - The aggregate computation (`rollupTelemetry`, `computeTraceAggregates`, `slowOutlierThresholdMs`) is a pure-function module shared between the engine (for the per-step rollup at write time) and the UI (for the timeline-strip / aggregates-card render). Edge cases (empty trace, single-entry, ties, missing optional fields) are exercised at source rather than in component tests.
-- Forks that need external observability can add an OTEL plug-in (Tier 3 item 13 in `improvement-priorities.md`) without changing this surface — the in-product viewer is additive, not exclusive.
+- Forks that want external observability register the shipped `OtelTracer` adapter via `registerOtelTracer()` and point any OTLP-compatible backend at it — the in-product viewer is additive, not exclusive. `AiCostLog` rows carry `traceId` / `spanId` so cost data joins back to the OTEL span when both are in use. See `.context/orchestration/tracing.md`.
 
 **Where it lives:** `lib/orchestration/trace/aggregate.ts` (pure helpers), `lib/orchestration/engine/orchestration-engine.ts` (telemetry threading + six trace.push sites), `lib/orchestration/engine/context.ts` (`stepTelemetry?` channel + `snapshotContext` overload), `app/api/v1/admin/orchestration/executions/[id]/route.ts` (cost-log join), `components/admin/orchestration/execution-{aggregates,timeline-strip,trace-filters}.tsx`, `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx`, `.context/admin/orchestration-observability.md`, `.context/orchestration/engine.md`.
 

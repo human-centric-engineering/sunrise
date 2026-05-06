@@ -16,7 +16,7 @@
  * @see lib/orchestration/engine/executors/agent-call.ts
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
@@ -72,6 +72,9 @@ import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatche
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { MockTracer } from '@/tests/helpers/mock-tracer';
+import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
+import { SPAN_AGENT_CALL_TURN } from '@/lib/orchestration/tracing/attributes';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -330,8 +333,8 @@ describe('executeAgentCall', () => {
     // Second call should include tool result in messages
     const secondCallMessages = mockChat.mock.calls[1][0];
     const toolMessage = secondCallMessages.find((m: { role: string }) => m.role === 'tool');
-    expect(toolMessage).toBeDefined();
-    expect(toolMessage.toolCallId).toBe('tc_1');
+    // Assert specific value directly — avoids a misleading TypeError if find() returns undefined
+    expect(toolMessage?.toolCallId).toBe('tc_1');
   });
 
   it('tool with skipFollowup returns tool result as output', async () => {
@@ -607,6 +610,91 @@ describe('executeAgentCall', () => {
     // Tokens from both chat calls should be summed
     expect(result.tokensUsed).toBe(180); // (50+20) + (80+30)
     expect(result.costUsd).toBe(0.03); // 0.01 + 0.02
+  });
+
+  // ── OTEL span emission per iteration ──────────────────────────────────────
+
+  describe('OTEL span emission per iteration', () => {
+    // Finding 6: Phase 2 wraps the per-iteration body in withSpan(SPAN_AGENT_CALL_TURN).
+    // These tests verify the sentinel mechanism — the span count per iteration.
+
+    const tracer = new MockTracer();
+
+    beforeEach(() => {
+      tracer.reset();
+      registerTracer(tracer);
+    });
+
+    afterEach(() => {
+      resetTracer();
+    });
+
+    it('1-turn no-tool response emits exactly 1 SPAN_AGENT_CALL_TURN span', async () => {
+      // Arrange: single response with no tool calls — loop runs once and breaks
+      mockChat.mockResolvedValue({
+        content: 'Done.',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        finishReason: 'stop',
+      });
+
+      // Act
+      await executeAgentCall(makeStep(), makeCtx());
+
+      // Assert: exactly one turn span was emitted
+      const turnSpans = tracer.spans.filter((s) => s.name === SPAN_AGENT_CALL_TURN);
+      expect(turnSpans).toHaveLength(1);
+    });
+
+    it('2-turn tool-then-final response emits exactly 2 SPAN_AGENT_CALL_TURN spans', async () => {
+      // Arrange: first call requests a tool, second completes
+      mockChat
+        .mockResolvedValueOnce({
+          content: 'Thinking...',
+          toolCalls: [{ id: 'tc_1', name: 'search', arguments: { q: 'x' } }],
+          usage: { inputTokens: 50, outputTokens: 20 },
+          finishReason: 'tool_use',
+        })
+        .mockResolvedValueOnce({
+          content: 'Done.',
+          usage: { inputTokens: 80, outputTokens: 40 },
+          finishReason: 'stop',
+        });
+
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+        success: true,
+        data: { result: 'found' },
+      });
+
+      // Act
+      await executeAgentCall(makeStep(), makeCtx());
+
+      // Assert: two turn spans — one per iteration
+      const turnSpans = tracer.spans.filter((s) => s.name === SPAN_AGENT_CALL_TURN);
+      expect(turnSpans).toHaveLength(2);
+    });
+
+    it('1-turn skipFollowup=true capability result emits exactly 1 SPAN_AGENT_CALL_TURN span', async () => {
+      // Arrange: model calls a tool whose result has skipFollowup=true — loop breaks after first turn
+      mockChat.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'tc_1', name: 'get-cost', arguments: {} }],
+        usage: { inputTokens: 30, outputTokens: 10 },
+        finishReason: 'tool_use',
+      });
+
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+        success: true,
+        data: { cost: 0.05 },
+        skipFollowup: true, // sentinel: break without a second LLM turn
+      });
+
+      // Act
+      await executeAgentCall(makeStep(), makeCtx());
+
+      // Assert: only one span — skipFollowup caused 'break' before a second iteration
+      const turnSpans = tracer.spans.filter((s) => s.name === SPAN_AGENT_CALL_TURN);
+      expect(turnSpans).toHaveLength(1);
+    });
   });
 
   it('multi-turn: outer-loop accumulator survives an inner-turn failure', async () => {

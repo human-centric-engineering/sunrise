@@ -49,6 +49,30 @@ import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
 import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_REQUEST_MODEL,
+  GEN_AI_REQUEST_TEMPERATURE,
+  GEN_AI_RESPONSE_MODEL,
+  GEN_AI_SYSTEM,
+  GEN_AI_USAGE_INPUT_TOKENS,
+  GEN_AI_USAGE_OUTPUT_TOKENS,
+  GEN_AI_USAGE_TOTAL_TOKENS,
+  SPAN_CHAT_TURN,
+  SPAN_LLM_CALL,
+  SUNRISE_AGENT_ID,
+  SUNRISE_AGENT_SLUG,
+  SUNRISE_CONVERSATION_ID,
+  SUNRISE_PROVIDER_FAILOVER_FROM,
+  SUNRISE_PROVIDER_FAILOVER_TO,
+  SUNRISE_TOOL_ITERATION,
+  SUNRISE_USER_ID,
+  recordSpanException,
+  setSpanAttributes,
+  setSpanStatus,
+  withSpanGenerator,
+  type Span,
+} from '@/lib/orchestration/tracing';
+import {
   MAX_HISTORY_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -146,13 +170,50 @@ export class StreamingChatHandler {
    * trust the iterator always terminates cleanly.
    */
   async *run(request: ChatRequest): ChatStream {
+    // `withSpanGenerator` activates the chat.turn span as the OTEL active
+    // context across yields. Inner llm.call spans (and any helper-`withSpan`
+    // calls inside tool dispatch) become children of this span in OTLP
+    // backends — one trace per turn, not fragmented roots. `manualStatus`
+    // lets the inner manage error status without breaking the SSE consumer
+    // contract (the iterator yields error events; never rejects).
+    yield* withSpanGenerator(
+      SPAN_CHAT_TURN,
+      {
+        [GEN_AI_OPERATION_NAME]: 'chat',
+        [SUNRISE_USER_ID]: request.userId,
+        [SUNRISE_AGENT_SLUG]: request.agentSlug,
+      },
+      (chatSpan) => this.runInner(chatSpan, request),
+      { manualStatus: true }
+    );
+  }
+
+  /**
+   * Inner body of `run()` — owns agent load, conversation load, the tool
+   * loop, and the catch-all error handling. Sets `chatSpan` status
+   * directly via `setSpanStatus` (the helper opts out via `manualStatus`)
+   * so error paths that yield `error` events instead of throwing still
+   * mark the span as failed in OTLP backends. Lives behind
+   * `withSpanGenerator` so the chat.turn span is active OTEL context for
+   * every yield, including each `llm.call` span the tool loop opens.
+   */
+  private async *runInner(
+    chatSpan: Span,
+    request: ChatRequest
+  ): AsyncGenerator<ChatEvent, void, unknown> {
     const log = request.requestId ? logger.withContext({ requestId: request.requestId }) : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
+    let chatSpanError: unknown = undefined;
     try {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
+      setSpanAttributes(chatSpan, {
+        [SUNRISE_AGENT_ID]: agent.id,
+        [GEN_AI_REQUEST_MODEL]: agent.model,
+        ...(agent.temperature !== null ? { [GEN_AI_REQUEST_TEMPERATURE]: agent.temperature } : {}),
+      });
 
       // Per-agent mutex prevents TOCTOU race between concurrent budget reads.
       // See lib/orchestration/llm/budget-mutex.ts for accepted over-run tolerance.
@@ -206,6 +267,7 @@ export class StreamingChatHandler {
         capSettings?.maxConversationsPerUser ?? null
       );
       conversationId = conversation.id;
+      setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
       const history = await this.loadHistory(conversation.id);
 
       // Enforce message-per-conversation cap using actual DB count
@@ -426,83 +488,150 @@ export class StreamingChatHandler {
         let streamSucceeded = false;
         let streamRetries = 0;
         const MAX_STREAM_RETRIES = 2;
+        // Captured before endLlmSpan so the post-stream logCost calls
+        // (lines 746 and 769 below) can correlate cost rows with the
+        // successful llm.call span. Empty strings under the no-op tracer.
+        let llmTraceId = '';
+        let llmSpanId = '';
 
         while (!streamSucceeded && streamRetries <= MAX_STREAM_RETRIES) {
-          try {
-            const stream = currentProvider.chatStream(messages, llmOptions);
+          // `withSpanGenerator` activates the llm.call span as the OTEL
+          // active context across yields, so any helper-`withSpan` calls
+          // inside the stream body see it as their parent. Each retry
+          // opens a fresh span (matching pre-refactor behaviour) — failed
+          // attempts and the eventual successful attempt land as siblings
+          // under chat.turn in OTLP backends.
+          yield* withSpanGenerator(
+            SPAN_LLM_CALL,
+            {
+              [GEN_AI_OPERATION_NAME]: 'chat',
+              [GEN_AI_REQUEST_MODEL]: agent.model,
+              [GEN_AI_SYSTEM]: currentProviderSlug,
+              [SUNRISE_AGENT_ID]: agent.id,
+              [SUNRISE_AGENT_SLUG]: agent.slug,
+              [SUNRISE_CONVERSATION_ID]: conversation.id,
+              [SUNRISE_TOOL_ITERATION]: iteration,
+              ...(agent.temperature !== null
+                ? { [GEN_AI_REQUEST_TEMPERATURE]: agent.temperature }
+                : {}),
+            },
 
-            let toolCallIndex = 0;
-            for await (const chunk of stream) {
-              if (chunk.type === 'text') {
-                if (toolCalls.size > 0) continue;
-                assistantText += chunk.content;
-                yield { type: 'content', delta: chunk.content };
-              } else if (chunk.type === 'tool_call') {
-                toolCalls.set(toolCallIndex++, chunk.toolCall);
-              } else if (chunk.type === 'done') {
-                usage = chunk.usage;
-              }
-            }
-            streamSucceeded = true;
-          } catch (streamErr) {
-            streamRetries++;
-            getBreaker(currentProviderSlug).recordFailure();
+            async function* (llmSpan: Span): AsyncGenerator<ChatEvent, void, unknown> {
+              try {
+                const stream = currentProvider.chatStream(messages, llmOptions);
 
-            // If aborted, don't retry
-            if (
-              streamErr instanceof Error &&
-              (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
-            ) {
-              throw streamErr;
-            }
-
-            // Try next fallback provider
-            const nextSlug = remainingFallbacks.shift();
-            if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
-              log.error('Stream failed, no more fallback providers', streamErr as Error, {
-                agentSlug: request.agentSlug,
-                provider: currentProviderSlug,
-                retries: streamRetries,
-              });
-              throw streamErr;
-            }
-
-            log.warn('Stream failed, retrying with fallback provider', {
-              failedProvider: currentProviderSlug,
-              nextProvider: nextSlug,
-              error: streamErr instanceof Error ? streamErr.message : String(streamErr),
-            });
-
-            yield {
-              type: 'warning',
-              code: 'provider_retry',
-              message: `Retrying with fallback provider...`,
-            };
-
-            // Signal client to discard any content deltas received so far —
-            // a fallback provider retry is about to start from scratch.
-            yield { type: 'content_reset', reason: 'provider_fallback' };
-
-            // Reset accumulated content for the retry
-            assistantText = '';
-            toolCalls.clear();
-            usage = null;
-
-            try {
-              currentProvider = await getProvider(nextSlug);
-              currentProviderSlug = nextSlug;
-              resolvedProviderSlug = nextSlug;
-            } catch {
-              log.error(
-                'Failed to load fallback provider',
-                new Error(`Provider ${nextSlug} not available`),
-                {
-                  agentSlug: request.agentSlug,
+                let toolCallIndex = 0;
+                for await (const chunk of stream) {
+                  if (chunk.type === 'text') {
+                    if (toolCalls.size > 0) continue;
+                    assistantText += chunk.content;
+                    yield { type: 'content', delta: chunk.content };
+                  } else if (chunk.type === 'tool_call') {
+                    toolCalls.set(toolCallIndex++, chunk.toolCall);
+                  } else if (chunk.type === 'done') {
+                    usage = chunk.usage;
+                  }
                 }
-              );
-              throw streamErr;
-            }
-          }
+                streamSucceeded = true;
+                if (usage) {
+                  setSpanAttributes(llmSpan, {
+                    [GEN_AI_RESPONSE_MODEL]: agent.model,
+                    [GEN_AI_USAGE_INPUT_TOKENS]: usage.inputTokens,
+                    [GEN_AI_USAGE_OUTPUT_TOKENS]: usage.outputTokens,
+                    [GEN_AI_USAGE_TOTAL_TOKENS]: usage.inputTokens + usage.outputTokens,
+                  });
+                }
+                llmTraceId = llmSpan.traceId();
+                llmSpanId = llmSpan.spanId();
+                setSpanStatus(llmSpan, { code: 'ok' });
+              } catch (streamErr) {
+                streamRetries++;
+                getBreaker(currentProviderSlug).recordFailure();
+
+                // If aborted, don't retry. Throw to let `withSpanGenerator`
+                // record the exception on the span and propagate to the
+                // outer try/catch in `runInner`.
+                if (
+                  streamErr instanceof Error &&
+                  (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
+                ) {
+                  setSpanStatus(llmSpan, {
+                    code: 'error',
+                    message: streamErr instanceof Error ? streamErr.message : 'stream aborted',
+                  });
+                  throw streamErr;
+                }
+
+                // Try next fallback provider
+                const nextSlug = remainingFallbacks.shift();
+                if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
+                  log.error('Stream failed, no more fallback providers', streamErr as Error, {
+                    agentSlug: request.agentSlug,
+                    provider: currentProviderSlug,
+                    retries: streamRetries,
+                  });
+                  setSpanStatus(llmSpan, {
+                    code: 'error',
+                    message: streamErr instanceof Error ? streamErr.message : 'stream failed',
+                  });
+                  throw streamErr;
+                }
+
+                log.warn('Stream failed, retrying with fallback provider', {
+                  failedProvider: currentProviderSlug,
+                  nextProvider: nextSlug,
+                  error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+                });
+
+                // Record the failover on the failed span so the OTEL trace
+                // shows which provider was tried next. The inner returns
+                // normally (we don't throw) so the helper won't auto-record
+                // the exception — call `recordSpanException` explicitly so
+                // OTLP backends still see the failure on the failed-attempt
+                // span.
+                setSpanAttributes(llmSpan, {
+                  [SUNRISE_PROVIDER_FAILOVER_FROM]: currentProviderSlug,
+                  [SUNRISE_PROVIDER_FAILOVER_TO]: nextSlug,
+                });
+                setSpanStatus(llmSpan, {
+                  code: 'error',
+                  message: streamErr instanceof Error ? streamErr.message : 'stream failed',
+                });
+                recordSpanException(llmSpan, streamErr);
+
+                yield {
+                  type: 'warning',
+                  code: 'provider_retry',
+                  message: `Retrying with fallback provider...`,
+                };
+
+                // Signal client to discard any content deltas received so far —
+                // a fallback provider retry is about to start from scratch.
+                yield { type: 'content_reset', reason: 'provider_fallback' };
+
+                // Reset accumulated content for the retry
+                assistantText = '';
+                toolCalls.clear();
+                usage = null;
+
+                try {
+                  currentProvider = await getProvider(nextSlug);
+                  currentProviderSlug = nextSlug;
+                  resolvedProviderSlug = nextSlug;
+                } catch {
+                  log.error(
+                    'Failed to load fallback provider',
+                    new Error(`Provider ${nextSlug} not available`),
+                    {
+                      agentSlug: request.agentSlug,
+                    }
+                  );
+                  throw streamErr;
+                }
+              }
+            },
+            { manualStatus: true }
+          );
         }
 
         if (toolCalls.size === 0) {
@@ -606,11 +735,16 @@ export class StreamingChatHandler {
         if (assistantText.length > 0) {
           const isTerminalTurn = toolCalls.size === 0;
           const assistantMetadata: MessageMetadata = {};
-          if (usage) {
+          // TS narrows `usage` (a closure-captured `let`) to its initial
+          // `null` value at this point because the closure mutation inside
+          // `withSpanGenerator` isn't visible to flow analysis. The cast
+          // restores the declared union shape so the `if` guard works.
+          const finalUsage = usage as { inputTokens: number; outputTokens: number } | null;
+          if (finalUsage) {
             assistantMetadata.tokenUsage = {
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              totalTokens: usage.inputTokens + usage.outputTokens,
+              inputTokens: finalUsage.inputTokens,
+              outputTokens: finalUsage.outputTokens,
+              totalTokens: finalUsage.inputTokens + finalUsage.outputTokens,
             };
           }
           if (isTerminalTurn && citations.length > 0) {
@@ -645,30 +779,38 @@ export class StreamingChatHandler {
               eventType: 'ai_response',
               content: assistantText,
               messageId: assistantMsg.id,
-              ...(usage
-                ? {
-                    tokenUsage: {
-                      inputTokens: usage.inputTokens,
-                      outputTokens: usage.outputTokens,
-                      totalTokens: usage.inputTokens + usage.outputTokens,
-                    },
-                  }
-                : {}),
+              ...((): {
+                tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+              } => {
+                const u = usage as { inputTokens: number; outputTokens: number } | null;
+                if (!u) return {};
+                return {
+                  tokenUsage: {
+                    inputTokens: u.inputTokens,
+                    outputTokens: u.outputTokens,
+                    totalTokens: u.inputTokens + u.outputTokens,
+                  },
+                };
+              })(),
               ...(citations.length > 0 ? { metadata: { citations } } : {}),
             });
           }
         }
 
         if (toolCalls.size === 0) {
-          if (usage) {
+          // Cast re-bind: see comment above the assistantMetadata block.
+          const u = usage as { inputTokens: number; outputTokens: number } | null;
+          if (u) {
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
               model: agent.model,
               provider: agent.provider,
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
+              inputTokens: u.inputTokens,
+              outputTokens: u.outputTokens,
               operation: CostOperation.CHAT,
+              traceId: llmTraceId,
+              spanId: llmSpanId,
             });
           }
 
@@ -676,22 +818,25 @@ export class StreamingChatHandler {
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
-          yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+          yield buildDoneEvent(agent.model, u, resolvedProviderSlug);
           return;
         }
 
         // Tool call path — log cost for this LLM turn, then re-check
         // budget before dispatching tools (which will trigger another
         // LLM turn that costs more).
-        if (usage) {
+        const turnUsage = usage as { inputTokens: number; outputTokens: number } | null;
+        if (turnUsage) {
           void logCost({
             agentId: agent.id,
             conversationId: conversation.id,
             model: agent.model,
             provider: agent.provider,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
+            inputTokens: turnUsage.inputTokens,
+            outputTokens: turnUsage.outputTokens,
             operation: CostOperation.CHAT,
+            traceId: llmTraceId,
+            spanId: llmSpanId,
           });
         }
 
@@ -1066,6 +1211,11 @@ export class StreamingChatHandler {
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
       );
     } catch (err) {
+      // Set chatSpanError up front so every caught-exception path (including
+      // ChatError early-return below) marks the chat.turn span as error in
+      // the finally. In-try `yield errorEvent(...); return;` paths are
+      // application-level outcomes (HTTP 4xx-equivalent) and keep span ok.
+      chatSpanError = err;
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {
           code: err.code,
@@ -1125,6 +1275,19 @@ export class StreamingChatHandler {
       // provider SDK details, and internal hostnames to the client. The
       // detailed error has already been logged via logger.error above.
       yield errorEvent('internal_error', 'An unexpected error occurred');
+    } finally {
+      // `withSpanGenerator` opts out of auto-status via `manualStatus: true`
+      // and handles `safeEnd` itself. Map captured `chatSpanError` (the
+      // catch above swallows ChatError / ProviderError / generic errors and
+      // yields error events instead of rethrowing) to error status here.
+      if (chatSpanError !== undefined) {
+        setSpanStatus(chatSpan, {
+          code: 'error',
+          message: chatSpanError instanceof Error ? chatSpanError.message : 'chat failed',
+        });
+      } else {
+        setSpanStatus(chatSpan, { code: 'ok' });
+      }
     }
   }
 

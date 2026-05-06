@@ -11,7 +11,9 @@ const nextConfig = {
   // `ioredis` is an optional peer dep loaded lazily by the Redis rate-limit
   // store; marking it external silences the "Module not found" warning when
   // it isn't installed (the runtime try/catch already handles absence).
-  serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg', 'ioredis'],
+  // `@opentelemetry/api` is the same pattern — opt-in tracer dep loaded
+  // lazily by `lib/orchestration/tracing/otel-bootstrap.ts`.
+  serverExternalPackages: ['@prisma/client', '@prisma/adapter-pg', 'ioredis', '@opentelemetry/api'],
 
   // Security headers
   async headers() {

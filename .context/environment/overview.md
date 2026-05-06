@@ -97,6 +97,20 @@ ALLOWED_ORIGINS="https://app.example.com,https://mobile.example.com"
   - Production: Only explicitly listed origins are allowed
   - Leave unset for same-origin only APIs
 
+#### Orchestration Tracing (Optional, Opt-in)
+
+```bash
+# OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
+# OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY
+# OTEL_SERVICE_NAME=sunrise-orchestration
+# OTEL_TRACES_SAMPLER=parentbased_traceidratio
+# OTEL_TRACES_SAMPLER_ARG=0.1
+```
+
+The orchestration layer ships a vendor-neutral tracer interface that defaults to a no-op — zero allocations and zero new dependencies when not used. To ingest spans into an OTLP-compatible backend (Datadog, Honeycomb, Grafana Tempo, Langfuse, MLflow ≥ 2.20), wire up OTEL via `instrumentation.ts` and call `registerOtelTracer()`. The `OTEL_*` env vars are consumed by `@opentelemetry/sdk-node` and the OTLP exporter directly — Sunrise itself does not read them through `lib/env.ts`.
+
+See [`.context/orchestration/tracing.md`](../orchestration/tracing.md) for full bootstrap recipes (Datadog, Honeycomb, Tempo, Langfuse), span tree, attribute reference, and sampling guidance.
+
 ### 3. Generate Secrets
 
 #### BETTER_AUTH_SECRET

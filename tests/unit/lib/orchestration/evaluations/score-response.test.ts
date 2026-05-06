@@ -175,6 +175,110 @@ describe('scoreResponse', () => {
     ).rejects.toThrow('Judge response was not valid JSON after retry');
   });
 
+  // Finding 8: parseMetricEntry defensive validation arms (L156, L167, L174, L176)
+  // A judge response with non-object entry, non-string reasoning, null score without
+  // allowNullScore, or rawScore outside [0,1] should all be treated as invalid —
+  // the first attempt is rejected and retried; the second attempt succeeds.
+  it('rejects a response where groundedness entry is non-object (null) → retries → succeeds', async () => {
+    // Arrange — first response has groundedness=null (non-object, fails L156 branch);
+    // second response is fully valid.
+    const judgeProvider = makeJudge([
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: null, // triggers parseMetricEntry L156 → null → parseMetricScores returns null
+          relevance: { score: 0.9, reasoning: 'OK' },
+        }),
+      },
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: { score: 0.7, reasoning: 'Fixed.' },
+          relevance: { score: 0.9, reasoning: 'OK' },
+        }),
+      },
+    ]);
+
+    // Act
+    const result = await scoreResponse({
+      userQuestion: 'Q',
+      aiResponse: 'A',
+      citations: [],
+      judgeProvider,
+      judgeModel: 'claude-sonnet-4-6',
+    });
+
+    // Assert — first attempt was rejected (retried), second succeeded
+    expect((judgeProvider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    expect(result.scores.groundedness.score).toBe(0.7);
+  });
+
+  it('rejects a response where reasoning is missing (non-string) → retries → succeeds', async () => {
+    // Arrange — first response has relevance.reasoning missing (non-string, fails L167 branch)
+    const judgeProvider = makeJudge([
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: { score: 0.7, reasoning: 'OK' },
+          relevance: { score: 0.9 }, // missing reasoning — triggers L167 → null
+        }),
+      },
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: { score: 0.7, reasoning: 'OK' },
+          relevance: { score: 0.9, reasoning: 'Now present.' },
+        }),
+      },
+    ]);
+
+    // Act
+    const result = await scoreResponse({
+      userQuestion: 'Q',
+      aiResponse: 'A',
+      citations: [],
+      judgeProvider,
+      judgeModel: 'claude-sonnet-4-6',
+    });
+
+    // Assert — first attempt was rejected (retried), second succeeded
+    expect((judgeProvider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    expect(result.scores.relevance.reasoning).toBe('Now present.');
+  });
+
+  it('rejects a response where groundedness score is out of [0,1] range → retries → succeeds', async () => {
+    // Arrange — first response has groundedness.score=1.5 (out of range, fails L176 branch)
+    const judgeProvider = makeJudge([
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: { score: 1.5, reasoning: 'Too high' }, // out-of-range triggers L176 → null
+          relevance: { score: 0.9, reasoning: 'OK' },
+        }),
+      },
+      {
+        content: JSON.stringify({
+          faithfulness: { score: 0.8, reasoning: 'OK' },
+          groundedness: { score: 0.6, reasoning: 'Fixed.' },
+          relevance: { score: 0.9, reasoning: 'OK' },
+        }),
+      },
+    ]);
+
+    // Act
+    const result = await scoreResponse({
+      userQuestion: 'Q',
+      aiResponse: 'A',
+      citations: [baseCitation],
+      judgeProvider,
+      judgeModel: 'claude-sonnet-4-6',
+    });
+
+    // Assert — first attempt was rejected (retried), second succeeded
+    expect((judgeProvider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    expect(result.scores.groundedness.score).toBe(0.6);
+  });
+
   it('truncates citation excerpts and caps citation count in the judge prompt', async () => {
     const longExcerpt = 'X'.repeat(2000);
     const manyCitations = Array.from({ length: 20 }, (_, i) => ({

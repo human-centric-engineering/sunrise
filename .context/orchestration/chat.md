@@ -235,6 +235,14 @@ Every terminal `error` event carries one of these stable `code` values:
 
 Dispatcher-level failures (`unknown_capability`, `rate_limited`, `requires_approval`, `invalid_args`, `execution_error`) surface as `capability_result` events with `success: false` — they're not fatal to the chat turn. The LLM sees them as tool errors unless `skipFollowup` is set.
 
+## OTEL tracing
+
+The chat turn is wrapped in a top-level `chat.turn` span; each pass through the streaming retry loop opens an `llm.call` child span. Mid-stream provider failover is recorded as an exception + `sunrise.provider.failover_from` / `sunrise.provider.failover_to` attributes on the failed span; the retry attempt opens a fresh `llm.call` sibling. Capability dispatches automatically attach as children of the active `llm.call` via the dispatcher's internal wrap.
+
+Span status follows OTEL conventions: `error` for caught exceptions (provider error, internal error, `ChatError`); `ok` for in-try error events (budget exceeded, output guard block, conversation cap) — application-level outcomes equivalent to HTTP 4xx, not transport failures.
+
+See [`tracing.md`](tracing.md) for the full guide.
+
 ## Supporting modules
 
 Three internal modules under `lib/orchestration/chat/` are not exported from the barrel but are core to the handler. Documented here so they aren't invisible to future readers.

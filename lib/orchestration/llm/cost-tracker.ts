@@ -46,6 +46,14 @@ export interface LogCostParams {
   /** Explicit override; otherwise inferred from the model registry tier. */
   isLocal?: boolean;
   metadata?: Record<string, unknown>;
+  /**
+   * OTEL trace correlation. Set when a non-default tracer is registered and
+   * the call site has an active span. Empty strings (returned by the no-op
+   * tracer) are normalised to `undefined` so historical analytics queries
+   * filtering on `WHERE traceId IS NULL` keep working.
+   */
+  traceId?: string;
+  spanId?: string;
 }
 
 /** Budget snapshot returned by `checkBudget`. */
@@ -135,6 +143,10 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
   if (params.metadata !== undefined) {
     data.metadata = params.metadata as Prisma.InputJsonValue;
   }
+  // Empty strings (returned by the no-op tracer) are normalised away — only
+  // real span IDs from a registered tracer land in the column.
+  if (params.traceId) data.traceId = params.traceId;
+  if (params.spanId) data.spanId = params.spanId;
 
   try {
     const row = await prisma.aiCostLog.create({ data });

@@ -269,6 +269,7 @@ async function runAnalysis(
     maxTokens: ANALYSIS_MAX_TOKENS,
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     onFinalFailure: () => new Error('Analysis response was not valid JSON after retry'),
+    phase: 'summary',
   });
   return {
     summary: result.value.summary,

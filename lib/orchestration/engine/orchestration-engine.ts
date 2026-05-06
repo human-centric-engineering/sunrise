@@ -84,6 +84,19 @@ import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
 import { dispatchApprovalNotification } from '@/lib/orchestration/notifications/dispatcher';
 import { env } from '@/lib/env';
+import {
+  SPAN_WORKFLOW_EXECUTE,
+  SPAN_WORKFLOW_STEP,
+  SUNRISE_EXECUTION_ID,
+  SUNRISE_STEP_ID,
+  SUNRISE_STEP_TYPE,
+  SUNRISE_USER_ID,
+  SUNRISE_WORKFLOW_ID,
+  setSpanStatus,
+  withSpan,
+  withSpanGenerator,
+  type Span,
+} from '@/lib/orchestration/tracing';
 
 // Ensure every executor self-registers before the engine touches the
 // registry. Importing for side effects.
@@ -158,131 +171,357 @@ export class OrchestrationEngine {
       userId: options.userId,
     });
 
-    // --------------------------------------------------------------
-    // 2. DAG walk (supports parallel execution of sibling branches)
-    // --------------------------------------------------------------
-    const byId = new Map(workflow.definition.steps.map((s) => [s.id, s]));
-    const visited = new Set<string>();
-    // Bounded retry tracking: key = "sourceStepId→targetStepId", value = attempts used.
-    const retryCount = new Map<string, number>();
-    const queue: string[] = resumeAfterStepId
-      ? this.nextIdsAfter(byId, resumeAfterStepId)
-      : [workflow.definition.entryStepId];
+    // `withSpanGenerator` activates the workflow.execute span as the OTEL
+    // active context across yields. Nested workflow.step spans (sequential
+    // and parallel) and any deeper helper-`withSpan` calls automatically
+    // see workflow.execute as their parent in OTLP backends — one trace
+    // per execution, end-to-end.
+    yield* withSpanGenerator(
+      SPAN_WORKFLOW_EXECUTE,
+      {
+        [SUNRISE_EXECUTION_ID]: executionId,
+        [SUNRISE_WORKFLOW_ID]: workflow.id,
+        [SUNRISE_USER_ID]: options.userId,
+      },
+      (workflowSpan) =>
+        this.executeInner(
+          workflowSpan,
+          workflow,
+          executionId,
+          trace,
+          budgetLimitUsd,
+          ctx,
+          resumeAfterStepId,
+          baseLogger,
+          options
+        ),
+      { manualStatus: true }
+    );
+  }
 
-    // On resume, seed visited with steps already recorded in the trace
-    // so the in-degree check doesn't block successors of completed steps.
-    if (resumeAfterStepId) {
-      for (const entry of trace) {
-        visited.add(entry.stepId);
-      }
-    }
-
-    // Build in-degree map for convergence detection. A step is "ready"
-    // only when ALL its predecessors have been visited.
-    // Bounded retry back-edges (maxRetries > 0 + condition) are excluded —
-    // they don't represent data dependencies and would cause deadlocks
-    // after cascade-clear removes the back-edge source from visited.
-    const inDegree = new Map<string, Set<string>>();
-    for (const step of workflow.definition.steps) {
-      for (const edge of step.nextSteps) {
-        if (edge.maxRetries && edge.maxRetries > 0 && edge.condition) continue;
-        if (!inDegree.has(edge.targetStepId)) {
-          inDegree.set(edge.targetStepId, new Set());
-        }
-        inDegree.get(edge.targetStepId)!.add(step.id);
-      }
-    }
-
-    const isReady = (stepId: string): boolean => {
-      const preds = inDegree.get(stepId);
-      if (!preds || preds.size === 0) return true;
-      for (const pred of preds) {
-        if (!visited.has(pred)) return false;
-      }
-      return true;
-    };
-
-    // Steps waiting for predecessors to complete before they can run.
-    const pending = new Set<string>();
-
-    let stepCount = 0;
-    let finalOutput: unknown = null;
+  /**
+   * Inner body of `execute()` — owns the DAG walk, finalize, and terminal
+   * event yields. Lives behind `withSpanGenerator` so the workflow.execute
+   * span is active OTEL context across every yield. Sets the span's status
+   * directly via `setSpanStatus` (the helper opts out via `manualStatus`)
+   * because the failed-but-no-throw path must map `failureReason` to error
+   * status without relying on an uncaught throw.
+   */
+  private async *executeInner(
+    workflowSpan: Span,
+    workflow: ExecuteWorkflowArg,
+    executionId: string,
+    trace: ExecutionTraceEntry[],
+    budgetLimitUsd: number | undefined,
+    ctx: ExecutionContext,
+    resumeAfterStepId: string | undefined,
+    baseLogger: Logger,
+    options: ExecuteOptions
+  ): AsyncGenerator<ExecutionEvent, void, unknown> {
+    let workflowSpanError: unknown = undefined;
+    // Hoisted so the `finally` block can read them when computing the
+    // span's terminal status.
     let failed = false;
     let failureReason: string | null = null;
 
-    while (queue.length > 0 || pending.size > 0) {
-      if (options.signal?.aborted) {
-        failureReason = 'Execution aborted by client';
-        yield workflowFailed(failureReason);
-        failed = true;
-        break;
-      }
+    try {
+      // --------------------------------------------------------------
+      // 2. DAG walk (supports parallel execution of sibling branches)
+      // --------------------------------------------------------------
+      const byId = new Map(workflow.definition.steps.map((s) => [s.id, s]));
+      const visited = new Set<string>();
+      // Bounded retry tracking: key = "sourceStepId→targetStepId", value = attempts used.
+      const retryCount = new Map<string, number>();
+      const queue: string[] = resumeAfterStepId
+        ? this.nextIdsAfter(byId, resumeAfterStepId)
+        : [workflow.definition.entryStepId];
 
-      // Check if the execution was cancelled via the cancel endpoint.
-      const row = await prisma.aiWorkflowExecution.findUnique({
-        where: { id: ctx.executionId },
-        select: { status: true },
-      });
-      if (row?.status === WorkflowStatus.CANCELLED) {
-        failureReason = 'Execution cancelled by user';
-        yield workflowFailed(failureReason);
-        failed = true;
-        break;
-      }
-
-      // Promote any pending steps whose predecessors have all completed.
-      for (const pid of pending) {
-        if (isReady(pid)) {
-          pending.delete(pid);
-          queue.push(pid);
+      // On resume, seed visited with steps already recorded in the trace
+      // so the in-degree check doesn't block successors of completed steps.
+      if (resumeAfterStepId) {
+        for (const entry of trace) {
+          visited.add(entry.stepId);
         }
       }
 
-      if (queue.length === 0) {
-        // All remaining steps are pending with unmet dependencies — deadlock.
-        const pendingIds = [...pending].join(', ');
-        failureReason = `Workflow deadlocked: steps [${pendingIds}] have unmet dependencies`;
-        yield workflowFailed(failureReason);
-        failed = true;
-        break;
-      }
-
-      // Partition queue into ready and not-yet-ready steps (deduplicated).
-      const readySet = new Set<string>();
-      for (const id of queue) {
-        if (visited.has(id) || readySet.has(id)) continue;
-        if (isReady(id)) {
-          readySet.add(id);
-        } else {
-          pending.add(id);
+      // Build in-degree map for convergence detection. A step is "ready"
+      // only when ALL its predecessors have been visited.
+      // Bounded retry back-edges (maxRetries > 0 + condition) are excluded —
+      // they don't represent data dependencies and would cause deadlocks
+      // after cascade-clear removes the back-edge source from visited.
+      const inDegree = new Map<string, Set<string>>();
+      for (const step of workflow.definition.steps) {
+        for (const edge of step.nextSteps) {
+          if (edge.maxRetries && edge.maxRetries > 0 && edge.condition) continue;
+          if (!inDegree.has(edge.targetStepId)) {
+            inDegree.set(edge.targetStepId, new Set());
+          }
+          inDegree.get(edge.targetStepId)!.add(step.id);
         }
       }
-      queue.length = 0;
-      const ready = [...readySet];
 
-      if (ready.length === 0) continue;
+      const isReady = (stepId: string): boolean => {
+        const preds = inDegree.get(stepId);
+        if (!preds || preds.size === 0) return true;
+        for (const pred of preds) {
+          if (!visited.has(pred)) return false;
+        }
+        return true;
+      };
 
-      // ── Single step (sequential path — unchanged semantics) ──────
-      if (ready.length === 1) {
-        const stepId = ready[0];
-        if (stepCount++ >= MAX_STEPS_PER_RUN) {
-          failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
+      // Steps waiting for predecessors to complete before they can run.
+      const pending = new Set<string>();
+
+      let stepCount = 0;
+      let finalOutput: unknown = null;
+
+      while (queue.length > 0 || pending.size > 0) {
+        if (options.signal?.aborted) {
+          failureReason = 'Execution aborted by client';
           yield workflowFailed(failureReason);
           failed = true;
           break;
         }
 
-        const step = byId.get(stepId);
-        if (!step) {
-          failureReason = `Unknown step id "${stepId}"`;
-          yield workflowFailed(failureReason, stepId);
+        // Check if the execution was cancelled via the cancel endpoint.
+        const row = await prisma.aiWorkflowExecution.findUnique({
+          where: { id: ctx.executionId },
+          select: { status: true },
+        });
+        if (row?.status === WorkflowStatus.CANCELLED) {
+          failureReason = 'Execution cancelled by user';
+          yield workflowFailed(failureReason);
           failed = true;
           break;
         }
-        visited.add(stepId);
 
-        const singleResult = yield* this.executeSingleStep(
-          step,
+        // Promote any pending steps whose predecessors have all completed.
+        for (const pid of pending) {
+          if (isReady(pid)) {
+            pending.delete(pid);
+            queue.push(pid);
+          }
+        }
+
+        if (queue.length === 0) {
+          // All remaining steps are pending with unmet dependencies — deadlock.
+          const pendingIds = [...pending].join(', ');
+          failureReason = `Workflow deadlocked: steps [${pendingIds}] have unmet dependencies`;
+          yield workflowFailed(failureReason);
+          failed = true;
+          break;
+        }
+
+        // Partition queue into ready and not-yet-ready steps (deduplicated).
+        const readySet = new Set<string>();
+        for (const id of queue) {
+          if (visited.has(id) || readySet.has(id)) continue;
+          if (isReady(id)) {
+            readySet.add(id);
+          } else {
+            pending.add(id);
+          }
+        }
+        queue.length = 0;
+        const ready = [...readySet];
+
+        if (ready.length === 0) continue;
+
+        // ── Single step (sequential path — unchanged semantics) ──────
+        if (ready.length === 1) {
+          const stepId = ready[0];
+          if (stepCount++ >= MAX_STEPS_PER_RUN) {
+            failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
+            yield workflowFailed(failureReason);
+            failed = true;
+            break;
+          }
+
+          const step = byId.get(stepId);
+          if (!step) {
+            failureReason = `Unknown step id "${stepId}"`;
+            yield workflowFailed(failureReason, stepId);
+            failed = true;
+            break;
+          }
+          visited.add(stepId);
+
+          // `withSpanGenerator` activates the workflow.step span as the
+          // OTEL active context across yields, so nested helper-`withSpan`
+          // calls inside `executeSingleStep` (LLM runner, agent-call turn,
+          // capability dispatcher) become children of this step in OTLP
+          // backends. `manualStatus: true` lets us map the step descriptor's
+          // `failed` flag to span status without throwing.
+          const singleResult = yield* this.runSingleStepWithSpan(
+            step,
+            ctx,
+            trace,
+            executionId,
+            budgetLimitUsd,
+            baseLogger
+          );
+
+          if (singleResult.paused) return;
+          if (singleResult.failed) {
+            failed = true;
+            failureReason = singleResult.failureReason ?? null;
+            break;
+          }
+          if (singleResult.output !== undefined) finalOutput = singleResult.output;
+          if (singleResult.terminal) break;
+
+          // Enqueue next steps (with bounded retry support).
+          for (const id of singleResult.nextIds) {
+            if (!visited.has(id)) {
+              queue.push(id);
+              continue;
+            }
+
+            // The target was already visited — check if the originating edge
+            // has a maxRetries cap that allows re-execution.
+            const retryEdge = step.nextSteps.find(
+              (e) => e.targetStepId === id && e.maxRetries && e.maxRetries > 0 && e.condition
+            );
+            if (!retryEdge) continue;
+
+            const edgeKey = `${step.id}\u2192${id}`;
+            const attempts = retryCount.get(edgeKey) ?? 0;
+            if (attempts >= retryEdge.maxRetries!) {
+              // Retry budget exhausted. If the source step has a sibling
+              // edge with the same condition but no maxRetries, route
+              // there as the exhaustion handler. Otherwise fall through
+              // to the legacy silent-halt behaviour.
+              const fallbackEdge = step.nextSteps.find(
+                (e) =>
+                  e.targetStepId !== id &&
+                  e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
+                  (!e.maxRetries || e.maxRetries === 0)
+              );
+              if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
+                const exhaustionReason =
+                  typeof singleResult.output === 'object' &&
+                  singleResult.output !== null &&
+                  'reason' in singleResult.output
+                    ? (singleResult.output as Record<string, unknown>).reason
+                    : singleResult.output;
+                const reasonStr =
+                  typeof exhaustionReason === 'string'
+                    ? exhaustionReason
+                    : exhaustionReason !== undefined && exhaustionReason !== null
+                      ? JSON.stringify(exhaustionReason)
+                      : '';
+                queue.push(fallbackEdge.targetStepId);
+                attachRetryToTrace(trace, step.id, {
+                  attempt: retryEdge.maxRetries! + 1,
+                  maxRetries: retryEdge.maxRetries!,
+                  reason: reasonStr,
+                  targetStepId: fallbackEdge.targetStepId,
+                  exhausted: true,
+                });
+                yield stepRetry(
+                  step.id,
+                  fallbackEdge.targetStepId,
+                  retryEdge.maxRetries! + 1,
+                  retryEdge.maxRetries!,
+                  reasonStr,
+                  true
+                );
+              }
+              continue;
+            }
+
+            // Under the retry limit — re-queue the target.
+            retryCount.set(edgeKey, attempts + 1);
+
+            // Store retry context so the target step's prompt can reference
+            // the failure reason via {{__retryContext.failureReason}}.
+            ctx.variables.__retryContext = {
+              fromStep: step.id,
+              attempt: attempts + 1,
+              maxRetries: retryEdge.maxRetries,
+              failureReason:
+                typeof singleResult.output === 'object' &&
+                singleResult.output !== null &&
+                'reason' in singleResult.output
+                  ? (singleResult.output as Record<string, unknown>).reason
+                  : String(singleResult.output),
+            };
+
+            // Cascade-clear visited for the retry target and all its
+            // downstream dependents so the engine re-executes them.
+            const toClear = new Set<string>([id]);
+            const clearQueue = [id];
+            while (clearQueue.length > 0) {
+              const current = clearQueue.shift()!;
+              const currentStep = byId.get(current);
+              if (!currentStep) continue;
+              for (const edge of currentStep.nextSteps) {
+                if (visited.has(edge.targetStepId) && !toClear.has(edge.targetStepId)) {
+                  toClear.add(edge.targetStepId);
+                  clearQueue.push(edge.targetStepId);
+                }
+              }
+            }
+            for (const clearId of toClear) {
+              visited.delete(clearId);
+              pending.delete(clearId);
+            }
+
+            queue.push(id);
+
+            const retryReason = (() => {
+              if (
+                typeof ctx.variables.__retryContext === 'object' &&
+                ctx.variables.__retryContext !== null
+              ) {
+                const reason = (ctx.variables.__retryContext as Record<string, unknown>)
+                  .failureReason;
+                if (typeof reason === 'string') return reason;
+                if (reason !== undefined && reason !== null) return JSON.stringify(reason);
+              }
+              return '';
+            })();
+            attachRetryToTrace(trace, step.id, {
+              attempt: attempts + 1,
+              maxRetries: retryEdge.maxRetries!,
+              reason: retryReason,
+              targetStepId: id,
+            });
+            yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
+          }
+          continue;
+        }
+
+        // ── Parallel batch (multiple ready steps — run concurrently) ──
+        // Validate batch size against step count cap.
+        if (stepCount + ready.length > MAX_STEPS_PER_RUN) {
+          failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
+          yield workflowFailed(failureReason);
+          failed = true;
+          break;
+        }
+        stepCount += ready.length;
+
+        // Resolve all steps and mark visited before execution.
+        const batchSteps: WorkflowStep[] = [];
+        let batchValid = true;
+        for (const stepId of ready) {
+          const step = byId.get(stepId);
+          if (!step) {
+            failureReason = `Unknown step id "${stepId}"`;
+            yield workflowFailed(failureReason, stepId);
+            failed = true;
+            batchValid = false;
+            break;
+          }
+          batchSteps.push(step);
+          visited.add(stepId);
+        }
+        if (!batchValid) break;
+
+        // Execute all branch steps concurrently.
+        const batchResult = await this.executeParallelBatch(
+          batchSteps,
           ctx,
           trace,
           executionId,
@@ -290,236 +529,90 @@ export class OrchestrationEngine {
           baseLogger
         );
 
-        if (singleResult.paused) return;
-        if (singleResult.failed) {
+        // Yield all collected events from the batch.
+        for (const event of batchResult.events) {
+          yield event;
+        }
+
+        if (batchResult.paused) return;
+        if (batchResult.failed) {
           failed = true;
-          failureReason = singleResult.failureReason ?? null;
+          failureReason = batchResult.failureReason ?? null;
           break;
         }
-        if (singleResult.output !== undefined) finalOutput = singleResult.output;
-        if (singleResult.terminal) break;
+        if (batchResult.lastOutput !== undefined) finalOutput = batchResult.lastOutput;
 
-        // Enqueue next steps (with bounded retry support).
-        for (const id of singleResult.nextIds) {
-          if (!visited.has(id)) {
-            queue.push(id);
-            continue;
-          }
-
-          // The target was already visited — check if the originating edge
-          // has a maxRetries cap that allows re-execution.
-          const retryEdge = step.nextSteps.find(
-            (e) => e.targetStepId === id && e.maxRetries && e.maxRetries > 0 && e.condition
-          );
-          if (!retryEdge) continue;
-
-          const edgeKey = `${step.id}\u2192${id}`;
-          const attempts = retryCount.get(edgeKey) ?? 0;
-          if (attempts >= retryEdge.maxRetries!) {
-            // Retry budget exhausted. If the source step has a sibling
-            // edge with the same condition but no maxRetries, route
-            // there as the exhaustion handler. Otherwise fall through
-            // to the legacy silent-halt behaviour.
-            const fallbackEdge = step.nextSteps.find(
-              (e) =>
-                e.targetStepId !== id &&
-                e.condition?.toLowerCase() === retryEdge.condition?.toLowerCase() &&
-                (!e.maxRetries || e.maxRetries === 0)
-            );
-            if (fallbackEdge && !visited.has(fallbackEdge.targetStepId)) {
-              const failureReason =
-                typeof singleResult.output === 'object' &&
-                singleResult.output !== null &&
-                'reason' in singleResult.output
-                  ? (singleResult.output as Record<string, unknown>).reason
-                  : singleResult.output;
-              const reasonStr =
-                typeof failureReason === 'string'
-                  ? failureReason
-                  : failureReason !== undefined && failureReason !== null
-                    ? JSON.stringify(failureReason)
-                    : '';
-              queue.push(fallbackEdge.targetStepId);
-              attachRetryToTrace(trace, step.id, {
-                attempt: retryEdge.maxRetries! + 1,
-                maxRetries: retryEdge.maxRetries!,
-                reason: reasonStr,
-                targetStepId: fallbackEdge.targetStepId,
-                exhausted: true,
-              });
-              yield stepRetry(
-                step.id,
-                fallbackEdge.targetStepId,
-                retryEdge.maxRetries! + 1,
-                retryEdge.maxRetries!,
-                reasonStr,
-                true
-              );
-            }
-            continue;
-          }
-
-          // Under the retry limit — re-queue the target.
-          retryCount.set(edgeKey, attempts + 1);
-
-          // Store retry context so the target step's prompt can reference
-          // the failure reason via {{__retryContext.failureReason}}.
-          ctx.variables.__retryContext = {
-            fromStep: step.id,
-            attempt: attempts + 1,
-            maxRetries: retryEdge.maxRetries,
-            failureReason:
-              typeof singleResult.output === 'object' &&
-              singleResult.output !== null &&
-              'reason' in singleResult.output
-                ? (singleResult.output as Record<string, unknown>).reason
-                : String(singleResult.output),
-          };
-
-          // Cascade-clear visited for the retry target and all its
-          // downstream dependents so the engine re-executes them.
-          const toClear = new Set<string>([id]);
-          const clearQueue = [id];
-          while (clearQueue.length > 0) {
-            const current = clearQueue.shift()!;
-            const currentStep = byId.get(current);
-            if (!currentStep) continue;
-            for (const edge of currentStep.nextSteps) {
-              if (visited.has(edge.targetStepId) && !toClear.has(edge.targetStepId)) {
-                toClear.add(edge.targetStepId);
-                clearQueue.push(edge.targetStepId);
-              }
-            }
-          }
-          for (const clearId of toClear) {
-            visited.delete(clearId);
-            pending.delete(clearId);
-          }
-
-          queue.push(id);
-
-          const retryReason = (() => {
-            if (
-              typeof ctx.variables.__retryContext === 'object' &&
-              ctx.variables.__retryContext !== null
-            ) {
-              const reason = (ctx.variables.__retryContext as Record<string, unknown>)
-                .failureReason;
-              if (typeof reason === 'string') return reason;
-              if (reason !== undefined && reason !== null) return JSON.stringify(reason);
-            }
-            return '';
-          })();
-          attachRetryToTrace(trace, step.id, {
-            attempt: attempts + 1,
-            maxRetries: retryEdge.maxRetries!,
-            reason: retryReason,
-            targetStepId: id,
-          });
-          yield stepRetry(step.id, id, attempts + 1, retryEdge.maxRetries!, retryReason);
-        }
-        continue;
-      }
-
-      // ── Parallel batch (multiple ready steps — run concurrently) ──
-      // Validate batch size against step count cap.
-      if (stepCount + ready.length > MAX_STEPS_PER_RUN) {
-        failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
-        yield workflowFailed(failureReason);
-        failed = true;
-        break;
-      }
-      stepCount += ready.length;
-
-      // Resolve all steps and mark visited before execution.
-      const batchSteps: WorkflowStep[] = [];
-      let batchValid = true;
-      for (const stepId of ready) {
-        const step = byId.get(stepId);
-        if (!step) {
-          failureReason = `Unknown step id "${stepId}"`;
-          yield workflowFailed(failureReason, stepId);
+        // Budget check after the batch.
+        if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
+          failureReason = 'Budget exceeded';
+          yield workflowFailed(failureReason);
           failed = true;
-          batchValid = false;
           break;
         }
-        batchSteps.push(step);
-        visited.add(stepId);
-      }
-      if (!batchValid) break;
+        if (
+          budgetLimitUsd &&
+          ctx.totalCostUsd >= budgetLimitUsd * BUDGET_WARN_FRACTION &&
+          !ctx.variables.__budgetWarned
+        ) {
+          ctx.variables.__budgetWarned = true;
+          yield budgetWarning(ctx.totalCostUsd, budgetLimitUsd);
+        }
 
-      // Execute all branch steps concurrently.
-      const batchResult = await this.executeParallelBatch(
-        batchSteps,
-        ctx,
-        trace,
-        executionId,
-        budgetLimitUsd,
-        baseLogger
-      );
-
-      // Yield all collected events from the batch.
-      for (const event of batchResult.events) {
-        yield event;
+        // Enqueue next steps from all completed branches.
+        for (const id of batchResult.nextIds) {
+          if (!visited.has(id)) queue.push(id);
+        }
       }
 
-      if (batchResult.paused) return;
-      if (batchResult.failed) {
-        failed = true;
-        failureReason = batchResult.failureReason ?? null;
-        break;
+      // --------------------------------------------------------------
+      // 3. Terminal event
+      // --------------------------------------------------------------
+      if (!failed) {
+        await this.finalize(executionId, ctx, trace, WorkflowStatus.COMPLETED, null);
+        yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
+        emitHookEvent('workflow.completed', {
+          executionId,
+          workflowId: workflow.id,
+          userId: options.userId,
+          tokensUsed: ctx.totalTokensUsed,
+          costUsd: ctx.totalCostUsd,
+        });
+      } else {
+        await this.finalize(
+          executionId,
+          ctx,
+          trace,
+          WorkflowStatus.FAILED,
+          failureReason ?? 'Execution did not complete'
+        );
+        emitHookEvent('workflow.failed', {
+          executionId,
+          workflowId: workflow.id,
+          userId: options.userId,
+          reason: failureReason ?? 'Execution did not complete',
+        });
       }
-      if (batchResult.lastOutput !== undefined) finalOutput = batchResult.lastOutput;
-
-      // Budget check after the batch.
-      if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-        failureReason = 'Budget exceeded';
-        yield workflowFailed(failureReason);
-        failed = true;
-        break;
+    } catch (err) {
+      workflowSpanError = err;
+      throw err;
+    } finally {
+      // `withSpanGenerator` opts out of auto-status via `manualStatus: true`
+      // and handles `safeRecordException` + `safeEnd` itself on rethrow.
+      // We map the failed-but-no-throw path (DAG walk set `failed = true`,
+      // generator returned normally) to error status here.
+      if (workflowSpanError !== undefined) {
+        setSpanStatus(workflowSpan, {
+          code: 'error',
+          message: workflowSpanError instanceof Error ? workflowSpanError.message : 'error',
+        });
+      } else if (failed) {
+        setSpanStatus(workflowSpan, {
+          code: 'error',
+          message: failureReason ?? 'workflow failed',
+        });
+      } else {
+        setSpanStatus(workflowSpan, { code: 'ok' });
       }
-      if (
-        budgetLimitUsd &&
-        ctx.totalCostUsd >= budgetLimitUsd * BUDGET_WARN_FRACTION &&
-        !ctx.variables.__budgetWarned
-      ) {
-        ctx.variables.__budgetWarned = true;
-        yield budgetWarning(ctx.totalCostUsd, budgetLimitUsd);
-      }
-
-      // Enqueue next steps from all completed branches.
-      for (const id of batchResult.nextIds) {
-        if (!visited.has(id)) queue.push(id);
-      }
-    }
-
-    // --------------------------------------------------------------
-    // 3. Terminal event
-    // --------------------------------------------------------------
-    if (!failed) {
-      await this.finalize(executionId, ctx, trace, WorkflowStatus.COMPLETED, null);
-      yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
-      emitHookEvent('workflow.completed', {
-        executionId,
-        workflowId: workflow.id,
-        userId: options.userId,
-        tokensUsed: ctx.totalTokensUsed,
-        costUsd: ctx.totalCostUsd,
-      });
-    } else {
-      await this.finalize(
-        executionId,
-        ctx,
-        trace,
-        WorkflowStatus.FAILED,
-        failureReason ?? 'Execution did not complete'
-      );
-      emitHookEvent('workflow.failed', {
-        executionId,
-        workflowId: workflow.id,
-        userId: options.userId,
-        reason: failureReason ?? 'Execution did not complete',
-      });
     }
   }
 
@@ -746,6 +839,98 @@ export class OrchestrationEngine {
   // ================================================================
   // Step execution helpers
   // ================================================================
+
+  /**
+   * Wrap `executeSingleStep` in the workflow.step span. Drives the inner
+   * generator inside `tracer.withActiveContext(span, …)` per iteration so
+   * AsyncLocalStorage propagates `span` as the active OTEL context — any
+   * helper-`withSpan` calls during step execution (LLM runner, agent-call
+   * turn, capability dispatcher) become children of this span in OTLP
+   * backends. Maps `singleResult.failed` to span status without throwing.
+   */
+  private async *runSingleStepWithSpan(
+    step: WorkflowStep,
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): AsyncGenerator<
+    ExecutionEvent,
+    {
+      failed: boolean;
+      paused: boolean;
+      terminal: boolean;
+      failureReason?: string;
+      output?: unknown;
+      nextIds: string[];
+    },
+    unknown
+  > {
+    return yield* withSpanGenerator(
+      SPAN_WORKFLOW_STEP,
+      {
+        [SUNRISE_STEP_ID]: step.id,
+        [SUNRISE_STEP_TYPE]: step.type,
+        [SUNRISE_EXECUTION_ID]: executionId,
+      },
+      (span) =>
+        this.executeSingleStepWithStatus(
+          span,
+          step,
+          ctx,
+          trace,
+          executionId,
+          budgetLimitUsd,
+          baseLogger
+        ),
+      { manualStatus: true }
+    );
+  }
+
+  /**
+   * `executeSingleStep` adapter that sets the workflow.step span's status
+   * from the step descriptor before returning. Lives separately from
+   * `executeSingleStep` so the latter remains tracing-agnostic.
+   */
+  private async *executeSingleStepWithStatus(
+    span: Span,
+    step: WorkflowStep,
+    ctx: ExecutionContext,
+    trace: ExecutionTraceEntry[],
+    executionId: string,
+    budgetLimitUsd: number | undefined,
+    baseLogger: Logger
+  ): AsyncGenerator<
+    ExecutionEvent,
+    {
+      failed: boolean;
+      paused: boolean;
+      terminal: boolean;
+      failureReason?: string;
+      output?: unknown;
+      nextIds: string[];
+    },
+    unknown
+  > {
+    const result = yield* this.executeSingleStep(
+      step,
+      ctx,
+      trace,
+      executionId,
+      budgetLimitUsd,
+      baseLogger
+    );
+    if (result.failed) {
+      setSpanStatus(span, {
+        code: 'error',
+        message: result.failureReason ?? 'step failed',
+      });
+    } else {
+      setSpanStatus(span, { code: 'ok' });
+    }
+    return result;
+  }
 
   /**
    * Execute a single step with full lifecycle: start event, strategy
@@ -983,53 +1168,76 @@ export class OrchestrationEngine {
     // (including retries) independently.
     // Note: allEvents.push() from concurrent callbacks is safe because
     // Node.js is single-threaded — each push() completes atomically between awaits.
-    const promises = steps.map(async (step) => {
-      const started = Date.now();
-      // Per-step telemetry buffer — isolated from sibling parallel branches.
-      const telemetryOut: LlmTelemetryEntry[] = [];
-      allEvents.push(stepStarted(step.id, step.type, step.name));
+    const promises = steps.map(async (step) =>
+      // `withSpan` activates the parallel-branch span as the OTEL active
+      // context; AsyncLocalStorage forks per Promise (Node ≥ 18), so each
+      // branch sees the outer workflow.execute as parent without entanglement
+      // with sibling branches. `manualStatus: true` lets us set the span
+      // status from the inner — necessary because the existing parallel-batch
+      // contract requires errors to be collected into a descriptor for the
+      // post-`Promise.allSettled` merge rather than rethrown.
+      withSpan(
+        SPAN_WORKFLOW_STEP,
+        {
+          [SUNRISE_STEP_ID]: step.id,
+          [SUNRISE_STEP_TYPE]: step.type,
+          [SUNRISE_EXECUTION_ID]: executionId,
+        },
+        async (span) => {
+          const started = Date.now();
+          // Per-step telemetry buffer — isolated from sibling parallel branches.
+          const telemetryOut: LlmTelemetryEntry[] = [];
+          allEvents.push(stepStarted(step.id, step.type, step.name));
 
-      try {
-        const result = await this.runStepToCompletion(step, ctx, telemetryOut);
-        const durationMs = Date.now() - started;
-        return {
-          step,
-          result,
-          durationMs,
-          started,
-          telemetryOut,
-          error: null as ExecutorError | null,
-        };
-      } catch (err) {
-        const durationMs = Date.now() - started;
-        if (err instanceof PausedForApproval) {
-          return {
-            step,
-            result: null,
-            durationMs,
-            started,
-            telemetryOut,
-            paused: true,
-            payload: err.payload,
-            // Carry partial cost (set by the retry loop's accumulator-aware
-            // PausedForApproval rethrow) so the trace entry below records it.
-            tokensUsed: err.tokensUsed,
-            costUsd: err.costUsd,
-            error: null,
-          };
-        }
-        const execErr =
-          err instanceof ExecutorError
-            ? err
-            : new ExecutorError(
-                step.id,
-                'executor_threw',
-                err instanceof Error ? err.message : 'Executor threw an unknown error',
-                err
-              );
-        return { step, result: null, durationMs, started, telemetryOut, error: execErr };
-      }
-    });
+          try {
+            const result = await this.runStepToCompletion(step, ctx, telemetryOut);
+            const durationMs = Date.now() - started;
+            setSpanStatus(span, { code: 'ok' });
+            return {
+              step,
+              result,
+              durationMs,
+              started,
+              telemetryOut,
+              error: null as ExecutorError | null,
+            };
+          } catch (err) {
+            const durationMs = Date.now() - started;
+            if (err instanceof PausedForApproval) {
+              // Pause is not a tracer-level error — workflow continues from the
+              // pause point after admin approval.
+              setSpanStatus(span, { code: 'ok' });
+              return {
+                step,
+                result: null,
+                durationMs,
+                started,
+                telemetryOut,
+                paused: true,
+                payload: err.payload,
+                // Carry partial cost (set by the retry loop's accumulator-aware
+                // PausedForApproval rethrow) so the trace entry below records it.
+                tokensUsed: err.tokensUsed,
+                costUsd: err.costUsd,
+                error: null,
+              };
+            }
+            const execErr =
+              err instanceof ExecutorError
+                ? err
+                : new ExecutorError(
+                    step.id,
+                    'executor_threw',
+                    err instanceof Error ? err.message : 'Executor threw an unknown error',
+                    err
+                  );
+            setSpanStatus(span, { code: 'error', message: execErr.message });
+            return { step, result: null, durationMs, started, telemetryOut, error: execErr };
+          }
+        },
+        { manualStatus: true }
+      )
+    );
 
     const settled = await Promise.allSettled(promises);
 
@@ -1574,10 +1782,6 @@ function backoffDelayMs(attempt: number): number {
   return Math.min(500 * Math.pow(2, attempt), 5_000);
 }
 
-/**
- * Append a retry record to the most recent trace entry written for
- * `stepId` — that's the entry whose verdict triggered the retry.
- */
 function attachRetryToTrace(
   trace: ExecutionTraceEntry[],
   stepId: string,

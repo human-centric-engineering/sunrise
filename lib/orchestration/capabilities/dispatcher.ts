@@ -38,6 +38,18 @@ import type {
   CapabilityRegistryEntry,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
+import {
+  GEN_AI_OPERATION_NAME,
+  GEN_AI_TOOL_NAME,
+  SPAN_CAPABILITY_DISPATCH,
+  SUNRISE_AGENT_ID,
+  SUNRISE_CAPABILITY_SLUG,
+  SUNRISE_CAPABILITY_SUCCESS,
+  SUNRISE_CONVERSATION_ID,
+  SUNRISE_USER_ID,
+  setSpanAttributes,
+  withSpan,
+} from '@/lib/orchestration/tracing';
 
 /**
  * Parse a Prisma `Json` value from `AiCapability.functionDefinition` into a
@@ -247,75 +259,97 @@ class CapabilityDispatcher {
       };
     }
 
-    // 7. Validate args.
-    let validated: unknown;
-    try {
-      validated = handler.validate(rawArgs);
-    } catch (err) {
-      if (err instanceof CapabilityValidationError) {
-        logger.warn('Capability dispatch: invalid args', {
+    // Steps 7–9 wrapped in a span. Earlier guard returns are not
+    // wrapped — they don't represent real tool work and producing
+    // spans for them would pollute the trace UI with noise.
+    return withSpan(
+      SPAN_CAPABILITY_DISPATCH,
+      {
+        [SUNRISE_CAPABILITY_SLUG]: slug,
+        [GEN_AI_TOOL_NAME]: slug,
+        [GEN_AI_OPERATION_NAME]: 'tool_call',
+        [SUNRISE_AGENT_ID]: context.agentId,
+        [SUNRISE_USER_ID]: context.userId,
+        ...(context.conversationId ? { [SUNRISE_CONVERSATION_ID]: context.conversationId } : {}),
+      },
+      async (span) => {
+        // 7. Validate args.
+        let validated: unknown;
+        try {
+          validated = handler.validate(rawArgs);
+        } catch (err) {
+          if (err instanceof CapabilityValidationError) {
+            logger.warn('Capability dispatch: invalid args', {
+              slug,
+              agentId: context.agentId,
+              issues: err.issues,
+            });
+            setSpanAttributes(span, { [SUNRISE_CAPABILITY_SUCCESS]: false });
+            return {
+              success: false,
+              error: {
+                code: 'invalid_args',
+                message: formatValidationIssues(err.issues),
+              },
+            };
+          }
+          throw err;
+        }
+
+        // 8. Execute. Any unexpected throw is normalised to execution_error.
+        let result: CapabilityResult;
+        try {
+          result = await handler.execute(validated, context);
+        } catch (err) {
+          logger.error('Capability dispatch: execution threw', {
+            slug,
+            agentId: context.agentId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          setSpanAttributes(span, { [SUNRISE_CAPABILITY_SUCCESS]: false });
+          return {
+            success: false,
+            error: {
+              code: 'execution_error',
+              message: err instanceof Error ? err.message : 'Capability execution failed',
+            },
+          };
+        }
+
+        setSpanAttributes(span, { [SUNRISE_CAPABILITY_SUCCESS]: result.success });
+
+        // 9. Fire-and-forget cost log. The LLM call that triggered this
+        //    tool already logged its own tokens, so we record zeros and
+        //    rely on the `operation: 'tool_call'` breakdown for per-tool
+        //    analytics.
+        void logCost({
+          ...(context.agentId ? { agentId: context.agentId } : {}),
+          ...(context.conversationId ? { conversationId: context.conversationId } : {}),
+          operation: CostOperation.TOOL_CALL,
+          model: 'n/a',
+          provider: 'capability',
+          inputTokens: 0,
+          outputTokens: 0,
+          traceId: span.traceId(),
+          spanId: span.spanId(),
+          metadata: { slug, success: result.success },
+        }).catch((err) => {
+          logger.error('Capability dispatch: logCost rejected', {
+            slug,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+        logger.info('Capability dispatched', {
           slug,
           agentId: context.agentId,
-          issues: err.issues,
+          success: result.success,
+          latencyMs: Date.now() - startedAt,
         });
-        return {
-          success: false,
-          error: {
-            code: 'invalid_args',
-            message: formatValidationIssues(err.issues),
-          },
-        };
+
+        return result;
       }
-      throw err;
-    }
-
-    // 8. Execute. Any unexpected throw is normalised to execution_error.
-    let result: CapabilityResult;
-    try {
-      result = await handler.execute(validated, context);
-    } catch (err) {
-      logger.error('Capability dispatch: execution threw', {
-        slug,
-        agentId: context.agentId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return {
-        success: false,
-        error: {
-          code: 'execution_error',
-          message: err instanceof Error ? err.message : 'Capability execution failed',
-        },
-      };
-    }
-
-    // 9. Fire-and-forget cost log. The LLM call that triggered this
-    //    tool already logged its own tokens, so we record zeros and
-    //    rely on the `operation: 'tool_call'` breakdown for per-tool
-    //    analytics.
-    void logCost({
-      ...(context.agentId ? { agentId: context.agentId } : {}),
-      ...(context.conversationId ? { conversationId: context.conversationId } : {}),
-      operation: CostOperation.TOOL_CALL,
-      model: 'n/a',
-      provider: 'capability',
-      inputTokens: 0,
-      outputTokens: 0,
-      metadata: { slug, success: result.success },
-    }).catch((err) => {
-      logger.error('Capability dispatch: logCost rejected', {
-        slug,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
-    logger.info('Capability dispatched', {
-      slug,
-      agentId: context.agentId,
-      success: result.success,
-      latencyMs: Date.now() - startedAt,
-    });
-
-    return result;
+    );
   }
 
   /**

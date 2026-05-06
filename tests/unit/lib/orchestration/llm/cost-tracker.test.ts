@@ -24,7 +24,23 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Model registry — use real implementations by default so existing calculateCost
+// tests continue to use the static fallback map. getAvailableModels is also
+// wrapped in a vi.fn() so the calculateLocalSavings "no non-local ref" test can
+// temporarily override it per-test.
+vi.mock('@/lib/orchestration/llm/model-registry', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/orchestration/llm/model-registry')>(
+    '@/lib/orchestration/llm/model-registry'
+  );
+  return {
+    ...actual,
+    getAvailableModels: vi.fn(actual.getAvailableModels),
+    getModel: vi.fn(actual.getModel),
+  };
+});
+
 const { prisma } = await import('@/lib/db/client');
+const { getAvailableModels } = await import('@/lib/orchestration/llm/model-registry');
 const {
   calculateCost,
   logCost,
@@ -557,6 +573,85 @@ describe('getAgentCosts — date range branches', () => {
   });
 });
 
+describe('logCost — trace correlation', () => {
+  it('omits traceId from the Prisma write when traceId is an empty string', async () => {
+    // Arrange: empty string is the sentinel returned by NOOP_SPAN.traceId()
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      traceId: '',
+    });
+
+    // Assert: the if (params.traceId) guard at cost-tracker.ts:148-149 normalises
+    // empty strings away so the column remains NULL rather than an empty string.
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('traceId');
+  });
+
+  it('includes traceId in the Prisma write when traceId is a real span ID', async () => {
+    // Arrange
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      traceId: 'abc-123',
+    });
+
+    // Assert: a non-empty traceId passes through the normalisation guard
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.traceId).toBe('abc-123');
+  });
+
+  it('omits spanId from the Prisma write when spanId is an empty string', async () => {
+    // Arrange: empty string is the sentinel returned by NOOP_SPAN.spanId()
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      spanId: '',
+    });
+
+    // Assert: empty spanId is normalised away (same guard at cost-tracker.ts:148-149)
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('spanId');
+  });
+
+  it('includes spanId in the Prisma write when spanId is a real span ID', async () => {
+    // Arrange
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'row-1' });
+
+    // Act
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 10,
+      outputTokens: 5,
+      operation: 'chat',
+      spanId: 'def-456',
+    });
+
+    // Assert: a non-empty spanId passes through the normalisation guard
+    const call = (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.data.spanId).toBe('def-456');
+  });
+});
+
 describe('calculateLocalSavings', () => {
   it('returns zero savings when no local rows exist in the window', async () => {
     // Arrange: DB returns empty list for local rows
@@ -595,5 +690,42 @@ describe('calculateLocalSavings', () => {
       'calculateLocalSavings: query failed, returning zero savings',
       expect.objectContaining({ error: 'db timeout' })
     );
+  });
+
+  // Finding 17: the `if (!ref) continue` branch at cost-tracker.ts:381 was uncovered.
+  // When getAvailableModels() returns only local-tier models, findCheapestNonLocalInTier
+  // returns null for every tier, so ref is null and the row is silently skipped —
+  // totalUsd stays 0 and contributing stays 0.
+  it('skips rows with no non-local reference and returns zero savings and sampleSize=0', async () => {
+    // Arrange: DB returns one local-model row
+    const dateFrom = new Date('2024-01-01T00:00:00Z');
+    const dateTo = new Date('2024-01-31T23:59:59Z');
+    (prisma.aiCostLog.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { model: 'local:llama-3', inputTokens: 1000, outputTokens: 500 },
+    ]);
+
+    // Override getAvailableModels to return only local-tier models —
+    // findCheapestNonLocalInTier filters out local, so ref is null for every tier.
+    vi.mocked(getAvailableModels).mockReturnValue([
+      {
+        id: 'local:llama-3',
+        name: 'Llama 3',
+        tier: 'local',
+        provider: 'ollama',
+        maxContext: 4096,
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        supportsTools: false,
+        available: true,
+      },
+    ]);
+
+    // Act
+    const result = await calculateLocalSavings({ dateFrom, dateTo });
+
+    // Assert: row was silently skipped; totalUsd=0, sampleSize=0
+    expect(result.usd).toBe(0);
+    expect(result.sampleSize).toBe(0);
+    expect(result.methodology).toBe('tier_fallback');
   });
 });
