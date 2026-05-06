@@ -30,6 +30,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: {
       findUnique: vi.fn(),
     },
+    aiWorkflowVersion: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -328,6 +331,154 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/dry-run', () => {
       const data = await parseJson<{ data: { warnings: string[] } }>(response);
       // __whole__ should NOT generate a warning
       expect(data.data.warnings).toHaveLength(0);
+    });
+  });
+
+  describe('target selector', () => {
+    const ALT_DEF = {
+      steps: [
+        {
+          id: 'step-2',
+          name: 'Alt step',
+          type: 'chain',
+          config: { prompt: 'alt' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'step-2',
+      errorStrategy: 'retry' as const,
+    };
+
+    it('target=draft validates the draftDefinition column instead of the published version', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflowRow({ workflowDefinition: ALT_DEF }) as never
+      );
+      // Override the helper with a workflow that has a draft.
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValueOnce({
+        ...makeWorkflowRow({ workflowDefinition: ALT_DEF }),
+        draftDefinition: makeValidDefinition(),
+      } as never);
+
+      const response = await POST(makeRequest({ inputData: {}, target: 'draft' }), makeParams());
+
+      expect(response.status).toBe(200);
+      // semanticValidateWorkflow should have been called with the DRAFT
+      // definition (entryStepId='step-1' from makeValidDefinition), not the
+      // published one (entryStepId='step-2' from ALT_DEF).
+      const arg = vi.mocked(semanticValidateWorkflow).mock.calls[0]?.[0] as
+        | { entryStepId?: string }
+        | undefined;
+      expect(arg?.entryStepId).toBe('step-1');
+    });
+
+    it('target=draft 400s when the workflow has no draft', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflowRow() as never // draftDefinition is null by default
+      );
+
+      const response = await POST(makeRequest({ inputData: {}, target: 'draft' }), makeParams());
+
+      expect(response.status).toBe(400);
+    });
+
+    it('target=version reads the snapshot from the requested version row', async () => {
+      const VERSION_ID = 'cmjbv4i3x00003wsloputvv01';
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflowRow() as never);
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+        id: VERSION_ID,
+        workflowId: WORKFLOW_ID,
+        version: 2,
+        snapshot: ALT_DEF,
+      } as never);
+
+      const response = await POST(
+        makeRequest({ inputData: {}, target: 'version', versionId: VERSION_ID }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(200);
+      const arg = vi.mocked(semanticValidateWorkflow).mock.calls[0]?.[0] as
+        | { entryStepId?: string }
+        | undefined;
+      expect(arg?.entryStepId).toBe('step-2');
+    });
+
+    it('target=version 404s when the version row is missing', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflowRow() as never);
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue(null);
+
+      const response = await POST(
+        makeRequest({
+          inputData: {},
+          target: 'version',
+          versionId: 'cmjbv4i3x00003wsloputvv99',
+        }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('target=version 404s when the version belongs to a different workflow', async () => {
+      const OTHER_WORKFLOW = 'cmjbv4i3x00003wsloputaaaa';
+      const VERSION_ID = 'cmjbv4i3x00003wsloputvv01';
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflowRow() as never);
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+        id: VERSION_ID,
+        workflowId: OTHER_WORKFLOW,
+        version: 1,
+        snapshot: ALT_DEF,
+      } as never);
+
+      const response = await POST(
+        makeRequest({ inputData: {}, target: 'version', versionId: VERSION_ID }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('target=version accepts UUID-format versionId (backfilled rows)', async () => {
+      const UUID_VERSION_ID = '90740b81-9e64-4839-8036-e800bb2ed143';
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflowRow() as never);
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+        id: UUID_VERSION_ID,
+        workflowId: WORKFLOW_ID,
+        version: 1,
+        snapshot: makeValidDefinition(),
+      } as never);
+
+      const response = await POST(
+        makeRequest({ inputData: {}, target: 'version', versionId: UUID_VERSION_ID }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('target=version 400s when versionId is missing', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const response = await POST(makeRequest({ inputData: {}, target: 'version' }), makeParams());
+      expect(response.status).toBe(400);
+    });
+
+    it('target=published (default) 400s when the workflow has no published version', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue({
+        ...makeWorkflowRow(),
+        publishedVersion: null,
+        publishedVersionId: null,
+      } as never);
+
+      const response = await POST(makeRequest({ inputData: {} }), makeParams());
+
+      expect(response.status).toBe(400);
     });
   });
 });

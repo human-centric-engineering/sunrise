@@ -106,6 +106,16 @@ For resume / recovery, `resumeApprovedExecution` and `processPendingExecutions`
 prefer the pinned version on the execution row, falling back to the workflow's
 current published version if the row pre-dates pinning.
 
+The admin-triggered resume path (`POST /workflows/:id/execute?resumeFromExecutionId=…`)
+follows the same rule: `prepareWorkflowExecution` accepts a
+`pinnedVersionId` override so the resume runs against the snapshot the
+execution was originally created with — even if a new version has been
+published mid-pause. Without this, an admin pausing at v3 then publishing
+v4 mid-pause would silently resume on v4's definition, defeating the whole
+publish/draft model. The `resume version pinning` regression test in
+`tests/unit/app/api/v1/admin/orchestration/workflows/[id]/execute/route.test.ts`
+locks this in.
+
 ## API surface
 
 All routes live under `app/api/v1/admin/orchestration/workflows/[id]/`.

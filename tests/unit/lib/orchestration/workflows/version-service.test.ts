@@ -205,6 +205,20 @@ describe('discardDraft', () => {
     expect(Object.keys(data ?? {})).toEqual(['draftDefinition']);
   });
 
+  it('is idempotent — calling on a workflow with no draft is a safe no-op write', async () => {
+    // Admin clicking "Discard draft" twice in a row should not error. The
+    // second call is a no-op write to a column that's already null.
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ draftDefinition: null }) as never
+    );
+    vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
+
+    await expect(
+      discardDraft({ workflowId: WORKFLOW_ID, userId: ADMIN_ID })
+    ).resolves.toBeDefined();
+    expect(prisma.aiWorkflow.update).toHaveBeenCalledOnce();
+  });
+
   it('emits a workflow.draft.discard audit log', async () => {
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
     vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
@@ -481,6 +495,37 @@ describe('rollback', () => {
     );
     expect(result.version.id).toBe(VERSION_ID_NEW);
     expect(result.version.id).not.toBe(VERSION_ID_V1);
+  });
+
+  it('rolling back to the currently-published version still creates a NEW version (allowed but visible in audit)', async () => {
+    // Edge case: admin rolls back to the same version that's already
+    // published. We don't reject this — it's a "freeze the current" gesture
+    // that creates a duplicate vN+1 with the same snapshot. The audit
+    // trail makes the action visible.
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ publishedVersionId: VERSION_ID_V1 }) as never
+    );
+    (prisma.aiWorkflowVersion.findUnique as unknown as Mock).mockResolvedValue(
+      makeVersion({ id: VERSION_ID_V1, version: 1 })
+    );
+    txState.versionFindFirst.mockResolvedValue(makeVersion({ version: 1 }));
+    txState.versionCreate.mockResolvedValue(makeVersion({ id: VERSION_ID_NEW, version: 2 }));
+    txState.workflowUpdate.mockResolvedValue(makeWorkflow({ publishedVersionId: VERSION_ID_NEW }));
+
+    await rollback({
+      workflowId: WORKFLOW_ID,
+      targetVersionId: VERSION_ID_V1,
+      userId: ADMIN_ID,
+    });
+
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'workflow.rollback',
+        // from: 1 (the previously-published v1) → to: 2 (the new copy)
+        changes: { publishedVersion: { from: 1, to: 2 } },
+        metadata: { rolledBackToVersion: 1 },
+      })
+    );
   });
 
   it('emits workflow.rollback audit including rolledBackToVersion', async () => {

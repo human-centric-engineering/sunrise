@@ -34,6 +34,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: { findUnique: vi.fn() },
     aiWorkflowExecution: { findUnique: vi.fn() },
+    aiWorkflowVersion: { findUnique: vi.fn() },
   },
 }));
 
@@ -422,6 +423,14 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/execute', () => {
         id: EXECUTION_ID,
         userId: adminSession.user.id,
         workflowId: WORKFLOW_ID,
+        versionId: 'wfv-1',
+      } as never);
+      // Resume now pins to the executions versionId — provide the version row.
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+        id: 'wfv-1',
+        workflowId: WORKFLOW_ID,
+        version: 1,
+        snapshot: VALID_DEFINITION,
       } as never);
 
       // Act
@@ -436,6 +445,81 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/execute', () => {
         expect.anything(),
         expect.objectContaining({ resumeFromExecutionId: EXECUTION_ID })
       );
+    });
+  });
+
+  describe('resume version pinning', () => {
+    it('passes the executions row versionId to the engine on resume (not the workflows current published version)', async () => {
+      // Pin a paused execution to v1 of a workflow whose current published
+      // version is v2. Resume must run against v1 — that's the whole point
+      // of the publish/draft model. Currently the helper resolves to the
+      // workflows publishedVersion, so we need to verify the resume path
+      // overrides that with the executions stamped versionId.
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
+
+      // Workflow row: currently published is v2.
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({
+          publishedVersionId: 'wfv-v2',
+          publishedVersion: { id: 'wfv-v2', version: 2, snapshot: VALID_DEFINITION },
+        }) as never
+      );
+      // The pinned v1 row that the execution row originally ran against.
+      // Use a slightly different snapshot so we can prove the engine sees v1.
+      const v1Snapshot = {
+        ...VALID_DEFINITION,
+        steps: VALID_DEFINITION.steps.map((s, i) =>
+          i === 0 ? { ...s, name: 'Pinned-v1 step' } : s
+        ),
+      };
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+        id: 'wfv-v1',
+        workflowId: WORKFLOW_ID,
+        version: 1,
+        snapshot: v1Snapshot,
+      } as never);
+      // Execution row: pinned to v1.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: EXECUTION_ID,
+        userId: adminSession.user.id,
+        workflowId: WORKFLOW_ID,
+        versionId: 'wfv-v1',
+      } as never);
+
+      await POST(
+        makeRequest(WORKFLOW_ID, { inputData: {} }, { resumeFromExecutionId: EXECUTION_ID }),
+        makeParams()
+      );
+
+      // Engine should receive v1 as the pinned versionId AND v1's snapshot
+      // as the definition — NOT v2.
+      const allCalls = mockExecute.mock.calls as unknown as Array<
+        [{ versionId?: string; definition?: { steps: Array<{ name: string }> } }, ...unknown[]]
+      >;
+      const callArgs = allCalls[0]?.[0];
+      expect(callArgs?.versionId).toBe('wfv-v1');
+      expect(callArgs?.definition?.steps[0]?.name).toBe('Pinned-v1 step');
+    });
+
+    it('404s when the executions originally-pinned version was deleted', async () => {
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: EXECUTION_ID,
+        userId: adminSession.user.id,
+        workflowId: WORKFLOW_ID,
+        versionId: 'wfv-deleted',
+      } as never);
+      // The pinned version row is gone.
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue(null);
+
+      const response = await POST(
+        makeRequest(WORKFLOW_ID, { inputData: {} }, { resumeFromExecutionId: EXECUTION_ID }),
+        makeParams()
+      );
+      expect(response.status).toBe(404);
     });
   });
 });
