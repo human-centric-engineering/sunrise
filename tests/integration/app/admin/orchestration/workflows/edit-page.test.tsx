@@ -228,7 +228,7 @@ describe('EditWorkflowPage (server component)', () => {
 
     render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
 
-    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
 
     await waitFor(() => {
       expect(apiClient.patch).toHaveBeenCalledTimes(1);
@@ -253,7 +253,7 @@ describe('EditWorkflowPage (server component)', () => {
 
     render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
 
-    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
 
     await waitFor(() => {
       expect(apiClient.patch).toHaveBeenCalledTimes(1);

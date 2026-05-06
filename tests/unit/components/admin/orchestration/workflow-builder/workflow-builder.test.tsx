@@ -427,7 +427,7 @@ describe('WorkflowBuilder', () => {
 
       // In edit mode, details are already set, so Save calls patch directly.
       vi.mocked(apiClient.patch).mockResolvedValue(makeWorkflow());
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalledTimes(1);
@@ -449,7 +449,7 @@ describe('WorkflowBuilder', () => {
 
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-edit-1' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalledTimes(1);
@@ -465,7 +465,7 @@ describe('WorkflowBuilder', () => {
 
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-targeted' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       await waitFor(() => {
         expect(apiClient.patch).toHaveBeenCalledTimes(1);
@@ -482,7 +482,7 @@ describe('WorkflowBuilder', () => {
 
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-err' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
@@ -939,7 +939,7 @@ describe('WorkflowBuilder', () => {
 
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-dlg-confirm' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       // Assert: performSave called via the direct-details path (handleSave → performSave)
       await waitFor(() => {
@@ -973,7 +973,7 @@ describe('WorkflowBuilder', () => {
       vi.mocked(apiClient.patch).mockResolvedValue(makeWorkflow({ id: 'wf-create-push' }));
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-create-push' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       // Assert: router.refresh called (edit-mode branch)
       await waitFor(() => {
@@ -990,7 +990,7 @@ describe('WorkflowBuilder', () => {
       vi.mocked(apiClient.patch).mockRejectedValue('raw string error');
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-generic-err' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       // Assert: fallback message used
       await waitFor(() => {
@@ -1220,7 +1220,7 @@ describe('WorkflowBuilder', () => {
       vi.mocked(apiClient.patch).mockRejectedValue(new Error('Disk quota exceeded'));
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-err-instance' })} />);
 
-      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await user.click(screen.getByRole('button', { name: /save draft/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
