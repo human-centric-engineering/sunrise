@@ -936,6 +936,79 @@ describe('StreamingChatHandler', () => {
     expect(toolMsgs).toHaveLength(1);
   });
 
+  // 12b — Phase 2 of consumer-chat-approvals -------------------------------
+  it('run_workflow paused: yields approval_required, persists synthetic assistant message with pendingApproval, then done', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Kicking off the refund workflow. ' },
+        {
+          type: 'tool_call',
+          toolCall: {
+            id: 'tc-rw',
+            name: 'run_workflow',
+            arguments: { workflowSlug: 'refund-flow' },
+          },
+        },
+        { type: 'done', usage: { inputTokens: 8, outputTokens: 2 }, finishReason: 'tool_use' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const pendingApprovalData = {
+      status: 'pending_approval',
+      executionId: 'exec-99',
+      stepId: 'step-approve',
+      prompt: 'Refund £42.50?',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      approveToken: 'tok-approve',
+      rejectToken: 'tok-reject',
+    };
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: pendingApprovalData,
+      skipFollowup: true,
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    const types = (events as Array<{ type: string }>).map((e) => e.type);
+    expect(types).toContain('capability_result');
+    expect(types).toContain('approval_required');
+    expect(types).toContain('done');
+
+    // approval_required event carries the full pendingApproval shape
+    const approvalEvent = events.find(
+      (e) => (e as { type: string }).type === 'approval_required'
+    ) as { type: 'approval_required'; pendingApproval: typeof pendingApprovalData };
+    expect(approvalEvent.pendingApproval).toEqual({
+      executionId: 'exec-99',
+      stepId: 'step-approve',
+      prompt: 'Refund £42.50?',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      approveToken: 'tok-approve',
+      rejectToken: 'tok-reject',
+    });
+
+    // Synthetic assistant message persisted with pendingApproval metadata
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const syntheticAssistant = createCalls.find(
+      (c: any) =>
+        c[0].data.role === 'assistant' && c[0].data.metadata && c[0].data.metadata.pendingApproval
+    );
+    expect(syntheticAssistant).toBeDefined();
+    expect(syntheticAssistant![0].data.content).toBe('');
+    expect(syntheticAssistant![0].data.metadata.pendingApproval).toMatchObject({
+      executionId: 'exec-99',
+      stepId: 'step-approve',
+    });
+
+    // No second LLM turn
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+  });
+
   // 13 ----------------------------------------------------------------------
   it('invalidateContext called after tool call when contextType/contextId are set', async () => {
     (buildContext as ReturnType<typeof vi.fn>).mockResolvedValue('=== LOCKED CONTEXT ===\ndata');

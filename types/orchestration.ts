@@ -423,8 +423,30 @@ export type ChatEvent =
   | { type: 'warning'; code: string; message: string }
   | { type: 'content_reset'; reason: string }
   | { type: 'citations'; citations: Citation[] }
+  | { type: 'approval_required'; pendingApproval: PendingApproval }
   | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * Carried on `approval_required` ChatEvent and persisted on
+ * `MessageMetadata.pendingApproval` so chat reloads recover the card.
+ *
+ * Tokens are HMAC strings (see `lib/orchestration/approval-tokens.ts`).
+ * The chat surface — admin or embed widget — builds the final URL at
+ * POST time, pointing at its channel-specific sub-route
+ * (`…/approve/chat`, `…/approve/embed`). Keeping tokens here rather
+ * than full URLs makes the persisted shape channel-agnostic across
+ * future surfaces (MCP, CLI).
+ */
+export interface PendingApproval {
+  executionId: string;
+  stepId: string;
+  prompt: string;
+  /** ISO 8601 token expiry. */
+  expiresAt: string;
+  approveToken: string;
+  rejectToken: string;
+}
 
 /** Token usage breakdown */
 export interface TokenUsage {
@@ -470,6 +492,14 @@ export interface MessageMetadata {
    * absent for non-RAG turns.
    */
   citations?: Citation[];
+  /**
+   * Set on the synthetic assistant message persisted when a workflow
+   * triggered via the `run_workflow` capability paused on a
+   * `human_approval` step. Drives the in-chat approval card and lets a
+   * reload recover the pending state. Cleared by the chat surface once
+   * the underlying execution row reaches a terminal state.
+   */
+  pendingApproval?: PendingApproval;
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;

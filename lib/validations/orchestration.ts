@@ -2218,6 +2218,26 @@ const citationSchema = z.object({
   finalScore: z.number().optional(),
 });
 
+/**
+ * Pending-approval marker carried on `MessageMetadata.pendingApproval`
+ * and on the `approval_required` ChatEvent. Tokens are HMAC strings
+ * (see `lib/orchestration/approval-tokens.ts`); the chat surface
+ * builds the final URL at POST time using its channel sub-route.
+ *
+ * Validate on read-back from `AiMessage.metadata` so a tampered or
+ * stale row can't crash the rendering path. Treat `prompt` as plain
+ * text only — it originates from a workflow step config and must
+ * never be rendered with `dangerouslySetInnerHTML`.
+ */
+export const pendingApprovalSchema = z.object({
+  executionId: z.string().min(1).max(120),
+  stepId: z.string().min(1).max(120),
+  prompt: z.string().min(1).max(5000),
+  expiresAt: z.string().datetime(),
+  approveToken: z.string().min(1).max(2048),
+  rejectToken: z.string().min(1).max(2048),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2229,6 +2249,7 @@ export const messageMetadataSchema = z.object({
   latencyMs: z.number().optional(),
   costUsd: z.number().optional(),
   citations: z.array(citationSchema).optional(),
+  pendingApproval: pendingApprovalSchema.optional(),
 });
 
 // ============================================================================
