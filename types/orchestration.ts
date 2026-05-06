@@ -713,6 +713,14 @@ export interface OrchestrationSettings {
   maxMessagesPerConversation: number | null;
   /** Escalation notification routing config, or `null` if not configured. */
   escalationConfig: EscalationConfig | null;
+  /**
+   * Allowlist of origins permitted to call the public embed-channel
+   * approval endpoints (`/api/v1/orchestration/approvals/:id/{approve,reject}/embed`).
+   * Empty array (default) means no embed-channel approval requests are
+   * accepted — admins must opt in by adding the customer site origins
+   * before in-chat approvals will work from a partner site.
+   */
+  embedAllowedOrigins: string[];
   createdAt: Date;
   updatedAt: Date;
 }

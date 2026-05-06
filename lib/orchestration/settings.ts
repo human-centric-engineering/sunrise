@@ -88,6 +88,7 @@ export function hydrateSettings(row: {
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   escalationConfig?: Prisma.JsonValue | null;
+  embedAllowedOrigins?: Prisma.JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -145,9 +146,30 @@ export function hydrateSettings(row: {
     maxConversationsPerUser: row.maxConversationsPerUser,
     maxMessagesPerConversation: row.maxMessagesPerConversation,
     escalationConfig: parseEscalationConfig(row.escalationConfig),
+    embedAllowedOrigins: parseEmbedAllowedOrigins(row.embedAllowedOrigins),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Narrow the `embedAllowedOrigins` JSON column into a `string[]`. Defaults
+ * to an empty array if the row is missing the field (e.g. on first read
+ * after the migration but before the row is touched). Each entry is
+ * validated as a URL — malformed entries are dropped at read time so a
+ * corrupt setting can't crash the approval routes.
+ */
+function parseEmbedAllowedOrigins(raw: Prisma.JsonValue | null | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => {
+    if (typeof v !== 'string') return false;
+    try {
+      const u = new URL(v);
+      return u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**

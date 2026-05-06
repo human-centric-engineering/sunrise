@@ -164,6 +164,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
   escalationConfig: null,
+  embedAllowedOrigins: [],
   createdAt: NOW,
   updatedAt: NOW,
 };
