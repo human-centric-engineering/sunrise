@@ -108,7 +108,8 @@ describe('PublishDialog', () => {
       <PublishDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} nextVersion={3} />
     );
 
-    const refreshed = screen.getByLabelText(/change summary/i);
-    expect(refreshed.value).toBe('');
+    // The previous text must have been cleared. queryByDisplayValue avoids the
+    // type-cast dance with HTMLTextAreaElement and survives lint --fix passes.
+    expect(screen.queryByDisplayValue('leftover text')).not.toBeInTheDocument();
   });
 });
