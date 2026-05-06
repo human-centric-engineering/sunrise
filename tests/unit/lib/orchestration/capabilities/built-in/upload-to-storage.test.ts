@@ -376,6 +376,23 @@ describe('UploadToStorageCapability.execute()', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('invalid_data');
     });
+
+    it('returns invalid_data when valid-shape base64 decodes to an empty buffer', async () => {
+      // Arrange: "=" passes the strict regex but Buffer.from("=", "base64") returns a
+      // zero-length buffer — exercising the L215 buffer-length guard, not the regex branch.
+      noBinding();
+      const cap = new UploadToStorageCapability();
+
+      // Act
+      const result = await cap.execute({ ...BASE_ARGS, data: '=' }, BASE_CONTEXT);
+
+      // Assert: (a) invalid_data error code, (b) message is the L215 guard message
+      // (not the L208 regex-rejection message), (c) upload was never called.
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_data');
+      expect(result.error?.message).toMatch(/Decoded payload is empty/);
+      expect(mockUpload).not.toHaveBeenCalled();
+    });
   });
 
   // Case 8: Base64 schema cap vs binding-level maxFileSizeBytes
