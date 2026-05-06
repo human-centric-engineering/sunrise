@@ -524,7 +524,9 @@ export function GET(request: NextRequest): Response {
         function tick() {
           if (settled) return;
           if (Date.now() - startedAt > POLL_BUDGET_MS) {
-            setStatus('Lost connection waiting for approval. Refresh to retry.');
+            setStatus(
+              'This is taking longer than expected. The workflow may still complete\\u2014ask the agent to check.'
+            );
             settled = true;
             return;
           }

@@ -43,6 +43,11 @@ vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: (): unknown => mockGetSettings(),
 }));
 
+const mockResumeApprovedExecution = vi.fn();
+vi.mock('@/lib/orchestration/scheduling', () => ({
+  resumeApprovedExecution: (id: string): unknown => mockResumeApprovedExecution(id),
+}));
+
 const VALID_ID = 'cmexec99validid01234567890';
 
 const chatApproveModule =
@@ -96,6 +101,7 @@ beforeEach(() => {
   });
   mockExecuteRejection.mockResolvedValue({ success: true, executionId: VALID_ID });
   mockGetSettings.mockResolvedValue({ embedAllowedOrigins: ['https://partner.com'] });
+  mockResumeApprovedExecution.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -164,6 +170,39 @@ describe('chat sub-routes (same-origin CORS)', () => {
     expect(mockExecuteApproval).not.toHaveBeenCalled();
   });
 
+  it('POST /approve/chat fire-and-forget triggers engine resumption', async () => {
+    const res = await chatApproveModule.POST(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/chat?token=t`, {
+        method: 'POST',
+        origin: APP_URL,
+        body: {},
+      }),
+      { params: Promise.resolve({ id: VALID_ID }) }
+    );
+    expect(res.status).toBe(200);
+    // Microtask may not have fired yet — flush.
+    await Promise.resolve();
+    expect(mockResumeApprovedExecution).toHaveBeenCalledWith(VALID_ID);
+  });
+
+  it('POST /reject/chat does NOT trigger resumption (rejection cancels, no engine work)', async () => {
+    mockVerify.mockReturnValue({
+      executionId: VALID_ID,
+      action: 'reject',
+      expiresAt: new Date('2030-01-01').toISOString(),
+    });
+    await chatRejectModule.POST(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/reject/chat?token=t`, {
+        method: 'POST',
+        origin: APP_URL,
+        body: { reason: 'no' },
+      }),
+      { params: Promise.resolve({ id: VALID_ID }) }
+    );
+    await Promise.resolve();
+    expect(mockResumeApprovedExecution).not.toHaveBeenCalled();
+  });
+
   it('POST /reject/chat passes actorLabel "token:chat"', async () => {
     mockVerify.mockReturnValue({
       executionId: VALID_ID,
@@ -206,6 +245,20 @@ describe('embed sub-routes (allowlist CORS)', () => {
       })
     );
     expect(res.status).toBe(403);
+  });
+
+  it('POST /approve/embed fire-and-forget triggers engine resumption', async () => {
+    const res = await embedApproveModule.POST(
+      makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/embed?token=t`, {
+        method: 'POST',
+        origin: 'https://partner.com',
+        body: {},
+      }),
+      { params: Promise.resolve({ id: VALID_ID }) }
+    );
+    expect(res.status).toBe(200);
+    await Promise.resolve();
+    expect(mockResumeApprovedExecution).toHaveBeenCalledWith(VALID_ID);
   });
 
   it('POST /approve/embed pins actorLabel "token:embed" when origin is allowlisted', async () => {

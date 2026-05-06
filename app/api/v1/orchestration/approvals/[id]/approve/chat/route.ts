@@ -42,5 +42,6 @@ export async function POST(
   return handleApproveRequest(request, params, {
     actorLabel: 'token:chat',
     corsHeaders,
+    triggerResume: true,
   });
 }

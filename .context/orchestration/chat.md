@@ -146,6 +146,10 @@ The `actorLabel` is **server-set** by the route hit, never trusted from a body f
 
 After a successful POST, the card polls `GET /api/v1/orchestration/approvals/:id/status?token=…` (token-authenticated, permissive CORS) until the execution reaches a terminal state, then submits a synthesised follow-up message such as `"Workflow approved. Result: { ... }"` so the LLM gets a fresh turn carrying the workflow output.
 
+The chat / embed approve routes fire-and-forget call `resumeApprovedExecution` after the approval action succeeds, so the engine starts draining the resumed run immediately rather than waiting for the maintenance tick (~2 minute stale threshold). Without this, the chat card's 5-minute polling budget would often expire before the workflow had even started resuming. Rejection skips this — there's no further engine work to do.
+
+For approval-only workflows (a single `human_approval` step), the synthesised follow-up's "result" is the approval payload (`{ approved, notes, actor }`) rather than meaningful business data, since that's the workflow's only step output. Multi-step workflows where the last step is an external call or transformation surface that step's output instead.
+
 **Carry-the-output-back, not resume-the-stream.** The chat handler is structured around one user message → one assistant reply (with tool-call iterations); re-entering it from a non-chat path would require a per-conversation pub/sub layer that doesn't exist. The polled-then-follow-up flow uses primitives that already exist and the `approval_required` event contract is forward-compatible if a future server-pushed implementation is added.
 
 The [output guard](./output-guard.md) ships an opt-in `citationGuardMode` that flags two failure modes: under-citation (citations were retrieved but no marker appears in the response) and hallucinated markers (a marker referenced that no citation produced).

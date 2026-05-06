@@ -49,5 +49,6 @@ export async function POST(
   return handleApproveRequest(request, params, {
     actorLabel: 'token:embed',
     corsHeaders,
+    triggerResume: true,
   });
 }

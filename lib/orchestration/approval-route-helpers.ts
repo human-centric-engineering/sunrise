@@ -25,6 +25,7 @@ import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { verifyApprovalToken } from '@/lib/orchestration/approval-tokens';
 import { executeApproval, executeRejection } from '@/lib/orchestration/approval-actions';
+import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
 import { cuidSchema } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 
@@ -42,6 +43,16 @@ export interface ApprovalRouteOptions {
   actorLabel: ApprovalActorLabel;
   /** Optional CORS headers to apply to every response (success + error). */
   corsHeaders?: Record<string, string>;
+  /**
+   * When true, fire-and-forget kick off the engine to resume the run
+   * after `executeApproval` succeeds. Channel routes where the user
+   * is actively waiting (chat, embed) set this — without it, the
+   * workflow stays in `pending` until the maintenance tick picks it
+   * up (~2 minute stale threshold + ~60s tick interval). The default
+   * is false to preserve the existing behaviour for the email/Slack
+   * channel where the recipient typically isn't watching.
+   */
+  triggerResume?: boolean;
 }
 
 function applyCors(response: Response, headers: Record<string, string> | undefined): Response {
@@ -116,6 +127,14 @@ export async function handleApproveRequest(
 
   try {
     const result = await executeApproval(id, { notes, actorLabel: opts.actorLabel });
+    if (opts.triggerResume) {
+      // Fire-and-forget — the engine drives the resumed run independently;
+      // any error logs through the engine's own paths. We do NOT await,
+      // because the response should land before the workflow restarts.
+      void resumeApprovedExecution(id).catch((err: unknown) => {
+        logger.error('resumeApprovedExecution failed', err, { executionId: id });
+      });
+    }
     return wrap(successResponse(result));
   } catch (err) {
     return wrap(mapActionError(err, 'approve'));

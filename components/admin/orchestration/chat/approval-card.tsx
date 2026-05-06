@@ -326,7 +326,8 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
 
       {expired && (
         <div className="text-muted-foreground mt-3 text-xs">
-          Lost connection waiting for approval. Refresh to retry.
+          This is taking longer than expected. The workflow may still complete in the background —
+          ask the agent to check the status.
         </div>
       )}
 
