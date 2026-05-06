@@ -33,6 +33,7 @@ import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import type { PendingApproval } from '@/types/orchestration';
+import { pendingApprovalSchema } from '@/lib/validations/orchestration';
 
 export interface AgentTestChatProps {
   /** Agent slug to hit via `POST /chat/stream`. Required. */
@@ -145,18 +146,24 @@ export function AgentTestChat({
             setWarning(parsed.data.message);
           } else if (parsed.type === 'content_reset') {
             typing.reset();
-          } else if (
-            parsed.type === 'approval_required' &&
-            parsed.data.pendingApproval &&
-            typeof parsed.data.pendingApproval === 'object'
-          ) {
+          } else if (parsed.type === 'approval_required' && parsed.data.pendingApproval) {
             // AgentTestChat is a single-turn surface — there's no
             // message thread to carry the workflow output back into,
             // so the card resolves to a static notice rather than
             // synthesising a follow-up turn. Admins testing an
             // approval-bearing agent should send a fresh message
             // afterwards to see how the agent responds.
-            setPendingApproval(parsed.data.pendingApproval as PendingApproval);
+            //
+            // Validate the SSE payload before trusting it as a typed
+            // PendingApproval (CLAUDE.md: "Never use `as` on external
+            // data — validate with Zod first"). Drop the event silently
+            // on parse failure — the card just won't render, matching
+            // how other malformed SSE events are handled in this file.
+            const parsedPa = pendingApprovalSchema.safeParse(parsed.data.pendingApproval);
+            if (parsedPa.success) {
+              const pa: PendingApproval = parsedPa.data;
+              setPendingApproval(pa);
+            }
           } else if (parsed.type === 'error') {
             const code = typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
             await ensureMinThinking();

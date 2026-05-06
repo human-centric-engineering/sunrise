@@ -1846,6 +1846,44 @@ export const updateOrchestrationSettingsSchema = z
       .nullable()
       .optional(),
     escalationConfig: escalationConfigSchema.nullable().optional(),
+    /**
+     * Allowlist of origins permitted to call the embed-channel approval
+     * routes. Each entry is validated as a URL and persisted as the
+     * canonical `.origin` form (`scheme://host[:port]` with default
+     * ports stripped, no path, no trailing slash) so it byte-matches
+     * what browsers send in the `Origin` header. Without normalisation,
+     * common admin inputs like `https://partner.com/` (trailing slash
+     * from copy-paste) or `https://partner.com:443` (explicit default
+     * port) silently never match.
+     *
+     * Read-side `parseEmbedAllowedOrigins` re-normalises defensively in
+     * case rows were written before this schema landed (or via import).
+     */
+    embedAllowedOrigins: z
+      .array(
+        z
+          .string()
+          .url()
+          .max(2048)
+          .refine(
+            (v) => {
+              try {
+                const u = new URL(v);
+                return (
+                  u.protocol === 'https:' ||
+                  u.hostname === 'localhost' ||
+                  u.hostname === '127.0.0.1'
+                );
+              } catch {
+                return false;
+              }
+            },
+            { message: 'Origin must be https or http://localhost / http://127.0.0.1' }
+          )
+          .transform((v) => new URL(v).origin)
+      )
+      .max(100, 'At most 100 allowed origins')
+      .optional(),
   })
   .refine(
     (v) =>
@@ -1862,7 +1900,8 @@ export const updateOrchestrationSettingsSchema = z
       v.auditLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
-      v.escalationConfig !== undefined,
+      v.escalationConfig !== undefined ||
+      v.embedAllowedOrigins !== undefined,
     {
       message: 'At least one field must be provided',
     }

@@ -400,4 +400,32 @@ describe('AgentTestChat', () => {
     expect(screen.getByRole('button', { name: /approve action/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /reject action/i })).toBeInTheDocument();
   });
+
+  it('drops a malformed approval_required payload silently (Zod parse fails closed)', async () => {
+    const user = userEvent.setup();
+    // Missing required fields (no executionId / stepId / tokens) — fails
+    // pendingApprovalSchema.safeParse, so no card should mount.
+    const malformedPa = { prompt: 'too short to be valid' };
+    const stream = makeSseStream([
+      contentFrame('Starting test workflow. '),
+      approvalRequiredFrame(malformedPa),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Run test workflow" />);
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // Wait for the streamed text to land (proves the SSE pipeline ran)
+    await waitFor(() => {
+      expect(screen.getByText(/Starting test workflow/)).toBeInTheDocument();
+    });
+
+    // Card should NOT mount — the prompt text doesn't appear and neither
+    // does the Approve/Reject button pair.
+    expect(screen.queryByText('too short to be valid')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /approve action/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reject action/i })).not.toBeInTheDocument();
+  });
 });

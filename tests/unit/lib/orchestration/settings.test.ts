@@ -64,6 +64,7 @@ function makeRow(
     auditLogRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
+    embedAllowedOrigins: Prisma.JsonValue;
   }> = {}
 ) {
   return {
@@ -422,6 +423,66 @@ describe('hydrateSettings', () => {
 
     // Assert — unknown value falls through to null (disabled)
     expect(result.outputGuardMode).toBeNull();
+  });
+
+  describe('embedAllowedOrigins normalisation (read-side safety net)', () => {
+    it('normalises trailing-slash entries to canonical origin', () => {
+      const row = makeRow({ embedAllowedOrigins: ['https://partner.com/'] });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('strips explicit default ports', () => {
+      const row = makeRow({ embedAllowedOrigins: ['https://partner.com:443'] });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('strips paths', () => {
+      const row = makeRow({ embedAllowedOrigins: ['https://partner.com/widget'] });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('preserves non-default ports', () => {
+      const row = makeRow({ embedAllowedOrigins: ['https://partner.com:8443'] });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://partner.com:8443']);
+    });
+
+    it('drops invalid URL strings', () => {
+      const row = makeRow({ embedAllowedOrigins: ['not-a-url', 'https://valid.com'] });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://valid.com']);
+    });
+
+    it('drops non-https non-localhost protocols', () => {
+      const row = makeRow({
+        embedAllowedOrigins: ['http://attacker.com', 'https://partner.com'],
+      });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://partner.com']);
+    });
+
+    it('keeps http://localhost and http://127.0.0.1 for development', () => {
+      const row = makeRow({
+        embedAllowedOrigins: ['http://localhost:3000', 'http://127.0.0.1:8080/'],
+      });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual([
+        'http://localhost:3000',
+        'http://127.0.0.1:8080',
+      ]);
+    });
+
+    it('returns empty array for non-array input', () => {
+      const row = makeRow({ embedAllowedOrigins: 'not-an-array' as unknown as Prisma.JsonValue });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual([]);
+    });
+
+    it('drops non-string entries', () => {
+      const row = makeRow({
+        embedAllowedOrigins: [
+          'https://valid.com',
+          123 as unknown as string,
+          null as unknown as string,
+        ] as unknown as Prisma.JsonValue,
+      });
+      expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://valid.com']);
+    });
   });
 });
 
