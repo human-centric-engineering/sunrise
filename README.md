@@ -1,26 +1,53 @@
 # Sunrise - build production apps faster
 
-A production-ready Next.js 16 starter template designed for rapid application development with AI assistance.
+A production-ready Next.js 16 starter template designed for rapid application development with AI assistance — now with a complete AI agent orchestration layer baked in.
 
 ## Why Sunrise?
 
 - **Production-ready from day one** — Auth, database, APIs, security headers, rate limiting all configured
+- **Agent-ready** — Production AI agent orchestration: agents, tools, workflows, knowledge bases (RAG), evaluations, observability
 - **Just ask Claude** — Documentation written as AI context; ask questions, get answers, start building
 - **Balanced** — Comprehensive yet customizable; not too minimal, not too opinionated
 - **Fork-friendly** — Take what you need, customize what you want
-- **API-first** — Actions accessible via versioned API endpoints, ready for agents and integrations
+- **API-first** — Actions accessible via versioned API endpoints, MCP server, and agent capabilities — ready for agents and integrations
 
 ## Tech Stack
 
-| Layer          | Technology                           |
-| -------------- | ------------------------------------ |
-| Framework      | Next.js 16 (App Router) + TypeScript |
-| Database       | PostgreSQL + Prisma 7                |
-| Authentication | better-auth                          |
-| Styling        | Tailwind CSS 4 + shadcn/ui           |
-| Email          | Resend + React Email                 |
-| Validation     | Zod throughout                       |
-| Deployment     | Docker-ready                         |
+| Layer            | Technology                                              |
+| ---------------- | ------------------------------------------------------- |
+| Framework        | Next.js 16 (App Router) + TypeScript                    |
+| Database         | PostgreSQL + Prisma 7 (pgvector for semantic search)    |
+| Authentication   | better-auth                                             |
+| Styling          | Tailwind CSS 4 + shadcn/ui                              |
+| Email            | Resend + React Email                                    |
+| Validation       | Zod throughout                                          |
+| Deployment       | Docker-ready                                            |
+| AI Orchestration | Multi-LLM agents, workflows, RAG, MCP server            |
+| LLM Providers    | Anthropic, OpenAI (extensible via provider abstraction) |
+
+## Agent Orchestration
+
+Sunrise ships with a complete AI agent orchestration layer. Admins design, configure, execute, and monitor AI agent systems from `/admin/orchestration`; consumer-facing chat is exposed via `/api/v1/chat` and an embeddable widget.
+
+What's included:
+
+- **Agents** — Configured AI personas with system instructions, model selection, temperature, budgets, and attached capabilities
+- **Capabilities (tools)** — Function-calling tools that agents invoke; ships with built-ins (knowledge search, memory, pattern lookup) and a 4-step pipeline for adding custom tools
+- **Workflows (DAGs)** — Multi-step pipelines with 15 step types: routing, chaining, parallel branches, RAG retrieval, human approval gates, error strategies, templating
+- **Knowledge bases (RAG)** — Document ingestion (MD, PDF, EPUB, DOCX), chunking, embeddings, and pgvector semantic search scoped per agent
+- **Multi-LLM providers** — Provider abstraction with fallback chains, model registry, and cost tracking
+- **MCP server** — Model Context Protocol integration so Claude Code (or any MCP client) can use your agents and tools
+- **Embed widget** — Token-authenticated, CORS-aware chat widget loadable into any site
+- **Scheduling & webhooks** — Cron-scheduled autonomous runs and event-driven triggers
+- **Evaluations & A/B experiments** — Named-metric scoring (faithfulness, groundedness, relevance) and variant lifecycle
+- **Observability** — Execution tracing (OTEL plug-in), conversation export, audit log, approval queue, dashboard analytics
+
+Built on the 21 agentic design patterns from _Agentic Design Patterns_ by Antonio Gullí.
+
+Docs:
+
+- [`.context/admin/orchestration.md`](./.context/admin/orchestration.md) — Overview, quick start, key concepts
+- [`.claude/docs/agent-orchestration.md`](./.claude/docs/agent-orchestration.md) — Architecture deep dive
 
 ## Quick Start
 
@@ -93,6 +120,7 @@ These work without configuration in development and can be enabled for productio
 
 - [**CUSTOMIZATION.md**](./CUSTOMIZATION.md) — Adapt Sunrise for your project
 - [**.context/substrate.md**](./.context/substrate.md) — Full architecture and reference docs
+- [**.context/admin/orchestration.md**](./.context/admin/orchestration.md) — Agent orchestration overview and quick start
 
 ## Just Ask Claude
 
@@ -102,6 +130,8 @@ Sunrise includes comprehensive documentation in `.context/` written specifically
 - _"What are the password validation rules?"_
 - _"Add a new API endpoint for user preferences"_
 - _"How does authentication work in this project?"_
+- _"Build me an agent that searches my knowledge base"_
+- _"Add a capability so my agent can call the Stripe API"_
 
 Clone the repo, start Claude Code, and start building. Claude already knows how Sunrise works.
 
