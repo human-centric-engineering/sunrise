@@ -118,17 +118,22 @@ import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
+const TEMPLATE_DEFINITION = {
+  entryStepId: 's1',
+  errorStrategy: 'fail',
+  steps: [
+    { id: 's1', name: 'Entry', type: 'llm_call', config: { prompt: 'Hello' }, nextSteps: [] },
+  ],
+};
+
+// The templates list endpoint now returns the snapshot inside the
+// `publishedVersion` relation; the page's templateItemSchema flattens it back
+// to the legacy `workflowDefinition` field for the builder.
 const MOCK_TEMPLATE = {
   slug: 'tpl-customer-support',
   name: 'Customer Support',
   description: 'Multi-channel support automation',
-  workflowDefinition: {
-    entryStepId: 's1',
-    errorStrategy: 'fail',
-    steps: [
-      { id: 's1', name: 'Entry', type: 'llm_call', config: { prompt: 'Hello' }, nextSteps: [] },
-    ],
-  },
+  publishedVersion: { snapshot: TEMPLATE_DEFINITION },
   patternsUsed: [1, 2],
   isTemplate: true,
   metadata: {
@@ -283,13 +288,14 @@ describe('NewWorkflowPage', () => {
     const [, options] = vi.mocked(apiClient.post).mock.calls[0];
     const body = options?.body as {
       name: string;
+      // POST /workflows still accepts the legacy field name on the create body
+      // (it's the explicit "first version" snapshot) — the validator hasn't
+      // changed for create.
       workflowDefinition: { steps: unknown[]; entryStepId: string };
     };
     expect(body.name).toBe(MOCK_TEMPLATE.name);
-    expect(body.workflowDefinition.steps).toHaveLength(
-      MOCK_TEMPLATE.workflowDefinition.steps.length
-    );
-    expect(body.workflowDefinition.entryStepId).toBe(MOCK_TEMPLATE.workflowDefinition.entryStepId);
+    expect(body.workflowDefinition.steps).toHaveLength(TEMPLATE_DEFINITION.steps.length);
+    expect(body.workflowDefinition.entryStepId).toBe(TEMPLATE_DEFINITION.entryStepId);
   });
 
   it('confirming dialog with empty canvas shows an inline error (no nodes to save)', async () => {

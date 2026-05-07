@@ -797,36 +797,66 @@ export const workflowDefinitionSchema = z.object({
 });
 
 /**
- * A single entry in `AiWorkflow.workflowDefinitionHistory`. Pushed on every
- * PATCH that actually changes `workflowDefinition`, and on every successful revert.
+ * Runtime shape of an `AiWorkflowVersion` row's `snapshot` JSON column.
+ * Use `safeParse` at read time before passing to the engine.
  */
-export const workflowDefinitionHistoryEntrySchema = z.object({
-  definition: workflowDefinitionSchema,
-  changedAt: z.string().datetime(),
-  changedBy: z.string().min(1),
+export const workflowVersionSnapshotSchema = workflowDefinitionSchema;
+
+/**
+ * Publish-draft request body
+ * (POST /api/v1/admin/orchestration/workflows/:id/publish).
+ */
+export const publishWorkflowSchema = z.object({
+  changeSummary: z
+    .string()
+    .max(500, 'Change summary must be less than 500 characters')
+    .trim()
+    .optional(),
 });
 
 /**
- * Runtime validator for the full `workflowDefinitionHistory` JSON column.
- * Use `safeParse` at read time — same pattern as `systemInstructionsHistorySchema`.
+ * Workflow version IDs come from two sources: `cuid()` for rows inserted by
+ * the version-service, and `gen_random_uuid()::text` for rows backfilled
+ * from the legacy `workflowDefinitionHistory` column at migration time.
+ * Validate either format — strictly, but loose enough to accept both.
  */
-export const workflowDefinitionHistorySchema = z.array(workflowDefinitionHistoryEntrySchema);
+export const workflowVersionIdSchema = z
+  .string()
+  .regex(
+    /^(c[a-z0-9]{24}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+    'Invalid version id'
+  );
 
 /**
- * Revert request — `versionIndex` is an index into the history array
- * (oldest→newest). The endpoint pushes the current definition onto
- * history before overwriting, so the forward value is never lost.
+ * Rollback request body
+ * (POST /api/v1/admin/orchestration/workflows/:id/rollback).
  */
-export const workflowDefinitionRevertSchema = z.object({
-  versionIndex: z.number().int().min(0),
+export const rollbackWorkflowSchema = z.object({
+  targetVersionId: workflowVersionIdSchema,
+  changeSummary: z
+    .string()
+    .max(500, 'Change summary must be less than 500 characters')
+    .trim()
+    .optional(),
 });
 
 /**
- * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run)
+ * Dry-run body (POST /api/v1/admin/orchestration/workflows/:id/dry-run).
+ *
+ * `target` selects which definition to validate. Defaults to the currently
+ * published version (back-compat). `'draft'` validates `draftDefinition`
+ * — errors if no draft exists. `'version'` requires `versionId`.
  */
-export const dryRunWorkflowBodySchema = z.object({
-  inputData: z.record(z.string(), z.unknown()),
-});
+export const dryRunWorkflowBodySchema = z
+  .object({
+    inputData: z.record(z.string(), z.unknown()),
+    target: z.enum(['published', 'draft', 'version']).default('published'),
+    versionId: workflowVersionIdSchema.optional(),
+  })
+  .refine((v) => v.target !== 'version' || !!v.versionId, {
+    message: 'versionId is required when target is "version"',
+    path: ['versionId'],
+  });
 
 /**
  * Create workflow schema (POST /api/v1/admin/orchestration/workflows)
@@ -858,7 +888,10 @@ export const createWorkflowSchema = z.object({
 });
 
 /**
- * Update workflow schema (PATCH /api/v1/admin/orchestration/workflows/[id])
+ * Update workflow schema (PATCH /api/v1/admin/orchestration/workflows/[id]).
+ *
+ * `draftDefinition` writes to the in-progress draft. The published version
+ * is never overwritten by PATCH — promote a draft via POST /publish.
  */
 export const updateWorkflowSchema = z.object({
   name: z
@@ -877,7 +910,7 @@ export const updateWorkflowSchema = z.object({
     .trim()
     .optional(),
 
-  workflowDefinition: workflowDefinitionSchema.optional(),
+  draftDefinition: workflowDefinitionSchema.nullable().optional(),
 
   patternsUsed: z.array(z.number().int().positive('Pattern number must be positive')).optional(),
 
@@ -2309,8 +2342,9 @@ export type UpdateAgentCapabilityInput = z.infer<typeof updateAgentCapabilitySch
 export type ExportAgentsInput = z.infer<typeof exportAgentsSchema>;
 export type AgentBundle = z.infer<typeof agentBundleSchema>;
 export type ImportAgentsInput = z.infer<typeof importAgentsSchema>;
-export type WorkflowDefinitionHistoryEntry = z.infer<typeof workflowDefinitionHistoryEntrySchema>;
-export type WorkflowDefinitionRevertInput = z.infer<typeof workflowDefinitionRevertSchema>;
+export type WorkflowVersionSnapshot = z.infer<typeof workflowVersionSnapshotSchema>;
+export type PublishWorkflowInput = z.infer<typeof publishWorkflowSchema>;
+export type RollbackWorkflowInput = z.infer<typeof rollbackWorkflowSchema>;
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;
 export type ChatMessageInput = z.infer<typeof chatMessageSchema>;

@@ -198,7 +198,7 @@ describe('saveWorkflow', () => {
       expect(url).toBe(API.ADMIN.ORCHESTRATION.workflowById('wf-edit-1'));
     });
 
-    it('sends the same body shape as create mode', async () => {
+    it('writes the canvas to draftDefinition (not workflowDefinition) on PATCH', async () => {
       const nodes: PatternNode[] = [makeNode('step-1')];
       const edges: Edge[] = [];
 
@@ -216,7 +216,10 @@ describe('saveWorkflow', () => {
       expect(body.name).toBe('Updated Workflow');
       expect(body.slug).toBe('updated-workflow');
       expect(body.description).toBe('Updated');
-      expect(body.workflowDefinition).toBeDefined();
+      // PATCH writes to the draft only — published version is not overwritten
+      // until an explicit POST /publish.
+      expect(body.draftDefinition).toBeDefined();
+      expect(body.workflowDefinition).toBeUndefined();
     });
 
     it('does NOT call apiClient.post in edit mode', async () => {

@@ -14,6 +14,7 @@ import type {
   AiMessage,
   AiWorkflow,
   AiWorkflowExecution,
+  AiWorkflowVersion,
   AiKnowledgeDocument,
   AiKnowledgeChunk,
   AiEvaluationSession,
@@ -194,7 +195,7 @@ export interface WorkflowStep {
   nextSteps: ConditionalEdge[];
 }
 
-/** Complete workflow DAG definition stored in AiWorkflow.workflowDefinition */
+/** Complete workflow DAG definition stored in AiWorkflowVersion.snapshot */
 export interface WorkflowDefinition {
   /** All steps in the workflow */
   steps: WorkflowStep[];
@@ -564,6 +565,16 @@ export type AiAgentListItem = AiAgent & {
 /** Enriched workflow row returned by the list endpoint. */
 export type AiWorkflowListItem = AiWorkflow & {
   _count: { executions: number };
+};
+
+/**
+ * `AiWorkflow` plus the joined published version, returned by the single-
+ * workflow endpoints. The builder reads the snapshot from `publishedVersion`
+ * (or `draftDefinition` when present) — the legacy `workflowDefinition`
+ * column has been removed.
+ */
+export type AiWorkflowWithVersion = AiWorkflow & {
+  publishedVersion: AiWorkflowVersion | null;
 };
 
 /** Minimal agent projection nested in capability list items. */

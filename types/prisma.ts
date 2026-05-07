@@ -33,6 +33,7 @@ export type {
   AiCapability,
   AiAgentCapability,
   AiWorkflow,
+  AiWorkflowVersion,
   AiWorkflowExecution,
   AiConversation,
   AiMessage,

@@ -10,7 +10,7 @@
  * - hasErrors=true applies the red ring class to the Save button
  * - Execute button is always disabled (available in Session 5.2)
  * - mode="create" shows "Create workflow" text on Save button
- * - mode="edit" shows "Save changes" text on Save button
+ * - mode="edit" shows "Save draft" text on Save button
  * - "Use template" dropdown opens and lists all built-in templates
  * - Selecting a template item fires onTemplateSelect with the matching template
  * - templatesDisabled=true renders every template item as disabled
@@ -70,6 +70,14 @@ function renderToolbar(overrides: Partial<Parameters<typeof BuilderToolbar>[0]> 
     saving: false,
     saved: false,
     hasErrors: false,
+    // Publish controls — default to "no draft, no published version" so the
+    // existing tests don't have to think about them.
+    publishedVersion: null as number | null,
+    hasDraft: false,
+    onPublish: vi.fn(),
+    onDiscardDraft: vi.fn(),
+    publishing: false,
+    published: false,
     ...overrides,
   };
   return render(<BuilderToolbar {...defaults} />);
@@ -191,9 +199,9 @@ describe('BuilderToolbar', () => {
       expect(screen.getByRole('button', { name: /create workflow/i })).toBeInTheDocument();
     });
 
-    it('shows "Save changes" in mode="edit"', () => {
+    it('shows "Save draft" in mode="edit"', () => {
       renderToolbar({ mode: 'edit' });
-      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /save draft/i })).toBeInTheDocument();
     });
   });
 
@@ -256,6 +264,91 @@ describe('BuilderToolbar', () => {
       renderToolbar();
       const backLink = screen.getByRole('link', { name: /workflows/i });
       expect(backLink).toBeInTheDocument();
+    });
+  });
+
+  describe('publish controls (edit mode)', () => {
+    it('hides the publish status pill in create mode', () => {
+      renderToolbar({ mode: 'create', publishedVersion: 1, hasDraft: false });
+      expect(screen.queryByTestId('publish-status-pill')).not.toBeInTheDocument();
+    });
+
+    it('shows "Editing draft" when hasDraft is true', () => {
+      renderToolbar({ mode: 'edit', publishedVersion: 3, hasDraft: true });
+      expect(screen.getByTestId('publish-status-pill')).toHaveTextContent(/editing draft/i);
+    });
+
+    it('shows "Up to date — vN published" when no draft and a version is published', () => {
+      renderToolbar({ mode: 'edit', publishedVersion: 5, hasDraft: false });
+      expect(screen.getByTestId('publish-status-pill')).toHaveTextContent(
+        /up to date.*v5 published/i
+      );
+    });
+
+    it('shows "No version published" when there is no published version yet', () => {
+      renderToolbar({ mode: 'edit', publishedVersion: null, hasDraft: false });
+      expect(screen.getByTestId('publish-status-pill')).toHaveTextContent(/no version published/i);
+    });
+
+    it('disables Publish when there is no draft', () => {
+      renderToolbar({ mode: 'edit', publishedVersion: 1, hasDraft: false });
+      expect(screen.getByRole('button', { name: /publish/i })).toBeDisabled();
+    });
+
+    it('disables Publish when there are validation errors', () => {
+      renderToolbar({ mode: 'edit', publishedVersion: 1, hasDraft: true, hasErrors: true });
+      expect(screen.getByRole('button', { name: /publish/i })).toBeDisabled();
+    });
+
+    it('enables Publish when there is a draft and no errors, and forwards onPublish', async () => {
+      const user = userEvent.setup();
+      const onPublish = vi.fn();
+      renderToolbar({ mode: 'edit', publishedVersion: 1, hasDraft: true, onPublish });
+      const btn = screen.getByRole('button', { name: /publish/i });
+      expect(btn).not.toBeDisabled();
+      await user.click(btn);
+      expect(onPublish).toHaveBeenCalledTimes(1);
+    });
+
+    it('only renders Discard draft when a draft exists', () => {
+      const { unmount } = renderToolbar({ mode: 'edit', publishedVersion: 1, hasDraft: false });
+      expect(screen.queryByRole('button', { name: /discard draft/i })).not.toBeInTheDocument();
+      unmount();
+      renderToolbar({ mode: 'edit', publishedVersion: 1, hasDraft: true });
+      expect(screen.getByRole('button', { name: /discard draft/i })).toBeInTheDocument();
+    });
+
+    it('forwards onDiscardDraft when Discard is clicked', async () => {
+      const user = userEvent.setup();
+      const onDiscardDraft = vi.fn();
+      renderToolbar({
+        mode: 'edit',
+        publishedVersion: 1,
+        hasDraft: true,
+        onDiscardDraft,
+      });
+      await user.click(screen.getByRole('button', { name: /discard draft/i }));
+      expect(onDiscardDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the spinner label while publishing is true', () => {
+      renderToolbar({
+        mode: 'edit',
+        publishedVersion: 1,
+        hasDraft: true,
+        publishing: true,
+      });
+      expect(screen.getByRole('button', { name: /publishing/i })).toBeDisabled();
+    });
+
+    it('shows the published checkmark briefly after a successful publish', () => {
+      renderToolbar({
+        mode: 'edit',
+        publishedVersion: 2,
+        hasDraft: false,
+        published: true,
+      });
+      expect(screen.getByRole('button', { name: /^published$/i })).toBeDisabled();
     });
   });
 });

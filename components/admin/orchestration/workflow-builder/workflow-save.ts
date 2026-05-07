@@ -55,22 +55,30 @@ export async function saveWorkflow(payload: WorkflowSavePayload): Promise<AiWork
     errorStrategy: payload.details.errorStrategy,
   });
 
-  const body = {
-    name: payload.name,
-    slug: payload.details.slug,
-    description: payload.details.description,
-    workflowDefinition: definition,
-    isTemplate: payload.details.isTemplate,
-  };
-
   if (payload.mode === 'create') {
-    return apiClient.post<AiWorkflow>(API.ADMIN.ORCHESTRATION.WORKFLOWS, { body });
+    return apiClient.post<AiWorkflow>(API.ADMIN.ORCHESTRATION.WORKFLOWS, {
+      body: {
+        name: payload.name,
+        slug: payload.details.slug,
+        description: payload.details.description,
+        workflowDefinition: definition,
+        isTemplate: payload.details.isTemplate,
+      },
+    });
   }
 
   if (!payload.workflowId) {
     throw new Error('workflowId is required when saving in edit mode');
   }
+  // PATCH writes the canvas state to `draftDefinition`; the published version
+  // is only updated by an explicit POST /publish from Phase 3's UI.
   return apiClient.patch<AiWorkflow>(API.ADMIN.ORCHESTRATION.workflowById(payload.workflowId), {
-    body,
+    body: {
+      name: payload.name,
+      slug: payload.details.slug,
+      description: payload.details.description,
+      draftDefinition: definition,
+      isTemplate: payload.details.isTemplate,
+    },
   });
 }

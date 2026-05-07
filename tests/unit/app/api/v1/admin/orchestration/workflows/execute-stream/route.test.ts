@@ -98,6 +98,11 @@ const VALID_DEFINITION = {
 };
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  // Compatibility shim: tests still set `workflowDefinition` on overrides so
+  // they can mutate the snapshot. We translate that to the published-version
+  // relation that prepareWorkflowExecution reads.
+  const { workflowDefinition: snapshotOverride, ...rest } = overrides;
+  const snapshot = snapshotOverride ?? VALID_DEFINITION;
   return {
     id: WORKFLOW_ID,
     name: 'Test Workflow',
@@ -105,15 +110,16 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-1',
+    publishedVersion: { id: 'wfv-1', version: 1, snapshot },
     patternsUsed: [],
     templateSource: null,
     metadata: {},
     createdBy: 'admin-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    ...overrides,
+    ...rest,
   };
 }
 

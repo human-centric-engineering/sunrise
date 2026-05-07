@@ -18,6 +18,8 @@ import {
   Loader2,
   Play,
   Save,
+  Send,
+  Trash2,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -64,6 +66,22 @@ export interface BuilderToolbarProps {
   saved: boolean;
   /** True when live validation is reporting at least one error — Save outlines in red. */
   hasErrors: boolean;
+  /**
+   * Currently-published version int. Renders as a status pill so admins can
+   * tell at a glance which version executions are pinned to. Null = no
+   * version has been published yet (legacy workflow or first save mid-edit).
+   */
+  publishedVersion: number | null;
+  /** True when the workflow has an in-progress draftDefinition. */
+  hasDraft: boolean;
+  /** Called when the Publish button is clicked. Opens the confirmation dialog. */
+  onPublish: () => void;
+  /** Called when Discard draft is clicked. */
+  onDiscardDraft: () => void;
+  /** True while a publish is in flight — Publish shows a spinner. */
+  publishing: boolean;
+  /** True briefly after a successful publish — Publish shows a checkmark. */
+  published: boolean;
 }
 
 export function BuilderToolbar({
@@ -83,8 +101,15 @@ export function BuilderToolbar({
   saving,
   saved,
   hasErrors,
+  publishedVersion,
+  hasDraft,
+  onPublish,
+  onDiscardDraft,
+  publishing,
+  published,
 }: BuilderToolbarProps) {
   const executeDisabled = mode !== 'edit' || hasErrors;
+  const showPublishControls = mode === 'edit';
   return (
     <div
       data-testid="builder-toolbar"
@@ -106,6 +131,33 @@ export function BuilderToolbar({
           className="max-w-md"
         />
       </div>
+
+      {showPublishControls && (
+        <span
+          data-testid="publish-status-pill"
+          className={
+            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ' +
+            (hasDraft
+              ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200'
+              : publishedVersion === null
+                ? 'border-muted-foreground/30 bg-muted text-muted-foreground'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-200')
+          }
+          title={
+            hasDraft
+              ? 'There is an unpublished draft. Executions still use the published version.'
+              : publishedVersion === null
+                ? 'No version has been published yet — publish before executing.'
+                : `Executions pin to v${publishedVersion}.`
+          }
+        >
+          {hasDraft
+            ? 'Editing draft'
+            : publishedVersion === null
+              ? 'No version published'
+              : `Up to date — v${publishedVersion} published`}
+        </span>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <DropdownMenu>
@@ -201,6 +253,7 @@ export function BuilderToolbar({
 
         <Button
           size="sm"
+          variant={showPublishControls ? 'outline' : 'default'}
           onClick={onSave}
           disabled={saving || saved || hasErrors}
           aria-label={
@@ -223,10 +276,67 @@ export function BuilderToolbar({
           ) : (
             <>
               <Save className="mr-2 h-4 w-4" />
-              {mode === 'create' ? 'Create workflow' : 'Save changes'}
+              {mode === 'create' ? 'Create workflow' : 'Save draft'}
             </>
           )}
         </Button>
+
+        {showPublishControls && hasDraft && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onDiscardDraft}
+            disabled={saving || publishing}
+            title="Throw away the in-progress draft. The published version is unchanged."
+            aria-label="Discard draft"
+          >
+            <Trash2 className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Discard draft</span>
+          </Button>
+        )}
+
+        {showPublishControls && (
+          <Button
+            size="sm"
+            onClick={onPublish}
+            disabled={!hasDraft || publishing || published || hasErrors}
+            aria-label={
+              publishing
+                ? 'Publishing'
+                : published
+                  ? 'Published'
+                  : !hasDraft
+                    ? 'Publish disabled — save a draft first'
+                    : hasErrors
+                      ? 'Publish disabled — fix validation errors first'
+                      : 'Publish the current draft as a new version'
+            }
+            title={
+              !hasDraft
+                ? 'Save a draft first'
+                : hasErrors
+                  ? 'Fix validation errors before publishing'
+                  : 'Promote the draft to a new published version'
+            }
+          >
+            {publishing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <span className="hidden sm:inline">Publishing…</span>
+              </>
+            ) : published ? (
+              <>
+                <Check className="mr-2 h-4 w-4" />
+                <span className="hidden sm:inline">Published</span>
+              </>
+            ) : (
+              <>
+                <Send className="mr-2 h-4 w-4" />
+                Publish…
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </div>
   );

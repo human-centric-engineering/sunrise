@@ -1,4 +1,5 @@
 import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
+import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
 
 const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
@@ -452,29 +453,63 @@ const unit: SeedUnit = {
       useCases: tpl.useCases,
       patterns: tpl.patterns,
     } as unknown as object;
-    await prisma.aiWorkflow.upsert({
-      where: { slug: tpl.slug },
-      update: {
-        name: tpl.name,
-        description: tpl.shortDescription,
-        workflowDefinition: tpl.workflowDefinition as unknown as object,
-        patternsUsed,
-        metadata,
-        isSystem: true,
-        isTemplate: false,
-      },
-      create: {
-        slug: tpl.slug,
-        name: tpl.name,
-        description: tpl.shortDescription,
-        workflowDefinition: tpl.workflowDefinition as unknown as object,
-        patternsUsed,
-        isActive: true,
-        isTemplate: false,
-        isSystem: true,
-        metadata,
-        createdBy,
-      },
+    // System workflows are framework-managed: every re-seed promotes the
+    // current template definition to a new version, so the audit chain is
+    // intact across upgrades and admins can compare today's behaviour with
+    // any prior seed.
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.aiWorkflow.findUnique({
+        where: { slug: tpl.slug },
+        select: { id: true, publishedVersionId: true },
+      });
+      if (existing) {
+        const lastVersion = await tx.aiWorkflowVersion.findFirst({
+          where: { workflowId: existing.id },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        const newVersion = await tx.aiWorkflowVersion.create({
+          data: {
+            workflowId: existing.id,
+            version: (lastVersion?.version ?? 0) + 1,
+            snapshot: tpl.workflowDefinition as unknown as object,
+            changeSummary: 'Seeded by 010-model-auditor',
+            createdBy,
+          },
+        });
+        await tx.aiWorkflow.update({
+          where: { id: existing.id },
+          data: {
+            name: tpl.name,
+            description: tpl.shortDescription,
+            patternsUsed,
+            metadata,
+            isSystem: true,
+            isTemplate: false,
+            publishedVersionId: newVersion.id,
+          },
+        });
+      } else {
+        const created = await tx.aiWorkflow.create({
+          data: {
+            slug: tpl.slug,
+            name: tpl.name,
+            description: tpl.shortDescription,
+            patternsUsed,
+            isActive: true,
+            isTemplate: false,
+            isSystem: true,
+            metadata,
+            createdBy,
+          },
+        });
+        await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: tpl.workflowDefinition,
+          userId: createdBy,
+        });
+      }
     });
 
     logger.info(

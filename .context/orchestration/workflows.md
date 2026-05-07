@@ -1,8 +1,10 @@
 # Workflows
 
-Structural validation for `AiWorkflow.workflowDefinition`. Lives in `lib/orchestration/workflows/` and is consumed by the admin `/validate` route, the `/execute` route pre-flight, the builder UI, and the runtime orchestration engine.
+Structural validation for the `WorkflowDefinition` JSON. Lives in `lib/orchestration/workflows/` and is consumed by the admin `/validate` route, the `/execute` route pre-flight, the builder UI, and the runtime orchestration engine.
 
 **Execution** is implemented by `OrchestrationEngine` at `lib/orchestration/engine/` — see [`engine.md`](./engine.md) for the event stream, executor registry, checkpoint lifecycle, and error strategies. This file covers **authoring-time** validation only.
+
+**Versioning.** Workflow definitions are stored as a chain of immutable `AiWorkflowVersion` rows pinned by `AiWorkflow.publishedVersionId`, plus an in-progress `draftDefinition` column. PATCH writes to the draft; explicit publish promotes to a new version; executions pin to the published version at trigger time. The full model is documented in [`workflow-versioning.md`](./workflow-versioning.md). Anti-pattern: reading `workflow.workflowDefinition` directly — that column is gone.
 
 ## Module Layout
 

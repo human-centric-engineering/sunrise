@@ -27,6 +27,14 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// Shared transaction-internal mocks so tests can assert on the tx writes.
+const txMocks = {
+  workflowCreate: vi.fn(),
+  workflowUpdate: vi.fn(),
+  workflowFindUniqueOrThrow: vi.fn(),
+  versionCreate: vi.fn(),
+};
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
@@ -34,6 +42,19 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       create: vi.fn(),
     },
+    aiWorkflowVersion: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
+      cb({
+        aiWorkflow: {
+          create: txMocks.workflowCreate,
+          update: txMocks.workflowUpdate,
+          findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
+        },
+        aiWorkflowVersion: { create: txMocks.versionCreate },
+      })
+    ),
   },
 }));
 
@@ -260,7 +281,11 @@ describe('POST /api/v1/admin/orchestration/workflows', () => {
   describe('Successful creation', () => {
     it('creates workflow and returns 201', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeWorkflow() as never);
+      // POST now wraps create + initial-version in a transaction — the
+      // shared txMocks let us assert on the inner writes.
+      txMocks.workflowCreate.mockResolvedValue({ id: 'wf-new' });
+      txMocks.versionCreate.mockResolvedValue({ id: 'wfv-new', version: 1 });
+      txMocks.workflowFindUniqueOrThrow.mockResolvedValue(makeWorkflow());
 
       const response = await POST(makePostRequest(VALID_WORKFLOW));
 
@@ -269,15 +294,19 @@ describe('POST /api/v1/admin/orchestration/workflows', () => {
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.slug).toBe('test-workflow');
+      // Initial version (v1) is seeded inside the same transaction.
+      expect(txMocks.versionCreate).toHaveBeenCalledOnce();
     });
 
     it('stores createdBy from session user id', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeWorkflow() as never);
+      txMocks.workflowCreate.mockResolvedValue({ id: 'wf-new' });
+      txMocks.versionCreate.mockResolvedValue({ id: 'wfv-new', version: 1 });
+      txMocks.workflowFindUniqueOrThrow.mockResolvedValue(makeWorkflow());
 
       await POST(makePostRequest(VALID_WORKFLOW));
 
-      expect(vi.mocked(prisma.aiWorkflow.create)).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ createdBy: ADMIN_ID }),
         })
@@ -325,7 +354,7 @@ describe('POST /api/v1/admin/orchestration/workflows', () => {
         code: 'P2002',
         clientVersion: '7.0.0',
       });
-      vi.mocked(prisma.aiWorkflow.create).mockRejectedValue(p2002);
+      txMocks.workflowCreate.mockRejectedValue(p2002);
 
       const response = await POST(makePostRequest(VALID_WORKFLOW));
 

@@ -28,12 +28,34 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// Shared transaction-internal mocks so tests can assert on the tx writes.
+const txMocks = {
+  workflowCreate: vi.fn(),
+  workflowUpdate: vi.fn(),
+  workflowFindUniqueOrThrow: vi.fn(),
+  versionCreate: vi.fn(),
+};
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    aiWorkflowVersion: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
+      cb({
+        aiWorkflow: {
+          create: txMocks.workflowCreate,
+          update: txMocks.workflowUpdate,
+          findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
+        },
+        aiWorkflowVersion: { create: txMocks.versionCreate },
+      })
+    ),
   },
 }));
 
@@ -104,8 +126,9 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-1',
+    publishedVersion: { id: 'wfv-1', version: 1, snapshot: VALID_DEFINITION },
     patternsUsed: [],
     templateSource: null,
     metadata: {},
@@ -125,8 +148,8 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
     isActive: true,
     isTemplate: true,
     templateSource: 'custom',
-    workflowDefinition: VALID_DEFINITION,
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-tpl-1',
     patternsUsed: [],
     metadata: {},
     createdBy: 'cmjbv4i3x00003wsloputgwul',
@@ -197,8 +220,10 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       return null;
     }) as never);
 
-    // Default: create succeeds and returns a template
-    vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeTemplate() as never);
+    // Default: transaction succeeds — clone is created + v1 seeded.
+    txMocks.workflowCreate.mockResolvedValue({ id: TEMPLATE_ID });
+    txMocks.versionCreate.mockResolvedValue({ id: 'wfv-tpl-1', version: 1 });
+    txMocks.workflowFindUniqueOrThrow.mockResolvedValue(makeTemplate());
   });
 
   // ─── Rate limiting ──────────────────────────────────────────────────
@@ -315,16 +340,18 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       expect(body.data.isTemplate).toBe(true);
       expect(body.data.templateSource).toBe('custom');
 
-      // Assert — prisma.create was called with the correct shape
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      // Assert — the transactional create was called with the correct shape.
+      // workflowDefinitionHistory is no longer a column — versions replace it.
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             isTemplate: true,
             templateSource: 'custom',
-            workflowDefinitionHistory: [],
           }),
         })
       );
+      // The transaction also seeds v1 of the new template.
+      expect(txMocks.versionCreate).toHaveBeenCalledOnce();
     });
 
     it('should use provided name and description overrides when supplied', async () => {
@@ -340,7 +367,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       );
 
       // Assert — create was called with the overridden name/description
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             name: overrideName,
@@ -358,7 +385,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       await POST(makeRequest(), makeParams());
 
       // Assert — name defaults to "<source name> (Template)"
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             name: 'My Workflow (Template)',
@@ -379,7 +406,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
         'Unique constraint failed on the fields: (`slug`)',
         { code: 'P2002', clientVersion: '7.0.0', meta: { target: ['slug'] } }
       );
-      vi.mocked(prisma.aiWorkflow.create).mockRejectedValue(p2002Error);
+      txMocks.workflowCreate.mockRejectedValue(p2002Error);
 
       // Act
       const response = await POST(makeRequest(), makeParams());
@@ -412,7 +439,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       await POST(makeRequest(), makeParams());
 
       // Assert — create was called with the suffixed slug (e.g. "my-workflow-template-1")
-      expect(prisma.aiWorkflow.create).toHaveBeenCalledWith(
+      expect(txMocks.workflowCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             slug: 'my-workflow-template-1',
@@ -437,6 +464,66 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('published-version preconditions', () => {
+    it('returns 400 when the source workflow has no published version', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      // Workflow exists but publishedVersion is null — admin must publish a
+      // draft first before cloning to a template (the template needs a
+      // snapshot to seed v1 from).
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({ publishedVersion: null, publishedVersionId: null }) as never
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<ErrorBody>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with field-path detail when the published snapshot is malformed', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      // Defensive case: a manual DB edit (or future schema change) leaves
+      // an invalid snapshot in the published version. The route catches it
+      // via safeParse rather than throwing a raw ZodError → 500.
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({
+          publishedVersion: {
+            id: 'wfv-bad',
+            version: 1,
+            snapshot: { steps: [], errorStrategy: 'fail' }, // missing entryStepId
+          },
+        }) as never
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<{
+        error: { code: string; details: { publishedVersionId: string[] } };
+      }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      // The error.issues mapping (`i.path.join('.') + ': ' + i.message`) was
+      // exercising fn 1 in coverage; the field-path string proves it ran.
+      expect(body.error.details.publishedVersionId.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('transaction error pass-through', () => {
+    it('re-throws non-P2002 errors as 500 (the catch only narrows P2002)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      // Force the transaction to reject with a generic error (not P2002).
+      // The route's catch only narrows the unique-constraint case; everything
+      // else propagates.
+      txMocks.workflowCreate.mockRejectedValueOnce(new Error('Database connection lost'));
+
+      const response = await POST(makeRequest(), makeParams());
+      expect(response.status).toBe(500);
     });
   });
 });

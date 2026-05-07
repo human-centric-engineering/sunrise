@@ -15,6 +15,7 @@ const mockTx = {
   aiAgent: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiCapability: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiWorkflow: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  aiWorkflowVersion: { findFirst: vi.fn(), create: vi.fn() },
   aiWebhookSubscription: { findFirst: vi.fn(), create: vi.fn() },
   aiOrchestrationSettings: { upsert: vi.fn() },
 };
@@ -94,7 +95,21 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     name: 'Onboarding Flow',
     slug: 'onboarding-flow',
     description: 'New user onboarding',
-    workflowDefinition: { steps: [] },
+    // Wire payload still uses `workflowDefinition` (the legacy column name).
+    // The importer reseeds v1 from this snapshot via createInitialVersion.
+    workflowDefinition: {
+      steps: [
+        {
+          id: 'step-1',
+          name: 'Step One',
+          type: 'chain',
+          config: { prompt: 'hi' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'step-1',
+      errorStrategy: 'fail',
+    },
     patternsUsed: [],
     isActive: true,
     isTemplate: false,
@@ -147,6 +162,8 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflow.findUnique.mockReset();
     mockTx.aiWorkflow.create.mockReset();
     mockTx.aiWorkflow.update.mockReset();
+    mockTx.aiWorkflowVersion.findFirst.mockReset();
+    mockTx.aiWorkflowVersion.create.mockReset();
     mockTx.aiWebhookSubscription.findFirst.mockReset();
     mockTx.aiWebhookSubscription.create.mockReset();
     mockTx.aiOrchestrationSettings.upsert.mockReset();
@@ -211,12 +228,15 @@ describe('importOrchestrationConfig', () => {
 
   it('creates a new workflow → workflows.created = 1', async () => {
     mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
-    mockTx.aiWorkflow.create.mockResolvedValue({});
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
     const result = await importOrchestrationConfig(payload, 'user-1');
 
     expect(mockTx.aiWorkflow.create).toHaveBeenCalledOnce();
+    expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledOnce();
     expect(result.workflows.created).toBe(1);
   });
 
@@ -300,5 +320,78 @@ describe('importOrchestrationConfig', () => {
         isActive: false,
       }),
     });
+  });
+
+  it('appends a new version when the workflow already exists (does not create v1)', async () => {
+    // Existing workflow in DB → importer should append a vN+1 row pointing at
+    // the imported snapshot, not create a fresh workflow row.
+    mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-existing' });
+    mockTx.aiWorkflowVersion.findFirst.mockResolvedValue({ version: 3 });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-new', version: 4 });
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-existing' });
+
+    const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
+    expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workflowId: 'wf-existing',
+        version: 4,
+        changeSummary: 'Imported from backup',
+        createdBy: 'user-1',
+      }),
+    });
+    expect(mockTx.aiWorkflow.update).toHaveBeenCalledWith({
+      where: { id: 'wf-existing' },
+      data: expect.objectContaining({ publishedVersionId: 'wfv-new' }),
+    });
+    expect(result.workflows.updated).toBe(1);
+    expect(result.workflows.created).toBe(0);
+  });
+
+  it('starts versions at 1 when the existing workflow has no version rows yet', async () => {
+    // Defensive case: an existing AiWorkflow with zero version rows. Should
+    // not crash; the new version becomes v1 (lastVersion?.version ?? 0) + 1.
+    mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-empty' });
+    mockTx.aiWorkflowVersion.findFirst.mockResolvedValue(null);
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-empty' });
+
+    const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ version: 1 }),
+    });
+  });
+
+  it('skips a workflow with a malformed snapshot and emits a warning', async () => {
+    // A backup payload whose `workflowDefinition` fails workflowDefinitionSchema
+    // must not be imported — the warning surfaces in result.warnings and no
+    // version is created.
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        workflows: [
+          makeWorkflow({
+            // Missing entryStepId, no steps — fails Zod parse
+            workflowDefinition: { steps: [], errorStrategy: 'fail' },
+          }),
+        ],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
+    expect(mockTx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+    expect(result.workflows.created).toBe(0);
+    expect(result.workflows.updated).toBe(0);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/onboarding-flow.*definition failed validation/i),
+      ])
+    );
   });
 });

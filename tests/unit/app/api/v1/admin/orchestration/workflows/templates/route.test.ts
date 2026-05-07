@@ -18,6 +18,14 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// Shared transaction-internal mock fns so tests can assert on the tx writes.
+const txMocks = {
+  workflowCreate: vi.fn(),
+  workflowUpdate: vi.fn(),
+  workflowFindUniqueOrThrow: vi.fn(),
+  versionCreate: vi.fn(),
+};
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: {
@@ -26,6 +34,20 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       create: vi.fn(),
     },
+    aiWorkflowVersion: {
+      findFirst: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(async (cb: (tx: unknown) => unknown) =>
+      cb({
+        aiWorkflow: {
+          create: txMocks.workflowCreate,
+          update: txMocks.workflowUpdate,
+          findUniqueOrThrow: txMocks.workflowFindUniqueOrThrow,
+        },
+        aiWorkflowVersion: { create: txMocks.versionCreate },
+      })
+    ),
   },
 }));
 
@@ -65,13 +87,27 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
 }
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
+  const VALID_DEF = {
+    steps: [
+      {
+        id: 's1',
+        name: 'S1',
+        type: 'chain',
+        config: { prompt: 'hi' },
+        nextSteps: [],
+      },
+    ],
+    entryStepId: 's1',
+    errorStrategy: 'fail',
+  };
   return {
     id: WORKFLOW_ID,
     name: 'My Workflow',
     slug: 'my-workflow',
     description: 'A workflow',
-    workflowDefinition: { steps: [] },
-    workflowDefinitionHistory: [],
+    draftDefinition: null,
+    publishedVersionId: 'wfv-1',
+    publishedVersion: { id: 'wfv-1', version: 1, snapshot: VALID_DEF },
     patternsUsed: [3],
     isActive: true,
     isTemplate: false,
@@ -187,26 +223,32 @@ describe('POST /workflows/:id/save-as-template', () => {
     vi.mocked(prisma.aiWorkflow.findUnique)
       .mockResolvedValueOnce(makeWorkflow() as never) // workflow lookup
       .mockResolvedValueOnce(null as never); // slug uniqueness check
-    vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(
+    txMocks.workflowCreate.mockResolvedValueOnce({ id: 'wf-new' });
+    txMocks.versionCreate.mockResolvedValueOnce({ id: 'wfv-new', version: 1 });
+    txMocks.workflowFindUniqueOrThrow.mockResolvedValueOnce(
       makeTemplate({
         templateSource: 'custom',
         name: 'My Workflow (Template)',
         slug: 'my-workflow-template',
-      }) as never
+      })
     );
 
     const response = await SaveAsTemplate(makeSaveRequest(), makeParams(WORKFLOW_ID));
     expect(response.status).toBe(200);
 
-    expect(vi.mocked(prisma.aiWorkflow.create)).toHaveBeenCalledWith(
+    // The route writes inside a transaction; the new template row gets
+    // isTemplate / templateSource / no inherited history. Workflow definition
+    // history is no longer a column — versioning replaces it.
+    expect(txMocks.workflowCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           isTemplate: true,
           templateSource: 'custom',
-          workflowDefinitionHistory: [],
         }),
       })
     );
+    // The transaction also seeds v1 of the new template via createInitialVersion.
+    expect(txMocks.versionCreate).toHaveBeenCalledOnce();
   });
 
   it('uses custom name and description when provided', async () => {
@@ -214,14 +256,16 @@ describe('POST /workflows/:id/save-as-template', () => {
     vi.mocked(prisma.aiWorkflow.findUnique)
       .mockResolvedValueOnce(makeWorkflow() as never)
       .mockResolvedValueOnce(null as never);
-    vi.mocked(prisma.aiWorkflow.create).mockResolvedValue(makeTemplate() as never);
+    txMocks.workflowCreate.mockResolvedValueOnce({ id: 'wf-new' });
+    txMocks.versionCreate.mockResolvedValueOnce({ id: 'wfv-new', version: 1 });
+    txMocks.workflowFindUniqueOrThrow.mockResolvedValueOnce(makeTemplate());
 
     await SaveAsTemplate(
       makeSaveRequest({ name: 'Custom Name', description: 'Custom description' }),
       makeParams(WORKFLOW_ID)
     );
 
-    expect(vi.mocked(prisma.aiWorkflow.create)).toHaveBeenCalledWith(
+    expect(txMocks.workflowCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           name: 'Custom Name',

@@ -20,13 +20,8 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
-import { logger } from '@/lib/logging';
-import {
-  updateWorkflowSchema,
-  workflowDefinitionHistorySchema,
-  workflowDefinitionSchema,
-  type WorkflowDefinitionHistoryEntry,
-} from '@/lib/validations/orchestration';
+import { saveDraft } from '@/lib/orchestration/workflows/version-service';
+import { updateWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 
 function parseWorkflowId(raw: string): string {
@@ -46,7 +41,10 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const { id: rawId } = await params;
   const id = parseWorkflowId(rawId);
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  const workflow = await prisma.aiWorkflow.findUnique({
+    where: { id },
+    include: { publishedVersion: true },
+  });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
   log.info('Workflow fetched', { workflowId: id });
@@ -77,46 +75,50 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     }
   }
 
+  // Definition edits go to `draftDefinition` only — published versions are
+  // promoted via POST /publish. The `saveDraft` service emits its own audit
+  // entry; the `workflow.update` audit below covers other field changes.
+  let baseline = current;
+  if (body.draftDefinition !== undefined) {
+    if (body.draftDefinition === null) {
+      await prisma.aiWorkflow.update({
+        where: { id },
+        data: { draftDefinition: Prisma.DbNull },
+      });
+    } else {
+      await saveDraft({
+        workflowId: id,
+        definition: body.draftDefinition,
+        userId: session.user.id,
+        clientIp: clientIP,
+      });
+    }
+    // Re-read after the draft write so the workflow.update audit's
+    // computeChanges doesn't double-log draftDefinition (saveDraft already
+    // logged it via workflow.draft.save).
+    baseline = (await prisma.aiWorkflow.findUnique({ where: { id } })) ?? current;
+  }
+
   const data: Prisma.AiWorkflowUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
   if (body.slug !== undefined) data.slug = body.slug;
   if (body.description !== undefined) data.description = body.description;
-  // Audit: if workflowDefinition actually changed, push the old value
-  // onto the history column before writing the new one.
-  if (body.workflowDefinition !== undefined) {
-    const historyParse = workflowDefinitionHistorySchema.safeParse(
-      current.workflowDefinitionHistory
-    );
-    if (!historyParse.success) {
-      logger.warn('Workflow PATCH: workflowDefinitionHistory malformed, resetting', {
-        workflowId: id,
-        issues: historyParse.error.issues,
-      });
-    }
-    const history: WorkflowDefinitionHistoryEntry[] = historyParse.success ? historyParse.data : [];
-    const defParse = workflowDefinitionSchema.safeParse(current.workflowDefinition);
-    if (defParse.success) {
-      history.push({
-        definition: defParse.data,
-        changedAt: new Date().toISOString(),
-        changedBy: session.user.id,
-      });
-    } else {
-      logger.warn('Workflow PATCH: current workflowDefinition malformed, skipping history push', {
-        workflowId: id,
-      });
-    }
-    // Cap history at 50 entries (keep most recent)
-    if (history.length > 50) {
-      history.splice(0, history.length - 50);
-    }
-    data.workflowDefinition = body.workflowDefinition as unknown as Prisma.InputJsonValue;
-    data.workflowDefinitionHistory = history as unknown as Prisma.InputJsonValue;
-  }
   if (body.patternsUsed !== undefined) data.patternsUsed = body.patternsUsed;
   if (body.isActive !== undefined) data.isActive = body.isActive;
   if (body.isTemplate !== undefined) data.isTemplate = body.isTemplate;
   if (body.metadata !== undefined) data.metadata = body.metadata as Prisma.InputJsonValue;
+
+  // Skip the workflow.update path entirely when only `draftDefinition` was
+  // sent — saveDraft / discardDraft has already emitted its own audit, and
+  // running an empty Prisma update + a redundant `workflow.update` audit
+  // double-logs the same change.
+  if (Object.keys(data).length === 0) {
+    const workflow = await prisma.aiWorkflow.findUniqueOrThrow({
+      where: { id },
+      include: { publishedVersion: true },
+    });
+    return successResponse(workflow);
+  }
 
   try {
     const workflow = await prisma.aiWorkflow.update({ where: { id }, data });
@@ -133,7 +135,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityId: id,
       entityName: workflow.name,
       changes: computeChanges(
-        current as unknown as Record<string, unknown>,
+        baseline as unknown as Record<string, unknown>,
         workflow as unknown as Record<string, unknown>
       ),
       clientIp: clientIP,

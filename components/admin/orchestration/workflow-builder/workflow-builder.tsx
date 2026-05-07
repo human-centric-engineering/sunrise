@@ -31,7 +31,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 
-import type { AiWorkflow } from '@/types/orchestration';
+import type { AiWorkflowWithVersion } from '@/types/orchestration';
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -44,6 +44,7 @@ import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring
 import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
 import { BlockConfigPanel } from '@/components/admin/orchestration/workflow-builder/block-config-panel';
 import { BuilderToolbar } from '@/components/admin/orchestration/workflow-builder/builder-toolbar';
+import { PublishDialog } from '@/components/admin/orchestration/workflow-builder/publish-dialog';
 import { ExecutionInputDialog } from '@/components/admin/orchestration/workflow-builder/execution-input-dialog';
 import { ExecutionPanel } from '@/components/admin/orchestration/workflow-builder/execution-panel';
 import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
@@ -81,7 +82,7 @@ export type WorkflowBuilderMode = 'create' | 'edit';
 
 export interface WorkflowBuilderProps {
   mode: WorkflowBuilderMode;
-  workflow?: AiWorkflow | null;
+  workflow?: AiWorkflowWithVersion | null;
   /** Pre-populate the canvas from a WorkflowDefinition (e.g. from advisor). */
   initialDefinition?: WorkflowDefinition;
   /** Server-prefetched capabilities for the Tool Call block editor. */
@@ -107,8 +108,20 @@ interface InitialState {
   details: WorkflowDetails | null;
 }
 
+/**
+ * Pick the definition to load onto the canvas.
+ * Prefer the in-progress `draftDefinition`; fall back to the published version's
+ * snapshot. Returns `unknown` so the caller can run its own Zod parse.
+ */
+function pickEditableDefinition(workflow: AiWorkflowWithVersion): unknown {
+  if (workflow.draftDefinition !== null && workflow.draftDefinition !== undefined) {
+    return workflow.draftDefinition;
+  }
+  return workflow.publishedVersion?.snapshot ?? null;
+}
+
 function initialState(
-  workflow: AiWorkflow | null | undefined,
+  workflow: AiWorkflowWithVersion | null | undefined,
   initialDefinition?: WorkflowDefinition
 ): InitialState {
   if (!workflow && initialDefinition && Array.isArray(initialDefinition.steps)) {
@@ -120,7 +133,7 @@ function initialState(
     return { nodes: [], edges: [], name: 'Untitled workflow', details: null };
   }
 
-  const defResult = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const defResult = workflowDefinitionSchema.safeParse(pickEditableDefinition(workflow));
   const def = defResult.success ? (defResult.data as WorkflowDefinition) : null;
   const baseDetails: WorkflowDetails = {
     slug: workflow.slug,
@@ -175,6 +188,19 @@ function WorkflowBuilderInner({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Publish / draft state — populated from the workflow prop, kept in sync
+  // by re-fetching on publish / discard.
+  const [publishedVersion, setPublishedVersion] = useState<number | null>(
+    workflow?.publishedVersion?.version ?? null
+  );
+  const [hasDraft, setHasDraft] = useState<boolean>(
+    workflow?.draftDefinition !== null && workflow?.draftDefinition !== undefined
+  );
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   // Capabilities for the Tool Call editor — server-prefetched via props,
   // with a client-side fallback if the page didn't provide them.
@@ -426,6 +452,10 @@ function WorkflowBuilderInner({
         if (mode === 'create') {
           router.push(`/admin/orchestration/workflows/${savedWorkflow.id}`);
         } else {
+          // PATCH wrote the canvas to draftDefinition — surface that state so
+          // the toolbar's status pill flips to "Editing draft" without a
+          // round-trip refresh.
+          setHasDraft(true);
           setSaved(true);
           setTimeout(() => setSaved(false), 2500);
           router.refresh();
@@ -518,10 +548,10 @@ function WorkflowBuilderInner({
   const handleHistoryRevert = useCallback(async () => {
     if (!workflow) return;
     try {
-      const fresh = await apiClient.get<AiWorkflow>(
+      const fresh = await apiClient.get<AiWorkflowWithVersion>(
         API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
       );
-      const parsed = workflowDefinitionSchema.safeParse(fresh.workflowDefinition);
+      const parsed = workflowDefinitionSchema.safeParse(pickEditableDefinition(fresh));
       if (parsed.success) {
         const { nodes: revertedNodes, edges: revertedEdges } = workflowDefinitionToFlow(
           parsed.data
@@ -529,10 +559,77 @@ function WorkflowBuilderInner({
         setNodes(revertedNodes);
         setEdges(revertedEdges);
       }
+      // A rollback creates a new published version and clears the draft —
+      // sync the toolbar pill to match.
+      setPublishedVersion(fresh.publishedVersion?.version ?? null);
+      setHasDraft(fresh.draftDefinition !== null && fresh.draftDefinition !== undefined);
     } catch (err) {
       logger.error('Failed to refresh canvas after revert', { err });
     }
   }, [workflow, setNodes, setEdges]);
+
+  // ------------------------------------------------------------------
+  // Publish / discard-draft flow
+  // ------------------------------------------------------------------
+
+  const handlePublishConfirm = useCallback(
+    async (changeSummary: string | undefined) => {
+      if (!workflow) return;
+      setPublishing(true);
+      setPublishError(null);
+      try {
+        const result = await apiClient.post<{
+          version: { version: number };
+        }>(API.ADMIN.ORCHESTRATION.workflowPublish(workflow.id), {
+          body: changeSummary ? { changeSummary } : {},
+        });
+        setPublishedVersion(result.version.version);
+        setHasDraft(false);
+        setPublishDialogOpen(false);
+        setPublished(true);
+        setTimeout(() => setPublished(false), 2500);
+        router.refresh();
+      } catch (err) {
+        const message =
+          err instanceof APIClientError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Failed to publish';
+        setPublishError(message);
+        logger.error('Workflow publish failed', { error: message });
+      } finally {
+        setPublishing(false);
+      }
+    },
+    [router, workflow]
+  );
+
+  const handleDiscardDraft = useCallback(async () => {
+    if (!workflow) return;
+    if (!window.confirm('Discard the in-progress draft? The published version is unchanged.')) {
+      return;
+    }
+    try {
+      await apiClient.post(API.ADMIN.ORCHESTRATION.workflowDiscardDraft(workflow.id), {});
+      // Reload the canvas from the published snapshot now that the draft is gone.
+      const fresh = await apiClient.get<AiWorkflowWithVersion>(
+        API.ADMIN.ORCHESTRATION.workflowById(workflow.id)
+      );
+      const parsed = workflowDefinitionSchema.safeParse(pickEditableDefinition(fresh));
+      if (parsed.success) {
+        const { nodes: revertedNodes, edges: revertedEdges } = workflowDefinitionToFlow(
+          parsed.data
+        );
+        setNodes(revertedNodes);
+        setEdges(revertedEdges);
+      }
+      setHasDraft(false);
+      router.refresh();
+    } catch (err) {
+      logger.error('Workflow discard-draft failed', { err });
+    }
+  }, [router, setEdges, setNodes, workflow]);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
@@ -555,6 +652,27 @@ function WorkflowBuilderInner({
         saving={saving}
         saved={saved}
         hasErrors={validationErrors.length > 0}
+        publishedVersion={publishedVersion}
+        hasDraft={hasDraft}
+        onPublish={() => {
+          setPublishError(null);
+          setPublishDialogOpen(true);
+        }}
+        onDiscardDraft={() => void handleDiscardDraft()}
+        publishing={publishing}
+        published={published}
+      />
+
+      <PublishDialog
+        open={publishDialogOpen}
+        onOpenChange={(open) => {
+          setPublishDialogOpen(open);
+          if (!open) setPublishError(null);
+        }}
+        onConfirm={handlePublishConfirm}
+        publishing={publishing}
+        errorMessage={publishError}
+        nextVersion={publishedVersion === null ? 1 : publishedVersion + 1}
       />
 
       {mode === 'create' && (
@@ -574,7 +692,7 @@ function WorkflowBuilderInner({
               | undefined) ?? null
           }
           workflowDefinition={
-            (workflowDefinitionSchema.safeParse(workflow.workflowDefinition).data as
+            (workflowDefinitionSchema.safeParse(pickEditableDefinition(workflow)).data as
               | WorkflowDefinition
               | undefined) ?? null
           }

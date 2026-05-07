@@ -61,7 +61,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         name: true,
         slug: true,
         description: true,
-        workflowDefinition: true,
+        publishedVersion: { select: { snapshot: true } },
         patternsUsed: true,
         isActive: true,
         isTemplate: true,
@@ -98,13 +98,36 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
     }),
   ]);
 
+  // Flatten the published version snapshot back to the wire shape that the
+  // importer expects: a single `workflowDefinition` per workflow. The version
+  // chain itself isn't carried in backups — backups are config snapshots, not
+  // point-in-time history. The importer reseeds v1 from this snapshot.
+  // Workflows that have never been published are skipped (they have no
+  // exportable definition).
+  const flattenedWorkflows = workflows.flatMap((w) =>
+    w.publishedVersion
+      ? [
+          {
+            name: w.name,
+            slug: w.slug,
+            description: w.description,
+            workflowDefinition: w.publishedVersion.snapshot,
+            patternsUsed: w.patternsUsed,
+            isActive: w.isActive,
+            isTemplate: w.isTemplate,
+            metadata: w.metadata,
+          },
+        ]
+      : []
+  );
+
   return {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     data: {
       agents,
       capabilities,
-      workflows,
+      workflows: flattenedWorkflows,
       webhooks,
       settings,
     },

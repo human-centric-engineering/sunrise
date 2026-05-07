@@ -228,20 +228,28 @@ export function WorkflowsTable({
       setIsLoading(true);
       setListError(null);
       try {
-        // Fetch the full workflow to get its definition
+        // Fetch the full workflow to get its definition. Definition is now
+        // sourced from the in-progress draft (preferred) or the published
+        // version's snapshot — whichever the admin would see in the builder.
         const full = await apiClient.get<{
-          workflowDefinition: unknown;
+          draftDefinition: unknown;
+          publishedVersion: { snapshot: unknown } | null;
           patternsUsed: string[];
           isTemplate: boolean;
           metadata: unknown;
         }>(API.ADMIN.ORCHESTRATION.workflowById(workflow.id));
+
+        const sourceDefinition = full.draftDefinition ?? full.publishedVersion?.snapshot;
+        if (!sourceDefinition) {
+          throw new Error(`Workflow "${workflow.name}" has no definition to duplicate.`);
+        }
 
         const created = await apiClient.post<{ id: string }>(API.ADMIN.ORCHESTRATION.WORKFLOWS, {
           body: {
             name: `${workflow.name} (copy)`,
             slug: `${workflow.slug}-copy-${Date.now()}`,
             description: workflow.description ?? '',
-            workflowDefinition: full.workflowDefinition,
+            workflowDefinition: sourceDefinition,
             patternsUsed: full.patternsUsed,
             isActive: false,
             isTemplate: false,

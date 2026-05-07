@@ -42,10 +42,18 @@ export const POST = withAdminAuth<{ id: string }>(async (request, _session, { pa
   }
   const id = parsed.data;
 
-  const workflow = await prisma.aiWorkflow.findUnique({ where: { id } });
+  const workflow = await prisma.aiWorkflow.findUnique({
+    where: { id },
+    include: { publishedVersion: true },
+  });
   if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
+  if (!workflow.publishedVersion) {
+    throw new ValidationError(`Workflow ${id} has no published version`, {
+      publishedVersionId: ['Publish a draft before validating'],
+    });
+  }
 
-  const defParsed = workflowDefinitionSchema.safeParse(workflow.workflowDefinition);
+  const defParsed = workflowDefinitionSchema.safeParse(workflow.publishedVersion.snapshot);
   if (!defParsed.success) {
     throw new ValidationError(`Workflow ${id} has a malformed definition`, {
       workflowDefinition: defParsed.error.issues.map((i) => i.message),

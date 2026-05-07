@@ -52,6 +52,7 @@ model User {
   aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
   aiInviteTokens         AiAgentInviteToken[]    @relation("InviteTokenCreator")
   aiAgentVersions        AiAgentVersion[]        @relation("AgentVersionCreator")
+  aiWorkflowVersions     AiWorkflowVersion[]     @relation("WorkflowVersionCreator")
   aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
   aiEventHooks           AiEventHook[]           @relation("AiEventHookCreator")
   aiProviderModels       AiProviderModel[]       @relation("AiProviderModelCreator")
@@ -310,35 +311,66 @@ model AiAgentCapability {
   @@map("ai_agent_capability")
 }
 
-// Reusable workflow definitions
+// Reusable workflow definitions.
+//
+// Versioning model: each workflow has a chain of immutable `AiWorkflowVersion`
+// rows (the published history) plus an optional in-progress `draftDefinition`.
+// Executions resolve their definition via `publishedVersionId` so a mid-edit
+// draft never alters in-flight runs. See `.context/orchestration/workflow-versioning.md`.
 model AiWorkflow {
-  id                        String   @id @default(cuid())
-  name                      String
-  slug                      String   @unique
-  description               String   @db.Text
-  workflowDefinition        Json // DAG of pattern steps
-  workflowDefinitionHistory Json     @default("[]") // [{definition, changedAt, changedBy}]
-  patternsUsed              Int[] // pattern numbers used in this workflow
-  isActive                  Boolean  @default(true)
-  isTemplate                Boolean  @default(false)
-  isSystem                  Boolean  @default(false)
-  templateSource            String? // null = regular workflow, "builtin" = seed template, "custom" = admin-created
-  metadata                  Json?
-  createdBy                 String
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  description        String   @db.Text
+  draftDefinition    Json? // in-progress edit; null when there is no draft
+  publishedVersionId String? // FK to the version executions pin to
+  patternsUsed       Int[] // pattern numbers used in this workflow
+  isActive           Boolean  @default(true)
+  isTemplate         Boolean  @default(false)
+  isSystem           Boolean  @default(false)
+  templateSource     String? // null = regular workflow, "builtin" = seed template, "custom" = admin-created
+  metadata           Json?
+  createdBy          String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   // Relations
-  creator    User                  @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
-  executions AiWorkflowExecution[]
-  schedules  AiWorkflowSchedule[]
+  creator          User                  @relation("AiWorkflowCreator", fields: [createdBy], references: [id])
+  publishedVersion AiWorkflowVersion?    @relation("WorkflowPublishedVersion", fields: [publishedVersionId], references: [id])
+  versions         AiWorkflowVersion[]   @relation("WorkflowVersions")
+  executions       AiWorkflowExecution[]
+  schedules        AiWorkflowSchedule[]
 
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
   @@index([isSystem])
   @@index([slug, isActive]) // Webhook trigger lookups: findFirst({ slug, isActive: true })
+  @@index([publishedVersionId])
   @@map("ai_workflow")
+}
+
+// Immutable snapshot of a workflow definition at publish time.
+// Mirrors the AiAgentVersion model. New rows are inserted by `publishDraft` and
+// `rollback`; existing rows are never mutated. Per-execution pinning is via
+// `AiWorkflowExecution.versionId`.
+model AiWorkflowVersion {
+  id            String   @id @default(cuid())
+  workflowId    String
+  version       Int // monotonic per workflow, starts at 1
+  snapshot      Json // full WorkflowDefinition at publish time
+  changeSummary String?  @db.Text // optional admin-supplied label
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  workflow     AiWorkflow            @relation("WorkflowVersions", fields: [workflowId], references: [id], onDelete: Cascade)
+  creator      User                  @relation("WorkflowVersionCreator", fields: [createdBy], references: [id])
+  publishedFor AiWorkflow[]          @relation("WorkflowPublishedVersion")
+  executions   AiWorkflowExecution[]
+
+  @@unique([workflowId, version])
+  @@index([workflowId])
+  @@map("ai_workflow_version")
 }
 
 // Cron-based workflow scheduling
@@ -368,6 +400,7 @@ model AiWorkflowSchedule {
 model AiWorkflowExecution {
   id              String    @id @default(cuid())
   workflowId      String
+  versionId       String? // pinned AiWorkflowVersion at trigger time; null on legacy rows only
   status          String // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
   inputData       Json
   outputData      Json?
@@ -384,11 +417,13 @@ model AiWorkflowExecution {
   updatedAt       DateTime  @updatedAt
 
   // Relations
-  workflow AiWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  user     User        @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
+  workflow AiWorkflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version  AiWorkflowVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  user     User               @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
   costLogs AiCostLog[]
 
   @@index([workflowId])
+  @@index([versionId])
   @@index([userId])
   @@index([status])
   @@index([createdAt])

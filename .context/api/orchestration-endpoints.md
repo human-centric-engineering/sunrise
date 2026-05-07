@@ -52,8 +52,11 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/dry-run`                  | POST               | Validate + check inputData against template vars        | 5.1     |
 | `/workflows/:id/execute`                  | POST               | Run workflow (SSE `text/event-stream`)                  | 3.2     |
 | `/workflows/:id/execute-stream`           | GET                | Run workflow via EventSource (SSE GET)                  | 5.1     |
-| `/workflows/:id/definition-history`       | GET                | Workflow definition version history                     | 5.1     |
-| `/workflows/:id/definition-revert`        | POST               | Revert to previous definition version                   | 5.1     |
+| `/workflows/:id/versions`                 | GET                | List published versions (paginated, desc by version)    | 5.1     |
+| `/workflows/:id/versions/:version`        | GET                | Single-version snapshot read                            | 5.1     |
+| `/workflows/:id/publish`                  | POST               | Promote `draftDefinition` to a new published version    | 5.1     |
+| `/workflows/:id/discard-draft`            | POST               | Clear `draftDefinition`; published version unchanged    | 5.1     |
+| `/workflows/:id/rollback`                 | POST               | Create a NEW version copied from a target version       | 5.1     |
 | `/executions/:id`                         | GET                | Read execution + parsed trace                           | 3.2     |
 | `/executions/:id/status`                  | GET                | Lightweight status read (no trace, polling-friendly)    | —       |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                | 3.2     |

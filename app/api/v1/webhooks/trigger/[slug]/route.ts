@@ -69,10 +69,17 @@ export async function POST(
 
   const workflow = await prisma.aiWorkflow.findFirst({
     where: { slug, isActive: true },
+    select: { id: true, publishedVersionId: true },
   });
 
   if (!workflow) {
     return errorResponse('Workflow not found', { code: 'NOT_FOUND', status: 404 });
+  }
+  if (!workflow.publishedVersionId) {
+    return errorResponse('Workflow has no published version', {
+      code: 'VALIDATION_ERROR',
+      status: 400,
+    });
   }
 
   let inputData: Prisma.InputJsonValue = {};
@@ -90,6 +97,7 @@ export async function POST(
     const execution = await prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
+        versionId: workflow.publishedVersionId,
         status: 'pending',
         inputData,
         executionTrace: [],

@@ -141,6 +141,14 @@ export interface ExecuteOptions {
 export interface ExecuteWorkflowArg {
   id: string;
   definition: WorkflowDefinition;
+  /**
+   * Pinned `AiWorkflowVersion.id` — stamped onto `AiWorkflowExecution.versionId`
+   * so the execution record references the exact snapshot it ran. Optional
+   * to keep the engine usable in tests / synthetic flows; production callers
+   * (admin routes, scheduler, webhook trigger, run_workflow capability)
+   * always pass it.
+   */
+  versionId?: string;
 }
 
 export class OrchestrationEngine {
@@ -1605,6 +1613,7 @@ export class OrchestrationEngine {
     const row = await prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
+        versionId: workflow.versionId ?? null,
         userId: options.userId,
         status: WorkflowStatus.RUNNING,
         inputData: inputData as object,

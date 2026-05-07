@@ -29,6 +29,7 @@ import {
   executeWorkflowBodySchema,
   resumeExecutionQuerySchema,
 } from '@/lib/validations/orchestration';
+import { cuidSchema } from '@/lib/validations/common';
 import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -53,20 +54,40 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
   const { resumeFromExecutionId } = queryParsed.data;
 
-  // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
-  const { workflow, definition } = await prepareWorkflowExecution(rawId);
-
-  // Resume-path ownership guard — cross-user resume returns 404 (not 403)
-  // to avoid confirming existence of another user's execution.
+  // Resume-path ownership + version pinning. The execution row's `versionId`
+  // (stamped at original create time) is the source of truth — if a new
+  // version has been published mid-pause, resume must NOT silently switch to
+  // the new definition. That would defeat the publish/draft model's whole
+  // point. Cross-user resume returns 404 (not 403) so existence isn't leaked.
+  let pinnedVersionId: string | null = null;
   if (resumeFromExecutionId) {
-    const existing = await prisma.aiWorkflowExecution.findUnique({
-      where: { id: resumeFromExecutionId },
-      select: { id: true, userId: true, workflowId: true },
-    });
-    if (!existing || existing.userId !== session.user.id || existing.workflowId !== workflow.id) {
+    // Short-circuit on malformed workflow id BEFORE the DB lookup so we
+    // don't waste a query on a request that can't possibly match.
+    const parsedWorkflowId = cuidSchema.safeParse(rawId);
+    if (!parsedWorkflowId.success) {
       throw new NotFoundError(`Execution ${resumeFromExecutionId} not found`);
     }
+    const existing = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: resumeFromExecutionId },
+      select: { id: true, userId: true, workflowId: true, versionId: true },
+    });
+    if (
+      !existing ||
+      existing.userId !== session.user.id ||
+      existing.workflowId !== parsedWorkflowId.data
+    ) {
+      throw new NotFoundError(`Execution ${resumeFromExecutionId} not found`);
+    }
+    pinnedVersionId = existing.versionId;
   }
+
+  // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation.
+  // For resumes, prepareWorkflowExecution loads the originally-pinned version
+  // (preserving definition continuity across the pause) rather than the
+  // workflow's currently-published version.
+  const { workflow, definition, version } = await prepareWorkflowExecution(rawId, {
+    pinnedVersionId,
+  });
 
   log.info('workflow execute started', {
     workflowId: workflow.id,
@@ -76,12 +97,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   });
 
   const engine = new OrchestrationEngine();
-  const events = engine.execute({ id: workflow.id, definition }, body.inputData, {
-    userId: session.user.id,
-    budgetLimitUsd: body.budgetLimitUsd,
-    signal: request.signal,
-    resumeFromExecutionId,
-  });
+  const events = engine.execute(
+    { id: workflow.id, definition, versionId: version.id },
+    body.inputData,
+    {
+      userId: session.user.id,
+      budgetLimitUsd: body.budgetLimitUsd,
+      signal: request.signal,
+      resumeFromExecutionId,
+    }
+  );
 
   return sseResponse(events, { signal: request.signal });
 });

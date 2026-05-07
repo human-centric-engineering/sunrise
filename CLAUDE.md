@@ -281,6 +281,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Streaming Chat           | `.context/orchestration/chat.md`                       | Chat handler, tool loop, context builder                               |
 | Knowledge Base           | `.context/orchestration/knowledge.md`                  | Document ingestion, chunking, vector search                            |
 | Workflows                | `.context/orchestration/workflows.md`                  | DAG validator, step types, error codes                                 |
+| Workflow Versioning      | `.context/orchestration/workflow-versioning.md`        | Publish/draft/rollback model, execution pinning, audit events          |
 | Patterns & Steps         | `.context/orchestration/patterns-and-steps.md`         | The 21 canonical patterns, step→pattern relationships, author guidance |
 | Orchestration Engine     | `.context/orchestration/engine.md`                     | Runtime executor, registry, events, strategies                         |
 | Tracing (OTEL plug-in)   | `.context/orchestration/tracing.md`                    | Tracer interface, no-op default, OTEL adapter, span tree, attributes   |

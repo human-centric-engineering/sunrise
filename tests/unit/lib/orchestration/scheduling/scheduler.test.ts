@@ -22,8 +22,10 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiWorkflowExecution: {
       create: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -71,6 +73,7 @@ import {
   isValidCron,
   processDueSchedules,
   processPendingExecutions,
+  resumeApprovedExecution,
   sanitiseHookErrorMessage,
 } from '@/lib/orchestration/scheduling/scheduler';
 import { prisma } from '@/lib/db/client';
@@ -104,7 +107,7 @@ function makeSchedule(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
-      workflowDefinition: VALID_DEFINITION,
+      publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
     ...overrides,
   };
@@ -114,6 +117,7 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
   return {
     id: 'exec_1',
     workflowId: 'wf_1',
+    versionId: 'wfv_1',
     status: 'pending',
     inputData: { topic: 'test' },
     executionTrace: [],
@@ -123,8 +127,9 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
-      workflowDefinition: VALID_DEFINITION,
+      publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
+    version: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     ...overrides,
   };
 }
@@ -284,7 +289,7 @@ describe('processDueSchedules', () => {
         id: 'wf_1',
         slug: 'inactive-wf',
         isActive: false,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
@@ -348,7 +353,7 @@ describe('processDueSchedules', () => {
         id: 'wf_2',
         slug: 'wf-two',
         isActive: true,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_2', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([s1, s2] as never);
@@ -405,7 +410,7 @@ describe('processDueSchedules', () => {
     expect(logger.info).not.toHaveBeenCalledWith('Scheduler: tick complete', expect.anything());
   });
 
-  it('includes workflowDefinition in findMany select', async () => {
+  it('includes the published version snapshot in findMany select', async () => {
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([]);
 
     await processDueSchedules();
@@ -414,11 +419,39 @@ describe('processDueSchedules', () => {
       expect.objectContaining({
         include: {
           workflow: {
-            select: expect.objectContaining({ workflowDefinition: true }),
+            select: expect.objectContaining({
+              publishedVersion: { select: { id: true, snapshot: true } },
+            }),
           },
         },
       })
     );
+  });
+
+  it('records failure when the workflow has no published version (publish/draft model)', async () => {
+    // A schedule pointing at a workflow that has never been published cannot
+    // run — the scheduler must record a failure entry rather than create an
+    // execution row pinned to a non-existent version.
+    const schedule = makeSchedule({
+      workflow: {
+        id: 'wf_unpub',
+        slug: 'unpublished-wf',
+        isActive: true,
+        publishedVersion: null,
+      },
+    });
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+
+    const result = await processDueSchedules();
+
+    expect(result.processed).toBe(1);
+    expect(result.succeeded).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors).toEqual([
+      { scheduleId: 'sched_1', error: 'Workflow has no published version' },
+    ]);
+    // No execution row should be inserted — bail before create.
+    expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
   });
 });
 
@@ -448,7 +481,7 @@ describe('processPendingExecutions', () => {
         id: 'wf_1',
         slug: 'inactive',
         isActive: false,
-        workflowDefinition: VALID_DEFINITION,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });
     vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);
@@ -525,6 +558,37 @@ describe('processPendingExecutions', () => {
     expect(prisma.aiWorkflowExecution.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 20 })
     );
+  });
+
+  it('marks pending execution failed when neither pinned nor current version snapshot is available', async () => {
+    // Edge case: the original pinned version row was hard-deleted AND the
+    // workflow has no current published version. The recovery must mark the
+    // row as FAILED rather than try to drain a missing definition.
+    const exec = makeExecution({
+      id: 'exec_orphan',
+      versionId: null, // pinned version row is gone, FK SetNull → null
+      version: null,
+      workflow: {
+        id: 'wf_1',
+        slug: 'test-workflow',
+        isActive: true,
+        publishedVersion: null, // workflow has been un-published / never published
+      },
+    });
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+
+    const result = await processPendingExecutions();
+
+    expect(result.failed).toBe(1);
+    expect(result.recovered).toBe(0);
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec_orphan' },
+      data: expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'No published version to resume',
+      }),
+    });
   });
 
   it('handles errors for individual executions without stopping the batch', async () => {
@@ -612,6 +676,40 @@ describe('drainEngine: engine crash path', () => {
         userId: 'user_1',
         error: 'engine boom',
       });
+    });
+  });
+
+  it('logs but does not throw when dispatchWebhookEvent rejects after engine crash', async () => {
+    // Exercises the `.catch(...)` arm on the dispatchWebhookEvent call inside
+    // drainEngine (line ~153). The webhook dispatch is fire-and-forget; a
+    // rejection should be logged at warn but never abort the crash-recovery
+    // path or surface as an unhandled rejection.
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
+      id: 'exec_dispatch_err',
+      inputData: { topic: 'test' },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    vi.mocked(dispatchWebhookEvent).mockRejectedValue(new Error('Webhook DNS failure'));
+
+    mockExecute.mockReturnValue(
+      // eslint-disable-next-line require-yield
+      (async function* () {
+        throw new Error('engine crashed');
+      })()
+    );
+
+    await processDueSchedules();
+
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Webhook dispatch failed for execution_crashed',
+        expect.objectContaining({
+          executionId: 'exec_dispatch_err',
+          error: 'Webhook DNS failure',
+        })
+      );
     });
   });
 
@@ -736,5 +834,183 @@ describe('drainEngine: engine crash path', () => {
         errorMessage: dirtyMessage,
       }),
     });
+  });
+});
+
+// ─── resumeApprovedExecution ────────────────────────────────────────────────
+//
+// Channel-specific approval routes (chat, embed) call `resumeApprovedExecution`
+// to drain the engine immediately after an HMAC-verified approval, so the
+// user-facing card doesn't have to wait on the maintenance tick. The function
+// has several short-circuit branches: missing execution, deactivated workflow,
+// no pinned snapshot, malformed snapshot, and the happy path.
+
+describe('resumeApprovedExecution', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(workflowDefinitionSchema.safeParse).mockReturnValue({
+      success: true,
+      data: VALID_DEFINITION,
+    } as never);
+    mockExecute.mockReturnValue((async function* () {})());
+  });
+
+  it('returns silently when the execution row is missing', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(null);
+
+    await resumeApprovedExecution('exec_missing');
+
+    // No engine call, no DB write — defensive early return.
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(prisma.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+
+  it('marks the execution failed when the workflow has been deactivated', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_deact' }),
+      workflow: {
+        id: 'wf_1',
+        slug: 'deactivated-wf',
+        isActive: false,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
+      },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await resumeApprovedExecution('exec_deact');
+
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledWith({
+      where: { id: 'exec_deact', status: 'pending' },
+      data: expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Workflow deactivated',
+      }),
+    });
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('logs but does not throw when mark-failed updateMany rejects on the deactivated path', async () => {
+    // Exercises the `.catch(...)` arm on the inactive-workflow updateMany
+    // (line ~392) — it logs to logger.error and swallows the rejection so
+    // the caller's promise resolves cleanly.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_deact_err' }),
+      workflow: {
+        id: 'wf_1',
+        slug: 'deactivated-wf',
+        isActive: false,
+        publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
+      },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockRejectedValue(new Error('DB unreachable'));
+
+    await expect(resumeApprovedExecution('exec_deact_err')).resolves.toBeUndefined();
+    // Wait a tick for the promise rejection to propagate to the catch handler.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logger.error).toHaveBeenCalledWith(
+      'resumeApprovedExecution: mark-failed update failed',
+      expect.any(Error),
+      expect.objectContaining({ executionId: 'exec_deact_err' })
+    );
+  });
+
+  it('logs and returns when neither pinned nor current snapshot is available', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_orphan', versionId: null }),
+      version: null,
+      workflow: {
+        id: 'wf_1',
+        slug: 'unpub',
+        isActive: true,
+        publishedVersion: null,
+      },
+    } as never);
+
+    await resumeApprovedExecution('exec_orphan');
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'resumeApprovedExecution: no version snapshot to resume',
+      undefined,
+      expect.objectContaining({ executionId: 'exec_orphan' })
+    );
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('logs and returns when the snapshot fails Zod parse', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_bad' }),
+      workflow: {
+        id: 'wf_1',
+        slug: 'wf-bad-def',
+        isActive: true,
+        publishedVersion: { id: 'wfv_1', snapshot: { invalid: true } },
+      },
+    } as never);
+    vi.mocked(workflowDefinitionSchema.safeParse).mockReturnValueOnce({
+      success: false,
+      error: { issues: [{ message: 'malformed' }] },
+    } as never);
+
+    await resumeApprovedExecution('exec_bad');
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'resumeApprovedExecution: invalid workflow definition',
+      undefined,
+      expect.objectContaining({ executionId: 'exec_bad' })
+    );
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('happy path: drains the engine with the pinned snapshot from execution.version', async () => {
+    // The pinned `execution.version.snapshot` should be preferred over the
+    // workflow's current published version — this is the publish/draft model
+    // promise (resume runs the version it started against).
+    const pinnedSnapshot = { ...VALID_DEFINITION, entryStepId: 'pinned-entry' };
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_happy', versionId: 'wfv_pinned' }),
+      version: { id: 'wfv_pinned', snapshot: pinnedSnapshot },
+      workflow: {
+        id: 'wf_1',
+        slug: 'happy-wf',
+        isActive: true,
+        publishedVersion: { id: 'wfv_current', snapshot: VALID_DEFINITION },
+      },
+    } as never);
+
+    await resumeApprovedExecution('exec_happy');
+
+    // Two assertions:
+    // 1. workflowDefinitionSchema.safeParse was called with the PINNED snapshot
+    //    (not the current published one). This proves the precedence rule.
+    // 2. The engine received the pinned versionId.
+    expect(workflowDefinitionSchema.safeParse).toHaveBeenCalledWith(pinnedSnapshot);
+    expect(mockExecute).toHaveBeenCalledOnce();
+    const arg = mockExecute.mock.calls[0]?.[0] as { versionId?: string };
+    expect(arg.versionId).toBe('wfv_pinned');
+  });
+
+  it('falls back to the workflows current published snapshot for legacy rows with versionId=null', async () => {
+    // Pre-pinning rows have versionId=null (FK SetNull or never stamped).
+    // Recovery should fall back to the workflow's current published snapshot
+    // rather than refusing to resume — the alternative is leaving the row
+    // stuck in PENDING forever.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...makeExecution({ id: 'exec_legacy', versionId: null }),
+      version: null,
+      workflow: {
+        id: 'wf_1',
+        slug: 'legacy-wf',
+        isActive: true,
+        publishedVersion: { id: 'wfv_current', snapshot: VALID_DEFINITION },
+      },
+    } as never);
+
+    await resumeApprovedExecution('exec_legacy');
+
+    expect(workflowDefinitionSchema.safeParse).toHaveBeenCalledWith(VALID_DEFINITION);
+    expect(mockExecute).toHaveBeenCalledOnce();
+    const arg = mockExecute.mock.calls[0]?.[0] as { versionId?: string };
+    // engine receives the fallback versionId from the workflow's current published.
+    expect(arg.versionId).toBe('wfv_current');
   });
 });

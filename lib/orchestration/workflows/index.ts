@@ -20,3 +20,24 @@ export type {
 } from '@/lib/orchestration/workflows/semantic-validator';
 
 export { extractTemplateVariables } from '@/lib/orchestration/workflows/template-scanner';
+
+export {
+  saveDraft,
+  discardDraft,
+  publishDraft,
+  rollback,
+  createInitialVersion,
+  listVersions,
+  getVersion,
+} from '@/lib/orchestration/workflows/version-service';
+export type {
+  SaveDraftArgs,
+  DiscardDraftArgs,
+  PublishDraftArgs,
+  PublishDraftResult,
+  RollbackArgs,
+  RollbackResult,
+  CreateInitialVersionArgs,
+  ListVersionsOptions,
+  ListVersionsResult,
+} from '@/lib/orchestration/workflows/version-service';

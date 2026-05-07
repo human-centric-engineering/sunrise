@@ -132,10 +132,16 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/cancel`,
       executionRetryStep: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/retry-step`,
-      workflowDefinitionHistory: (id: string): string =>
-        `/api/v1/admin/orchestration/workflows/${id}/definition-history`,
-      workflowDefinitionRevert: (id: string): string =>
-        `/api/v1/admin/orchestration/workflows/${id}/definition-revert`,
+      workflowVersions: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/versions`,
+      workflowVersionById: (id: string, version: number): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/versions/${version}`,
+      workflowPublish: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/publish`,
+      workflowDiscardDraft: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/discard-draft`,
+      workflowRollback: (id: string): string =>
+        `/api/v1/admin/orchestration/workflows/${id}/rollback`,
       CHAT_STREAM: '/api/v1/admin/orchestration/chat/stream',
       CONVERSATIONS: '/api/v1/admin/orchestration/conversations',
       conversationById: (id: string): string => `/api/v1/admin/orchestration/conversations/${id}`,
