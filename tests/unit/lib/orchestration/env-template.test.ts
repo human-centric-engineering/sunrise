@@ -166,6 +166,43 @@ describe('env-template', () => {
       const input = '${env:lower} stays put';
       expect(resolveEnvTemplate(input)).toBe(input);
     });
+
+    it('does NOT recursively re-resolve substituted values (single-pass)', () => {
+      // If env A holds a literal `${env:B}` string, the result must
+      // contain the literal text — not B's value. Recursive resolution
+      // would let env-var-controlled values trigger further
+      // substitutions, breaking predictability and creating a
+      // surprise privilege boundary (anyone who can set A indirectly
+      // controls reads of B).
+      process.env.A = '${env:B}';
+      process.env.B = 'should-not-leak';
+      expect(resolveEnvTemplate('${env:A}')).toBe('${env:B}');
+    });
+
+    it('regex lastIndex stays consistent after a thrown substitution', () => {
+      // String.prototype.replace with /g resets state between calls
+      // anyway, but if a future refactor reaches for .test() / .exec()
+      // we want the throw-mid-iteration path to be robust. Verify by
+      // running a call that throws, then immediately running another
+      // call that should succeed.
+      delete process.env.MISSING;
+      process.env.PRESENT = 'ok';
+      expect(() => resolveEnvTemplate('${env:MISSING}')).toThrow(EnvTemplateError);
+      expect(resolveEnvTemplate('${env:PRESENT}')).toBe('ok');
+      expect(containsEnvTemplate('${env:PRESENT}')).toBe(true);
+    });
+
+    it('handles env values with regex-special characters safely', () => {
+      // The replacement string in String.prototype.replace can be
+      // interpreted (e.g. `$&` means "matched substring", `$1` means
+      // "first capture group"). Using the function form of replace
+      // (which we do) sidesteps that — the returned value goes in
+      // verbatim. Lock the behaviour so a future refactor doesn't
+      // accidentally switch to the string form and re-introduce the
+      // pitfall.
+      process.env.WEIRD = '$1$&\\trickery';
+      expect(resolveEnvTemplate('${env:WEIRD}')).toBe('$1$&\\trickery');
+    });
   });
 
   describe('resolveEnvTemplatesInRecord', () => {

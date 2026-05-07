@@ -637,4 +637,43 @@ describe('${env:VAR} save-time warnings on capability binding routes', () => {
     const data = await parseJson<{ meta?: unknown }>(response);
     expect(data.meta).toBeUndefined();
   });
+
+  it('POST: omits meta when customConfig is null', async () => {
+    const body = { capabilityId: CAPABILITY_ID, customConfig: null };
+    const response = await POST(makeAttachRequest(body), makeAttachParams(AGENT_ID));
+    expect(response.status).toBe(201);
+    const data = await parseJson<{ meta?: unknown }>(response);
+    expect(data.meta).toBeUndefined();
+  });
+
+  it('POST: tolerates non-string forcedUrl (typed as something else) and emits no false warning', async () => {
+    // The route-layer Zod schema accepts any record — capability-shape
+    // validation only happens at execute time. Make sure the warning
+    // helper doesn't crash or invent missing-env entries when a field
+    // it inspects has the wrong type. Save still succeeds (the binding
+    // is malformed for execution, but invalid_binding is the runtime
+    // signal — the warning surface is not the validator).
+    const body = {
+      capabilityId: CAPABILITY_ID,
+      customConfig: { forcedUrl: 123, forcedHeaders: { X: 456 } },
+    };
+    const response = await POST(makeAttachRequest(body), makeAttachParams(AGENT_ID));
+    expect(response.status).toBe(201);
+    const data = await parseJson<{ meta?: unknown }>(response);
+    expect(data.meta).toBeUndefined();
+  });
+
+  it('POST: deduplicates when same env var appears in forcedUrl and forcedHeaders', async () => {
+    delete process.env.SHARED_VAR;
+    const body = {
+      capabilityId: CAPABILITY_ID,
+      customConfig: {
+        forcedUrl: '${env:SHARED_VAR}',
+        forcedHeaders: { Authorization: 'Bearer ${env:SHARED_VAR}' },
+      },
+    };
+    const response = await POST(makeAttachRequest(body), makeAttachParams(AGENT_ID));
+    const data = await parseJson<{ meta: { warnings: { missingEnvVars: string[] } } }>(response);
+    expect(data.meta.warnings.missingEnvVars).toEqual(['SHARED_VAR']);
+  });
 });

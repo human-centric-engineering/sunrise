@@ -93,14 +93,16 @@ Beyond `authSecret`, certain fields whose values may themselves be credentials (
 
 **Where it works.**
 
-| Surface                                | Templated fields                                            |
-| -------------------------------------- | ----------------------------------------------------------- |
-| `call_external_api` capability binding | `customConfig.forcedUrl`, `customConfig.forcedHeaders`      |
-| `external_call` workflow step config   | `config.url` (after prompt interpolation), `config.headers` |
+| Surface                                | Templated fields                                       |
+| -------------------------------------- | ------------------------------------------------------ |
+| `call_external_api` capability binding | `customConfig.forcedUrl`, `customConfig.forcedHeaders` |
+| `external_call` workflow step config   | `config.url`, `config.headers`                         |
 
-**Where it doesn't.** Auth fields (`authSecret`, `auth.secret`) already use the env-var-name pattern — keep using that. The body / `bodyTemplate` carries workflow-context interpolation only.
+**Where it doesn't.** Auth fields (`authSecret`, `auth.secret`) already use the env-var-name pattern — keep using that. The body / `bodyTemplate` carries workflow-context interpolation only. Step-config `allowedUrlPrefixes` (capability binding) does not currently support templating — the URL allowlist is admin-controlled deploy-time config, not credential.
 
-**Pattern.** `${env:NAME}` where NAME matches `[A-Z][A-Z0-9_]*`. Multiple references per string and a mix of literal text + templates are both supported (`https://api.example.com/${env:REGION}/v1` is valid).
+**Pattern.** `${env:NAME}` where NAME matches `[A-Z][A-Z0-9_]*`. Multiple references per string and a mix of literal text + templates are both supported (`https://api.example.com/${env:REGION}/v1` is valid). Empty env vars (`FOO=`) and unset env vars are both treated as missing — same posture as `readSecret()`. Values like `0` or `false` are valid (non-empty strings).
+
+**Resolution order in `external_call`.** Env-template resolution runs on `config.url` **before** workflow-context interpolation, so a workflow input value containing literal `${env:VAR}` text cannot trigger env substitution. This is security-critical: reversing the order would let user-controlled content (a chat message that reaches the URL via `{{input.message}}`) introduce a `${env:SECRET}` token that the resolver would then expand, leaking the secret as a URL path component to allowlisted endpoints. Headers are not interpolated, so order doesn't matter for them. The `call_external_api` capability has no equivalent issue: `forcedUrl` and `forcedHeaders` are admin-only fields that never carry interpolated user content.
 
 **Failure mode.** Same fail-closed posture as `readSecret()`:
 

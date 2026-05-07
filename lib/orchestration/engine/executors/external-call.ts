@@ -73,15 +73,26 @@ export async function executeExternalCall(
     throw new ExecutorError(step.id, 'missing_url', 'external_call step is missing a URL');
   }
   // Two interpolation passes, in order:
-  //   1. interpolatePrompt — workflow-context variables (`{{input.x}}`).
-  //   2. resolveEnvTemplate — `${env:VAR}` references against process.env.
-  // Order matters: env substitution runs over the post-context literal so
-  // a workflow value of "${env:..." cannot be re-interpreted as an env
-  // template (env templates only come from the admin-authored step config).
+  //   1. resolveEnvTemplate — `${env:VAR}` references in the
+  //      admin-authored config string only.
+  //   2. interpolatePrompt — workflow-context variables (`{{input.x}}`)
+  //      injected into the post-resolution literal.
+  //
+  // Order is security-critical. Reversing it would let user-controlled
+  // workflow input (`{{input.message}}` etc.) introduce a literal
+  // `${env:SECRET}` token into the URL that the env resolver would
+  // then expand — exfiltrating env vars as URL path components to
+  // allowlisted endpoints that log paths. Resolving env templates
+  // FIRST means the admin-authored template is the only source of
+  // `${env:VAR}` references; user content remains literal text.
+  //
+  // Headers don't go through prompt interpolation today, so order
+  // doesn't matter for them — env-substitute the admin-authored map
+  // directly.
   let url: string;
   let resolvedHeaders: Record<string, string> | undefined;
   try {
-    url = resolveEnvTemplate(interpolatePrompt(config.url, ctx));
+    url = interpolatePrompt(resolveEnvTemplate(config.url), ctx);
     resolvedHeaders = resolveEnvTemplatesInRecord(config.headers);
   } catch (err) {
     if (err instanceof EnvTemplateError) {
