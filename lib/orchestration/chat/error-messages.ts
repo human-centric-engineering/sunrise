@@ -78,6 +78,11 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: "This agent's AI provider has not been set up yet.",
     action: 'Go to Admin → Providers and configure a provider, then assign it to this agent.',
   },
+  no_provider_configured: {
+    title: 'Setup Required',
+    message: 'No LLM provider is configured for this Sunrise instance yet.',
+    action: 'Run the setup wizard at Admin → AI Orchestration to add a provider.',
+  },
   provider_disabled: {
     title: 'Provider Disabled',
     message: "This agent's AI provider is currently disabled.",

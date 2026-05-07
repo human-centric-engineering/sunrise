@@ -29,6 +29,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation, type Citation } from '@/types/orchestration';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
@@ -103,10 +104,28 @@ export async function completeEvaluationSession(
     throw new ValidationError('Evaluation session has no logs to analyse');
   }
 
-  // Agent may have been deleted while the session was in progress —
-  // fall back to the default provider/model so completion still works.
-  const providerSlug = session.agent?.provider ?? DEFAULT_PROVIDER;
-  const model = session.agent?.model ?? DEFAULT_MODEL;
+  // Agent may have been deleted while the session was in progress, OR
+  // it may carry empty provider/model (system-seeded built-ins inherit
+  // values dynamically). Resolve the binding through the agent-resolver
+  // when an agent is present; only fall back to the env-var defaults
+  // for a fully orphaned session.
+  let providerSlug: string;
+  let model: string;
+  if (session.agent) {
+    const resolved = await resolveAgentProviderAndModel(
+      {
+        provider: session.agent.provider,
+        model: session.agent.model,
+        fallbackProviders: [],
+      },
+      'chat'
+    );
+    providerSlug = resolved.providerSlug;
+    model = resolved.model;
+  } else {
+    providerSlug = DEFAULT_PROVIDER;
+    model = DEFAULT_MODEL;
+  }
 
   const provider = await getProvider(providerSlug);
 
