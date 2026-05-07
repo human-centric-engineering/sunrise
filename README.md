@@ -46,8 +46,9 @@ Built on the 21 agentic design patterns from _Agentic Design Patterns_ by Antoni
 
 Docs:
 
-- [`.context/admin/orchestration.md`](./.context/admin/orchestration.md) — Overview, quick start, key concepts
-- [`.claude/docs/agent-orchestration.md`](./.claude/docs/agent-orchestration.md) — Architecture deep dive
+- [`.context/orchestration/meta/functional-specification.md`](./.context/orchestration/meta/functional-specification.md) — What the system does (canonical)
+- [`.context/admin/orchestration.md`](./.context/admin/orchestration.md) — Admin operator landing, quick start
+- [`.context/orchestration/meta/`](./.context/orchestration/meta/) — Architectural decisions, hosting, roadmap, commercial proposition
 
 ## Quick Start
 
@@ -120,7 +121,7 @@ These work without configuration in development and can be enabled for productio
 
 - [**CUSTOMIZATION.md**](./CUSTOMIZATION.md) — Adapt Sunrise for your project
 - [**.context/substrate.md**](./.context/substrate.md) — Full architecture and reference docs
-- [**.context/admin/orchestration.md**](./.context/admin/orchestration.md) — Agent orchestration overview and quick start
+- [**.context/orchestration/meta/functional-specification.md**](./.context/orchestration/meta/functional-specification.md) — Agent orchestration: full system inventory and capability spec
 
 ## Just Ask Claude
 
