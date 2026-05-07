@@ -44,8 +44,10 @@ import {
   resolveEnvTemplatesInRecord,
 } from '@/lib/orchestration/env-template';
 import {
+  buildMultipartBody,
   executeHttpRequest,
   HttpError,
+  MultipartError,
   type HttpAuthConfig,
   type HttpMethod,
 } from '@/lib/orchestration/http';
@@ -53,6 +55,7 @@ import {
 const HTTP_TO_EXECUTOR_CODE: Record<string, string> = {
   host_not_allowed: 'host_not_allowed',
   missing_auth_secret: 'missing_auth_secret',
+  multipart_hmac_unsupported: 'multipart_hmac_unsupported',
   outbound_rate_limited: 'outbound_rate_limited',
   request_failed: 'request_failed',
   request_aborted: 'request_aborted',
@@ -113,10 +116,43 @@ export async function executeExternalCall(
     throw new ExecutorError(step.id, 'request_aborted', 'Execution was already aborted');
   }
 
-  const body =
-    method === 'GET' || method === 'DELETE' || !config.bodyTemplate
-      ? undefined
-      : interpolatePrompt(config.bodyTemplate, ctx);
+  // Body resolution. Three states:
+  //   - GET / DELETE → no body
+  //   - `multipart` config set → interpolate field values + file
+  //     templates against the workflow context, then build FormData
+  //   - `bodyTemplate` set → string interpolation (unchanged)
+  // Mutual exclusion between bodyTemplate and multipart is enforced
+  // by the schema's .refine.
+  const isBodyless = method === 'GET' || method === 'DELETE';
+  let body: string | FormData | undefined;
+  if (!isBodyless && config.multipart) {
+    const interpolatedFiles = config.multipart.files.map((file) => ({
+      name: file.name,
+      filename: file.filename ? interpolatePrompt(file.filename, ctx) : undefined,
+      contentType: interpolatePrompt(file.contentType, ctx),
+      data: interpolatePrompt(file.data, ctx),
+    }));
+    const interpolatedFields = config.multipart.fields
+      ? Object.fromEntries(
+          Object.entries(config.multipart.fields).map(([k, v]) => [k, interpolatePrompt(v, ctx)])
+        )
+      : undefined;
+    try {
+      body = buildMultipartBody({ files: interpolatedFiles, fields: interpolatedFields });
+    } catch (err) {
+      if (err instanceof MultipartError) {
+        throw new ExecutorError(
+          step.id,
+          err.code,
+          `external_call multipart body build failed: ${err.message}`,
+          err
+        );
+      }
+      throw err;
+    }
+  } else if (!isBodyless && config.bodyTemplate) {
+    body = interpolatePrompt(config.bodyTemplate, ctx);
+  }
 
   const auth: HttpAuthConfig | undefined = config.authType
     ? {

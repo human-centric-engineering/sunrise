@@ -976,4 +976,114 @@ describe('executeExternalCall', () => {
       expect(fetchSpy.mock.calls[0]?.[0]).toContain('${env:lower}');
     });
   });
+
+  // ─── multipart/form-data step config ───────────────────────────────
+
+  describe('multipart body', () => {
+    const helloBase64 = Buffer.from('hello').toString('base64');
+
+    it('builds a FormData and passes it to fetch when config.multipart is set', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({
+        bodyTemplate: undefined,
+        multipart: {
+          files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+          fields: { paperWidth: '8.5' },
+        },
+      });
+      await executeExternalCall(step, makeCtx());
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      expect(init.body).toBeInstanceOf(FormData);
+      expect((init.body as FormData).get('paperWidth')).toBe('8.5');
+      expect((init.body as FormData).get('index.html')).toBeInstanceOf(File);
+    });
+
+    it('interpolates {{steps...}} into multipart file data and field values', async () => {
+      const { interpolatePrompt } = await import('@/lib/orchestration/engine/llm-runner');
+      vi.mocked(interpolatePrompt).mockImplementation((template: string, c: any) => {
+        if (template.includes('{{steps.render.body.data}}')) {
+          return template.replace('{{steps.render.body.data}}', c.stepOutputs.render.body.data);
+        }
+        if (template.includes('{{input.tag}}')) {
+          return template.replace('{{input.tag}}', c.inputData.tag);
+        }
+        return template;
+      });
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({
+        bodyTemplate: undefined,
+        multipart: {
+          files: [
+            { name: 'index.html', contentType: 'text/html', data: '{{steps.render.body.data}}' },
+          ],
+          fields: { tag: '{{input.tag}}' },
+        },
+      });
+      const ctx = makeCtx({
+        inputData: { tag: 'release-notes' },
+        stepOutputs: { render: { body: { data: helloBase64 } } },
+      });
+      await executeExternalCall(step, ctx);
+      const fd = (fetchSpy.mock.calls[0]?.[1] as RequestInit).body as FormData;
+      expect(fd.get('tag')).toBe('release-notes');
+      expect(fd.get('index.html')).toBeInstanceOf(File);
+    });
+
+    it('throws ExecutorError("invalid_base64") when interpolated data is not base64', async () => {
+      const { interpolatePrompt } = await import('@/lib/orchestration/engine/llm-runner');
+      vi.mocked(interpolatePrompt).mockImplementation((template: string) => {
+        if (template === '{{steps.broken.body.data}}') return 'not really base64 !!!';
+        return template;
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({
+        bodyTemplate: undefined,
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: '{{steps.broken.body.data}}' }],
+        },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'invalid_base64',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('schema rejects bodyTemplate and multipart together', async () => {
+      // The mutual-exclusion .refine fires at schema parse time, so
+      // executeExternalCall throws on the parse rather than reaching
+      // the body-construction branch.
+      const step = makeStep({
+        bodyTemplate: '{"hello":"world"}',
+        multipart: {
+          files: [{ name: 'x', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toThrow();
+    });
+
+    it('maps multipart_hmac_unsupported HttpError → ExecutorError("multipart_hmac_unsupported")', async () => {
+      process.env.HMAC_KEY = 'secret';
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({
+        authType: 'hmac',
+        authSecret: 'HMAC_KEY',
+        bodyTemplate: undefined,
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'multipart_hmac_unsupported',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
 });
