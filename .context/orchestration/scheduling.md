@@ -135,6 +135,14 @@ Authentication: `Authorization: Bearer sk_...` header. Create keys with `scopes:
 
 Returns `{ executionId, workflowId, workflowSlug, status: 'pending' }` with status 201.
 
+### Inbound Triggers (channel-specific signature auth)
+
+For senders that can't issue an `Authorization: Bearer sk_…` API-key header — Slack, Postmark inbound parse, generic-HMAC senders — use the inbound-triggers route family at `POST /api/v1/inbound/:channel/:slug` instead. Each channel ships with a verified signature scheme (Slack signing-secret HMAC, Postmark Basic auth, generic HMAC over body) and a normalised payload shape so workflow templates reference fields like `{{ trigger.event.text }}` (Slack) or `{{ trigger.from.email }}` (Postmark).
+
+The webhook-trigger endpoint above stays appropriate when YOU control the sender (internal services, Zapier/n8n/Make, your own automation): one bearer token, opaque body. The inbound-triggers route is for **named third-party systems** where the signature scheme is dictated by the vendor and per-channel payload normalisation matters.
+
+See [Inbound triggers](./inbound-triggers.md) for the full guide — quick-start per channel, normalised payload tables, replay-protection model, and the adapter authoring contract.
+
 ## Validation Schemas
 
 - `createScheduleSchema` — `name` (required), `cronExpression` (required), `inputTemplate` (optional JSON), `isEnabled` (optional boolean)

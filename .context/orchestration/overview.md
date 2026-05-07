@@ -29,6 +29,7 @@ For the full module list, every step type, every capability, route counts, and t
 | [`api-keys.md`](./api-keys.md)                                   | Self-service API keys, scopes, key resolution                                    |
 | [`mcp.md`](./mcp.md)                                             | MCP protocol, tools, resources, keys, audit                                      |
 | [`scheduling.md`](./scheduling.md)                               | Cron schedules, webhook triggers, scheduler tick                                 |
+| [`inbound-triggers.md`](./inbound-triggers.md)                   | Slack / Postmark / generic-HMAC inbound adapters, replay protection              |
 | [`hooks.md`](./hooks.md)                                         | In-process event dispatch, outbound webhooks vs internal handlers                |
 | [`analytics.md`](./analytics.md)                                 | Popular topics, unanswered questions, engagement, gaps                           |
 | [`evaluation-metrics.md`](./evaluation-metrics.md)               | Named-metric scoring (faithfulness, groundedness, relevance), rescore            |
