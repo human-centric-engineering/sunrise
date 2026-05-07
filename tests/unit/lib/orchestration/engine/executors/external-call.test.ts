@@ -821,4 +821,68 @@ describe('executeExternalCall', () => {
     const [, init] = (fetch as any).mock.calls[0];
     expect(init.method).toBe('POST');
   });
+
+  // ─── Env-var template substitution ───────────────────────────────────
+
+  describe('${env:VAR} substitution', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv, ORCHESTRATION_ALLOWED_HOSTS: 'api.allowed.com' };
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('resolves ${env:VAR} in url after prompt interpolation', async () => {
+      process.env.WEBHOOK_PATH = 'v1/notify';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({ url: 'https://api.allowed.com/${env:WEBHOOK_PATH}' });
+      await executeExternalCall(step, makeCtx());
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/v1/notify');
+    });
+
+    it('resolves ${env:VAR} in header values', async () => {
+      process.env.UPSTREAM_TOKEN = 'tok_123';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({
+        headers: { 'X-Upstream': 'Bearer ${env:UPSTREAM_TOKEN}' },
+      });
+      await executeExternalCall(step, makeCtx());
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers['X-Upstream']).toBe('Bearer tok_123');
+    });
+
+    it('throws ExecutorError("missing_env_var") when url references an unset env var', async () => {
+      delete process.env.MISSING_HOST_PATH;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({ url: 'https://api.allowed.com/${env:MISSING_HOST_PATH}' });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'missing_env_var',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('throws ExecutorError("missing_env_var") when a header references an unset env var', async () => {
+      delete process.env.MISSING_HEADER_VAR;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({
+        headers: { 'X-Foo': 'Bearer ${env:MISSING_HEADER_VAR}' },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'missing_env_var',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
 });

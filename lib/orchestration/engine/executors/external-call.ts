@@ -39,6 +39,11 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import {
+  EnvTemplateError,
+  resolveEnvTemplate,
+  resolveEnvTemplatesInRecord,
+} from '@/lib/orchestration/env-template';
+import {
   executeHttpRequest,
   HttpError,
   type HttpAuthConfig,
@@ -67,7 +72,28 @@ export async function executeExternalCall(
   if (typeof config.url !== 'string' || config.url.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_url', 'external_call step is missing a URL');
   }
-  const url = interpolatePrompt(config.url, ctx);
+  // Two interpolation passes, in order:
+  //   1. interpolatePrompt — workflow-context variables (`{{input.x}}`).
+  //   2. resolveEnvTemplate — `${env:VAR}` references against process.env.
+  // Order matters: env substitution runs over the post-context literal so
+  // a workflow value of "${env:..." cannot be re-interpreted as an env
+  // template (env templates only come from the admin-authored step config).
+  let url: string;
+  let resolvedHeaders: Record<string, string> | undefined;
+  try {
+    url = resolveEnvTemplate(interpolatePrompt(config.url, ctx));
+    resolvedHeaders = resolveEnvTemplatesInRecord(config.headers);
+  } catch (err) {
+    if (err instanceof EnvTemplateError) {
+      throw new ExecutorError(
+        step.id,
+        'missing_env_var',
+        `external_call step references env var "${err.envVarName}" which is not set`,
+        err
+      );
+    }
+    throw err;
+  }
   const method = (config.method ?? 'POST') as HttpMethod;
 
   // Pre-check execution-level abort so we surface as request_aborted
@@ -101,7 +127,7 @@ export async function executeExternalCall(
     const response = await executeHttpRequest({
       url,
       method,
-      headers: config.headers,
+      headers: resolvedHeaders,
       body,
       auth,
       idempotency,
