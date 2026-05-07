@@ -28,7 +28,9 @@ export {
 } from '@/lib/orchestration/http/idempotency';
 export {
   ABSOLUTE_MAX_FILE_BASE64_LENGTH,
+  MAX_FIELD_NAME_LENGTH,
   MAX_FIELD_PARTS,
+  MAX_FIELD_VALUE_LENGTH,
   MAX_FILE_PARTS,
   MAX_TOTAL_MULTIPART_BYTES,
   MultipartError,

@@ -188,14 +188,16 @@ The executor and the `call_external_api` capability both accept structured multi
 
 **Size posture.**
 
-| Limit                                       | Value | Source                                                          |
-| ------------------------------------------- | ----- | --------------------------------------------------------------- |
-| Per-file (base64)                           | 8 MB  | `ABSOLUTE_MAX_FILE_BASE64_LENGTH` (matches `upload_to_storage`) |
-| Total request body (decoded files + fields) | 25 MB | `MAX_TOTAL_MULTIPART_BYTES`                                     |
-| File parts per request                      | 16    | `MAX_FILE_PARTS`                                                |
-| Field parts per request                     | 64    | `MAX_FIELD_PARTS`                                               |
+| Limit                                       | Value | Source                                                                                |
+| ------------------------------------------- | ----- | ------------------------------------------------------------------------------------- |
+| Per-file (base64)                           | 8 MB  | `ABSOLUTE_MAX_FILE_BASE64_LENGTH` (matches `upload_to_storage`)                       |
+| Per-field name (chars)                      | 128   | `MAX_FIELD_NAME_LENGTH`                                                               |
+| Per-field value (chars)                     | 1 MB  | `MAX_FIELD_VALUE_LENGTH` — for blob content larger than this, use a file part instead |
+| Total request body (decoded files + fields) | 25 MB | `MAX_TOTAL_MULTIPART_BYTES`                                                           |
+| File parts per request                      | 16    | `MAX_FILE_PARTS`                                                                      |
+| Field parts per request                     | 64    | `MAX_FIELD_PARTS`                                                                     |
 
-Validation failures fail closed before any FormData allocation with a typed `MultipartError` (mapped to `invalid_args` for the capability, `ExecutorError(<code>)` for the workflow step). Codes: `invalid_shape`, `invalid_base64`, `file_too_large`, `body_too_large`.
+Validation failures fail closed before any FormData allocation with a typed `MultipartError` (mapped to `invalid_args` for the capability, `ExecutorError(<code>)` for the workflow step). Codes: `invalid_shape`, `invalid_base64`, `body_too_large`.
 
 **Auth restriction.** HMAC auth is rejected with `multipart_hmac_unsupported` when paired with a multipart body — multipart can't be signed deterministically (boundary varies per request, undici controls part ordering). Use `none`, `bearer`, `api-key`, `query-param`, or `basic` instead.
 
@@ -234,7 +236,6 @@ Auth headers and secrets are never logged.
 | `missing_auth_secret`        | No        | Auth env var is not set                                                        |
 | `multipart_hmac_unsupported` | No        | HMAC auth was paired with a multipart body — disallowed                        |
 | `invalid_base64`             | No        | A multipart file `data` was not valid base64                                   |
-| `file_too_large`             | No        | A multipart file part exceeded the per-request size cap                        |
 | `body_too_large`             | No        | The multipart total body (files + fields) exceeded `MAX_TOTAL_MULTIPART_BYTES` |
 | `outbound_rate_limited`      | Yes       | Per-host rate limit exceeded                                                   |
 | `request_failed`             | Yes       | Network error or timeout                                                       |

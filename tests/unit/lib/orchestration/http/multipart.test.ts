@@ -17,7 +17,9 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ABSOLUTE_MAX_FILE_BASE64_LENGTH,
+  MAX_FIELD_NAME_LENGTH,
   MAX_FIELD_PARTS,
+  MAX_FIELD_VALUE_LENGTH,
   MAX_FILE_PARTS,
   MAX_TOTAL_MULTIPART_BYTES,
   MultipartError,
@@ -97,6 +99,41 @@ describe('multipartShapeSchema', () => {
       extra: 'nope',
     });
     expect(result.success).toBe(false);
+  });
+
+  it('rejects field name longer than MAX_FIELD_NAME_LENGTH', () => {
+    const longName = 'x'.repeat(MAX_FIELD_NAME_LENGTH + 1);
+    const result = multipartShapeSchema.safeParse({
+      files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+      fields: { [longName]: 'value' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty field name', () => {
+    const result = multipartShapeSchema.safeParse({
+      files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+      fields: { '': 'value' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects field value longer than MAX_FIELD_VALUE_LENGTH', () => {
+    const oversized = 'a'.repeat(MAX_FIELD_VALUE_LENGTH + 1);
+    const result = multipartShapeSchema.safeParse({
+      files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+      fields: { description: oversized },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a field value at exactly MAX_FIELD_VALUE_LENGTH', () => {
+    const atCap = 'a'.repeat(MAX_FIELD_VALUE_LENGTH);
+    const result = multipartShapeSchema.safeParse({
+      files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+      fields: { html: atCap },
+    });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -230,13 +267,17 @@ describe('buildMultipartBody', () => {
 
   it('throws body_too_large from fields alone when their byte sum exceeds the cap', () => {
     // Exercise the early field-budget check (runs before any base64
-    // decode, so a malformed file in the same request isn't
-    // touched). Two huge fields > 25 MB combined.
-    const big = 'x'.repeat(13 * 1024 * 1024);
+    // decode). Each field is at the per-field cap; 30 fields × 1 MB
+    // sums to ~30 MB > 25 MB total cap. Per-field cap means the
+    // schema doesn't reject; the body-cap math fires inside the
+    // builder.
+    const oneMb = 'x'.repeat(MAX_FIELD_VALUE_LENGTH);
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) fields[`f${i}`] = oneMb;
     try {
       buildMultipartBody({
         files: [{ name: 'small', contentType: 'text/plain', data: helloBase64 }],
-        fields: { a: big, b: big },
+        fields,
       });
       expect.fail('expected throw');
     } catch (err) {

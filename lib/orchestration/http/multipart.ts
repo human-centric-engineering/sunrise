@@ -42,6 +42,21 @@ export const MAX_FILE_PARTS = 16;
 /** Max number of field parts in a single request. */
 export const MAX_FIELD_PARTS = 64;
 
+/** Max length of a multipart field NAME (matches the file-part `name` cap). */
+export const MAX_FIELD_NAME_LENGTH = 128;
+
+/**
+ * Max character length of a multipart field VALUE. Generous enough to
+ * cover legitimate "longish text in a field" cases (e.g. an email
+ * body in a SendGrid `text` field, a JSON blob in a config field) but
+ * small enough that an accidental interpolation blowup or LLM mistake
+ * is rejected at field granularity rather than via the body-total
+ * math. Content larger than this should be sent as a file part —
+ * that's the right multipart pattern for blob content anyway, and
+ * file parts carry proper Content-Type metadata.
+ */
+export const MAX_FIELD_VALUE_LENGTH = 1 * 1024 * 1024;
+
 const CONTENT_TYPE_RE = /^[a-z0-9]+\/[a-zA-Z0-9.+\-_]+$/;
 const STRICT_BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 
@@ -73,8 +88,14 @@ export const multipartShapeSchema = z
       )
       .min(1)
       .max(MAX_FILE_PARTS),
-    /** Optional plain-text field parts. Values are sent verbatim. */
-    fields: z.record(z.string(), z.string()).optional(),
+    /**
+     * Optional plain-text field parts. Names are capped at
+     * `MAX_FIELD_NAME_LENGTH`; values at `MAX_FIELD_VALUE_LENGTH`.
+     * Use file parts for blob content larger than that.
+     */
+    fields: z
+      .record(z.string().min(1).max(MAX_FIELD_NAME_LENGTH), z.string().max(MAX_FIELD_VALUE_LENGTH))
+      .optional(),
   })
   .strict()
   .refine(
