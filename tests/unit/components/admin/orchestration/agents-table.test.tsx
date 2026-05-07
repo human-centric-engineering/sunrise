@@ -171,12 +171,32 @@ describe('AgentsTable', () => {
       expect(screen.getByRole('link', { name: /create agent/i })).toBeInTheDocument();
     });
 
-    it('renders empty state when no agents', () => {
+    it('renders the friendly empty-state card with CTAs when no agents', () => {
       // Arrange & Act
       render(<AgentsTable initialAgents={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
 
       // Assert
-      expect(screen.getByText('No agents found.')).toBeInTheDocument();
+      expect(screen.getByText(/No agents yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /create your first agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /open setup wizard/i })).toBeInTheDocument();
+    });
+
+    it('renders a "System default" badge when an agent has empty provider/model', () => {
+      // Empty-string provider/model is the contract for system-seeded agents
+      // that resolve their LLM binding dynamically via agent-resolver.ts.
+      const systemAgent = makeAgent({
+        id: 'sys-1',
+        name: 'pattern-advisor',
+        slug: 'pattern-advisor',
+        provider: '',
+        model: '',
+      });
+
+      render(
+        <AgentsTable initialAgents={[systemAgent]} initialMeta={{ ...MOCK_META, total: 1 }} />
+      );
+
+      expect(screen.getByText(/System default/i)).toBeInTheDocument();
     });
 
     it('renders pagination info', () => {
