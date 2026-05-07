@@ -267,4 +267,118 @@ describe('executeHttpRequest', () => {
       expect((err as HttpError).cause).toBe(cause);
     }
   });
+
+  // ─── multipart/form-data body handling ─────────────────────────────
+
+  describe('FormData body', () => {
+    function spyJson200(): ReturnType<typeof vi.spyOn> {
+      return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    }
+
+    it('passes the FormData to fetch verbatim', async () => {
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('file', new File([new Uint8Array([1, 2, 3])], 'x.bin'));
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+      });
+
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      expect(init.body).toBe(fd);
+    });
+
+    it('does NOT set the JSON Content-Type default when body is FormData', async () => {
+      // undici fills in `multipart/form-data; boundary=…` itself when
+      // body is FormData; sending application/json here would
+      // mismatch the actual body and break the server-side parser.
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+      });
+
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers['Content-Type']).toBeUndefined();
+      expect(headers['content-type']).toBeUndefined();
+    });
+
+    it('still applies the host allowlist when body is FormData', async () => {
+      const fd = new FormData();
+      fd.append('field', 'value');
+      await expect(
+        executeHttpRequest({
+          url: 'https://evil.example.com/x',
+          method: 'POST',
+          body: fd,
+        })
+      ).rejects.toMatchObject({ code: 'host_not_allowed' });
+    });
+
+    it('rejects HMAC + multipart with multipart_hmac_unsupported (no fetch fired)', async () => {
+      const fetchSpy = spyJson200();
+      process.env.HMAC_KEY = 'secret';
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await expect(
+        executeHttpRequest({
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          body: fd,
+          auth: { type: 'hmac', secret: 'HMAC_KEY' },
+        })
+      ).rejects.toMatchObject({ code: 'multipart_hmac_unsupported' });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('still allows non-HMAC auth modes alongside FormData (bearer)', async () => {
+      process.env.BEARER_KEY = 'tok_abc';
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+        auth: { type: 'bearer', secret: 'BEARER_KEY' },
+      });
+
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers.Authorization).toBe('Bearer tok_abc');
+    });
+
+    it('respects an already-aborted signal with a multipart body', async () => {
+      const fd = new FormData();
+      fd.append('field', 'value');
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        executeHttpRequest({
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          body: fd,
+          signal: controller.signal,
+        })
+      ).rejects.toMatchObject({ code: 'request_aborted' });
+    });
+  });
 });
