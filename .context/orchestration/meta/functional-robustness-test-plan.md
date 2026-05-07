@@ -924,7 +924,7 @@ These run periodically rather than per-request. Lower frequency, lower urgency, 
 
 **What this covers:** All the admin pages that aren't covered by their own dedicated phase — agents list, capabilities list, providers list, provider models matrix, knowledge document list, conversations list, costs pages. Most of these are List + Form patterns; the goal is to spot-check one of each is healthy.
 
-**Reference docs:** `.context/admin/orchestration.md`, all `.context/admin/orchestration-*.md` files.
+**Reference docs:** `.context/admin/orchestration.md`, all `.context/admin/orchestration-*.md` files. For the canonical inventory of what each surface should expose, cross-check against `functional-specification.md` (this directory).
 
 ### Use scenarios
 
@@ -1603,7 +1603,7 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 
 **What this covers:** The brand-new install: no providers, no agents, no API keys, no knowledge documents, no conversations. This is the first impression every consumer of the starter template gets exactly once. It's also the surface most likely to silently break on a refactor because it's rarely revisited after initial development.
 
-**Reference docs:** `.context/admin/setup-wizard.md`, `.context/admin/orchestration.md`, `hosting-requirements.md`.
+**Reference docs:** `.context/admin/setup-wizard.md`, `.context/admin/orchestration.md` (the Quick Start walkthrough), `hosting-requirements.md`, and `functional-specification.md` for the post-onboarding capability surface.
 
 ### Use scenarios
 

@@ -1,85 +1,50 @@
-# Agent Orchestration Layer — Context for Claude Code
+# Agent Orchestration — Context for Claude Code
 
-## What This Is
+Architectural rules and entry points for working in the orchestration layer. This doc is deliberately small — it tells you the rules and where to look. For inventory facts (counts, step types, capabilities, schema), read the spec.
 
-The Agent Orchestration Layer in the Sunrise admin dashboard lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. It is fully built across 7 phases with 120 API routes, 16 service modules, and 7000+ tests.
+## Canonical references
 
-**Main documentation:** [`.context/admin/orchestration.md`](../../.context/admin/orchestration.md)
+| Need                          | File                                                      |
+| ----------------------------- | --------------------------------------------------------- |
+| **What does the system do?**  | `.context/orchestration/meta/functional-specification.md` |
+| **Why was X chosen?**         | `.context/orchestration/meta/architectural-decisions.md`  |
+| **Index of all meta docs**    | `.context/orchestration/meta/README.md`                   |
+| **Engineering directory map** | `.context/orchestration/overview.md`                      |
+| **Admin operator landing**    | `.context/admin/orchestration.md`                         |
 
-## Architecture Decisions
+## Architectural rules
 
-- All orchestration services go in `lib/orchestration/` (platform-agnostic)
-- All new Prisma models go in `prisma/schema.prisma` following existing conventions
-- All new API routes go under `app/api/v1/admin/orchestration/*`
-- All new admin pages go under `app/admin/orchestration/*`
-- All new components go under `components/admin/orchestration/*`
-- All new validation schemas go in `lib/validations/orchestration.ts`
-- All new types go in `types/orchestration.ts`
-- The vector DB uses pgvector extension on PostgreSQL
-- SSE (Server-Sent Events) for streaming agent responses to clients
-- LLM provider abstraction supporting Anthropic, OpenAI, Ollama, and any OpenAI-compatible provider
+These change how you write code. Treat as non-negotiable.
 
-## Critical: Platform-Agnostic Core
+- **Platform-agnostic core.** Everything under `lib/orchestration/` is pure TypeScript. Never import from `next/server`, `next/headers`, `next/cache`, or any Next.js module. The chat handler returns `AsyncIterable<ChatEvent>` (typed plain objects), not HTTP responses.
+- **API-first.** Every capability must be API-accessible before any UI is built. UI calls the API; it does not duplicate logic.
+- **Multi-tenant via `userId`.** Scope all agent data by `userId`. Cross-user lookups return 404, not 403. Organisation scoping is a future addition — don't anticipate it.
+- **`@/` imports only.** Never use relative paths, even for siblings. Enforced by ESLint.
+- **Validate at boundaries.** Zod schemas in `lib/validations/orchestration.ts` validate every external input. Never `as` external data.
 
-`lib/orchestration/` MUST be pure TypeScript. It must NEVER import from `next/server`, `next/headers`, `next/cache`, or any Next.js-specific module.
+## Where things live
 
-The separation is:
+| Need                                             | File / Directory                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Core services (engine, capabilities, chat, etc.) | `lib/orchestration/`                                                                                    |
+| API routes                                       | `app/api/v1/admin/orchestration/`, `app/api/v1/orchestration/`, `app/api/v1/embed/`, `app/api/v1/chat/` |
+| Admin pages                                      | `app/admin/orchestration/`                                                                              |
+| Components                                       | `components/admin/orchestration/`                                                                       |
+| Types                                            | `types/orchestration.ts`                                                                                |
+| Validation schemas                               | `lib/validations/orchestration.ts`                                                                      |
+| Prisma models                                    | `prisma/schema.prisma` (29 `Ai*` models)                                                                |
+| Seeds                                            | `prisma/seeds/data/`                                                                                    |
+| SSE bridge                                       | `lib/api/sse.ts` (`sseResponse()`)                                                                      |
+| Tests                                            | `tests/unit/lib/orchestration/`, `tests/integration/api/v1/admin/orchestration/`                        |
 
-- `lib/orchestration/*` — pure TypeScript core. Chat handler returns `AsyncIterable<ChatEvent>` (typed plain objects), NOT HTTP responses.
-- `app/api/v1/admin/orchestration/*` — thin Next.js wrappers (~30 lines each) that handle auth, request parsing, SSE formatting, and delegate to the core.
+For per-module engineering detail (chat handler, knowledge base, workflows, MCP, scheduling, etc.), the directory map at `.context/orchestration/overview.md` lists every doc.
 
-## Module Layout
+## Implementation skills
 
-| Module        | Path                               | Purpose                                                 |
-| ------------- | ---------------------------------- | ------------------------------------------------------- |
-| Knowledge     | `lib/orchestration/knowledge/`     | Document ingestion, chunking, embeddings, vector search |
-| LLM Providers | `lib/orchestration/llm/`           | Provider abstraction, model registry, cost tracking     |
-| Capabilities  | `lib/orchestration/capabilities/`  | Tool dispatcher, built-in capabilities, rate limiting   |
-| Chat          | `lib/orchestration/chat/`          | Streaming chat handler, context builder, input guard    |
-| Workflows     | `lib/orchestration/workflows/`     | DAG validator, step types, templates                    |
-| Engine        | `lib/orchestration/engine/`        | Runtime executor, 15 step executors, event stream       |
-| Evaluations   | `lib/orchestration/evaluations/`   | Evaluation session completion handler                   |
-| Analytics     | `lib/orchestration/analytics/`     | Usage metrics, popular topics, engagement, gap analysis |
-| Audit         | `lib/orchestration/audit/`         | Immutable config change log                             |
-| Backup        | `lib/orchestration/backup/`        | Export/import orchestration config                      |
-| Hooks         | `lib/orchestration/hooks/`         | In-process event dispatch, outbound webhook triggers    |
-| MCP           | `lib/orchestration/mcp/`           | Model Context Protocol server, tools, resources         |
-| Notifications | `lib/orchestration/notifications/` | Email and webhook notification delivery                 |
-| Scheduling    | `lib/orchestration/scheduling/`    | Cron schedules, webhook triggers, scheduler tick        |
-| Utils         | `lib/orchestration/utils/`         | Shared utility functions                                |
-| Webhooks      | `lib/orchestration/webhooks/`      | Webhook subscription management and dispatch            |
-| Seed          | `prisma/seeds/data/`               | Dev seed data for providers / agents                    |
+When the task fits one of these, the skill loads the right context for you:
 
-## Key File Paths
-
-| Area        | Key Files                                                                                                                                                                                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Types       | `types/orchestration.ts` — all orchestration types, events, step types                                                                                                                                                                                    |
-| Validation  | `lib/validations/orchestration.ts` — all Zod schemas                                                                                                                                                                                                      |
-| SSE helper  | `lib/api/sse.ts` — `sseResponse()` used by chat + execute routes                                                                                                                                                                                          |
-| API routes  | `app/api/v1/admin/orchestration/` — 120 route files across 25 areas                                                                                                                                                                                       |
-| Admin pages | `app/admin/orchestration/` — 43 pages: dashboard, agents, capabilities, providers, workflows, executions, costs, learn, knowledge, conversations, evaluations, experiments, observability, approvals, audit-log, analytics, mcp, hooks, schedules, backup |
-| Tests       | `tests/unit/lib/orchestration/`, `tests/integration/api/v1/admin/orchestration/`                                                                                                                                                                          |
-
-## API-First Rule
-
-Every capability must be API-accessible before any UI is built. All API endpoints were built in Phase 3. All UI was built in Phase 4+.
-
-## Multi-Tenant Note
-
-Scope all agent data by `userId`. Organisation scoping can be added later.
-
-## Future Work
-
-- **Variable embedding dimensions** — allow the `AiKnowledgeChunk.embedding` column to support non-1536 dimensions, enabling local models (768-dim) without schema changes
-- **Quarterly registry review** — update `lib/orchestration/llm/embedding-models.ts` pricing and add new models
-- **Auto-detect embedding capability** — probe provider `/models` endpoint to discover embedding support automatically
-- **Cohere native adapter** — Cohere's embeddings API uses `input_type` and `embedding_types` params that differ from OpenAI; a dedicated adapter would unlock full Cohere support
-
-## Key Reference Documents
-
-- [Orchestration overview](../../.context/admin/orchestration.md) — main entry point
-- [Solution builder](../../.context/admin/orchestration-solution-builder.md) — problem-to-solution guide
-- [Capabilities guide](../../.context/admin/orchestration-capabilities-guide.md) — how to create capabilities
-- [Workflows guide](../../.context/admin/orchestration-workflows-guide.md) — how to design workflows
-- [Agent architect skill](../skills/agent-architect/SKILL.md) — pattern selection and composition
+- `/orchestration-agent-architect` — pattern selection, multi-pattern composition
+- `/orchestration-solution-builder` — end-to-end build from problem to running solution
+- `/orchestration-capability-builder` — custom capabilities (Zod, registry, DB, agent binding)
+- `/orchestration-workflow-builder` — workflow DAGs with all step types
+- `/orchestration-knowledge-builder` — document ingestion, embeddings, scoping

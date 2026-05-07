@@ -1,25 +1,8 @@
-# Agent Orchestration — Overview
+# Agent Orchestration — Admin Landing
 
-The orchestration layer lets admins design, configure, execute, and monitor AI agent systems using 21 agentic design patterns. Admin management lives under `/admin/orchestration` in the UI and `/api/v1/admin/orchestration` in the API. Consumer-facing chat endpoints live under `/api/v1/chat` (see `.context/api/consumer-chat.md`).
+Admin-facing entry point for the orchestration layer. The admin dashboard at `/admin/orchestration` lets you design, configure, run, and monitor AI agents without touching code. This page orients you to the admin surface — for deeper detail jump into the linked sub-pages.
 
-## Architecture
-
-```
-lib/orchestration/          ← Platform-agnostic core (NEVER imports Next.js)
-├── knowledge/              ← Document ingestion, chunking, embeddings, vector search
-├── llm/                    ← Provider abstraction, model registry, cost tracking
-├── capabilities/           ← Tool dispatcher, built-in capabilities, rate limiting
-├── chat/                   ← Streaming chat handler, context builder, input guard
-├── workflows/              ← DAG validator, step types, templates
-├── engine/                 ← Runtime executor, 12 step executors, event stream
-├── evaluations/            ← Evaluation session completion handler
-└── seed/                   ← Dev seed data for providers / agents
-
-app/api/v1/admin/orchestration/  ← Thin Next.js wrappers (~30 lines each)
-components/admin/orchestration/  ← React UI components
-```
-
-**Hard rule:** `lib/orchestration/` is pure TypeScript — no Next.js imports. The API layer handles auth, request parsing, SSE formatting, and delegates to the core. Chat returns `AsyncIterable<ChatEvent>`, not HTTP responses.
+> **For full system inventory and capability matrix** (every step type, capability, route group, schema model), see [`.context/orchestration/meta/functional-specification.md`](../orchestration/meta/functional-specification.md). For the architectural rules that the engineering team follows, see [`.claude/docs/agent-orchestration.md`](../../.claude/docs/agent-orchestration.md).
 
 ## Quick Start — First Agent in 5 Minutes
 
@@ -71,78 +54,54 @@ Content-Type: application/json
 
 The response is an SSE stream of `ChatEvent` objects (`start`, `content`, `status`, `done`, `error`).
 
-## Key Concepts
+If you'd prefer guided onboarding, run the [Setup Wizard](./setup-wizard.md) — five steps from empty install to working chat.
 
-### Agents
+## Admin Surface — Where to Look
 
-An agent is a configured AI persona: system instructions, model selection, temperature, budget, and attached capabilities. Agents are stored in `AiAgent` and scoped by `userId`. Seeded agents (`pattern-advisor`, `quiz-master`) are marked `isSystem: true` and cannot be deleted or deactivated via the admin API.
+The dashboard groups concerns into sidebar sections. Each row below points to the sub-page doc that explains the screen.
 
-- [Agent list & pages](./orchestration-agents.md)
-- [Agent form (5-tab editor)](./agent-form.md)
+### Build
 
-### Capabilities
+| Page                             | Doc                                                                                                                                                                              | What you do here                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Agents (list / form)             | [`orchestration-agents.md`](./orchestration-agents.md), [`agent-form.md`](./agent-form.md)                                                                                       | CRUD for agents, capability binding, instructions, embed tab |
+| Capabilities (list / form)       | [`orchestration-capabilities.md`](./orchestration-capabilities.md), [`capability-form.md`](./capability-form.md)                                                                 | Tool definitions, JSON Schema editor, rate limits, approval  |
+| Workflows (list / builder)       | [`workflow-builder.md`](./workflow-builder.md)                                                                                                                                   | Visual DAG editor, palette, dry-run, publish/draft/rollback  |
+| Knowledge base                   | [`orchestration-knowledge-ui.md`](./orchestration-knowledge-ui.md)                                                                                                               | Document upload, chunking, search test                       |
+| Providers (list / form / models) | [`orchestration-providers.md`](./orchestration-providers.md), [`provider-form.md`](./provider-form.md), [`orchestration-provider-models.md`](./orchestration-provider-models.md) | LLM credentials, model registry, connection test             |
+| Setup Wizard                     | [`setup-wizard.md`](./setup-wizard.md)                                                                                                                                           | Five-step guided initial configuration                       |
 
-Capabilities are tools an agent can call — function definitions with execution handlers, rate limits, and approval gates. Five built-in capabilities ship out of the box (`search_knowledge_base`, `estimate_workflow_cost`, `get_pattern_detail`, `read_user_memory`, `write_user_memory`) and are marked `isSystem: true` — they cannot be deleted or deactivated via the admin API.
+### Operate
 
-- [Capabilities list page](./orchestration-capabilities.md)
-- [How to create capabilities](./orchestration-capabilities-guide.md)
-- [Capability form (4-tab editor)](./capability-form.md)
+| Page                       | Doc                                                                  | What you do here                                        |
+| -------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
+| Conversations              | [`orchestration-conversations.md`](./orchestration-conversations.md) | Browse chat history, view traces, tag, export           |
+| Executions (list / detail) | [`orchestration-observability.md`](./orchestration-observability.md) | Workflow run history, trace viewer, latency attribution |
+| Approvals                  | [`orchestration-approvals.md`](./orchestration-approvals.md)         | Pending human-approval queue                            |
+| Costs & budget             | [`orchestration-costs.md`](./orchestration-costs.md)                 | Summary, trend, savings, settings singleton             |
+| Observability              | [`orchestration-observability.md`](./orchestration-observability.md) | Dashboard metrics, latency, error rates                 |
+| Audit log                  | [`orchestration-audit-log.md`](./orchestration-audit-log.md)         | Immutable config change log                             |
 
-### Workflows
+### Improve
 
-Workflows are DAGs of steps (LLM calls, tool calls, routing, parallel branches, human approvals, etc.) executed by the `OrchestrationEngine`. 12 step types are supported, and 5 built-in templates provide starting points. Definitions are versioned: PATCH writes to a draft, an explicit publish promotes the draft to a new immutable version, and executions pin to the published version at trigger time.
+| Page                   | Doc                                                                        | What you do here                                           |
+| ---------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Evaluations            | [`orchestration-evaluations.md`](./orchestration-evaluations.md)           | Quality assessment runner, scoring, annotations            |
+| Experiments            | (admin form)                                                               | A/B variants for agents (model, temperature, instructions) |
+| Analytics              | [`orchestration-analytics.md`](./orchestration-analytics.md)               | Usage, popular topics, unanswered questions, gaps          |
+| Learning UI            | [`orchestration-learn.md`](./orchestration-learn.md)                       | Pattern explorer, advisor chatbot, quizzes                 |
+| Solution builder guide | [`orchestration-solution-builder.md`](./orchestration-solution-builder.md) | Problem-to-solution worked examples                        |
 
-- [How to design workflows](./orchestration-workflows-guide.md)
-- [Workflow builder UI](./workflow-builder.md)
-- [Workflow versioning model (publish / draft / rollback)](../orchestration/workflow-versioning.md)
+### Connect
 
-### Patterns
+| Page             | Doc                                                                                                                          | What you do here                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| MCP server       | [`../orchestration/mcp.md`](../orchestration/mcp.md)                                                                         | Tools, resources, sessions, audit, API keys         |
+| Embed widget     | [`../orchestration/embed.md`](../orchestration/embed.md)                                                                     | Token auth, CORS, widget.js loader, Shadow DOM chat |
+| Hooks & webhooks | [`../orchestration/hooks.md`](../orchestration/hooks.md), [`../orchestration/scheduling.md`](../orchestration/scheduling.md) | Event hooks, outbound webhooks, cron schedules      |
+| Backup & restore | [`../orchestration/backup.md`](../orchestration/backup.md)                                                                   | Export/import config bundle                         |
 
-21 agentic design patterns (routing, chaining, reflection, planning, multi-agent, RAG, etc.) inform how you compose agents and workflows. The Learning UI provides an interactive explorer, advisor chatbot, and quizzes.
-
-- [Learning UI](./orchestration-learn.md)
-- [Solution builder guide](./orchestration-solution-builder.md)
-
-### Knowledge Base
-
-Upload documents (`.md`, `.txt`, max 10 MB) → auto-chunked → embedded with pgvector → semantic search available to agents via the `search_knowledge_base` capability. Agent scoping uses `AiAgent.knowledgeCategories` (a string array) to filter which categories an agent can search — when non-empty, the agent's `search_knowledge_base` calls are restricted to matching chunks only.
-
-- [Knowledge Base UI](./orchestration-knowledge-ui.md)
-- [Knowledge service docs](../orchestration/knowledge.md)
-
-## API Reference
-
-120 route files under `/api/v1/admin/orchestration/`. All require `ADMIN` role. Mutating routes are rate-limited at 30 req/min per IP.
-
-| Area             | Endpoints | Purpose                                                                               |
-| ---------------- | --------- | ------------------------------------------------------------------------------------- |
-| Agents           | 20 routes | CRUD, capabilities, instructions history, export/import, clone, bulk, compare, budget |
-| Knowledge        | 16 routes | Documents, search, seed, embed, graph, retry, patterns                                |
-| Workflows        | 13 routes | CRUD, validate, dry-run, execute, versions, publish/discard-draft/rollback            |
-| MCP              | 11 routes | MCP server management, tools, resources, keys                                         |
-| Providers        | 6 routes  | CRUD, test connection, test model, health                                             |
-| Executions       | 6 routes  | List, read, approve, cancel, retry-step                                               |
-| Conversations    | 6 routes  | List, read, delete, bulk clear, export                                                |
-| Webhooks         | 5 routes  | CRUD for webhook subscriptions                                                        |
-| Hooks            | 5 routes  | Event hook management                                                                 |
-| Analytics        | 5 routes  | Usage metrics, popular topics, engagement, gaps                                       |
-| Capabilities     | 4 routes  | CRUD, agents-using count, execution stats                                             |
-| Evaluations      | 4 routes  | CRUD, logs, AI completion                                                             |
-| Provider Models  | 3 routes  | Model registry CRUD                                                                   |
-| Experiments      | 3 routes  | A/B testing — list, create, get, update, delete, run                                  |
-| Costs            | 3 routes  | Breakdown, summary, alerts                                                            |
-| Backup           | 2 routes  | Export/import orchestration config                                                    |
-| Settings         | 1 route   | Global orchestration settings                                                         |
-| Schedules        | 1 route   | Cron schedule management                                                              |
-| Quiz             | 1 route   | Quiz scores                                                                           |
-| Observability    | 1 route   | Dashboard stats                                                                       |
-| Models           | 1 route   | Model listing                                                                         |
-| Maintenance      | 1 route   | System maintenance tasks                                                              |
-| Embedding Models | 1 route   | Embedding model registry                                                              |
-| Chat             | 1 route   | Streaming chat turn (SSE)                                                             |
-| Audit Log        | 1 route   | Config change audit trail                                                             |
-
-Full reference: [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md)
+For the admin HTTP API used by these pages, see [`../api/orchestration-endpoints.md`](../api/orchestration-endpoints.md). All admin routes require `ADMIN` role; mutating routes are rate-limited per IP.
 
 ## Configuration
 
@@ -154,7 +113,7 @@ Full reference: [`.context/api/orchestration-endpoints.md`](../api/orchestration
 | -------------------------- | ------------------------------------------------------------------------- | --------------------------------- |
 | `defaultModels`            | Task → model mapping (`routing`, `chat`, `reasoning`, `embeddings`)       | Auto-computed from model registry |
 | `globalMonthlyBudgetUsd`   | Hard cap across all agents                                                | `null` (unlimited)                |
-| `searchConfig`             | Knowledge base search tuning (vector weight, keyword weight, etc.)        | `null` (built-in defaults)        |
+| `searchConfig`             | Knowledge base search tuning (vector weight, BM25 weight, hybrid on/off)  | `null` (built-in defaults)        |
 | `inputGuardMode`           | Prompt injection detection mode: `log_only`, `warn_and_continue`, `block` | `log_only`                        |
 | `defaultApprovalTimeoutMs` | Default timeout for human-approval steps (ms)                             | `null` (no timeout)               |
 | `approvalDefaultAction`    | Action when approval times out: `deny` or `allow`                         | `deny`                            |
@@ -170,14 +129,16 @@ Settings are cached for 30s. The PATCH route invalidates the cache immediately.
 | `temperature`       | LLM temperature                                         | `0.7`              |
 | `maxTokens`         | Max output tokens per turn                              | `4096`             |
 
-### Resilience
+For the full per-agent configuration surface, see [`agent-form.md`](./agent-form.md).
+
+### Resilience defaults
 
 - **Circuit breaker**: Auto-disables failing providers (5 failures / 60s → 30s cooldown)
 - **Provider fallback**: Tries `[primary, ...fallbackProviders]` in order
-- **Input guard**: Log-only prompt injection detection (never blocks)
+- **Input guard**: Log-only prompt injection detection by default
 - **Chat rate limit**: 20/min per user ID (on top of 30/min per IP admin limiter)
 
-See [`.context/orchestration/resilience.md`](../orchestration/resilience.md) for details.
+Detail in [`../orchestration/resilience.md`](../orchestration/resilience.md).
 
 ### Choosing an Embedding Provider
 
@@ -196,29 +157,10 @@ The knowledge base requires an **embedding provider** — a model that converts 
 
 The static registry is at `lib/orchestration/llm/embedding-models.ts` and served via `GET /api/v1/admin/orchestration/embedding-models`.
 
-## AI-Assisted Development
+## Related
 
-Five Claude Code skills accelerate orchestration work. Each skill loads domain context and guides you through implementation step-by-step.
-
-| Skill                               | Purpose                                                          |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `/orchestration-agent-architect`    | Design agentic solutions using the 21 design patterns            |
-| `/orchestration-solution-builder`   | End-to-end build from business problem to working solution       |
-| `/orchestration-capability-builder` | Create custom capabilities with Zod schemas and registry binding |
-| `/orchestration-workflow-builder`   | Compose multi-step workflow DAGs with 15 step types              |
-| `/orchestration-knowledge-builder`  | Set up document ingestion, embeddings, and vector search         |
-
-These are invoked in Claude Code via the slash command (e.g. type `/orchestration-capability-builder`). Each skill reads the relevant `.context/` guides listed above, so they stay current with the documented patterns.
-
-## Related Documentation
-
-| Topic                      | Path                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------- |
-| Service-level architecture | [`.context/orchestration/overview.md`](../orchestration/overview.md)                      |
-| LLM providers              | [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md)            |
-| Streaming chat             | [`.context/orchestration/chat.md`](../orchestration/chat.md)                              |
-| Engine & execution         | [`.context/orchestration/engine.md`](../orchestration/engine.md)                          |
-| SSE helper                 | [`.context/api/sse.md`](../api/sse.md)                                                    |
-| Solution builder           | [`.context/admin/orchestration-solution-builder.md`](./orchestration-solution-builder.md) |
-| Setup wizard               | [`.context/admin/setup-wizard.md`](./setup-wizard.md)                                     |
-| Observability              | [`.context/admin/orchestration-observability.md`](./orchestration-observability.md)       |
+- **What the system does, end to end** → [`../orchestration/meta/functional-specification.md`](../orchestration/meta/functional-specification.md)
+- **Why architectural choices were made** → [`../orchestration/meta/architectural-decisions.md`](../orchestration/meta/architectural-decisions.md)
+- **Engineering directory map** → [`../orchestration/overview.md`](../orchestration/overview.md)
+- **Architectural rules for code authors** → [`../../.claude/docs/agent-orchestration.md`](../../.claude/docs/agent-orchestration.md)
+- **Hosting in production** → [`../orchestration/meta/hosting-requirements.md`](../orchestration/meta/hosting-requirements.md)
