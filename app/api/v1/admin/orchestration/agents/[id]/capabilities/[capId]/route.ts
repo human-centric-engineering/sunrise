@@ -14,6 +14,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -23,9 +24,33 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
 import { updateAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+
+/**
+ * Narrow shape used by `collectMissingEnvVars`. See the matching
+ * schema in the sibling attach route for the rationale.
+ */
+const bindingScanSchema = z
+  .object({
+    forcedUrl: z.string().optional(),
+    forcedHeaders: z.record(z.string(), z.string()).optional(),
+  })
+  .partial();
+
+/**
+ * Scans a customConfig blob for `${env:VAR}` references in known
+ * credential-bearing fields and returns the names that are NOT set in
+ * the running process. Soft warning — see the matching helper in the
+ * sibling attach route.
+ */
+function collectMissingEnvVars(customConfig: unknown): string[] {
+  const parsed = bindingScanSchema.safeParse(customConfig);
+  if (!parsed.success) return [];
+  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
+}
 
 type RouteParams = { id: string; capId: string };
 
@@ -82,7 +107,9 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
       clientIp: clientIP,
     });
 
-    return successResponse(link);
+    const missingEnvVars = collectMissingEnvVars(body.customConfig);
+    const meta = missingEnvVars.length > 0 ? { warnings: { missingEnvVars } } : undefined;
+    return successResponse(link, meta);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
       throw new NotFoundError(`Capability ${capabilityId} is not attached to agent ${agentId}`);

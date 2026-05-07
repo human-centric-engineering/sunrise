@@ -821,4 +821,159 @@ describe('executeExternalCall', () => {
     const [, init] = (fetch as any).mock.calls[0];
     expect(init.method).toBe('POST');
   });
+
+  // ─── Env-var template substitution ───────────────────────────────────
+
+  describe('${env:VAR} substitution', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv, ORCHESTRATION_ALLOWED_HOSTS: 'api.allowed.com' };
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('resolves ${env:VAR} in url config (no workflow-context interpolation needed)', async () => {
+      process.env.WEBHOOK_PATH = 'v1/notify';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({ url: 'https://api.allowed.com/${env:WEBHOOK_PATH}' });
+      await executeExternalCall(step, makeCtx());
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/v1/notify');
+    });
+
+    it('resolves ${env:VAR} in header values', async () => {
+      process.env.UPSTREAM_TOKEN = 'tok_123';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({
+        headers: { 'X-Upstream': 'Bearer ${env:UPSTREAM_TOKEN}' },
+      });
+      await executeExternalCall(step, makeCtx());
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers['X-Upstream']).toBe('Bearer tok_123');
+    });
+
+    it('throws ExecutorError("missing_env_var") when url references an unset env var', async () => {
+      delete process.env.MISSING_HOST_PATH;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({ url: 'https://api.allowed.com/${env:MISSING_HOST_PATH}' });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'missing_env_var',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('throws ExecutorError("missing_env_var") when a header references an unset env var', async () => {
+      delete process.env.MISSING_HEADER_VAR;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({
+        headers: { 'X-Foo': 'Bearer ${env:MISSING_HEADER_VAR}' },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'missing_env_var',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    // ─── Security: order of resolution prevents user-injected env
+    //     substitution. interpolatePrompt produces a value containing
+    //     `${env:...}` text only when a user passes that string as
+    //     workflow input — the env resolver MUST run before
+    //     interpolation so user content cannot trigger substitution. ──
+    it('does NOT resolve ${env:VAR} when the reference comes from interpolated context, not the admin config', async () => {
+      const { interpolatePrompt } = await import('@/lib/orchestration/engine/llm-runner');
+      // Real interpolation behaviour for this case: substitute
+      // `{{input.message}}` with whatever the user sent.
+      vi.mocked(interpolatePrompt).mockImplementationOnce((template: string, c: any) =>
+        template.replace('{{input.message}}', c.inputData.message ?? '')
+      );
+
+      // Attacker-controlled chat input contains a literal env-template
+      // string. If we resolved env templates AFTER interpolation, this
+      // would exfiltrate the secret through the URL.
+      process.env.SHOULD_NOT_LEAK = 'super-secret';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+      const step = makeStep({ url: 'https://api.allowed.com/echo/{{input.message}}' });
+      const ctx = makeCtx({ inputData: { message: '${env:SHOULD_NOT_LEAK}' } });
+      await executeExternalCall(step, ctx);
+
+      const calledUrl = fetchSpy.mock.calls[0]?.[0] as string;
+      // The literal `${env:SHOULD_NOT_LEAK}` must survive in the URL —
+      // the secret must NOT be substituted in.
+      expect(calledUrl).toContain('${env:SHOULD_NOT_LEAK}');
+      expect(calledUrl).not.toContain('super-secret');
+    });
+
+    it('resolves admin-authored ${env:VAR} BEFORE interpolatePrompt mixes in user content', async () => {
+      const { interpolatePrompt } = await import('@/lib/orchestration/engine/llm-runner');
+      vi.mocked(interpolatePrompt).mockImplementationOnce((template: string, c: any) =>
+        template.replace('{{input.tag}}', c.inputData.tag ?? '')
+      );
+
+      process.env.WEBHOOK_BASE = 'https://api.allowed.com/svc';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+      const step = makeStep({ url: '${env:WEBHOOK_BASE}/{{input.tag}}' });
+      const ctx = makeCtx({ inputData: { tag: 'release-notes' } });
+      await executeExternalCall(step, ctx);
+
+      // Admin's env template resolved + user's input value substituted.
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/svc/release-notes');
+    });
+
+    it('treats env var set to empty string as missing (matches readSecret posture)', async () => {
+      process.env.EMPTY_VAR = '';
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const step = makeStep({ url: 'https://api.allowed.com/${env:EMPTY_VAR}' });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
+        code: 'missing_env_var',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('preserves env var values that look falsy but are valid strings (e.g. "0")', async () => {
+      process.env.ZERO_VAR = '0';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      const step = makeStep({ url: 'https://api.allowed.com/v${env:ZERO_VAR}' });
+      await executeExternalCall(step, makeCtx());
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/v0');
+    });
+
+    it('ignores ${env:lower} and other malformed templates (left as literal in URL)', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+      // Strict pattern means a typo doesn't accidentally substitute or
+      // throw — it stays as literal text. This URL is malformed for
+      // most real APIs but the env resolver itself is content-blind.
+      const step = makeStep({ url: 'https://api.allowed.com/${env:lower}/x' });
+      await executeExternalCall(step, makeCtx());
+      expect(fetchSpy.mock.calls[0]?.[0]).toContain('${env:lower}');
+    });
+  });
 });

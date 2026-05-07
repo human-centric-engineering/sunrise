@@ -39,6 +39,11 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import {
+  EnvTemplateError,
+  resolveEnvTemplate,
+  resolveEnvTemplatesInRecord,
+} from '@/lib/orchestration/env-template';
+import {
   executeHttpRequest,
   HttpError,
   type HttpAuthConfig,
@@ -67,7 +72,39 @@ export async function executeExternalCall(
   if (typeof config.url !== 'string' || config.url.trim().length === 0) {
     throw new ExecutorError(step.id, 'missing_url', 'external_call step is missing a URL');
   }
-  const url = interpolatePrompt(config.url, ctx);
+  // Two interpolation passes, in order:
+  //   1. resolveEnvTemplate — `${env:VAR}` references in the
+  //      admin-authored config string only.
+  //   2. interpolatePrompt — workflow-context variables (`{{input.x}}`)
+  //      injected into the post-resolution literal.
+  //
+  // Order is security-critical. Reversing it would let user-controlled
+  // workflow input (`{{input.message}}` etc.) introduce a literal
+  // `${env:SECRET}` token into the URL that the env resolver would
+  // then expand — exfiltrating env vars as URL path components to
+  // allowlisted endpoints that log paths. Resolving env templates
+  // FIRST means the admin-authored template is the only source of
+  // `${env:VAR}` references; user content remains literal text.
+  //
+  // Headers don't go through prompt interpolation today, so order
+  // doesn't matter for them — env-substitute the admin-authored map
+  // directly.
+  let url: string;
+  let resolvedHeaders: Record<string, string> | undefined;
+  try {
+    url = interpolatePrompt(resolveEnvTemplate(config.url), ctx);
+    resolvedHeaders = resolveEnvTemplatesInRecord(config.headers);
+  } catch (err) {
+    if (err instanceof EnvTemplateError) {
+      throw new ExecutorError(
+        step.id,
+        'missing_env_var',
+        `external_call step references env var "${err.envVarName}" which is not set`,
+        err
+      );
+    }
+    throw err;
+  }
   const method = (config.method ?? 'POST') as HttpMethod;
 
   // Pre-check execution-level abort so we surface as request_aborted
@@ -101,7 +138,7 @@ export async function executeExternalCall(
     const response = await executeHttpRequest({
       url,
       method,
-      headers: config.headers,
+      headers: resolvedHeaders,
       body,
       auth,
       idempotency,

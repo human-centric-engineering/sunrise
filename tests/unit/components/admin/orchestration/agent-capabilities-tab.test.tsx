@@ -308,7 +308,14 @@ describe('AgentCapabilitiesTab', () => {
       // Arrange
       const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));
-      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      // Configure dialog now uses raw fetch (not apiClient.patch) so it
+      // can read meta.warnings.missingEnvVars from the response.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
 
       const user = userEvent.setup();
       render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
@@ -333,16 +340,96 @@ describe('AgentCapabilitiesTab', () => {
 
       // Assert
       await waitFor(() => {
-        expect(apiClient.patch).toHaveBeenCalledWith(
+        expect(fetchSpy).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search'),
           expect.objectContaining({
-            body: expect.objectContaining({
+            method: 'PATCH',
+            body: JSON.stringify({
               customConfig: { maxResults: 10 },
               customRateLimit: 60,
             }),
           })
         );
       });
+    });
+
+    it('shows missing-env-var warning panel when API returns meta.warnings.missingEnvVars', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {},
+            meta: { warnings: { missingEnvVars: ['SLACK_WEBHOOK_URL', 'POSTMARK_TOKEN'] } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      const configArea = screen.getByRole('textbox', { name: /custom config/i });
+      await user.clear(configArea);
+      await user.click(configArea);
+      await user.paste('{"forcedUrl":"${env:SLACK_WEBHOOK_URL}"}');
+
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('missing-env-vars-warning')).toBeInTheDocument();
+      });
+      const panel = screen.getByTestId('missing-env-vars-warning');
+      expect(panel).toHaveTextContent('SLACK_WEBHOOK_URL');
+      expect(panel).toHaveTextContent('POSTMARK_TOKEN');
+      // Save-with-warning swaps the Cancel button label to Close so it
+      // doesn't imply the binding wasn't saved. (Dialog has its own
+      // accessible "Close" X button — match the footer button by exact
+      // visible text content instead of role-name.)
+      const closeButtons = screen.getAllByRole('button', { name: /close/i });
+      expect(closeButtons.some((btn) => btn.textContent?.trim() === 'Close')).toBe(true);
+    });
+
+    it('clears the warning panel when the admin edits the config text after a warned save', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {},
+            meta: { warnings: { missingEnvVars: ['MISSING'] } },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      const configArea = screen.getByRole('textbox', { name: /custom config/i });
+      await user.clear(configArea);
+      await user.click(configArea);
+      await user.paste('{"forcedUrl":"${env:MISSING}"}');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('missing-env-vars-warning')).toBeInTheDocument();
+      });
+
+      // Edit the config — warning should disappear.
+      await user.click(configArea);
+      await user.type(configArea, ' ');
+      expect(screen.queryByTestId('missing-env-vars-warning')).not.toBeInTheDocument();
     });
   });
 
@@ -658,12 +745,20 @@ describe('AgentCapabilitiesTab', () => {
       expect(apiClient.patch).not.toHaveBeenCalled();
     });
 
-    it('shows error message from APIClientError when save PATCH fails', async () => {
-      // Arrange
-      const { apiClient, APIClientError } = await import('@/lib/api/client');
+    it('shows server error message when save PATCH returns non-OK', async () => {
+      // Arrange — the dialog now uses raw fetch so non-OK responses are
+      // parsed via parseApiResponse and the server's error.message is
+      // surfaced inline.
+      const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));
-      vi.mocked(apiClient.patch).mockRejectedValue(
-        new APIClientError('Capability not found', 'NOT_FOUND', 404)
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: 'NOT_FOUND', message: 'Capability not found' },
+          }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        )
       );
 
       const user = userEvent.setup();
@@ -676,7 +771,6 @@ describe('AgentCapabilitiesTab', () => {
 
       await user.click(screen.getByRole('button', { name: /^save$/i }));
 
-      // Assert: APIClientError message shown in dialog
       await waitFor(() => {
         expect(screen.getByText(/capability not found/i)).toBeInTheDocument();
       });

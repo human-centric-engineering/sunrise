@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,7 +37,24 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import type { AiAgentCapability, AiCapability } from '@/types/prisma';
+
+/**
+ * Narrow shape of the binding-save response `meta` field. The server
+ * sets `meta.warnings.missingEnvVars` when a saved customConfig
+ * references env vars that are not currently set on the host.
+ * Validating with Zod (rather than asserting via `as`) keeps the
+ * client robust against future server-side shape changes — drift
+ * trips the parse instead of silently disabling the warning.
+ */
+const bindingMetaSchema = z.object({
+  warnings: z
+    .object({
+      missingEnvVars: z.array(z.string()),
+    })
+    .optional(),
+});
 
 type AttachedLink = AiAgentCapability & { capability: AiCapability };
 
@@ -272,8 +290,11 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
         onOpenChange={(open) => {
           if (!open) setConfigureTarget(null);
         }}
-        onSaved={() => {
-          setConfigureTarget(null);
+        onSaved={(opts) => {
+          // When keepDialogOpen is requested, the dialog renders an
+          // inline warning the admin has to acknowledge; the parent
+          // still refreshes so the saved state is visible elsewhere.
+          if (!opts?.keepDialogOpen) setConfigureTarget(null);
           void fetchAll();
         }}
         agentId={agentId}
@@ -286,7 +307,7 @@ interface ConfigureDialogProps {
   link: AttachedLink | null;
   agentId: string;
   onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
+  onSaved: (opts?: { keepDialogOpen?: boolean }) => void;
 }
 
 function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDialogProps) {
@@ -294,12 +315,17 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
   const [rateLimit, setRateLimit] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Soft warning surfaced from the binding-save API meta when an
+  // ${env:VAR} reference points at an unset env var. Save still
+  // succeeds — admin may legitimately save before deploying the var.
+  const [missingEnvVars, setMissingEnvVars] = useState<string[]>([]);
 
   useEffect(() => {
     if (link) {
       setConfigText(link.customConfig ? JSON.stringify(link.customConfig, null, 2) : '');
       setRateLimit(link.customRateLimit ? String(link.customRateLimit) : '');
       setError(null);
+      setMissingEnvVars([]);
     }
   }, [link]);
 
@@ -328,12 +354,38 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         return;
       }
 
-      await apiClient.patch(
+      // Use raw fetch + parseApiResponse so we can read the response
+      // meta (apiClient.patch unwraps to data only). The save-time
+      // missing-env-var warning lives on meta.warnings.missingEnvVars.
+      const response = await fetch(
         API.ADMIN.ORCHESTRATION.agentCapabilityById(agentId, link.capabilityId),
         {
-          body: { customConfig, customRateLimit },
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customConfig, customRateLimit }),
         }
       );
+      if (!response.ok) {
+        const errBody = await parseApiResponse<unknown>(response).catch(() => null);
+        const message =
+          errBody && !errBody.success
+            ? errBody.error.message
+            : `Save failed: ${response.statusText}`;
+        setError(message);
+        setSaving(false);
+        return;
+      }
+      const parsed = await parseApiResponse<unknown>(response);
+      const meta = parsed.success ? bindingMetaSchema.safeParse(parsed.meta) : undefined;
+      const missing = meta?.success ? (meta.data.warnings?.missingEnvVars ?? []) : [];
+      if (missing.length > 0) {
+        // Keep the dialog open so the admin sees the warning; refresh
+        // the parent list in the background so the saved state is
+        // visible elsewhere.
+        setMissingEnvVars(missing);
+        onSaved({ keepDialogOpen: true });
+        return;
+      }
       onSaved();
     } catch (err) {
       setError(err instanceof APIClientError ? err.message : 'Could not save capability config.');
@@ -358,17 +410,34 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             <Label htmlFor="custom-config">
               Custom config (JSON){' '}
               <FieldHelp title="Custom config">
-                JSON key-value pairs passed to the capability handler when it runs. The expected
-                shape depends on the capability — open the capability&apos;s edit page and look at
-                the Execution tab for supported keys. Leave as <code>{'{}'}</code> to use the
-                capability&apos;s defaults.
+                <p>
+                  JSON key-value pairs passed to the capability handler when it runs. The expected
+                  shape depends on the capability — open the capability&apos;s edit page and look at
+                  the Execution tab for supported keys. Leave as <code>{'{}'}</code> to use the
+                  capability&apos;s defaults.
+                </p>
+                <p className="mt-2">
+                  <strong>Env-var templating.</strong> String values may contain{' '}
+                  <code>${'{env:VAR_NAME}'}</code> references — resolved at call time against the
+                  running process&apos;s env vars. Useful when the value itself is a credential
+                  (e.g. a Slack incoming-webhook URL on <code>forcedUrl</code>, a literal
+                  Authorization on <code>forcedHeaders</code>) and you want it to live in env vars
+                  only, not in the database. A missing env var fails the call closed; rotation =
+                  change one env var, no binding edit.
+                </p>
               </FieldHelp>
             </Label>
             <Textarea
               id="custom-config"
               rows={8}
               value={configText}
-              onChange={(e) => setConfigText(e.target.value)}
+              onChange={(e) => {
+                setConfigText(e.target.value);
+                // Hide the post-save warning as soon as the admin
+                // edits the config — they're either fixing the env
+                // var or changing the binding shape.
+                if (missingEnvVars.length > 0) setMissingEnvVars([]);
+              }}
               className="font-mono text-xs"
               placeholder="{}"
             />
@@ -391,6 +460,30 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             />
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
+          {missingEnvVars.length > 0 && (
+            <div
+              role="status"
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+              data-testid="missing-env-vars-warning"
+            >
+              <p className="font-medium text-amber-900 dark:text-amber-100">
+                Saved — but {missingEnvVars.length === 1 ? 'an env var is' : 'env vars are'} not set
+                in the running process:
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-amber-900 dark:text-amber-100">
+                {missingEnvVars.map((name) => (
+                  <li key={name}>
+                    <code>{name}</code>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-amber-900 dark:text-amber-100">
+                The binding is saved, but calls will fail closed until you set{' '}
+                {missingEnvVars.length === 1 ? 'this var' : 'these vars'} on the host and restart
+                (or hot-reload, if your runtime supports it).
+              </p>
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -400,7 +493,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             onClick={() => onOpenChange(false)}
             disabled={saving}
           >
-            Cancel
+            {missingEnvVars.length > 0 ? 'Close' : 'Cancel'}
           </Button>
           <Button type="button" onClick={() => void handleSave()} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}

@@ -67,6 +67,23 @@ Worked example: Postmark. Save this as the `customConfig` on the `AiAgentCapabil
 
 Postmark uses `X-Postmark-Server-Token` (rather than the generic `X-API-Key`) for authentication. The `apiKeyHeaderName` field on the auth config tells the api-key path to use that header name instead of the default — the secret stays in env vars, never in DB. For providers that use `Authorization: Bearer ...` (SendGrid, Resend), use `auth.type: 'bearer'` and remove the `apiKeyHeaderName` line — see [Vendor variants](#8-vendor-variants).
 
+### Optional: env-templated endpoint
+
+Most teams hit Postmark's public endpoint, but if you front the vendor through a regional proxy or a sensitive gateway URL, pin it via `forcedUrl` and reference an env var:
+
+```json
+{
+  "forcedUrl": "${env:EMAIL_GATEWAY_URL}",
+  "auth": {
+    "type": "api-key",
+    "secret": "POSTMARK_SERVER_TOKEN",
+    "apiKeyHeaderName": "X-Postmark-Server-Token"
+  }
+}
+```
+
+The literal `${env:EMAIL_GATEWAY_URL}` stays in `customConfig`; the value resolves at call time. A missing env var fails the call closed (no silent downgrade). See `.context/orchestration/external-calls.md` for the full templating rules. The `auth.secret` field has always been an env-var name — that part is unchanged.
+
 ## 6. Agent prompt guidance
 
 Append to the agent's system instructions:

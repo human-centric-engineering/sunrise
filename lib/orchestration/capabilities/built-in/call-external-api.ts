@@ -32,6 +32,12 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import {
+  EnvTemplateError,
+  containsEnvTemplate,
+  resolveEnvTemplate,
+  resolveEnvTemplatesInRecord,
+} from '@/lib/orchestration/env-template';
+import {
   executeHttpRequest,
   HttpError,
   mergeHeaders,
@@ -52,8 +58,16 @@ const customConfigSchema = z
     allowedUrlPrefixes: z.array(z.string().url()).min(1).optional(),
     /** Replaces the LLM-supplied URL entirely. When set, `allowedUrlPrefixes` is ignored — the binding
      * pins one exact endpoint. Useful for chat-platform incoming webhooks where the URL itself is a
-     * secret the LLM should not need to know. */
-    forcedUrl: z.string().url().optional(),
+     * secret the LLM should not need to know. May contain `${env:VAR}` references (resolved at call
+     * time); the resolved value must parse as a URL. */
+    forcedUrl: z
+      .string()
+      .min(1)
+      .max(2048)
+      .refine((value) => containsEnvTemplate(value) || isParsableUrl(value), {
+        message: 'forcedUrl must be a valid URL or contain ${env:VAR} references',
+      })
+      .optional(),
     /** Auth config — `type: 'none'` is valid and explicit. */
     auth: z
       .object({
@@ -112,6 +126,15 @@ interface Data {
 }
 
 const SLUG = 'call_external_api';
+
+function isParsableUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export class CallExternalApiCapability extends BaseCapability<Args, Data> {
   readonly slug = SLUG;
@@ -179,9 +202,48 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
     }
     const customConfig = loaded.config;
 
+    // Resolve `${env:VAR}` templates in admin-set credential-bearing
+    // fields. Read-time resolution: the literal template stays in the
+    // DB and the secret only exists in process memory. Fail-closed —
+    // missing env var is reported as an invalid binding so the call
+    // never silently downgrades to wrong-target / unauthenticated.
+    let resolvedForcedUrl: string | undefined;
+    let resolvedForcedHeaders: Record<string, string> | undefined;
+    try {
+      resolvedForcedUrl = customConfig?.forcedUrl
+        ? resolveEnvTemplate(customConfig.forcedUrl)
+        : undefined;
+      resolvedForcedHeaders = resolveEnvTemplatesInRecord(customConfig?.forcedHeaders);
+    } catch (err) {
+      if (err instanceof EnvTemplateError) {
+        logger.error(
+          'call_external_api: refusing call — env var referenced by binding is not set',
+          {
+            agentId: context.agentId,
+            envVarName: err.envVarName,
+          }
+        );
+        return this.error(
+          `Capability binding references env var "${err.envVarName}" which is not set`,
+          'invalid_binding'
+        );
+      }
+      throw err;
+    }
+
+    if (resolvedForcedUrl && !isParsableUrl(resolvedForcedUrl)) {
+      logger.error('call_external_api: refusing call — resolved forcedUrl is not a valid URL', {
+        agentId: context.agentId,
+      });
+      return this.error(
+        'Capability binding forcedUrl resolved to an invalid URL',
+        'invalid_binding'
+      );
+    }
+
     // forcedUrl takes precedence over both args.url and allowedUrlPrefixes —
     // the binding pins one exact endpoint and the LLM-supplied URL is discarded.
-    const url = customConfig?.forcedUrl ?? args.url;
+    const url = resolvedForcedUrl ?? args.url;
     if (!url) {
       return this.error(
         'No URL supplied — provide a `url` arg, or bind `forcedUrl` in the customConfig',
@@ -215,7 +277,7 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
 
     // mergeHeaders is case-insensitive so the LLM can't smuggle an
     // `authorization` past forcedHeaders' `Authorization` by varying case.
-    const headers = mergeHeaders(args.headers, customConfig?.forcedHeaders);
+    const headers = mergeHeaders(args.headers, resolvedForcedHeaders);
 
     const idempotency = customConfig?.autoIdempotency
       ? { key: 'auto', headerName: customConfig.idempotencyHeader }

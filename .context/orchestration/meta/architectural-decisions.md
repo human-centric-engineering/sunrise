@@ -1046,7 +1046,7 @@ This section covers how untrusted input is contained, how authentication works a
 
 **What is it?** LLM API keys, webhook signing secrets, and other credentials are sensitive strings. They can be stored in the database (encrypted or otherwise), in environment variables, or in an external secret manager. Each option has different operational and audit characteristics.
 
-**What we chose:** Credentials live only in environment variables, resolved at runtime. The DB stores the _name_ of the env var (`apiKeyEnvVar: "ANTHROPIC_API_KEY"`), never the value. Credentials never enter LLM context, never appear in logs, and never appear in API responses.
+**What we chose:** Credentials live only in environment variables, resolved at runtime. The DB stores the _name_ of the env var (`apiKeyEnvVar: "ANTHROPIC_API_KEY"`), never the value. Credentials never enter LLM context, never appear in logs, and never appear in API responses. The same posture extends to credential-bearing **URL** and **header** fields on capability bindings and workflow steps via `${env:VAR}` template syntax — the literal template stays in the DB, `process.env[NAME]` resolves on every call. Read-time, never write-time, so the resolved secret never lands on disk.
 
 **Alternatives**
 
@@ -1062,7 +1062,7 @@ This section covers how untrusted input is contained, how authentication works a
 - Operators rotate keys by changing an env var and restarting — no DB migration.
 - The "name not value" pattern lets multiple environments (dev, staging, prod) share the same configuration export with environment-specific secrets.
 
-**Where it lives:** `lib/orchestration/llm/provider-manager.ts` (resolution at runtime), `prisma/schema.prisma` (`AiProviderConfig.apiKeyEnvVar`), `.context/orchestration/llm-providers.md`.
+**Where it lives:** `lib/orchestration/llm/provider-manager.ts` (resolution at runtime), `prisma/schema.prisma` (`AiProviderConfig.apiKeyEnvVar`), `.context/orchestration/llm-providers.md`. Template-based extension to URL-shaped credentials lives in `lib/orchestration/env-template.ts`, wired into `call_external_api`'s `forcedUrl` / `forcedHeaders` and the workflow `external_call` step's `url` / `headers`; documented in `.context/orchestration/external-calls.md` (Env-var templating section).
 
 ### 6.5 SSRF protection via host allowlist for `external_call`
 
