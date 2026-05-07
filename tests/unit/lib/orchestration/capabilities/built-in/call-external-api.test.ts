@@ -359,7 +359,7 @@ describe('CallExternalApiCapability', () => {
         string,
         string
       >;
-      expect(headers['X-Idempotent']).toBeTruthy();
+      expect(headers['X-Idempotent']).toMatch(/^[0-9a-f-]{36}$/);
       expect(headers['Idempotency-Key']).toBeUndefined();
     });
   });
@@ -503,6 +503,31 @@ describe('CallExternalApiCapability', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('rate_limited');
     });
+
+    it('maps HttpError("request_aborted") to capability error code "request_aborted"', async () => {
+      // Drives the previously-untested case in mapHttpErrorCode
+      // (call-external-api.ts:437-438). The capability doesn't
+      // propagate an AbortSignal to executeHttpRequest today, so the
+      // only way to exercise this branch is to mock the HTTP module
+      // to throw the typed error directly. Future wiring that adds a
+      // signal pass-through gets this assertion as a regression
+      // backstop.
+      const httpModule = await import('@/lib/orchestration/http');
+      const httpSpy = vi
+        .spyOn(httpModule, 'executeHttpRequest')
+        .mockRejectedValue(new httpModule.HttpError('request_aborted', 'caller aborted', false));
+      noBinding();
+
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('request_aborted');
+      httpSpy.mockRestore();
+    });
   });
 
   describe('response transform error surfaced on success result', () => {
@@ -518,7 +543,8 @@ describe('CallExternalApiCapability', () => {
       );
       expect(result.success).toBe(true);
       expect(result.data?.body).toEqual({ user: { id: 'u1' } });
-      expect(result.data?.transformError).toBeTruthy();
+      expect(typeof result.data?.transformError).toBe('string');
+      expect(result.data!.transformError!.length).toBeGreaterThan(0);
     });
   });
 
