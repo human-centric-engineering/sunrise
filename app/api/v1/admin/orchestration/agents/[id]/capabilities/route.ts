@@ -16,6 +16,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -31,6 +32,21 @@ import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 /**
+ * Narrow shape used by `collectMissingEnvVars` to extract the only two
+ * fields it scans. The route-layer `customConfig` is `z.record(z.string(),
+ * z.unknown())` (capability-specific shape is enforced at execute time),
+ * so we validate just the binding-scan-relevant fields here. Malformed
+ * values fall through to `safeParse` failure → empty result, which is
+ * the right behaviour for a soft warning helper.
+ */
+const bindingScanSchema = z
+  .object({
+    forcedUrl: z.string().optional(),
+    forcedHeaders: z.record(z.string(), z.string()).optional(),
+  })
+  .partial();
+
+/**
  * Scans a customConfig blob for `${env:VAR}` references in known
  * credential-bearing fields and returns the names that are NOT set in
  * the running process. Soft warning surfaced to the admin UI — save
@@ -38,14 +54,9 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
  * matching env var has been deployed to the host.
  */
 function collectMissingEnvVars(customConfig: unknown): string[] {
-  if (!customConfig || typeof customConfig !== 'object') return [];
-  const cfg = customConfig as Record<string, unknown>;
-  const forcedUrl = typeof cfg.forcedUrl === 'string' ? cfg.forcedUrl : undefined;
-  const forcedHeaders =
-    cfg.forcedHeaders && typeof cfg.forcedHeaders === 'object'
-      ? (cfg.forcedHeaders as Record<string, string>)
-      : undefined;
-  return findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
+  const parsed = bindingScanSchema.safeParse(customConfig);
+  if (!parsed.success) return [];
+  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
 }
 
 function parseAgentId(raw: string): string {

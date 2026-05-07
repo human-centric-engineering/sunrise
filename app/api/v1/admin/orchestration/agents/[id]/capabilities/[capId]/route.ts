@@ -14,6 +14,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -29,20 +30,26 @@ import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 /**
+ * Narrow shape used by `collectMissingEnvVars`. See the matching
+ * schema in the sibling attach route for the rationale.
+ */
+const bindingScanSchema = z
+  .object({
+    forcedUrl: z.string().optional(),
+    forcedHeaders: z.record(z.string(), z.string()).optional(),
+  })
+  .partial();
+
+/**
  * Scans a customConfig blob for `${env:VAR}` references in known
  * credential-bearing fields and returns the names that are NOT set in
  * the running process. Soft warning — see the matching helper in the
  * sibling attach route.
  */
 function collectMissingEnvVars(customConfig: unknown): string[] {
-  if (!customConfig || typeof customConfig !== 'object') return [];
-  const cfg = customConfig as Record<string, unknown>;
-  const forcedUrl = typeof cfg.forcedUrl === 'string' ? cfg.forcedUrl : undefined;
-  const forcedHeaders =
-    cfg.forcedHeaders && typeof cfg.forcedHeaders === 'object'
-      ? (cfg.forcedHeaders as Record<string, string>)
-      : undefined;
-  return findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
+  const parsed = bindingScanSchema.safeParse(customConfig);
+  if (!parsed.success) return [];
+  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
 }
 
 type RouteParams = { id: string; capId: string };

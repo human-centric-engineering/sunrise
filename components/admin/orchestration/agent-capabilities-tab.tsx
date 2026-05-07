@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,22 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import type { AiAgentCapability, AiCapability } from '@/types/prisma';
+
+/**
+ * Narrow shape of the binding-save response `meta` field. The server
+ * sets `meta.warnings.missingEnvVars` when a saved customConfig
+ * references env vars that are not currently set on the host.
+ * Validating with Zod (rather than asserting via `as`) keeps the
+ * client robust against future server-side shape changes — drift
+ * trips the parse instead of silently disabling the warning.
+ */
+const bindingMetaSchema = z.object({
+  warnings: z
+    .object({
+      missingEnvVars: z.array(z.string()),
+    })
+    .optional(),
+});
 
 type AttachedLink = AiAgentCapability & { capability: AiCapability };
 
@@ -359,11 +376,8 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
         return;
       }
       const parsed = await parseApiResponse<unknown>(response);
-      const warnings =
-        parsed.success && parsed.meta && typeof parsed.meta === 'object'
-          ? (parsed.meta as { warnings?: { missingEnvVars?: string[] } }).warnings
-          : undefined;
-      const missing = Array.isArray(warnings?.missingEnvVars) ? warnings.missingEnvVars : [];
+      const meta = parsed.success ? bindingMetaSchema.safeParse(parsed.meta) : undefined;
+      const missing = meta?.success ? (meta.data.warnings?.missingEnvVars ?? []) : [];
       if (missing.length > 0) {
         // Keep the dialog open so the admin sees the warning; refresh
         // the parent list in the background so the saved state is
