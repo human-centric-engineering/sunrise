@@ -1229,4 +1229,199 @@ describe('WorkflowBuilder', () => {
       expect(screen.getByRole('alert').textContent).toContain('Disk quota exceeded');
     });
   });
+
+  describe('publish flow', () => {
+    function workflowWithDraft(): AiWorkflowWithVersion {
+      // Mark the workflow as having an in-progress draft so the toolbar
+      // enables the Publish button.
+      return makeWorkflow({
+        id: 'wf-publish',
+        draftDefinition: TWO_STEP_DEFINITION as unknown as never,
+      });
+    }
+
+    it('opens the publish dialog on click and POSTs to /publish on confirm', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.post).mockResolvedValue({
+        version: { id: 'wfv-2', version: 2, snapshot: TWO_STEP_DEFINITION },
+        workflow: {},
+      } as never);
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      // Click the toolbar Publish button (the one that opens the dialog).
+      const publishToolbarBtn = screen.getByRole('button', {
+        name: /publish the current draft as a new version/i,
+      });
+      await user.click(publishToolbarBtn);
+
+      // The dialog renders a second "Publish" button — the confirm action.
+      // queryByRole returns the first match, but the confirm is named exactly "Publish".
+      const dialogConfirm = await screen.findByRole('button', { name: /^publish$/i });
+      await user.click(dialogConfirm);
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+      const url = vi.mocked(apiClient.post).mock.calls[0]?.[0];
+      expect(url).toContain('wf-publish');
+      expect(url).toContain('/publish');
+    });
+
+    it('passes a non-empty changeSummary through to the POST body', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.post).mockResolvedValue({
+        version: { id: 'wfv-2', version: 2, snapshot: TWO_STEP_DEFINITION },
+        workflow: {},
+      } as never);
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      const publishToolbarBtn = screen.getByRole('button', {
+        name: /publish the current draft as a new version/i,
+      });
+      await user.click(publishToolbarBtn);
+
+      const summaryInput = await screen.findByLabelText(/change summary/i);
+      await user.type(summaryInput, 'Tweaked the prompt');
+      const dialogConfirm = await screen.findByRole('button', { name: /^publish$/i });
+      await user.click(dialogConfirm);
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledOnce());
+      const options = vi.mocked(apiClient.post).mock.calls[0]?.[1] as
+        | { body?: { changeSummary?: string } }
+        | undefined;
+      expect(options?.body?.changeSummary).toBe('Tweaked the prompt');
+    });
+
+    it('surfaces an APIClientError as an inline alert in the dialog and does not close it', async () => {
+      const user = userEvent.setup();
+      vi.mocked(apiClient.post).mockRejectedValue(
+        new APIClientError('Publish denied', 'FORBIDDEN', 403)
+      );
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      const publishToolbarBtn = screen.getByRole('button', {
+        name: /publish the current draft as a new version/i,
+      });
+      await user.click(publishToolbarBtn);
+      const dialogConfirm = await screen.findByRole('button', { name: /^publish$/i });
+      await user.click(dialogConfirm);
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert').textContent).toContain('Publish denied');
+      });
+      // Dialog stays open so the user can retry / cancel — the Cancel button is still there.
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('discard-draft flow', () => {
+    function workflowWithDraft(): AiWorkflowWithVersion {
+      return makeWorkflow({
+        id: 'wf-discard',
+        draftDefinition: TWO_STEP_DEFINITION as unknown as never,
+      });
+    }
+
+    it('does NOT POST when window.confirm is dismissed', async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => false)
+      );
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      // The Discard button only renders when a draft exists.
+      const discardBtn = screen.getByRole('button', { name: /discard draft/i });
+      await user.click(discardBtn);
+
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('POSTs to /discard-draft and refetches the workflow on confirm', async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
+      vi.mocked(apiClient.post).mockResolvedValue({} as never);
+      // Refetch returns the workflow with the draft cleared.
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        if (url.includes('capabilities') || url.includes('agents')) return new Promise(() => {});
+        return Promise.resolve(makeWorkflow({ id: 'wf-discard', draftDefinition: null }));
+      });
+
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      const discardBtn = screen.getByRole('button', { name: /discard draft/i });
+      await user.click(discardBtn);
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledOnce();
+      });
+      const postUrl = vi.mocked(apiClient.post).mock.calls[0]?.[0];
+      expect(postUrl).toContain('wf-discard');
+      expect(postUrl).toContain('/discard-draft');
+    });
+
+    it('logs an error when the discard POST rejects', async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal(
+        'confirm',
+        vi.fn(() => true)
+      );
+      const { logger } = await import('@/lib/logging');
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('Server boom'));
+      render(<WorkflowBuilder mode="edit" workflow={workflowWithDraft()} />);
+
+      const discardBtn = screen.getByRole('button', { name: /discard draft/i });
+      await user.click(discardBtn);
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+          'Workflow discard-draft failed',
+          expect.anything()
+        );
+      });
+    });
+  });
+
+  describe('pickEditableDefinition precedence', () => {
+    it('seeds the canvas from draftDefinition when one exists (over publishedVersion)', () => {
+      // The draft has a single uniquely-named step; the published has the
+      // standard two-step fixture. The mocked useNodesState captures the
+      // initial array so we can assert which definition was loaded.
+      const draftOnly: WorkflowDefinition = {
+        entryStepId: 'draft-step',
+        errorStrategy: 'fail',
+        steps: [
+          { id: 'draft-step', name: 'From-draft', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+      };
+      const workflow = makeWorkflow({
+        id: 'wf-precedence',
+        draftDefinition: draftOnly as unknown as never,
+      });
+      lastNodesStateArg = ['placeholder'];
+
+      render(<WorkflowBuilder mode="edit" workflow={workflow} />);
+
+      // The seeded nodes should derive from the draft, not the published version.
+      const seededNames = (lastNodesStateArg as Array<{ data?: { label?: string } }>).map(
+        (n) => n?.data?.label
+      );
+      expect(seededNames).toContain('From-draft');
+    });
+
+    it('falls back to publishedVersion.snapshot when no draft exists', () => {
+      const workflow = makeWorkflow({ id: 'wf-fallback', draftDefinition: null });
+      lastNodesStateArg = ['placeholder'];
+
+      render(<WorkflowBuilder mode="edit" workflow={workflow} />);
+
+      // The two-step fixture has step ids "step-1" and "step-2" — verify one
+      // of those was loaded (proves the published snapshot was used).
+      const seededIds = (lastNodesStateArg as Array<{ id?: string }>).map((n) => n?.id);
+      expect(seededIds).toContain('step-1');
+    });
+  });
 });

@@ -437,6 +437,28 @@ describe('POST /workflows/:id/discard-draft', () => {
     );
     expect(res.status).toBe(401);
   });
+
+  it('429s when rate limited', async () => {
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
+    const res = await DISCARD(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/discard-draft`),
+      makeParams()
+    );
+    expect(res.status).toBe(429);
+  });
+
+  it('400s for an invalid workflow id', async () => {
+    const res = await DISCARD(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/not-a-cuid/discard-draft`),
+      { params: Promise.resolve({ id: 'not-a-cuid' }) }
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 // ─── POST /rollback ────────────────────────────────────────────────────────
@@ -542,6 +564,32 @@ describe('POST /workflows/:id/rollback', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('429s when rate limited', async () => {
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
+    const res = await ROLLBACK(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/rollback`, {
+        targetVersionId: VERSION_ID_V1,
+      }),
+      makeParams()
+    );
+    expect(res.status).toBe(429);
+  });
+
+  it('400s for an invalid workflow id', async () => {
+    const res = await ROLLBACK(
+      makeRequest('POST', `/api/v1/admin/orchestration/workflows/not-a-cuid/rollback`, {
+        targetVersionId: VERSION_ID_V1,
+      }),
+      { params: Promise.resolve({ id: 'not-a-cuid' }) }
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 // ─── GET /versions ─────────────────────────────────────────────────────────
@@ -598,6 +646,20 @@ describe('GET /workflows/:id/versions', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it('429s when rate limited', async () => {
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
+    const res = await LIST_VERSIONS(
+      makeRequest('GET', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/versions`),
+      makeParams()
+    );
+    expect(res.status).toBe(429);
+  });
 });
 
 // ─── GET /versions/:version ────────────────────────────────────────────────
@@ -631,5 +693,19 @@ describe('GET /workflows/:id/versions/:version', () => {
       { params: Promise.resolve({ id: WORKFLOW_ID, version: 'abc' }) }
     );
     expect(res.status).toBe(400);
+  });
+
+  it('429s when rate limited', async () => {
+    vi.mocked(adminLimiter.check).mockReturnValueOnce({
+      success: false,
+      limit: 10,
+      remaining: 0,
+      reset: Date.now() + 60_000,
+    });
+    const res = await GET_VERSION(
+      makeRequest('GET', `/api/v1/admin/orchestration/workflows/${WORKFLOW_ID}/versions/1`),
+      { params: Promise.resolve({ id: WORKFLOW_ID, version: '1' }) }
+    );
+    expect(res.status).toBe(429);
   });
 });

@@ -424,6 +424,32 @@ describe('processDueSchedules', () => {
       })
     );
   });
+
+  it('records failure when the workflow has no published version (publish/draft model)', async () => {
+    // A schedule pointing at a workflow that has never been published cannot
+    // run — the scheduler must record a failure entry rather than create an
+    // execution row pinned to a non-existent version.
+    const schedule = makeSchedule({
+      workflow: {
+        id: 'wf_unpub',
+        slug: 'unpublished-wf',
+        isActive: true,
+        publishedVersion: null,
+      },
+    });
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+
+    const result = await processDueSchedules();
+
+    expect(result.processed).toBe(1);
+    expect(result.succeeded).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.errors).toEqual([
+      { scheduleId: 'sched_1', error: 'Workflow has no published version' },
+    ]);
+    // No execution row should be inserted — bail before create.
+    expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+  });
 });
 
 // ─── processPendingExecutions ───────────────────────────────────────────────
@@ -529,6 +555,37 @@ describe('processPendingExecutions', () => {
     expect(prisma.aiWorkflowExecution.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 20 })
     );
+  });
+
+  it('marks pending execution failed when neither pinned nor current version snapshot is available', async () => {
+    // Edge case: the original pinned version row was hard-deleted AND the
+    // workflow has no current published version. The recovery must mark the
+    // row as FAILED rather than try to drain a missing definition.
+    const exec = makeExecution({
+      id: 'exec_orphan',
+      versionId: null, // pinned version row is gone, FK SetNull → null
+      version: null,
+      workflow: {
+        id: 'wf_1',
+        slug: 'test-workflow',
+        isActive: true,
+        publishedVersion: null, // workflow has been un-published / never published
+      },
+    });
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([exec] as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+
+    const result = await processPendingExecutions();
+
+    expect(result.failed).toBe(1);
+    expect(result.recovered).toBe(0);
+    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec_orphan' },
+      data: expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'No published version to resume',
+      }),
+    });
   });
 
   it('handles errors for individual executions without stopping the batch', async () => {
