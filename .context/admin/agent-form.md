@@ -48,6 +48,10 @@ Hydrated from `GET /providers` on the server. Each option shows the provider nam
 
 Hydrated from `GET /models`, filtered to the selected provider. Options are labelled `${id} — ${tier}`. Same free-text fallback on hydration failure.
 
+### Dynamic resolution: empty provider/model
+
+The 5 system-seeded agents (pattern-advisor, quiz-master, mcp-system, provider-model-auditor, audit-report-writer) ship with **empty `provider`/`model` strings**. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills the binding from the operator's first active provider plus the system default-chat model in `AiOrchestrationSettings.defaultModels.chat`. The agent form's Zod schema still requires non-empty strings on user-driven creates — this contract applies only to system seeds, which bypass Zod via direct `prisma.aiAgent.upsert`. See `.context/admin/setup-wizard.md` for how the wizard populates the system default-chat model.
+
 ### Temperature slider
 
 shadcn `<Slider>` from 0 to 2 with step 0.05. Readout shows the current value to two decimals. Default is 0.7.
@@ -83,8 +87,8 @@ The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain 
 
 ### Help copy
 
-- **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. Default: `anthropic`."
-- **Model** — "The exact model identifier your provider exposes. Changing this switches which model actually answers — cost, latency, and quality all shift. Default: `claude-opus-4-6`."
+- **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. No default — pick one of the providers configured via the setup wizard or the Providers page."
+- **Model** — "The exact model identifier your provider exposes. Changing this switches which model actually answers — cost, latency, and quality all shift. No default — pick one from the dropdown filtered to the chosen provider."
 - **Temperature** — "How much the model varies its wording. 0 = always picks the most likely next word (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes incoherent. Default: `0.7`."
 - **Max output tokens** — "Upper bound on how long one reply can be. Defaults to `4096`. Only raise this if replies are getting cut off — higher values cost more on every turn."
 - **Monthly budget (USD)** — "Hard spend cap for this agent, in USD. When month-to-date spend exceeds the cap, new chats are rejected until the calendar month rolls over or you raise the limit. Leave blank to disable the cap."

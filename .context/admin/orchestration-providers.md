@@ -2,6 +2,35 @@
 
 Admin list/create/edit flows for `AiProviderConfig`. Landed in Phase 4 Session 4.3. Providers are the **LLM backends** your agents can call — Anthropic, OpenAI, Voyage AI, Ollama, or any OpenAI-compatible service.
 
+## No pre-seeded providers
+
+A fresh install (post `db:reset`) starts with **zero `AiProviderConfig` rows**. Providers are not pre-seeded — operators choose what to configure via the [setup wizard](./setup-wizard.md), which detects API keys present in `process.env` and offers one-click configuration cards.
+
+The 47-row provider-model matrix (`prisma/seeds/009-provider-models.ts`) is still seeded as **reference catalogue data**, not as configured providers. It powers the Model Matrix tab and the recommender (`lib/orchestration/llm/provider-selector.ts`).
+
+## Detection API
+
+`GET /api/v1/admin/orchestration/providers/detect` (admin-only) scans `process.env` for known LLM API keys and returns:
+
+```ts
+{
+  detected: Array<{
+    slug: string; // e.g. "anthropic"
+    name: string;
+    providerType: 'anthropic' | 'openai-compatible' | 'voyage';
+    defaultBaseUrl: string | null;
+    apiKeyEnvVar: string | null; // e.g. "ANTHROPIC_API_KEY" — name only, never the value
+    apiKeyPresent: boolean;
+    alreadyConfigured: boolean; // true if a row with this slug already exists
+    isLocal: boolean;
+    suggestedDefaultChatModel: string | null;
+    suggestedEmbeddingModel: string | null;
+  }>;
+}
+```
+
+The known-provider catalogue lives in `lib/orchestration/llm/known-providers.ts`. Add a flavour there to make it detectable. Env-var values never leave the server.
+
 **Pages**
 
 | Route                                 | File                                              | Role                                 |

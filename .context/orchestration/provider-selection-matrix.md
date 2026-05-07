@@ -2,6 +2,17 @@
 
 DB-managed registry of LLM provider **models** with tier classification, capability ratings, and a decision heuristic for assigning models to agent roles. Each row represents a single model (e.g. "Claude Opus 4", "GPT-4o-mini", "Voyage 3") rather than a provider.
 
+## Dynamic system-agent resolution
+
+The 5 system-seeded agents (`pattern-advisor`, `quiz-master`, `mcp-system`, `provider-model-auditor`, `audit-report-writer`) ship with empty `provider`/`model` strings. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills those bindings from:
+
+1. The first active `AiProviderConfig` row whose `apiKeyEnvVar` is set in `process.env` (or whose row is `isLocal`).
+2. `AiOrchestrationSettings.defaultModels.chat` for the model id, falling through to `getDefaultModelForTask('chat')` and ultimately the registry's static fallback (`computeDefaultModelMap()` in `model-registry.ts`).
+
+The setup wizard writes `defaultModels.chat` and `.embeddings` based on the operator's chosen provider, so a fresh install picks up sensible defaults automatically once a provider is configured. Explicit `agent.provider`/`.model` always wins; the empty-string fallback is reserved for system seeds.
+
+This is the seam that makes Sunrise provider-agnostic on a fresh install. The 47-row matrix in `009-provider-models.ts` remains the **catalogue** that powers the recommender below.
+
 ## Quick Start
 
 ```typescript
