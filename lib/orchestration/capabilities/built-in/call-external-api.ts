@@ -38,9 +38,12 @@ import {
   resolveEnvTemplatesInRecord,
 } from '@/lib/orchestration/env-template';
 import {
+  buildMultipartBody,
   executeHttpRequest,
   HttpError,
   mergeHeaders,
+  multipartShapeSchema,
+  MultipartError,
   type HttpAuthConfig,
   type HttpMethod,
   type ResponseTransform,
@@ -102,19 +105,33 @@ const customConfigSchema = z
 
 type CustomConfig = z.infer<typeof customConfigSchema>;
 
-const argsSchema = z.object({
-  /** Optional — the binding's `forcedUrl` (if set) takes precedence; otherwise this is required. */
-  url: z.string().url().max(2048).optional(),
-  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  headers: z.record(z.string(), z.string()).optional(),
-  body: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-  /**
-   * Optional JMESPath expression. The LLM can request a structured
-   * extraction inline; otherwise the binding's
-   * `defaultResponseTransform` is used (if any).
-   */
-  responseExtract: z.string().min(1).max(2000).optional(),
-});
+const argsSchema = z
+  .object({
+    /** Optional — the binding's `forcedUrl` (if set) takes precedence; otherwise this is required. */
+    url: z.string().url().max(2048).optional(),
+    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+    headers: z.record(z.string(), z.string()).optional(),
+    body: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+    /**
+     * Multipart/form-data body — mutually exclusive with `body`. Used
+     * for endpoints that require named file parts (e.g. Gotenberg
+     * HTML→PDF). File `data` is base64-encoded bytes; `fields` are
+     * plain string form values. The HTTP layer rejects HMAC auth +
+     * multipart; non-HMAC auth modes (bearer / api-key /
+     * query-param / basic) work unchanged.
+     */
+    multipart: multipartShapeSchema.optional(),
+    /**
+     * Optional JMESPath expression. The LLM can request a structured
+     * extraction inline; otherwise the binding's
+     * `defaultResponseTransform` is used (if any).
+     */
+    responseExtract: z.string().min(1).max(2000).optional(),
+  })
+  .refine((args) => !(args.body !== undefined && args.multipart !== undefined), {
+    message: '`body` and `multipart` are mutually exclusive — supply one or the other, not both',
+    path: ['multipart'],
+  });
 
 type Args = z.infer<typeof argsSchema>;
 
@@ -165,7 +182,35 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
         },
         body: {
           description:
-            'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE.',
+            'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE. Mutually exclusive with `multipart` — supply one or the other.',
+        },
+        multipart: {
+          type: 'object',
+          description:
+            'Optional multipart/form-data body for endpoints that require named file parts (e.g. document renderers like Gotenberg). Mutually exclusive with `body`. Per-file size cap is 8 MB base64; total request body cap is 25 MB.',
+          properties: {
+            files: {
+              type: 'array',
+              description:
+                'File parts. Each entry is `{ name, filename?, contentType, data }` where `data` is base64-encoded bytes. If a previous tool returned `{ encoding: "base64", data }`, pass that `data` directly here.',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  filename: { type: 'string' },
+                  contentType: { type: 'string' },
+                  data: { type: 'string' },
+                },
+                required: ['name', 'contentType', 'data'],
+              },
+            },
+            fields: {
+              type: 'object',
+              description: 'Optional plain-text field parts (form key → value).',
+              additionalProperties: { type: 'string' },
+            },
+          },
+          required: ['files'],
         },
         responseExtract: {
           type: 'string',
@@ -283,7 +328,24 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
       ? { key: 'auto', headerName: customConfig.idempotencyHeader }
       : undefined;
 
-    const body = stringifyBody(args.body);
+    // Multipart and JSON bodies are mutually exclusive at the schema
+    // layer; only one branch ever fires. The HTTP layer rejects
+    // HMAC + multipart with `multipart_hmac_unsupported` — surface that
+    // back as `invalid_binding` since the misconfiguration is on the
+    // admin's auth choice, not on the LLM's call.
+    let body: string | FormData | undefined;
+    if (args.multipart) {
+      try {
+        body = buildMultipartBody(args.multipart);
+      } catch (err) {
+        if (err instanceof MultipartError) {
+          return this.error(err.message, 'invalid_args');
+        }
+        throw err;
+      }
+    } else {
+      body = stringifyBody(args.body);
+    }
 
     const responseTransform: ResponseTransform | undefined = args.responseExtract
       ? { type: 'jmespath', expression: args.responseExtract }
@@ -355,6 +417,11 @@ function mapHttpErrorCode(code: string): string {
       return 'host_not_allowed';
     case 'missing_auth_secret':
       return 'auth_failed';
+    case 'multipart_hmac_unsupported':
+      // The misconfiguration is on the admin's auth choice (HMAC) +
+      // the LLM choosing multipart — surface as invalid_binding so the
+      // admin sees the binding-level fix path.
+      return 'invalid_binding';
     case 'outbound_rate_limited':
       return 'rate_limited';
     case 'request_timeout':
