@@ -56,11 +56,26 @@ The webhook URL is the credential — the LLM should not need to know it. Bind i
 
 When `forcedUrl` is set, the LLM-supplied `url` arg is discarded and the binding-pinned URL is used. The capability function definition allows omitting `url` entirely, so the agent prompt can describe the tool as "post a message" without the LLM needing to pick a URL. The host (`hooks.slack.com`) still has to be in `ORCHESTRATION_ALLOWED_HOSTS` — `forcedUrl` is a binding constraint, not an allowlist bypass.
 
-Storing the actual webhook URL in `customConfig` is acceptable for chat webhooks because the URL itself is the credential and is scoped per-channel. Rotate the webhook URL (and update the binding) annually or when team access changes. If you'd rather keep the URL in env vars only, use the alternative below.
+Storing the actual webhook URL in `customConfig` is acceptable for chat webhooks because the URL itself is the credential and is scoped per-channel. Rotate the webhook URL (and update the binding) annually or when team access changes. If you'd rather keep the URL in env vars only, use the env-templated form below.
 
-### Alternative: env-resolved `forcedUrl` at admin-save time
+### Alternative: env-templated `forcedUrl` (recommended for shared deployments)
 
-If your admin pipeline supports it (some orgs require all secrets to live in env vars only, never DB columns), set `forcedUrl: "${env:SLACK_WEBHOOK_URL}"` and have the binding-save endpoint resolve the env var at write time. **The current admin API does not perform this substitution** — see [Common variants](#9-common-variants) for the open follow-up. Until then, the inline `forcedUrl` is the supported path.
+If your org requires secrets to live in env vars only and never in DB columns, reference the env var via the `${env:VAR_NAME}` template:
+
+```json
+{
+  "forcedUrl": "${env:SLACK_WEBHOOK_URL}",
+  "forcedHeaders": { "Content-Type": "application/json" },
+  "auth": { "type": "none" },
+  "defaultResponseTransform": { "type": "template", "expression": "ok" },
+  "timeoutMs": 10000,
+  "maxResponseBytes": 1024
+}
+```
+
+The literal template string stays in `customConfig`; the env var is resolved on every call against `process.env`. Same fail-closed posture as `auth.secret` — a missing env var refuses the call rather than silently downgrading. Rotation = change one env var, no binding edit.
+
+The binding-save API surfaces a soft warning (`meta.warnings.missingEnvVars`) when a referenced env var isn't set in the running process — the binding still saves so admins can wire the env var afterwards. See `.context/orchestration/external-calls.md` for the full templating rules.
 
 ## 6. Agent prompt guidance
 
@@ -162,7 +177,7 @@ Outbound webhooks don't sign. If you migrate to Slack's chat.postMessage Web API
 - **Threading.** Slack incoming webhooks don't support threading (you can't pass `thread_ts`). For threads, use `chat.postMessage` with bearer auth — different recipe / capability binding
 - **Mentions.** Slack: `<@USER_ID>` in `text` notifies the user. Discord: `<@user_id>`. Teams: `<at>...</at>` inside an Adaptive Card
 - **Throttling.** Slack rate-limits incoming webhooks at ~1/sec per webhook URL with bursts. Set `ORCHESTRATION_OUTBOUND_RATE_LIMIT` low for Slack-heavy agents
-- **Env-resolved `forcedUrl` (open follow-up).** Today the binding stores the resolved webhook URL inline in `customConfig`. An admin-API substitution path that resolves `${env:VAR}` at binding-save time would let the URL stay in env vars only — see `improvement-priorities.md` Tier 3
+- **Env-templated `forcedUrl`.** `forcedUrl: "${env:SLACK_WEBHOOK_URL}"` resolves on every call so the URL stays in env vars only. See §5 (Alternative)
 - **Multi-channel.** Bind `call_external_api` once per channel (each with its own `customConfig` and `forcedUrl`). The LLM picks which channel by which capability slug it calls — give them descriptive names like `notify_eng_channel` if you wrap them, or just rely on prompt guidance
 
 ## 10. Anti-patterns

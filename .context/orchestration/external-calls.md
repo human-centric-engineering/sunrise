@@ -87,6 +87,30 @@ Secrets are **never** stored in the database or workflow config. The `authSecret
 
 If the env var is missing, the executor **fails fast** with a non-retriable `missing_auth_secret` error — it does not silently drop auth headers.
 
+### Env-var templating in stringy fields
+
+Beyond `authSecret`, certain fields whose values may themselves be credentials (e.g. an admin-pinned webhook URL on `forcedUrl`, a literal `Authorization` line on `forcedHeaders`) accept the `${env:VAR_NAME}` template syntax. The literal template stays in the DB; the value resolves on every call.
+
+**Where it works.**
+
+| Surface                                | Templated fields                                            |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `call_external_api` capability binding | `customConfig.forcedUrl`, `customConfig.forcedHeaders`      |
+| `external_call` workflow step config   | `config.url` (after prompt interpolation), `config.headers` |
+
+**Where it doesn't.** Auth fields (`authSecret`, `auth.secret`) already use the env-var-name pattern — keep using that. The body / `bodyTemplate` carries workflow-context interpolation only.
+
+**Pattern.** `${env:NAME}` where NAME matches `[A-Z][A-Z0-9_]*`. Multiple references per string and a mix of literal text + templates are both supported (`https://api.example.com/${env:REGION}/v1` is valid).
+
+**Failure mode.** Same fail-closed posture as `readSecret()`:
+
+| Surface              | Missing env var → error                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `call_external_api`  | Capability result `error.code = invalid_binding` (no outbound request)       |
+| `external_call` step | `ExecutorError(stepId, 'missing_env_var')` — workflow error strategy applies |
+
+**Save-time hint.** The capability binding API (`POST` / `PATCH /agents/:id/capabilities`) scans `forcedUrl` and `forcedHeaders` for env-var references and returns `meta.warnings.missingEnvVars: string[]` for any names not currently set in the running process. Soft warning — the binding still saves so admins can deploy the env var afterwards. The agent Capabilities tab renders this as an inline amber panel under the JSON editor.
+
 ### Auth types
 
 | Type          | Behavior                                                                                                                                                             |
@@ -167,18 +191,19 @@ Auth headers and secrets are never logged.
 
 ## Error codes
 
-| Code                    | Retriable | Description                                   |
-| ----------------------- | --------- | --------------------------------------------- |
-| `missing_url`           | Yes       | Step config has no `url`                      |
-| `host_not_allowed`      | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS` |
-| `missing_auth_secret`   | No        | Auth env var is not set                       |
-| `outbound_rate_limited` | Yes       | Per-host rate limit exceeded                  |
-| `request_failed`        | Yes       | Network error or timeout                      |
-| `request_aborted`       | No        | Execution's AbortSignal was already triggered |
-| `http_error`            | No        | Non-retriable HTTP status (4xx except 429)    |
-| `http_error_retriable`  | Yes       | Retriable HTTP status (429, 502, 503, 504)    |
-| `response_too_large`    | No        | Response body exceeds `maxResponseBytes`      |
-| `step_timeout`          | No        | Per-step timeout exceeded (engine-level)      |
+| Code                    | Retriable | Description                                                              |
+| ----------------------- | --------- | ------------------------------------------------------------------------ |
+| `missing_url`           | Yes       | Step config has no `url`                                                 |
+| `missing_env_var`       | No        | A `${env:VAR}` reference in `url` / `headers` points at an unset env var |
+| `host_not_allowed`      | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS`                            |
+| `missing_auth_secret`   | No        | Auth env var is not set                                                  |
+| `outbound_rate_limited` | Yes       | Per-host rate limit exceeded                                             |
+| `request_failed`        | Yes       | Network error or timeout                                                 |
+| `request_aborted`       | No        | Execution's AbortSignal was already triggered                            |
+| `http_error`            | No        | Non-retriable HTTP status (4xx except 429)                               |
+| `http_error_retriable`  | Yes       | Retriable HTTP status (429, 502, 503, 504)                               |
+| `response_too_large`    | No        | Response body exceeds `maxResponseBytes`                                 |
+| `step_timeout`          | No        | Per-step timeout exceeded (engine-level)                                 |
 
 ## Environment variables
 
