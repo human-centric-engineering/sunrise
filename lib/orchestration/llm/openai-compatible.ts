@@ -64,7 +64,13 @@ import { getTextContent } from '@/lib/orchestration/llm/types';
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
 
-/** Default embedding model for cloud OpenAI-compatible hosts. */
+/**
+ * Default embedding model for cloud OpenAI-compatible hosts. Used only
+ * as a constructor-default fallback when nobody passes `embeddingModel`
+ * to the provider class. The runtime embedding pipeline resolves the
+ * model dynamically via `getDefaultModelForTask('embeddings')` in
+ * `lib/orchestration/knowledge/embedder.ts`.
+ */
 const DEFAULT_CLOUD_EMBEDDING_MODEL = 'text-embedding-3-small';
 
 /** Default embedding model for local Ollama-style hosts. */

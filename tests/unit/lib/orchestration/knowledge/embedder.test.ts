@@ -27,6 +27,16 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Stub the settings-resolver so the test fixture-defined embedding model
+// (text-embedding-3-small) wins over whatever the live registry would
+// compute. Real callers still get the operator-configured value via
+// AiOrchestrationSettings.defaultModels.embeddings.
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  getDefaultModelForTask: vi.fn(async (task: string) =>
+    task === 'embeddings' ? 'text-embedding-3-small' : 'fixture-chat-model'
+  ),
+}));
+
 // Mock global fetch before importing the SUT so the module picks it up
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
