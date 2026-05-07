@@ -27,6 +27,7 @@ triggers:
   - 'build this from scratch'
 
 contexts:
+  - '.context/orchestration/meta/functional-specification.md'
   - '.context/admin/orchestration.md'
   - '.context/admin/orchestration-solution-builder.md'
   - '.context/admin/orchestration-capabilities-guide.md'
