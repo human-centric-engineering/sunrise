@@ -1,69 +1,59 @@
-# Agent Orchestration
+# Agent Orchestration — Engineering Directory
 
-The orchestration layer lives in `lib/orchestration/` and powers the Sunrise admin dashboard's AI agent system.
+The orchestration layer lives in `lib/orchestration/` and powers the Sunrise admin dashboard's AI agent system. This page is the engineering-side directory map for `.context/orchestration/` — one row per topic doc.
 
-**Hard rule:** Everything under `lib/orchestration/` is **platform-agnostic**. Never import from `next/server`, `next/headers`, `next/cache`, or any Next.js module. HTTP/SSE wrapping happens in `app/api/v1/admin/orchestration/*`.
+For the full module list, every step type, every capability, route counts, and the schema, see [`meta/functional-specification.md`](./meta/functional-specification.md). For the architectural rules code authors must follow, see [`.claude/docs/agent-orchestration.md`](../../.claude/docs/agent-orchestration.md). For the admin UI, see [`.context/admin/orchestration.md`](../admin/orchestration.md).
 
-## Module Layout
+**Hard rule (load-bearing):** Everything under `lib/orchestration/` is platform-agnostic. Never import from `next/server`, `next/headers`, `next/cache`, or any Next.js module. HTTP/SSE wrapping happens in `app/api/v1/admin/orchestration/*`.
 
-| Module                            | Purpose                                                                                                        | Status      |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------- |
-| `lib/orchestration/knowledge/`    | Document ingestion, chunking, embeddings, vector search                                                        | Phase 1 ✓   |
-| `lib/orchestration/llm/`          | Provider abstraction, model registry, cost tracking                                                            | Phase 2a ✓  |
-| `lib/orchestration/capabilities/` | Tool dispatcher, built-in capabilities, rate limiting, approval gating                                         | Phase 2b ✓  |
-| `lib/orchestration/chat/`         | Streaming chat handler, context builder, message composition                                                   | Phase 2c ✓  |
-| `lib/orchestration/workflows/`    | DAG validator (authoring-time structural checks)                                                               | Phase 3.2 ✓ |
-| `lib/orchestration/engine/`       | Runtime executor — `OrchestrationEngine`, executor registry, 12 step executors, event stream                   | Phase 5.2 ✓ |
-| `prisma/seeds/data/`              | Dev seed data for providers / agents                                                                           | Phase 1 ✓   |
-| `lib/orchestration/evaluations/`  | Evaluation session completion handler (bounded prompt, sanitized errors)                                       | Phase 3.4 ✓ |
-| `app/api/v1/admin/orchestration/` | Admin CRUD + runtime routes (chat stream, knowledge, conversations, costs, evaluations, live workflow execute) | Phase 5.2 ✓ |
+## Engineering Topics
 
-## Documentation
+| Doc                                                              | Covers                                                                           |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`llm-providers.md`](./llm-providers.md)                         | Provider abstraction, chat, streaming, embeddings, cost tracking, model registry |
+| [`provider-selection-matrix.md`](./provider-selection-matrix.md) | Tier classification, model audit workflow, decision heuristic                    |
+| [`capabilities.md`](./capabilities.md)                           | Tool dispatcher, built-in capabilities, rate limits, approval gating             |
+| [`chat.md`](./chat.md)                                           | Streaming chat handler, tool loop, context builder, error codes                  |
+| [`knowledge.md`](./knowledge.md)                                 | Document ingestion, chunking, vector search, hybrid retrieval                    |
+| [`document-ingestion.md`](./document-ingestion.md)               | Multi-format parsing, PDF preview flow, parser architecture                      |
+| [`workflows.md`](./workflows.md)                                 | DAG validator, step types, error codes                                           |
+| [`workflow-versioning.md`](./workflow-versioning.md)             | Publish / draft / rollback model, execution pinning, audit events                |
+| [`patterns-and-steps.md`](./patterns-and-steps.md)               | The 21 canonical patterns, step→pattern relationships, author guidance           |
+| [`engine.md`](./engine.md)                                       | Runtime executor, executor registry, events, checkpoints, error strategies       |
+| [`tracing.md`](./tracing.md)                                     | Tracer interface, no-op default, OTEL adapter, span tree                         |
+| [`external-calls.md`](./external-calls.md)                       | HTTP executor, outbound rate limits, auth, response caps                         |
+| [`autonomous-orchestration.md`](./autonomous-orchestration.md)   | Orchestrator step, workflows vs autonomous, when to use each                     |
+| [`resilience.md`](./resilience.md)                               | Circuit breaker, fallback, budget UX, input guard, error registry                |
+| [`output-guard.md`](./output-guard.md)                           | Topic boundaries, PII detection, brand voice, citation guard                     |
+| [`agent-visibility.md`](./agent-visibility.md)                   | Visibility modes, invite tokens, access control                                  |
+| [`api-keys.md`](./api-keys.md)                                   | Self-service API keys, scopes, key resolution                                    |
+| [`mcp.md`](./mcp.md)                                             | MCP protocol, tools, resources, keys, audit                                      |
+| [`scheduling.md`](./scheduling.md)                               | Cron schedules, webhook triggers, scheduler tick                                 |
+| [`hooks.md`](./hooks.md)                                         | In-process event dispatch, outbound webhooks vs internal handlers                |
+| [`analytics.md`](./analytics.md)                                 | Popular topics, unanswered questions, engagement, gaps                           |
+| [`evaluation-metrics.md`](./evaluation-metrics.md)               | Named-metric scoring (faithfulness, groundedness, relevance), rescore            |
+| [`experiments.md`](./experiments.md)                             | A/B variants, lifecycle, run API                                                 |
+| [`backup.md`](./backup.md)                                       | Export/import config, schema versioning, ImportResult                            |
+| [`embed.md`](./embed.md)                                         | Token auth, CORS, widget.js loader, Shadow DOM chat                              |
+| [`admin-api.md`](./admin-api.md)                                 | Admin HTTP API summary (paths, auth, rate limits)                                |
+| [`recipes/`](./recipes/)                                         | Vendor integration cookbook (HTTP-based, no SDK bundling)                        |
+| [`meta/`](./meta/README.md)                                      | Spec, decisions, maturity, roadmap, hosting, commercial, QA test plan            |
 
-| Topic         | File                                                          | Covers                                                                         |
-| ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| LLM Providers | [`llm-providers.md`](./llm-providers.md)                      | Chat, streaming, embeddings, cost tracking, model registry                     |
-| Capabilities  | [`capabilities.md`](./capabilities.md)                        | Dispatcher, built-in capabilities, rate limits, approval gating                |
-| Chat          | [`chat.md`](./chat.md)                                        | Streaming chat handler, tool loop, context builder, error codes                |
-| Knowledge     | [`knowledge.md`](./knowledge.md)                              | Document ingestion, chunking, vector search, seeder                            |
-| Workflows     | [`workflows.md`](./workflows.md)                              | DAG validator, step types, error codes                                         |
-| Engine        | [`engine.md`](./engine.md)                                    | Runtime executor, executor registry, events, checkpoints, error strategies     |
-| Resilience    | [`resilience.md`](./resilience.md)                            | Circuit breaker, provider fallback, budget UX, input guard, error registry     |
-| Admin API     | [`admin-api.md`](./admin-api.md)                              | Agents, capabilities, providers, workflows, chat, knowledge, costs, executions |
-| Maturity      | [`maturity-analysis.md`](./meta/maturity-analysis.md)         | Competitive analysis, capability matrices, prioritised improvements            |
-| Applications  | [`business-applications.md`](./meta/business-applications.md) | Real-world use cases, venture studio opportunities, worked examples            |
+## Architecture Decisions (summary)
 
-### Admin UI (`.context/admin/`)
+The full record with alternatives and rationale lives in [`meta/architectural-decisions.md`](./meta/architectural-decisions.md). The decisions you'll feel day-to-day:
 
-| Topic              | File                                                                                  | Covers                                                               |
-| ------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Overview           | [`orchestration.md`](../admin/orchestration.md)                                       | Architecture, quick start, key concepts, API summary, config         |
-| Solution Builder   | [`orchestration-solution-builder.md`](../admin/orchestration-solution-builder.md)     | Problem-to-solution guide, 5 worked examples                         |
-| Capabilities Guide | [`orchestration-capabilities-guide.md`](../admin/orchestration-capabilities-guide.md) | How to create capabilities, BaseCapability ref, built-ins            |
-| Workflows Guide    | [`orchestration-workflows-guide.md`](../admin/orchestration-workflows-guide.md)       | Step types, error strategies, templates, extending                   |
-| Agents list        | [`orchestration-agents.md`](../admin/orchestration-agents.md)                         | List page, table, duplicate/import dialogs                           |
-| Agent form         | [`agent-form.md`](../admin/agent-form.md)                                             | 5-tab create/edit form, instructions history, test chat              |
-| Capabilities list  | [`orchestration-capabilities.md`](../admin/orchestration-capabilities.md)             | Table, category filter, lazy agents-using count, soft-delete dialog  |
-| Capability form    | [`capability-form.md`](../admin/capability-form.md)                                   | 4 tabs, visual builder ↔ JSON editor, execution, safety              |
-| Providers list     | [`orchestration-providers.md`](../admin/orchestration-providers.md)                   | Card grid, status dots, models dialog, env-var-only security model   |
-| Provider form      | [`provider-form.md`](../admin/provider-form.md)                                       | 4-flavor selector, reverse-mapping on edit, test-connection flow     |
-| Costs & budget     | [`orchestration-costs.md`](../admin/orchestration-costs.md)                           | Summary cards, trend chart, savings panel, settings singleton        |
-| Workflow builder   | [`workflow-builder.md`](../admin/workflow-builder.md)                                 | React Flow canvas, pattern palette, step registry, layout round-trip |
-| Learning UI        | [`orchestration-learn.md`](../admin/orchestration-learn.md)                           | Pattern explorer, advisor chatbot, quiz system, tabbed hub           |
-| Knowledge Base UI  | [`orchestration-knowledge-ui.md`](../admin/orchestration-knowledge-ui.md)             | Document management, drag-drop upload, search test                   |
-| Chat Interface     | [`orchestration-chat-interface.md`](../admin/orchestration-chat-interface.md)         | Reusable SSE chat component, embedded mode, event callbacks          |
-
-## Architecture Decisions
-
-- **Platform-agnostic core**: Orchestration services return plain values and `AsyncIterable`s, not HTTP responses. The API layer adapts.
-- **API-first**: Every capability must be API-accessible before any UI is built.
-- **Multi-tenant**: All agent data is scoped by `userId`. Organisation scoping is a later addition.
-- **Provider-agnostic LLMs**: A single `LlmProvider` interface covers Anthropic, OpenAI, Ollama, LM Studio, vLLM, Together, Fireworks, and Groq. Callers never touch vendor SDKs directly.
-- **pgvector** for embeddings; **SSE** for streaming responses from the future chat handler.
+- **Platform-agnostic core.** Orchestration services return plain values and `AsyncIterable`s, not HTTP responses. The API layer adapts.
+- **API-first.** Every capability must be API-accessible before any UI is built.
+- **Multi-tenant by `userId`.** All agent data is scoped by `userId`. Organisation scoping is a later addition.
+- **Provider-agnostic LLMs.** A single `LlmProvider` interface covers Anthropic, OpenAI, Ollama, LM Studio, vLLM, Together, Fireworks, Groq, Voyage AI, Google, Mistral, Cohere. Callers never touch vendor SDKs directly.
+- **pgvector** for embeddings; **SSE** for streaming chat.
 
 ## Related Files
 
-- `.claude/docs/agent-orchestration.md` — architectural brief for Claude Code sessions
-- `.claude/skills/agent-architect/` — design-decision skill for orchestration work
+- [`.claude/docs/agent-orchestration.md`](../../.claude/docs/agent-orchestration.md) — architectural rules for code authors
+- [`.context/admin/orchestration.md`](../admin/orchestration.md) — admin operator landing
+- `.claude/skills/orchestration-*` — implementation skills (architect, solution builder, capability builder, workflow builder, knowledge builder)
 - `types/orchestration.ts` — shared TypeScript types (`TokenUsage`, `ChatEvent`, `CostSummary`, ...)
-- `prisma/schema.prisma` — `AiAgent`, `AiProviderConfig`, `AiCostLog`, `AiConversation`, `AiWorkflowExecution`, and knowledge-base models
+- `lib/validations/orchestration.ts` — Zod schemas for every external boundary
+- `prisma/schema.prisma` — 29 `Ai*` models (agents, workflows, conversations, knowledge, costs, …)
