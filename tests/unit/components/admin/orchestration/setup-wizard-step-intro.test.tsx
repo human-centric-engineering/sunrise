@@ -178,7 +178,7 @@ describe('SetupWizard — StepIntro (step 1)', () => {
 
       // Assert: wizard advances to step 2
       await waitFor(() => {
-        expect(screen.getByText(/Step 2 of 5/i)).toBeInTheDocument();
+        expect(screen.getByText(/Step 2 of 6/i)).toBeInTheDocument();
       });
     });
   });
