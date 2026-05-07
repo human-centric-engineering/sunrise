@@ -302,6 +302,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Consumer Chat API        | `.context/api/consumer-chat.md`                           | End-user chat endpoints, agent visibility, rate limits                                  |
 | Document Ingestion       | `.context/orchestration/document-ingestion.md`            | Multi-format parsing, PDF preview flow, parser arch                                     |
 | Scheduling & Webhooks    | `.context/orchestration/scheduling.md`                    | Cron schedules, webhook triggers, scheduler tick                                        |
+| Inbound Triggers         | `.context/orchestration/inbound-triggers.md`              | Slack / Postmark / generic-HMAC adapters, replay protection, per-channel payload tables |
 | Event Hooks              | `.context/orchestration/hooks.md`                         | In-process dispatch, outbound webhooks vs internal handlers                             |
 | Client Analytics         | `.context/orchestration/analytics.md`                     | Popular topics, unanswered questions, engagement, gaps                                  |
 | Autonomous Orchestration | `.context/orchestration/autonomous-orchestration.md`      | Orchestrator step, workflows vs autonomous, when to use each                            |

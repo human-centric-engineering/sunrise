@@ -308,6 +308,18 @@ export const embedChatLimiter = createRateLimiter({
   uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
 });
 
+/**
+ * Inbound trigger limiter — 60 requests per minute per (channel + remote IP).
+ * Slack can burst on app-mention storms; Postmark inbound is steadier. The
+ * limit lives above expected steady traffic but caps runaway loops or
+ * misconfigured pollers.
+ */
+export const inboundLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: 60,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
 // =============================================================================
 // Dynamic Rate Limiter Factory
 // =============================================================================

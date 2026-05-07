@@ -88,8 +88,12 @@ export interface ScheduleProcessResult {
  * `workflow.execution.failed` hook is emitted. The engine's own
  * `workflow.failed` hook is NOT emitted on this path because
  * `finalize()` never ran — see `lib/orchestration/engine/orchestration-engine.ts`.
+ *
+ * Exported so the inbound-trigger route can drain immediately on receipt
+ * (rather than waiting for the next maintenance tick) — the crash-handling
+ * and hook-emission semantics are identical for both entry points.
  */
-async function drainEngine(
+export async function drainEngine(
   executionId: string,
   workflow: { id: string; slug: string },
   definition: WorkflowDefinition,
