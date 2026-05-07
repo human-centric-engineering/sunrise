@@ -25,9 +25,28 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+
+/**
+ * Scans a customConfig blob for `${env:VAR}` references in known
+ * credential-bearing fields and returns the names that are NOT set in
+ * the running process. Soft warning surfaced to the admin UI — save
+ * still succeeds; an admin may legitimately save a binding before the
+ * matching env var has been deployed to the host.
+ */
+function collectMissingEnvVars(customConfig: unknown): string[] {
+  if (!customConfig || typeof customConfig !== 'object') return [];
+  const cfg = customConfig as Record<string, unknown>;
+  const forcedUrl = typeof cfg.forcedUrl === 'string' ? cfg.forcedUrl : undefined;
+  const forcedHeaders =
+    cfg.forcedHeaders && typeof cfg.forcedHeaders === 'object'
+      ? (cfg.forcedHeaders as Record<string, string>)
+      : undefined;
+  return findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
+}
 
 function parseAgentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -106,7 +125,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       clientIp: clientIP,
     });
 
-    return successResponse(link, undefined, { status: 201 });
+    const missingEnvVars = collectMissingEnvVars(body.customConfig);
+    const meta = missingEnvVars.length > 0 ? { warnings: { missingEnvVars } } : undefined;
+    return successResponse(link, meta, { status: 201 });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       throw new ConflictError(

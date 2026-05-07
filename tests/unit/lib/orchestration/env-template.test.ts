@@ -17,6 +17,7 @@ import {
   EnvTemplateError,
   containsEnvTemplate,
   extractEnvTemplateNames,
+  findUnsetEnvVarReferences,
   resolveEnvTemplate,
   resolveEnvTemplatesInRecord,
 } from '@/lib/orchestration/env-template';
@@ -197,6 +198,45 @@ describe('env-template', () => {
           B: 'Bearer ${env:MISSING}',
         })
       ).toThrow(EnvTemplateError);
+    });
+  });
+
+  describe('findUnsetEnvVarReferences', () => {
+    it('returns empty when no values reference any templates', () => {
+      expect(findUnsetEnvVarReferences('plain', { Authorization: 'Bearer literal' })).toEqual([]);
+    });
+
+    it('returns empty when every referenced var is set', () => {
+      process.env.A = '1';
+      process.env.B = '2';
+      expect(findUnsetEnvVarReferences('${env:A}', { h: '${env:B}' })).toEqual([]);
+    });
+
+    it('returns names of missing vars only', () => {
+      process.env.PRESENT = 'x';
+      delete process.env.MISSING_1;
+      delete process.env.MISSING_2;
+      expect(
+        findUnsetEnvVarReferences('${env:PRESENT}-${env:MISSING_1}', {
+          h: 'Bearer ${env:MISSING_2}',
+        })
+      ).toEqual(['MISSING_1', 'MISSING_2']);
+    });
+
+    it('deduplicates the same missing var seen across multiple values', () => {
+      delete process.env.SAME_MISSING;
+      expect(
+        findUnsetEnvVarReferences('${env:SAME_MISSING}', { h: 'Bearer ${env:SAME_MISSING}' })
+      ).toEqual(['SAME_MISSING']);
+    });
+
+    it('treats empty-string env var as missing (matches resolveEnvTemplate)', () => {
+      process.env.EMPTY = '';
+      expect(findUnsetEnvVarReferences('${env:EMPTY}')).toEqual(['EMPTY']);
+    });
+
+    it('ignores undefined and null inputs', () => {
+      expect(findUnsetEnvVarReferences(undefined, null, undefined)).toEqual([]);
     });
   });
 });

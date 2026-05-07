@@ -107,3 +107,45 @@ export function resolveEnvTemplatesInRecord(
   }
   return out;
 }
+
+/**
+ * Scans the supplied values for `${env:VAR}` references and returns
+ * the deduplicated names of any referenced env vars that are not
+ * currently set in `process.env`. Used by the binding-save warning to
+ * tell the admin which env vars they still need to deploy.
+ *
+ * Soft check — empty result does NOT prove the call will succeed
+ * (env vars can be unset between save and call); non-empty result
+ * means at least one referenced var is definitely missing right now.
+ *
+ * Mirrors the `apiKeyPresent` posture in
+ * `lib/orchestration/llm/provider-manager.ts` — presence check only,
+ * never returns the resolved value.
+ */
+export function findUnsetEnvVarReferences(
+  ...values: ReadonlyArray<string | Record<string, string> | undefined | null>
+): string[] {
+  const all: string[] = [];
+  for (const value of values) {
+    if (value == null) continue;
+    if (typeof value === 'string') {
+      all.push(...extractEnvTemplateNames(value));
+    } else {
+      for (const inner of Object.values(value)) {
+        if (typeof inner === 'string') {
+          all.push(...extractEnvTemplateNames(inner));
+        }
+      }
+    }
+  }
+  const seen = new Set<string>();
+  const missing: string[] = [];
+  for (const name of all) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (!process.env[name]) {
+      missing.push(name);
+    }
+  }
+  return missing;
+}
