@@ -166,8 +166,8 @@ model AiAgent {
   description               String   @db.Text
   systemInstructions        String   @db.Text
   systemInstructionsHistory Json     @default("[]") // [{instructions, changedAt, changedBy}]
-  model                     String // e.g. "claude-sonnet-4-6", "llama3:latest"
-  provider                  String   @default("anthropic")
+  model                     String // e.g. "claude-sonnet-4-6", "llama3:latest". Empty string => resolve dynamically via lib/orchestration/llm/agent-resolver.ts (used by system-seeded agents on fresh installs).
+  provider                  String   @default("anthropic") // e.g. "anthropic", "openai". Empty string => same dynamic-resolution contract as `model`.
   fallbackProviders         String[] @default([])
   providerConfig            Json?
   temperature               Float    @default(0.7)
