@@ -231,4 +231,23 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.webhooks).toHaveLength(1);
     expect(payload.data.settings).not.toBeNull();
   });
+
+  it('skips workflows that have no published version (no exportable snapshot)', async () => {
+    // Edge case: a workflow row with publishedVersion=null can't be exported
+    // because the snapshot lives there in the new model. The exporter's
+    // flatMap drops such rows rather than emitting an entry with no
+    // workflowDefinition.
+    const unpublishedRow = { ...workflowRow, slug: 'never-published', publishedVersion: null };
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([workflowRow, unpublishedRow]) // workflows: one with, one without
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.workflows).toHaveLength(1);
+    expect(payload.data.workflows[0].slug).toBe('onboarding-flow');
+  });
 });

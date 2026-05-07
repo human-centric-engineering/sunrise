@@ -466,4 +466,64 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
   });
+
+  describe('published-version preconditions', () => {
+    it('returns 400 when the source workflow has no published version', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      // Workflow exists but publishedVersion is null — admin must publish a
+      // draft first before cloning to a template (the template needs a
+      // snapshot to seed v1 from).
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({ publishedVersion: null, publishedVersionId: null }) as never
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<ErrorBody>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 400 with field-path detail when the published snapshot is malformed', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      // Defensive case: a manual DB edit (or future schema change) leaves
+      // an invalid snapshot in the published version. The route catches it
+      // via safeParse rather than throwing a raw ZodError → 500.
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+        makeWorkflow({
+          publishedVersion: {
+            id: 'wfv-bad',
+            version: 1,
+            snapshot: { steps: [], errorStrategy: 'fail' }, // missing entryStepId
+          },
+        }) as never
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<{
+        error: { code: string; details: { publishedVersionId: string[] } };
+      }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      // The error.issues mapping (`i.path.join('.') + ': ' + i.message`) was
+      // exercising fn 1 in coverage; the field-path string proves it ran.
+      expect(body.error.details.publishedVersionId.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('transaction error pass-through', () => {
+    it('re-throws non-P2002 errors as 500 (the catch only narrows P2002)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      // Force the transaction to reject with a generic error (not P2002).
+      // The route's catch only narrows the unique-constraint case; everything
+      // else propagates.
+      txMocks.workflowCreate.mockRejectedValueOnce(new Error('Database connection lost'));
+
+      const response = await POST(makeRequest(), makeParams());
+      expect(response.status).toBe(500);
+    });
+  });
 });

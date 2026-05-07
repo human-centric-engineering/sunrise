@@ -292,12 +292,7 @@ describe('WorkflowDefinitionHistoryPanel', () => {
     });
   });
 
-  // Note: rollback-error UX is exercised at the route layer
-  // (workflows.versioning.test.ts). The panel's AlertDialog auto-closes on
-  // action click per Radix default behaviour, so the inline `revertError`
-  // can't be reliably asserted at this layer without a panel-level fix to
-  // call event.preventDefault on the action click.
-  it.skip('surfaces a generic error message when the rollback POST fails', async () => {
+  it('surfaces a generic error message when the rollback POST fails', async () => {
     // Exercises the catch branch in handleRollback (line ~125) when the POST
     // rejects. APIClientError-vs-generic branching depends on instanceof
     // semantics across module instances, which can be brittle in test mocks
@@ -314,22 +309,18 @@ describe('WorkflowDefinitionHistoryPanel', () => {
     );
     const rollbackButtons = screen.getAllByRole('button', { name: /^rollback$/i });
     await user.click(rollbackButtons[0]); // open AlertDialog
-    // Wait for the AlertDialog to mount — its confirm button is the (N+1)th
-    // Rollback button on the page.
-    await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /^rollback$/i }).length).toBeGreaterThan(
-        rollbackButtons.length
-      );
-    });
-    const confirms = screen.getAllByRole('button', { name: /^rollback$/i });
-    await user.click(confirms[confirms.length - 1]);
+    // Wait for the AlertDialog title to appear — Radix sets aria-modal on the
+    // dialog, which hides background buttons from the accessibility tree, so
+    // the dialog's confirm action becomes the only matching Rollback button.
+    await screen.findByText(/roll back to this version/i);
+    await user.click(screen.getByRole('button', { name: /^rollback$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/rollback failed/i)).toBeInTheDocument();
     });
   });
 
-  it.skip('uses APIClientError.message when the rollback POST rejects with one', async () => {
+  it('uses APIClientError.message when the rollback POST rejects with one', async () => {
     // Variant covering the APIClientError limb specifically, by throwing the
     // exact class the component imports.
     vi.mocked(apiClient.get).mockResolvedValue(makeListResponse() as never);

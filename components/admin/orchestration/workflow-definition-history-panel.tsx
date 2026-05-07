@@ -261,7 +261,20 @@ export function WorkflowDefinitionHistoryPanel({
           {revertError && <p className="text-destructive text-sm">{revertError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleRevert()} disabled={reverting}>
+            {/*
+              `event.preventDefault()` keeps the dialog open across the async
+              POST so a failure surfaces inline via `revertError` rather than
+              the dialog auto-closing per Radix's default action behaviour.
+              `handleRevert` itself closes the dialog on success by clearing
+              `revertTarget`.
+            */}
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRevert();
+              }}
+              disabled={reverting}
+            >
               {reverting ? 'Rolling back…' : 'Rollback'}
             </AlertDialogAction>
           </AlertDialogFooter>

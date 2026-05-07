@@ -266,4 +266,54 @@ describe('EditWorkflowPage (server component)', () => {
     expect(Array.isArray(def.steps)).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     expect(def.steps).toHaveLength(2);
   });
+
+  it('hydrates getAgents() and getTemplates() when those endpoints return data', async () => {
+    // Exercises two inline transform functions that the other tests don't
+    // cover: (1) the agent-row mapper inside `getAgents` and (2) the
+    // templateItemSchema's `.transform()` that flattens publishedVersion.snapshot
+    // back to a top-level workflowDefinition. Both fire only when the
+    // upstream lists are non-empty.
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: TWO_STEP_WORKFLOW }) // workflow
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          { slug: 'cap-1', name: 'Cap One', description: 'One' },
+          { slug: 'cap-2', name: 'Cap Two', description: null },
+        ],
+      }) // capabilities
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          { slug: 'agent-1', name: 'Agent One', description: 'A1' },
+          { slug: 'agent-2', name: 'Agent Two', description: null },
+        ],
+      }) // agents (exercises the inline `body.data.map` transform on line ~89)
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          // Exercises the `templateItemSchema.transform` callback that
+          // flattens publishedVersion.snapshot to workflowDefinition.
+          {
+            slug: 'tpl-1',
+            name: 'Template One',
+            description: 'first',
+            publishedVersion: { snapshot: TWO_STEP_DEFINITION },
+            patternsUsed: [],
+            isTemplate: true,
+            metadata: null,
+          },
+        ],
+      }); // templates
+
+    const { default: EditWorkflowPage } =
+      await import('@/app/admin/orchestration/workflows/[id]/page');
+
+    render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
+
+    // The page renders without throwing — the inline transforms ran successfully.
+    expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
+  });
 });
