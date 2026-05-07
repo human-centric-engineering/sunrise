@@ -44,6 +44,7 @@ model User {
   aiWorkflows            AiWorkflow[]            @relation("AiWorkflowCreator")
   aiWorkflowExecutions   AiWorkflowExecution[]   @relation("AiWorkflowExecutionUser")
   aiWorkflowSchedules    AiWorkflowSchedule[]    @relation("AiWorkflowScheduleCreator")
+  aiWorkflowTriggers     AiWorkflowTrigger[]     @relation("AiWorkflowTriggerCreator")
   aiConversations        AiConversation[]        @relation("AiConversationUser")
   aiUserMemories         AiUserMemory[]          @relation("AiUserMemoryUser")
   aiKnowledgeDocuments   AiKnowledgeDocument[]   @relation("AiKnowledgeDocumentUploader")
@@ -340,6 +341,7 @@ model AiWorkflow {
   versions         AiWorkflowVersion[]   @relation("WorkflowVersions")
   executions       AiWorkflowExecution[]
   schedules        AiWorkflowSchedule[]
+  triggers         AiWorkflowTrigger[]
 
   @@index([createdBy])
   @@index([isActive])
@@ -396,25 +398,62 @@ model AiWorkflowSchedule {
   @@map("ai_workflow_schedule")
 }
 
+// Inbound trigger from a third-party system (Slack, Postmark, generic-HMAC). Each row
+// binds (channel, workflow) so the inbound route can dispatch incoming requests to the
+// right workflow. Channel-wide secrets (Slack signing secret, Postmark basic-auth) live
+// in env vars; per-trigger generic-HMAC secrets are stored hashed in `signingSecretHash`.
+// `metadata` carries channel-specific config (event-type filter, allowed senders, ...).
+model AiWorkflowTrigger {
+  id                String    @id @default(cuid())
+  workflowId        String
+  channel           String    @db.VarChar(40) // "slack" | "postmark" | "hmac"
+  name              String
+  metadata          Json      @default("{}")
+  signingSecret     String?   @db.Text // per-trigger HMAC shared secret (plaintext, mirrors AiEventHook.secret); null for env-var-keyed channels
+  isEnabled         Boolean   @default(true)
+  lastFiredAt       DateTime?
+  createdBy         String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  creator  User       @relation("AiWorkflowTriggerCreator", fields: [createdBy], references: [id])
+
+  @@unique([channel, workflowId]) // one trigger per (channel, workflow); v2 may relax for multi-event setups
+  @@index([workflowId])
+  @@index([channel, isEnabled])
+  @@map("ai_workflow_trigger")
+}
+
 // Runtime workflow instances
 model AiWorkflowExecution {
-  id              String    @id @default(cuid())
-  workflowId      String
-  versionId       String? // pinned AiWorkflowVersion at trigger time; null on legacy rows only
-  status          String // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
-  inputData       Json
-  outputData      Json?
-  currentStep     String?
-  executionTrace  Json // array of step execution logs
-  totalTokensUsed Int       @default(0)
-  totalCostUsd    Float     @default(0)
-  budgetLimitUsd  Float?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  errorMessage    String?   @db.Text
-  userId          String
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  workflowId        String
+  versionId         String? // pinned AiWorkflowVersion at trigger time; null on legacy rows only
+  status            String // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
+  inputData         Json
+  outputData        Json?
+  currentStep       String?
+  executionTrace    Json // array of step execution logs
+  totalTokensUsed   Int       @default(0)
+  totalCostUsd      Float     @default(0)
+  budgetLimitUsd    Float?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  errorMessage      String?   @db.Text
+  // Trigger attribution. Source is `schedule | webhook | chat | inbound:<channel>` (free-form;
+  // not enforced as enum so new sources can be added without migration). External ID carries
+  // vendor-supplied identifiers (Slack `event_id`, Postmark `MessageID`); used for human/audit
+  // attribution only. Dedup is keyed on `dedupKey` so shared-secret channels (Slack, Postmark)
+  // can dedup globally across workflows even though the same external ID is allowed to appear
+  // for unrelated per-trigger HMAC events.
+  triggerSource     String?   @db.VarChar(50)
+  triggerExternalId String?
+  dedupKey          String?
+  userId            String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   // Relations
   workflow AiWorkflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
@@ -422,6 +461,11 @@ model AiWorkflowExecution {
   user     User               @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
   costLogs AiCostLog[]
 
+  // Inbound-trigger dedup keyed on `dedupKey`. Route computes per-channel scope:
+  //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
+  //   - per-trigger HMAC: `hmac:<workflowId>:<externalId>` — scoped per trigger
+  // Postgres treats NULLs as distinct, so non-inbound rows (NULL dedupKey) never collide.
+  @@unique([dedupKey], name: "ai_workflow_execution_dedup_key")
   @@index([workflowId])
   @@index([versionId])
   @@index([userId])
