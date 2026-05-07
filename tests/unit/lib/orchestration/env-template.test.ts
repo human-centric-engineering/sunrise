@@ -236,6 +236,16 @@ describe('env-template', () => {
         })
       ).toThrow(EnvTemplateError);
     });
+
+    it('does NOT substitute env templates inside header keys (keys are protocol identifiers, not credentials)', () => {
+      // Locks in the scope. If this ever changes, callers using
+      // header-name keys like "X-${env:NAME}" would suddenly start
+      // resolving — that's a behaviour change that needs deliberate
+      // review, not an accidental refactor.
+      process.env.HEADER_NAME = 'X-Real-Name';
+      const out = resolveEnvTemplatesInRecord({ '${env:HEADER_NAME}': 'value' });
+      expect(out).toEqual({ '${env:HEADER_NAME}': 'value' });
+    });
   });
 
   describe('findUnsetEnvVarReferences', () => {

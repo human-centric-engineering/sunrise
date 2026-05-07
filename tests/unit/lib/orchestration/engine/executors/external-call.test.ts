@@ -835,7 +835,7 @@ describe('executeExternalCall', () => {
       process.env = originalEnv;
     });
 
-    it('resolves ${env:VAR} in url after prompt interpolation', async () => {
+    it('resolves ${env:VAR} in url config (no workflow-context interpolation needed)', async () => {
       process.env.WEBHOOK_PATH = 'v1/notify';
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')

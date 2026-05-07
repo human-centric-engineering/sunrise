@@ -644,5 +644,64 @@ describe('CallExternalApiCapability', () => {
       const result = __testing.customConfigSchema.safeParse({ forcedUrl: 'not-a-url' });
       expect(result.success).toBe(false);
     });
+
+    it('host-allowlist runs on the RESOLVED url, so env vars cannot bypass ORCHESTRATION_ALLOWED_HOSTS', async () => {
+      // If an admin sets `forcedUrl: "${env:ENDPOINT}"` and the env
+      // value points at a host NOT in the allowlist, the call must be
+      // rejected with host_not_allowed — env substitution is not an
+      // allowlist bypass. (This is enforced by the shared HTTP module
+      // running the allowlist check on the URL it actually fetches,
+      // which is the resolved one.)
+      process.env.OFF_ALLOWLIST = 'https://evil.example.com/x';
+      bindCustomConfig({ forcedUrl: '${env:OFF_ALLOWLIST}' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: {} }, context);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('host_not_allowed');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('does NOT env-substitute LLM-supplied args.url (only forcedUrl/forcedHeaders are templated)', async () => {
+      // The LLM arg path is intentionally outside env-template scope.
+      // If an LLM puts ${env:SECRET} in args.url, it must be sent
+      // verbatim — the env resolver must never give an LLM a way to
+      // read env vars by stuffing template syntax into a tool call.
+      process.env.LLM_PROBE_SECRET = 'should-not-leak';
+      bindCustomConfig({ allowedUrlPrefixes: ['https://api.allowed.com/path/'] });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/path/${env:LLM_PROBE_SECRET}',
+          method: 'POST',
+          body: {},
+        },
+        context
+      );
+      const calledUrl = fetchSpy.mock.calls[0]?.[0] as string;
+      expect(calledUrl).toContain('${env:LLM_PROBE_SECRET}');
+      expect(calledUrl).not.toContain('should-not-leak');
+    });
+
+    it('does NOT env-substitute LLM-supplied args.headers either', async () => {
+      process.env.LLM_PROBE_HDR_SECRET = 'should-not-leak';
+      noBinding();
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          headers: { 'X-LLM-Set': 'Bearer ${env:LLM_PROBE_HDR_SECRET}' },
+          body: {},
+        },
+        context
+      );
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers['X-LLM-Set']).toBe('Bearer ${env:LLM_PROBE_HDR_SECRET}');
+      expect(headers['X-LLM-Set']).not.toContain('should-not-leak');
+    });
   });
 });
