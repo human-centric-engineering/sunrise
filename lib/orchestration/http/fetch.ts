@@ -46,8 +46,17 @@ export interface HttpRequestOptions {
   url: string;
   method: HttpMethod;
   headers?: Record<string, string>;
-  /** Stringified body. Ignored for GET/DELETE. */
-  body?: string;
+  /**
+   * Request body. `string` is sent verbatim with the default
+   * `Content-Type: application/json` (which the caller may override
+   * via `headers`). `FormData` triggers multipart/form-data handling:
+   * the `Content-Type` default is suppressed so `fetch()`/undici sets
+   * the boundary-bearing Content-Type itself, and HMAC auth is
+   * rejected (multipart bodies cannot be signed deterministically —
+   * see `multipart_hmac_unsupported`). Build the FormData via
+   * `buildMultipartBody()` from `./multipart`. Ignored for GET/DELETE.
+   */
+  body?: string | FormData;
   auth?: HttpAuthConfig;
   idempotency?: HttpIdempotencyConfig;
   timeoutMs?: number;
@@ -100,20 +109,48 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = opts.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-  const body = BODYLESS_METHODS.has(method) ? '' : (opts.body ?? '');
+  const isBodyless = BODYLESS_METHODS.has(method);
+  const isMultipart = !isBodyless && opts.body instanceof FormData;
 
-  const { url: authedUrl, headers: authHeaders } = applyAuth(opts.auth, opts.url, method, body);
+  // HMAC signs `${method}\n${path}\n${body}` (auth.ts) — multipart
+  // bodies cannot be signed deterministically because the boundary
+  // varies per request and undici controls part ordering. Fail closed
+  // here rather than silently weakening the signature or signing the
+  // empty string.
+  if (isMultipart && opts.auth?.type === 'hmac') {
+    throw new HttpError(
+      'multipart_hmac_unsupported',
+      'HMAC auth cannot be used with multipart/form-data bodies — drop one or use a different auth type',
+      false
+    );
+  }
+
+  const body = isBodyless ? '' : (opts.body ?? '');
+  // For HMAC over a string body the existing path applies. For
+  // multipart we pass an empty string into applyAuth — the HMAC branch
+  // is unreachable here due to the guard above; non-HMAC auth modes
+  // don't consume the body argument.
+  const authBodyForSigning = typeof body === 'string' ? body : '';
+  const { url: authedUrl, headers: authHeaders } = applyAuth(
+    opts.auth,
+    opts.url,
+    method,
+    authBodyForSigning
+  );
   const idempotencyHeaders = resolveIdempotencyHeader(opts.idempotency);
 
   // mergeHeaders is case-insensitive — opts.headers (caller-supplied, possibly
   // LLM-influenced) cannot smuggle a `authorization` past authHeaders'
   // `Authorization` by varying case.
-  const headers = mergeHeaders(
-    BODYLESS_METHODS.has(method) ? undefined : { 'Content-Type': 'application/json' },
-    opts.headers,
-    authHeaders,
-    idempotencyHeaders
-  );
+  //
+  // For multipart bodies we deliberately omit the JSON Content-Type
+  // default so undici fills in the right `multipart/form-data;
+  // boundary=…` itself. An admin-set `forcedHeaders.Content-Type` from
+  // the capability layer still wins via mergeHeaders if explicitly
+  // provided.
+  const defaultContentType =
+    isBodyless || isMultipart ? undefined : { 'Content-Type': 'application/json' };
+  const headers = mergeHeaders(defaultContentType, opts.headers, authHeaders, idempotencyHeaders);
 
   logger.info('HTTP request: sending', {
     method,
@@ -140,7 +177,7 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
     response = await fetch(authedUrl, {
       method,
       headers,
-      body: BODYLESS_METHODS.has(method) ? undefined : body || undefined,
+      body: isBodyless ? undefined : body || undefined,
       signal: controller.signal,
     });
   } catch (err) {

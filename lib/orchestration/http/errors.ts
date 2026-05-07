@@ -9,6 +9,7 @@
 export type HttpErrorCode =
   | 'host_not_allowed'
   | 'missing_auth_secret'
+  | 'multipart_hmac_unsupported'
   | 'outbound_rate_limited'
   | 'request_failed'
   | 'request_aborted'

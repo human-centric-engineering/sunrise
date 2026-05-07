@@ -2106,33 +2106,81 @@ export const responseTransformSchema = z.object({
   expression: z.string().min(1).max(2000),
 });
 
-export const externalCallConfigSchema = stepErrorConfigSchema.extend({
-  url: z.string().optional(),
-  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  bodyTemplate: z.string().optional(),
-  timeoutMs: z.number().optional(),
-  authType: z.enum(['none', 'bearer', 'api-key', 'query-param', 'basic', 'hmac']).optional(),
-  authSecret: z.string().optional(),
-  /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
-  authQueryParam: z.string().optional(),
-  /** Header name when authType is 'api-key' (default: 'X-API-Key'). For vendors with non-standard names, e.g. Postmark's 'X-Postmark-Server-Token'. */
-  apiKeyHeaderName: z.string().optional(),
-  /** Header name for the HMAC signature when authType is 'hmac' (default: 'X-Signature'). */
-  hmacHeaderName: z.string().optional(),
-  /** Digest algorithm when authType is 'hmac' (default: 'sha256'). */
-  hmacAlgorithm: z.enum(['sha256', 'sha512']).optional(),
-  /** Template for the signed string when authType is 'hmac'. Tokens: `{method}`, `{path}`, `{body}`. Default: `{method}\n{path}\n{body}`. */
-  hmacBodyTemplate: z.string().optional(),
-  /** Idempotency key. `'auto'` generates a UUID; any other string is used verbatim. Omit to skip the header. */
-  idempotencyKey: z.string().optional(),
-  /** Header name for the idempotency key (default: 'Idempotency-Key'). */
-  idempotencyKeyHeader: z.string().optional(),
-  /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
-  maxResponseBytes: z.number().int().positive().optional(),
-  /** Optional transformation to apply to the response body before returning step output. */
-  responseTransform: responseTransformSchema.optional(),
+/**
+ * Multipart/form-data config shape for the workflow `external_call`
+ * step. Mirrors the canonical multipart input but takes string
+ * templates rather than already-resolved values: each `data` and
+ * field value is run through `interpolatePrompt` against the
+ * execution context (so a previous step's `body.data` base64 can
+ * flow in via `{{steps.render.body.data}}`).
+ *
+ * Validation here is just structural — actual base64 + size enforcement
+ * happens in `buildMultipartBody` after interpolation.
+ */
+const externalCallMultipartShape = z.object({
+  files: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(128),
+        filename: z.string().min(1).max(255).optional(),
+        contentType: z.string().min(1).max(127),
+        /** Template string that interpolates to base64 bytes at execution time. */
+        data: z.string().min(1),
+      })
+    )
+    .min(1)
+    .max(16),
+  fields: z.record(z.string(), z.string()).optional(),
 });
+
+export const externalCallConfigSchema = stepErrorConfigSchema
+  .extend({
+    url: z.string().optional(),
+    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    bodyTemplate: z.string().optional(),
+    /**
+     * Multipart/form-data body — mutually exclusive with `bodyTemplate`.
+     * The `data` and field values are templates interpolated against
+     * the workflow execution context before the multipart body is
+     * built. HMAC auth is rejected at execute time when paired with a
+     * multipart body (see `multipart_hmac_unsupported`).
+     */
+    multipart: externalCallMultipartShape.optional(),
+    timeoutMs: z.number().optional(),
+    authType: z.enum(['none', 'bearer', 'api-key', 'query-param', 'basic', 'hmac']).optional(),
+    authSecret: z.string().optional(),
+    /** Name of the query parameter when authType is 'query-param' (default: 'api_key'). */
+    authQueryParam: z.string().optional(),
+    /** Header name when authType is 'api-key' (default: 'X-API-Key'). For vendors with non-standard names, e.g. Postmark's 'X-Postmark-Server-Token'. */
+    apiKeyHeaderName: z.string().optional(),
+    /** Header name for the HMAC signature when authType is 'hmac' (default: 'X-Signature'). */
+    hmacHeaderName: z.string().optional(),
+    /** Digest algorithm when authType is 'hmac' (default: 'sha256'). */
+    hmacAlgorithm: z.enum(['sha256', 'sha512']).optional(),
+    /** Template for the signed string when authType is 'hmac'. Tokens: `{method}`, `{path}`, `{body}`. Default: `{method}\n{path}\n{body}`. */
+    hmacBodyTemplate: z.string().optional(),
+    /** Idempotency key. `'auto'` generates a UUID; any other string is used verbatim. Omit to skip the header. */
+    idempotencyKey: z.string().optional(),
+    /** Header name for the idempotency key (default: 'Idempotency-Key'). */
+    idempotencyKeyHeader: z.string().optional(),
+    /** Max response body size in bytes (default: 1 048 576 = 1 MB). */
+    maxResponseBytes: z.number().int().positive().optional(),
+    /** Optional transformation to apply to the response body before returning step output. */
+    responseTransform: responseTransformSchema.optional(),
+  })
+  .refine((cfg) => !(cfg.bodyTemplate !== undefined && cfg.multipart !== undefined), {
+    message:
+      '`bodyTemplate` and `multipart` are mutually exclusive — supply one or the other, not both',
+    path: ['multipart'],
+  })
+  .refine(
+    (cfg) => !(cfg.multipart !== undefined && (cfg.method === 'GET' || cfg.method === 'DELETE')),
+    {
+      message: '`multipart` cannot be used with GET or DELETE methods (no body permitted)',
+      path: ['multipart'],
+    }
+  );
 
 export const agentCallConfigSchema = stepErrorConfigSchema.extend({
   agentSlug: z.string().optional(),

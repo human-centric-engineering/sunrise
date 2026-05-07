@@ -241,7 +241,8 @@ describe('executeHttpRequest', () => {
     });
     expect(out.status).toBe(200);
     expect(out.body).toEqual({ a: 1 });
-    expect(out.transformError).toBeTruthy();
+    expect(typeof out.transformError).toBe('string');
+    expect(out.transformError!.length).toBeGreaterThan(0);
   });
 
   it('applies a successful transform and returns the transformed body', async () => {
@@ -266,5 +267,241 @@ describe('executeHttpRequest', () => {
       expect((err as HttpError).code).toBe('request_failed');
       expect((err as HttpError).cause).toBe(cause);
     }
+  });
+
+  // ─── multipart/form-data body handling ─────────────────────────────
+
+  describe('FormData body', () => {
+    function spyJson200(): ReturnType<typeof vi.spyOn> {
+      return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    }
+
+    it('passes the FormData to fetch verbatim', async () => {
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('file', new File([new Uint8Array([1, 2, 3])], 'x.bin'));
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+      });
+
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      expect(init.body).toBe(fd);
+    });
+
+    it('does NOT set the JSON Content-Type default when body is FormData', async () => {
+      // undici fills in `multipart/form-data; boundary=…` itself when
+      // body is FormData; sending application/json here would
+      // mismatch the actual body and break the server-side parser.
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+      });
+
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers['Content-Type']).toBeUndefined();
+      expect(headers['content-type']).toBeUndefined();
+    });
+
+    it('still applies the host allowlist when body is FormData', async () => {
+      const fd = new FormData();
+      fd.append('field', 'value');
+      await expect(
+        executeHttpRequest({
+          url: 'https://evil.example.com/x',
+          method: 'POST',
+          body: fd,
+        })
+      ).rejects.toMatchObject({ code: 'host_not_allowed' });
+    });
+
+    it('rejects HMAC + multipart with multipart_hmac_unsupported (no fetch fired)', async () => {
+      const fetchSpy = spyJson200();
+      process.env.HMAC_KEY = 'secret';
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await expect(
+        executeHttpRequest({
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          body: fd,
+          auth: { type: 'hmac', secret: 'HMAC_KEY' },
+        })
+      ).rejects.toMatchObject({ code: 'multipart_hmac_unsupported' });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('still allows non-HMAC auth modes alongside FormData (bearer)', async () => {
+      process.env.BEARER_KEY = 'tok_abc';
+      const fetchSpy = spyJson200();
+      const fd = new FormData();
+      fd.append('field', 'value');
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: fd,
+        auth: { type: 'bearer', secret: 'BEARER_KEY' },
+      });
+
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers.Authorization).toBe('Bearer tok_abc');
+    });
+
+    it('respects an already-aborted signal with a multipart body', async () => {
+      const fd = new FormData();
+      fd.append('field', 'value');
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        executeHttpRequest({
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          body: fd,
+          signal: controller.signal,
+        })
+      ).rejects.toMatchObject({ code: 'request_aborted' });
+    });
+  });
+
+  // ─── Coverage gaps surfaced by /test-review (axes: coverage) ─────────
+  // These paths are exercised through the capability + workflow tests via
+  // indirection; here they're driven directly so fetch.test.ts stands on
+  // its own as a focused unit test of executeHttpRequest.
+
+  describe('outbound rate limit', () => {
+    it('throws outbound_rate_limited (retriable) when the limiter rejects', async () => {
+      // Drive the host's per-minute quota down to 1, fire one allowed
+      // call, then assert the second hits the rate-limited branch in
+      // executeHttpRequest (lib/orchestration/http/fetch.ts:99-108).
+      process.env.ORCHESTRATION_OUTBOUND_RATE_LIMIT = '1';
+      resetOutboundRateLimiters();
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      await executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' });
+
+      const err: unknown = await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).code).toBe('outbound_rate_limited');
+      expect((err as HttpError).retriable).toBe(true);
+    });
+
+    it('records Retry-After from a 429 response so subsequent calls fail with outbound_rate_limited', async () => {
+      // The non-2xx branch reads the Retry-After header and feeds it
+      // into the outbound rate limiter (fetch.ts:202-203). The next
+      // call to the same host within the retry-after window is
+      // rejected by the limiter rather than reaching fetch.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('rate limited', {
+          status: 429,
+          headers: { 'Content-Type': 'text/plain', 'Retry-After': '30' },
+        })
+      );
+
+      // First call: 429 propagates as a retriable HttpError.
+      const first = await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+      }).catch((e) => e);
+      expect(first).toBeInstanceOf(HttpError);
+      expect((first as HttpError).code).toBe('http_error_retriable');
+
+      // Second call: the rate limiter returns allowed=false and
+      // executeHttpRequest throws before fetch is hit again.
+      const second = await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+      }).catch((e) => e);
+      expect(second).toBeInstanceOf(HttpError);
+      expect((second as HttpError).code).toBe('outbound_rate_limited');
+    });
+  });
+
+  describe('internal timeout', () => {
+    it('fires the internal AbortController on timeoutMs and surfaces request_timeout', async () => {
+      // The previous "abort mid-flight" test exercises the caller's
+      // signal. This test covers the OTHER branch — the internal
+      // setTimeout(..., timeoutMs) callback at fetch.ts:164. The
+      // distinction matters because only this path produces
+      // request_timeout (vs request_failed for caller aborts).
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            // Hang until the executor's internal AbortController fires
+            // its abort, which the runtime turns into an AbortError
+            // rejection on the awaited fetch.
+            const signal = init?.signal;
+            signal?.addEventListener('abort', () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          })
+      );
+
+      const err: unknown = await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+        timeoutMs: 50,
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).code).toBe('request_timeout');
+      expect((err as HttpError).message).toContain('50ms');
+    });
+  });
+
+  describe('response size cap', () => {
+    it('throws response_too_large when the body exceeds maxResponseBytes', async () => {
+      // readResponseBody throws on cap exceeded; the catch around it
+      // wraps non-HttpError into HttpError('response_too_large')
+      // (fetch.ts:230-237). This drives the path directly without
+      // the capability layer.
+      const big = 'a'.repeat(2048);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(big, {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain', 'Content-Length': String(big.length) },
+        })
+      );
+
+      const err: unknown = await executeHttpRequest({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+        maxResponseBytes: 100,
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).code).toBe('response_too_large');
+    });
   });
 });

@@ -240,13 +240,26 @@ Agent: _"Done. Your invoice is at https://&lt;bucket&gt;.s3.amazonaws.com/... �
 {
   "allowedUrlPrefixes": ["https://gotenberg.internal/forms/chromium/convert/html"],
   "auth": { "type": "none" },
-  "forcedHeaders": { "Content-Type": "multipart/form-data" },
   "timeoutMs": 60000,
   "maxResponseBytes": 5242880
 }
 ```
 
-Gotenberg expects multipart form data with an `index.html` file part. **The current `call_external_api` doesn't construct multipart bodies** — the LLM would have to emit a raw multipart string in `body`, which is fragile. For Gotenberg, prefer a small adapter service (a Next.js API route on your own host) that takes JSON `{html}` and forwards as multipart to Gotenberg. Then bind `call_external_api` to your adapter, not Gotenberg directly.
+Gotenberg expects multipart form data with an `index.html` file part. The capability accepts a `multipart` arg directly — the LLM emits structured `{ files, fields }`, the HTTP module assembles the FormData, and `fetch()` sets the `multipart/form-data; boundary=…` Content-Type itself. No adapter service required. The agent prompt should describe the call shape:
+
+```
+To render HTML to PDF, call call_external_api with:
+  - url: https://gotenberg.internal/forms/chromium/convert/html
+  - method: POST
+  - multipart:
+      files:
+        - { name: "index.html", contentType: "text/html", data: "<base64 of the HTML>" }
+      fields:
+        paperWidth: "8.5"
+        paperHeight: "11"
+```
+
+Per-file size cap is 8 MB base64; total request body cap is 25 MB. HMAC auth is rejected with multipart bodies (multipart can't be HMAC-signed deterministically) — pair Gotenberg with `none` or `basic` auth. The PDF response comes back via the binary auto-wrap (`{ encoding: "base64", contentType: "application/pdf", data: "…" }`) and chains naturally into `upload_to_storage`.
 
 ### PDFShift (sync mode, HTML → URL)
 
@@ -269,7 +282,7 @@ Body: `{ "source": "<html>", "filename": "...", "use_print": true }`. With the r
 - **Templated rendering.** DocRaptor and similar accept a `document_url` instead of inline `document_content` — point at a template URL on your own host and pass `data` as variables. Reduces the size of the LLM-emitted body
 - **Self-hosted with auth.** If your Gotenberg instance is on a public network, front it with Basic auth or an API key check in your reverse proxy. Then bind `call_external_api` with `auth: { type: 'basic', ... }`
 - **Public vs signed URLs in Pattern B.** Drop `signedUrlTtlSeconds` for a permanent public URL (suitable for sharing on a public site). Keep it set for time-limited private access (suitable for invoices, receipts, anything user-specific). Signed URLs are S3-only — Vercel Blob URLs are publish-once-public and can be deleted but not signed; local storage has no signing concept
-- **Multipart bodies (open follow-up).** Gotenberg expects `multipart/form-data` with file parts, which the HTTP module doesn't construct natively. Tracked in `improvement-priorities.md` Tier 3 — for now front Gotenberg with a small JSON-to-multipart adapter on your own host
+- **Multipart bodies.** Gotenberg expects `multipart/form-data` with file parts. The capability's `multipart` arg covers this directly — no adapter service required. See [`external-calls.md` → Multipart bodies](../external-calls.md) for the full spec.
 
 ## 10. Anti-patterns
 

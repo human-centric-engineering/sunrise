@@ -168,6 +168,41 @@ Detected binary content types: `application/pdf`, `application/octet-stream`, `a
 
 The capability layer surfaces this wrapper directly as the `body` of `CapabilityResult.data` — consumers detect it via `isBinaryResponseBody(body)` (re-exported from `@/lib/orchestration/http`) and typically hand the bytes to a storage capability rather than letting the LLM see base64 inline.
 
+### Multipart/form-data bodies
+
+The executor and the `call_external_api` capability both accept structured multipart input. Used for endpoints that require named file parts (e.g. Gotenberg HTML→PDF, vendor-specific upload APIs that don't accept JSON).
+
+**Shape** (canonical, from `lib/orchestration/http/multipart.ts`):
+
+```ts
+{
+  files: [{ name: string; filename?: string; contentType: string; data: string /* base64 */ }],
+  fields?: Record<string, string>
+}
+```
+
+| Surface                             | Field name         | Resolution                                                                                                                                                                                                        |
+| ----------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `call_external_api` capability args | `args.multipart`   | LLM emits resolved values directly. Mutually exclusive with `args.body`.                                                                                                                                          |
+| Workflow `external_call.config`     | `config.multipart` | Each `data` / `filename` / `contentType` / field value is a template string interpolated against the execution context (`{{steps.x.body.data}}`, `{{input.tag}}`). Mutually exclusive with `config.bodyTemplate`. |
+
+**Size posture.**
+
+| Limit                                       | Value | Source                                                                                |
+| ------------------------------------------- | ----- | ------------------------------------------------------------------------------------- |
+| Per-file (base64)                           | 8 MB  | `ABSOLUTE_MAX_FILE_BASE64_LENGTH` (matches `upload_to_storage`)                       |
+| Per-field name (chars)                      | 128   | `MAX_FIELD_NAME_LENGTH`                                                               |
+| Per-field value (chars)                     | 1 MB  | `MAX_FIELD_VALUE_LENGTH` — for blob content larger than this, use a file part instead |
+| Total request body (decoded files + fields) | 25 MB | `MAX_TOTAL_MULTIPART_BYTES`                                                           |
+| File parts per request                      | 16    | `MAX_FILE_PARTS`                                                                      |
+| Field parts per request                     | 64    | `MAX_FIELD_PARTS`                                                                     |
+
+Validation failures fail closed before any FormData allocation with a typed `MultipartError` (mapped to `invalid_args` for the capability, `ExecutorError(<code>)` for the workflow step). Codes: `invalid_shape`, `invalid_base64`, `body_too_large`.
+
+**Auth restriction.** HMAC auth is rejected with `multipart_hmac_unsupported` when paired with a multipart body — multipart can't be signed deterministically (boundary varies per request, undici controls part ordering). Use `none`, `bearer`, `api-key`, `query-param`, or `basic` instead.
+
+**Content-Type.** When the body is multipart, the executor suppresses the default `Content-Type: application/json` header so that `fetch()`/undici fills in the correct `multipart/form-data; boundary=…` itself. An admin-set `forcedHeaders.Content-Type` still wins via `mergeHeaders` if explicitly provided.
+
 ### Per-step timeout
 
 Every step config supports `timeoutMs` (on `stepErrorConfigSchema`). The engine wraps executor invocation in `Promise.race` against a timeout. Timeout produces a non-retriable `step_timeout` error.
@@ -193,19 +228,22 @@ Auth headers and secrets are never logged.
 
 ## Error codes
 
-| Code                    | Retriable | Description                                                              |
-| ----------------------- | --------- | ------------------------------------------------------------------------ |
-| `missing_url`           | Yes       | Step config has no `url`                                                 |
-| `missing_env_var`       | No        | A `${env:VAR}` reference in `url` / `headers` points at an unset env var |
-| `host_not_allowed`      | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS`                            |
-| `missing_auth_secret`   | No        | Auth env var is not set                                                  |
-| `outbound_rate_limited` | Yes       | Per-host rate limit exceeded                                             |
-| `request_failed`        | Yes       | Network error or timeout                                                 |
-| `request_aborted`       | No        | Execution's AbortSignal was already triggered                            |
-| `http_error`            | No        | Non-retriable HTTP status (4xx except 429)                               |
-| `http_error_retriable`  | Yes       | Retriable HTTP status (429, 502, 503, 504)                               |
-| `response_too_large`    | No        | Response body exceeds `maxResponseBytes`                                 |
-| `step_timeout`          | No        | Per-step timeout exceeded (engine-level)                                 |
+| Code                         | Retriable | Description                                                                    |
+| ---------------------------- | --------- | ------------------------------------------------------------------------------ |
+| `missing_url`                | Yes       | Step config has no `url`                                                       |
+| `missing_env_var`            | No        | A `${env:VAR}` reference in `url` / `headers` points at an unset env var       |
+| `host_not_allowed`           | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS`                                  |
+| `missing_auth_secret`        | No        | Auth env var is not set                                                        |
+| `multipart_hmac_unsupported` | No        | HMAC auth was paired with a multipart body — disallowed                        |
+| `invalid_base64`             | No        | A multipart file `data` was not valid base64                                   |
+| `body_too_large`             | No        | The multipart total body (files + fields) exceeded `MAX_TOTAL_MULTIPART_BYTES` |
+| `outbound_rate_limited`      | Yes       | Per-host rate limit exceeded                                                   |
+| `request_failed`             | Yes       | Network error or timeout                                                       |
+| `request_aborted`            | No        | Execution's AbortSignal was already triggered                                  |
+| `http_error`                 | No        | Non-retriable HTTP status (4xx except 429)                                     |
+| `http_error_retriable`       | Yes       | Retriable HTTP status (429, 502, 503, 504)                                     |
+| `response_too_large`         | No        | Response body exceeds `maxResponseBytes`                                       |
+| `step_timeout`               | No        | Per-step timeout exceeded (engine-level)                                       |
 
 ## Environment variables
 

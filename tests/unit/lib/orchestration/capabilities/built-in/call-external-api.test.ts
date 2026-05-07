@@ -359,7 +359,7 @@ describe('CallExternalApiCapability', () => {
         string,
         string
       >;
-      expect(headers['X-Idempotent']).toBeTruthy();
+      expect(headers['X-Idempotent']).toMatch(/^[0-9a-f-]{36}$/);
       expect(headers['Idempotency-Key']).toBeUndefined();
     });
   });
@@ -503,6 +503,31 @@ describe('CallExternalApiCapability', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('rate_limited');
     });
+
+    it('maps HttpError("request_aborted") to capability error code "request_aborted"', async () => {
+      // Drives the previously-untested case in mapHttpErrorCode
+      // (call-external-api.ts:437-438). The capability doesn't
+      // propagate an AbortSignal to executeHttpRequest today, so the
+      // only way to exercise this branch is to mock the HTTP module
+      // to throw the typed error directly. Future wiring that adds a
+      // signal pass-through gets this assertion as a regression
+      // backstop.
+      const httpModule = await import('@/lib/orchestration/http');
+      const httpSpy = vi
+        .spyOn(httpModule, 'executeHttpRequest')
+        .mockRejectedValue(new httpModule.HttpError('request_aborted', 'caller aborted', false));
+      noBinding();
+
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'GET' },
+        context
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('request_aborted');
+      httpSpy.mockRestore();
+    });
   });
 
   describe('response transform error surfaced on success result', () => {
@@ -518,7 +543,8 @@ describe('CallExternalApiCapability', () => {
       );
       expect(result.success).toBe(true);
       expect(result.data?.body).toEqual({ user: { id: 'u1' } });
-      expect(result.data?.transformError).toBeTruthy();
+      expect(typeof result.data?.transformError).toBe('string');
+      expect(result.data!.transformError!.length).toBeGreaterThan(0);
     });
   });
 
@@ -702,6 +728,195 @@ describe('CallExternalApiCapability', () => {
       const headers = init.headers as Record<string, string>;
       expect(headers['X-LLM-Set']).toBe('Bearer ${env:LLM_PROBE_HDR_SECRET}');
       expect(headers['X-LLM-Set']).not.toContain('should-not-leak');
+    });
+  });
+
+  describe('multipart/form-data', () => {
+    const helloBase64 = Buffer.from('<html>hi</html>').toString('base64');
+
+    it('schema rejects body and multipart together', async () => {
+      const cap = new CallExternalApiCapability();
+      // BaseCapability.validate wraps Zod failures with a generic
+      // message; checking via the test-only schema export gets at the
+      // refine's actual message.
+      expect(() =>
+        cap.validate({
+          url: 'https://api.allowed.com/x',
+          method: 'POST',
+          body: { foo: 'bar' },
+          multipart: {
+            files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+          },
+        })
+      ).toThrow();
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.argsSchema.safeParse({
+        url: 'https://api.allowed.com/x',
+        method: 'POST',
+        body: { foo: 'bar' },
+        multipart: {
+          files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+        },
+      });
+      expect(result.success).toBe(false);
+      const issue = result.success ? undefined : result.error.issues[0];
+      expect(issue?.message).toMatch(/mutually exclusive/);
+    });
+
+    it('schema accepts a multipart-only call', () => {
+      const cap = new CallExternalApiCapability();
+      expect(() =>
+        cap.validate({
+          url: 'https://api.allowed.com/forms',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+            fields: { paperWidth: '8.5' },
+          },
+        })
+      ).not.toThrow();
+    });
+
+    it('passes a FormData body to fetch when multipart is supplied', async () => {
+      noBinding();
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/forms/chromium/convert/html',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+            fields: { paperWidth: '8.5' },
+          },
+        },
+        context
+      );
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+      expect(init.body).toBeInstanceOf(FormData);
+      expect((init.body as FormData).get('paperWidth')).toBe('8.5');
+      expect((init.body as FormData).get('index.html')).toBeInstanceOf(File);
+    });
+
+    it('omits Content-Type: application/json when multipart is supplied (undici sets boundary)', async () => {
+      noBinding();
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/forms',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'doc', contentType: 'application/octet-stream', data: helloBase64 }],
+          },
+        },
+        context
+      );
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers['Content-Type']).toBeUndefined();
+    });
+
+    it('returns invalid_args when multipart contains non-base64 data', async () => {
+      noBinding();
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        {
+          url: 'https://api.allowed.com/forms',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'doc', contentType: 'text/plain', data: 'not really base64 !!!' }],
+          },
+        },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_args');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('surfaces multipart_hmac_unsupported as invalid_binding when admin pairs HMAC with a multipart call', async () => {
+      process.env.HMAC_KEY = 'secret';
+      bindCustomConfig({ auth: { type: 'hmac', secret: 'HMAC_KEY' } });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        {
+          url: 'https://api.allowed.com/forms',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+          },
+        },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('schema rejects multipart with method=GET', async () => {
+      const cap = new CallExternalApiCapability();
+      expect(() =>
+        cap.validate({
+          url: 'https://api.allowed.com/x',
+          method: 'GET',
+          multipart: {
+            files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+          },
+        })
+      ).toThrow();
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.argsSchema.safeParse({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+        multipart: {
+          files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+        },
+      });
+      expect(result.success).toBe(false);
+      const issue = result.success ? undefined : result.error.issues[0];
+      expect(issue?.message).toMatch(/GET or DELETE/);
+    });
+
+    it('schema rejects multipart with method=DELETE', async () => {
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.argsSchema.safeParse({
+        url: 'https://api.allowed.com/x',
+        method: 'DELETE',
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('still applies non-HMAC auth alongside multipart', async () => {
+      process.env.UPLOAD_TOKEN = 'tok_abc';
+      bindCustomConfig({ auth: { type: 'bearer', secret: 'UPLOAD_TOKEN' } });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute(
+        {
+          url: 'https://api.allowed.com/forms',
+          method: 'POST',
+          multipart: {
+            files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+          },
+        },
+        context
+      );
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers.Authorization).toBe('Bearer tok_abc');
     });
   });
 });
