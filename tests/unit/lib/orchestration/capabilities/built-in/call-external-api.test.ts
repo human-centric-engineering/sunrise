@@ -547,4 +547,102 @@ describe('CallExternalApiCapability', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('env-var template substitution', () => {
+    it('resolves ${env:VAR} in forcedUrl at call time', async () => {
+      process.env.SLACK_WEBHOOK_URL = 'https://api.allowed.com/v1/services/T/B/X';
+      bindCustomConfig({ forcedUrl: '${env:SLACK_WEBHOOK_URL}' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: { msg: 'hi' } }, context);
+      expect(result.success).toBe(true);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.allowed.com/v1/services/T/B/X');
+    });
+
+    it('resolves ${env:VAR} in forcedHeaders at call time', async () => {
+      process.env.MY_BEARER = 'admin-controlled-token';
+      bindCustomConfig({
+        forcedHeaders: { Authorization: 'Bearer ${env:MY_BEARER}' },
+      });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute({ url: 'https://api.allowed.com/x', method: 'POST', body: {} }, context);
+      const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<
+        string,
+        string
+      >;
+      expect(headers.Authorization).toBe('Bearer admin-controlled-token');
+    });
+
+    it('resolves multiple ${env:VAR} references inside a single forcedUrl', async () => {
+      process.env.SLACK_TEAM = 'TEAM123';
+      process.env.SLACK_HOOK = 'HOOK456';
+      bindCustomConfig({
+        forcedUrl: 'https://api.allowed.com/services/${env:SLACK_TEAM}/${env:SLACK_HOOK}/x',
+      });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      await cap.execute({ method: 'POST', body: {} }, context);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe(
+        'https://api.allowed.com/services/TEAM123/HOOK456/x'
+      );
+    });
+
+    it('returns invalid_binding when forcedUrl references an unset env var', async () => {
+      delete process.env.MISSING_WEBHOOK;
+      bindCustomConfig({ forcedUrl: '${env:MISSING_WEBHOOK}' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: {} }, context);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(result.error?.message).toContain('MISSING_WEBHOOK');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns invalid_binding when a forcedHeaders value references an unset env var', async () => {
+      delete process.env.MISSING_TOKEN;
+      bindCustomConfig({
+        forcedHeaders: { Authorization: 'Bearer ${env:MISSING_TOKEN}' },
+      });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute(
+        { url: 'https://api.allowed.com/x', method: 'POST', body: {} },
+        context
+      );
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns invalid_binding when forcedUrl resolves to a non-URL string', async () => {
+      process.env.NOT_A_URL = 'just some text';
+      bindCustomConfig({ forcedUrl: '${env:NOT_A_URL}' });
+      const fetchSpy = mockFetchJson(200, { ok: true });
+      const cap = new CallExternalApiCapability();
+      const result = await cap.execute({ method: 'POST', body: {} }, context);
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('schema accepts forcedUrl with an env-template literal (was previously .url()-rejected)', async () => {
+      // Validate via the test-only export rather than relying on
+      // execute() so the schema-layer behaviour is asserted directly.
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.customConfigSchema.safeParse({
+        forcedUrl: '${env:SLACK_WEBHOOK_URL}',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('schema still rejects a non-URL literal that contains no env template', async () => {
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.customConfigSchema.safeParse({ forcedUrl: 'not-a-url' });
+      expect(result.success).toBe(false);
+    });
+  });
 });
