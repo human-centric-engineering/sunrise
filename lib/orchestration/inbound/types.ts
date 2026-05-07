@@ -51,8 +51,12 @@ export type VerifyFailureReason =
  * `{{ trigger.<field> }}` template substitution.
  *
  * The `payload` shape is **per-channel and versioned**: see the per-channel
- * tables in `.context/orchestration/inbound-triggers.md`. Adapters MUST keep
- * the shape stable — additive changes only.
+ * tables in `.context/orchestration/inbound-triggers.md`, and the per-channel
+ * payload interfaces exported from each adapter file:
+ *   - `SlackTriggerPayload`        in `./adapters/slack.ts`
+ *   - `PostmarkTriggerPayload`     in `./adapters/postmark.ts`
+ *   - `GenericHmacTriggerPayload`  in `./adapters/generic-hmac.ts`
+ * Adapters MUST keep the shape stable — additive changes only.
  */
 export interface NormalisedTriggerPayload {
   channel: string;
@@ -73,10 +77,11 @@ export interface InboundAdapter {
    * Return `null` to fall through to normal verification, or a `Response` to
    * short-circuit (e.g. echo Slack's `challenge`).
    *
-   * `rawBody` is the parsed JSON body if any; adapters that need the raw string
-   * read it from the request themselves.
+   * `parsedBody` is the JSON-parsed request body (or `null` if the body was
+   * absent or unparseable). Adapters that need the raw signed bytes read them
+   * from the request themselves.
    */
-  handleHandshake?(rawBody: unknown): Response | null;
+  handleHandshake?(parsedBody: unknown): Response | null;
 
   /**
    * Verify the request authenticity. MUST NOT throw — return a structured

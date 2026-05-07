@@ -48,13 +48,35 @@ interface SlackEventEnvelope {
   event_time?: number;
 }
 
+/**
+ * Shape of the Slack adapter's normalised `payload`. Workflow templates reference
+ * fields with `{{ trigger.<field> }}`. Empty-string defaults populate every field
+ * so templates can rely on shape stability across messages.
+ *
+ * Stable contract — additive changes only. See `inbound-triggers.md` for the
+ * field-by-field source mapping.
+ */
+export interface SlackTriggerPayload {
+  teamId: string;
+  appId: string;
+  eventTime: number;
+  type: string;
+  user: string;
+  botId: string;
+  channel: string;
+  channelType: string;
+  text: string;
+  ts: string;
+  threadTs: string;
+}
+
 export class SlackAdapter implements InboundAdapter {
   readonly channel = 'slack';
 
   constructor(private readonly signingSecret: string) {}
 
-  handleHandshake(rawBody: unknown): Response | null {
-    const body = (rawBody ?? {}) as SlackEventEnvelope;
+  handleHandshake(parsedBody: unknown): Response | null {
+    const body = (parsedBody ?? {}) as SlackEventEnvelope;
     if (body.type !== 'url_verification') return null;
 
     const challenge = typeof body.challenge === 'string' ? body.challenge : '';

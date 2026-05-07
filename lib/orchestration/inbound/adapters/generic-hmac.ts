@@ -39,6 +39,15 @@ interface GenericHmacBody {
   eventType?: unknown;
 }
 
+/**
+ * Shape of the generic-HMAC adapter's normalised `payload`. The body is opaque
+ * pass-through — workflow templates reference fields with `{{ trigger.body.<field> }}`.
+ * Stable contract — additive changes only.
+ */
+export interface GenericHmacTriggerPayload {
+  body: unknown;
+}
+
 /** Read a string field from the parsed body, or undefined if absent / wrong type. */
 function readBodyString(body: unknown, key: keyof GenericHmacBody): string | undefined {
   if (!body || typeof body !== 'object') return undefined;

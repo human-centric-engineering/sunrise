@@ -401,20 +401,22 @@ model AiWorkflowSchedule {
 // Inbound trigger from a third-party system (Slack, Postmark, generic-HMAC). Each row
 // binds (channel, workflow) so the inbound route can dispatch incoming requests to the
 // right workflow. Channel-wide secrets (Slack signing secret, Postmark basic-auth) live
-// in env vars; per-trigger generic-HMAC secrets are stored hashed in `signingSecretHash`.
-// `metadata` carries channel-specific config (event-type filter, allowed senders, ...).
+// in env vars; per-trigger generic-HMAC secrets are stored as plaintext on `signingSecret`,
+// mirroring `AiEventHook.secret` (HMAC needs the original secret on both sides; the at-rest
+// security model treats the DB as admin-trusted). `metadata` carries channel-specific config
+// (event-type filter, allowed senders, ...).
 model AiWorkflowTrigger {
-  id                String    @id @default(cuid())
-  workflowId        String
-  channel           String    @db.VarChar(40) // "slack" | "postmark" | "hmac"
-  name              String
-  metadata          Json      @default("{}")
-  signingSecret     String?   @db.Text // per-trigger HMAC shared secret (plaintext, mirrors AiEventHook.secret); null for env-var-keyed channels
-  isEnabled         Boolean   @default(true)
-  lastFiredAt       DateTime?
-  createdBy         String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  workflowId    String
+  channel       String    @db.VarChar(40) // "slack" | "postmark" | "hmac"
+  name          String
+  metadata      Json      @default("{}")
+  signingSecret String?   @db.Text // per-trigger HMAC shared secret (plaintext, mirrors AiEventHook.secret); null for env-var-keyed channels
+  isEnabled     Boolean   @default(true)
+  lastFiredAt   DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Relations
   workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)

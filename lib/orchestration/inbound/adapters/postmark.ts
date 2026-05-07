@@ -56,6 +56,32 @@ interface PostmarkInboundBody {
 }
 
 /**
+ * Shape of the Postmark adapter's normalised `payload`. Workflow templates
+ * reference fields with `{{ trigger.<field> }}`. Stable contract — additive
+ * changes only. See `inbound-triggers.md` for source mapping.
+ */
+export interface PostmarkTriggerPayload {
+  from: { email: string; name: string };
+  to: Array<{ email: string; name: string; mailboxHash: string }>;
+  cc: Array<{ email: string; name: string }>;
+  subject: string;
+  messageId: string;
+  date: string;
+  textBody: string;
+  htmlBody: string;
+  strippedTextReply: string;
+  mailboxHash: string;
+  messageStream: string;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    contentLength: number;
+    contentBase64: string;
+    contentId: string;
+  }>;
+}
+
+/**
  * Constant-time string compare. `timingSafeEqual` requires equal-length buffers,
  * so we encode both sides and short-circuit on length mismatch *after* doing
  * the comparison work over equal-length scratch buffers. The length-check leaks

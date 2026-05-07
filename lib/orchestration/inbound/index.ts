@@ -21,8 +21,11 @@ export {
 } from '@/lib/orchestration/inbound/registry';
 
 export { GenericHmacAdapter } from '@/lib/orchestration/inbound/adapters/generic-hmac';
+export type { GenericHmacTriggerPayload } from '@/lib/orchestration/inbound/adapters/generic-hmac';
 export { PostmarkAdapter } from '@/lib/orchestration/inbound/adapters/postmark';
+export type { PostmarkTriggerPayload } from '@/lib/orchestration/inbound/adapters/postmark';
 export { SlackAdapter } from '@/lib/orchestration/inbound/adapters/slack';
+export type { SlackTriggerPayload } from '@/lib/orchestration/inbound/adapters/slack';
 
 export {
   bootstrapInboundAdapters,
