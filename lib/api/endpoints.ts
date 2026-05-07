@@ -98,6 +98,7 @@ export const API = {
         `/api/v1/admin/orchestration/provider-models/${id}`,
       PROVIDER_MODEL_RECOMMEND: '/api/v1/admin/orchestration/provider-models/recommend',
       PROVIDERS: '/api/v1/admin/orchestration/providers',
+      PROVIDERS_DETECT: '/api/v1/admin/orchestration/providers/detect',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
       providerTestModel: (id: string): string =>
