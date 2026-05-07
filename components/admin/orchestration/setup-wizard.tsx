@@ -89,9 +89,16 @@ const DEFAULT_STATE: WizardState = {
 export interface SetupWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Triggered from the dashboard's fresh-install banner when no
+   * provider has been configured yet. Currently informational —
+   * Phase 4 will use it to skip the persisted "completed" marker so
+   * the wizard re-opens until setup is genuinely done.
+   */
+  forceOpen?: boolean;
 }
 
-export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
+export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: SetupWizardProps) {
   const [state, setState, clearState] = useLocalStorage<WizardState>(STORAGE_KEY, DEFAULT_STATE);
   const wiz = useWizard({ totalSteps: TOTAL_STEPS, initialIndex: state.stepIndex });
 

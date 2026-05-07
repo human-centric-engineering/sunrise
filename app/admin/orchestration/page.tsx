@@ -8,6 +8,7 @@ import {
   type ActivityFeedItem,
 } from '@/components/admin/orchestration/dashboard-activity-feed';
 import { DashboardStatsCards } from '@/components/admin/orchestration/dashboard-stats-cards';
+import { SetupRequiredBanner } from '@/components/admin/orchestration/setup-required-banner';
 import { SetupWizardLauncher } from '@/components/admin/orchestration/setup-wizard-launcher';
 import {
   TopCapabilitiesPanel,
@@ -17,6 +18,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
+import { getSetupState } from '@/lib/orchestration/setup-state';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
@@ -217,13 +219,15 @@ async function getActivityFeed(
 }
 
 export default async function OrchestrationDashboardPage() {
-  const [costSummary, budgetAlerts, agentsCount, dashboardStats, models] = await Promise.all([
-    getCostSummary(),
-    getBudgetAlerts(),
-    getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
-    getDashboardStats(),
-    getModels(),
-  ]);
+  const [costSummary, budgetAlerts, agentsCount, dashboardStats, models, setupState] =
+    await Promise.all([
+      getCostSummary(),
+      getBudgetAlerts(),
+      getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
+      getDashboardStats(),
+      getModels(),
+      getSetupState(),
+    ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
   const weekTrend = costSummary?.trend.slice(-7) ?? null;
@@ -240,8 +244,10 @@ export default async function OrchestrationDashboardPage() {
             Operational overview — agents, spend, and activity.
           </p>
         </div>
-        <SetupWizardLauncher />
+        <SetupWizardLauncher forceOpen={!setupState.hasProvider} />
       </header>
+
+      <SetupRequiredBanner hasProvider={setupState.hasProvider} />
 
       <BudgetAlertsBanner alerts={budgetAlerts} />
 
