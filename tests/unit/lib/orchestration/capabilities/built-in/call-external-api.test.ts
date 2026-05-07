@@ -833,6 +833,44 @@ describe('CallExternalApiCapability', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
+    it('schema rejects multipart with method=GET', async () => {
+      const cap = new CallExternalApiCapability();
+      expect(() =>
+        cap.validate({
+          url: 'https://api.allowed.com/x',
+          method: 'GET',
+          multipart: {
+            files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+          },
+        })
+      ).toThrow();
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.argsSchema.safeParse({
+        url: 'https://api.allowed.com/x',
+        method: 'GET',
+        multipart: {
+          files: [{ name: 'index.html', contentType: 'text/html', data: helloBase64 }],
+        },
+      });
+      expect(result.success).toBe(false);
+      const issue = result.success ? undefined : result.error.issues[0];
+      expect(issue?.message).toMatch(/GET or DELETE/);
+    });
+
+    it('schema rejects multipart with method=DELETE', async () => {
+      const { __testing } =
+        await import('@/lib/orchestration/capabilities/built-in/call-external-api');
+      const result = __testing.argsSchema.safeParse({
+        url: 'https://api.allowed.com/x',
+        method: 'DELETE',
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      expect(result.success).toBe(false);
+    });
+
     it('still applies non-HMAC auth alongside multipart', async () => {
       process.env.UPLOAD_TOKEN = 'tok_abc';
       bindCustomConfig({ auth: { type: 'bearer', secret: 'UPLOAD_TOKEN' } });

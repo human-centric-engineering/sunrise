@@ -1069,6 +1069,28 @@ describe('executeExternalCall', () => {
       await expect(executeExternalCall(step, makeCtx())).rejects.toThrow();
     });
 
+    it('config schema rejects multipart with method=GET', async () => {
+      const step = makeStep({
+        method: 'GET',
+        bodyTemplate: undefined,
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toThrow();
+    });
+
+    it('config schema rejects multipart with method=DELETE', async () => {
+      const step = makeStep({
+        method: 'DELETE',
+        bodyTemplate: undefined,
+        multipart: {
+          files: [{ name: 'doc', contentType: 'text/plain', data: helloBase64 }],
+        },
+      });
+      await expect(executeExternalCall(step, makeCtx())).rejects.toThrow();
+    });
+
     it('maps multipart_hmac_unsupported HttpError → ExecutorError("multipart_hmac_unsupported")', async () => {
       process.env.HMAC_KEY = 'secret';
       const fetchSpy = vi.spyOn(globalThis, 'fetch');

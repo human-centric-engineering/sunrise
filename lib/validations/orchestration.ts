@@ -2173,7 +2173,14 @@ export const externalCallConfigSchema = stepErrorConfigSchema
     message:
       '`bodyTemplate` and `multipart` are mutually exclusive — supply one or the other, not both',
     path: ['multipart'],
-  });
+  })
+  .refine(
+    (cfg) => !(cfg.multipart !== undefined && (cfg.method === 'GET' || cfg.method === 'DELETE')),
+    {
+      message: '`multipart` cannot be used with GET or DELETE methods (no body permitted)',
+      path: ['multipart'],
+    }
+  );
 
 export const agentCallConfigSchema = stepErrorConfigSchema.extend({
   agentSlug: z.string().optional(),

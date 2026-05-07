@@ -206,21 +206,71 @@ describe('buildMultipartBody', () => {
     }
   });
 
-  it('throws MultipartError("body_too_large") when total bytes exceed cap', () => {
-    // Build a payload right at the per-file limit, with two files —
-    // their combined decoded size will overshoot the total cap.
-    const halfish = 'A'.repeat(ABSOLUTE_MAX_FILE_BASE64_LENGTH);
-    expect(() =>
+  it('throws MultipartError("body_too_large") when summed file bytes exceed the cap', () => {
+    // 5 × 8 MB base64 ≈ 5 × 6 MB decoded = 30 MB — over the 25 MB
+    // total cap. Strict regex requires real base64; build a buffer
+    // of the right decoded size and re-encode for each part.
+    const sixMb = Buffer.alloc(6 * 1024 * 1024, 0x41).toString('base64');
+    try {
       buildMultipartBody({
         files: [
-          { name: 'a', contentType: 'application/octet-stream', data: halfish },
-          { name: 'b', contentType: 'application/octet-stream', data: halfish },
-          { name: 'c', contentType: 'application/octet-stream', data: halfish },
-          { name: 'd', contentType: 'application/octet-stream', data: halfish },
-          { name: 'e', contentType: 'application/octet-stream', data: halfish },
+          { name: 'a', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'b', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'c', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'd', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'e', contentType: 'application/octet-stream', data: sixMb },
         ],
-      })
-    ).toThrow(/body_too_large|exceeds.*cap|exceeds per-request/);
+      });
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MultipartError);
+      expect((err as MultipartError).code).toBe('body_too_large');
+    }
+  });
+
+  it('throws body_too_large from fields alone when their byte sum exceeds the cap', () => {
+    // Exercise the early field-budget check (runs before any base64
+    // decode, so a malformed file in the same request isn't
+    // touched). Two huge fields > 25 MB combined.
+    const big = 'x'.repeat(13 * 1024 * 1024);
+    try {
+      buildMultipartBody({
+        files: [{ name: 'small', contentType: 'text/plain', data: helloBase64 }],
+        fields: { a: big, b: big },
+      });
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MultipartError);
+      expect((err as MultipartError).code).toBe('body_too_large');
+    }
+  });
+
+  it('fails fast on the offending file rather than decoding everything first', () => {
+    // Five 6 MB files: running totals 6/12/18/24/30. The 5th pushes
+    // total over the 25 MB cap and triggers the throw — the 6th
+    // (which would be wasted work) is never decoded. Each
+    // individual file passes the schema's per-file cap.
+    const sixMb = Buffer.alloc(6 * 1024 * 1024, 0x41).toString('base64');
+    try {
+      buildMultipartBody({
+        files: [
+          { name: 'first', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'second', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'third', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'fourth', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'fifth', contentType: 'application/octet-stream', data: sixMb },
+          { name: 'sixth', contentType: 'application/octet-stream', data: sixMb },
+        ],
+      });
+      expect.fail('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MultipartError);
+      expect((err as MultipartError).code).toBe('body_too_large');
+      // The error message names the file that pushed the total
+      // over the cap; later files in the array were never decoded.
+      expect((err as MultipartError).message).toContain('"fifth"');
+      expect((err as MultipartError).message).not.toContain('"sixth"');
+    }
   });
 
   it('exports MAX_TOTAL_MULTIPART_BYTES as a positive integer', () => {

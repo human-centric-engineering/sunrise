@@ -84,11 +84,7 @@ export const multipartShapeSchema = z
 
 export type MultipartShape = z.infer<typeof multipartShapeSchema>;
 
-export type MultipartErrorCode =
-  | 'invalid_shape'
-  | 'invalid_base64'
-  | 'file_too_large'
-  | 'body_too_large';
+export type MultipartErrorCode = 'invalid_shape' | 'invalid_base64' | 'body_too_large';
 
 export class MultipartError extends Error {
   constructor(
@@ -122,13 +118,32 @@ export function buildMultipartBody(input: unknown): FormData {
   }
   const parts = parsed.data;
 
+  // Validate field-byte budget first (cheap — no base64 decode needed)
+  // and seed the running total. This lets the file-decode loop bail
+  // as soon as decoded files push the total over the cap, rather than
+  // decoding every file first and only THEN noticing the body is
+  // too big (which would have allocated all those buffers for nothing).
+  let totalBytes = 0;
+  if (parts.fields) {
+    for (const value of Object.values(parts.fields)) {
+      totalBytes += Buffer.byteLength(value, 'utf8');
+    }
+    if (totalBytes > MAX_TOTAL_MULTIPART_BYTES) {
+      throw new MultipartError(
+        'body_too_large',
+        `multipart fields total ${totalBytes} bytes exceeds cap of ${MAX_TOTAL_MULTIPART_BYTES} bytes`
+      );
+    }
+  }
+
   // Decode each file's base64 so we can (a) reject non-base64 inputs
   // before fetch, and (b) sum the decoded sizes for the total-body
   // cap. `Buffer.from(s, 'base64')` silently drops invalid characters,
   // so we screen with a strict regex first — same posture as
-  // `upload_to_storage`.
+  // `upload_to_storage`. We check the running total AFTER each push so
+  // the function fails closed without allocating buffers for files
+  // beyond the body-cap point.
   const decodedFiles: Array<{ part: MultipartShape['files'][number]; bytes: Buffer }> = [];
-  let totalBytes = 0;
 
   for (const part of parts.files) {
     if (!STRICT_BASE64_RE.test(part.data)) {
@@ -141,27 +156,14 @@ export function buildMultipartBody(input: unknown): FormData {
     if (bytes.length === 0) {
       throw new MultipartError('invalid_base64', `file part "${part.name}" decoded to zero bytes`);
     }
-    if (bytes.length > MAX_TOTAL_MULTIPART_BYTES) {
+    totalBytes += bytes.length;
+    if (totalBytes > MAX_TOTAL_MULTIPART_BYTES) {
       throw new MultipartError(
-        'file_too_large',
-        `file part "${part.name}" decoded to ${bytes.length} bytes — exceeds per-request cap of ${MAX_TOTAL_MULTIPART_BYTES} bytes`
+        'body_too_large',
+        `multipart body total ${totalBytes} bytes exceeds cap of ${MAX_TOTAL_MULTIPART_BYTES} bytes (failed at file part "${part.name}")`
       );
     }
-    totalBytes += bytes.length;
     decodedFiles.push({ part, bytes });
-  }
-
-  if (parts.fields) {
-    for (const value of Object.values(parts.fields)) {
-      totalBytes += Buffer.byteLength(value, 'utf8');
-    }
-  }
-
-  if (totalBytes > MAX_TOTAL_MULTIPART_BYTES) {
-    throw new MultipartError(
-      'body_too_large',
-      `multipart body total ${totalBytes} bytes exceeds cap of ${MAX_TOTAL_MULTIPART_BYTES} bytes`
-    );
   }
 
   const fd = new FormData();

@@ -131,7 +131,15 @@ const argsSchema = z
   .refine((args) => !(args.body !== undefined && args.multipart !== undefined), {
     message: '`body` and `multipart` are mutually exclusive — supply one or the other, not both',
     path: ['multipart'],
-  });
+  })
+  .refine(
+    (args) =>
+      !(args.multipart !== undefined && (args.method === 'GET' || args.method === 'DELETE')),
+    {
+      message: '`multipart` cannot be used with GET or DELETE methods (no body permitted)',
+      path: ['multipart'],
+    }
+  );
 
 type Args = z.infer<typeof argsSchema>;
 
