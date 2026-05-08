@@ -1387,6 +1387,66 @@ export const updateProviderModelSchema = z.object({
   metadata: metadataSchema,
 });
 
+/**
+ * POST body for the bulk-create endpoint. Each row mirrors
+ * `createProviderModelSchema` but `slug` and `providerSlug` come
+ * from the top-level envelope so the operator can't accidentally
+ * mix providers in one batch.
+ */
+const bulkProviderModelRowSchema = z.object({
+  modelId: z
+    .string()
+    .min(1, 'Model ID is required')
+    .max(100, 'Model ID must be less than 100 characters')
+    .trim(),
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
+  description: z
+    .string()
+    .max(2000, 'Description must be less than 2000 characters')
+    .trim()
+    .default(''),
+  capabilities: z.array(capabilitySchema).min(1).default(['chat']),
+  tierRole: tierRoleSchema,
+  reasoningDepth: ratingLevelSchema,
+  latency: latencyLevelSchema,
+  costEfficiency: ratingLevelSchema,
+  contextLength: contextLengthLevelSchema,
+  toolUse: toolUseLevelSchema,
+  bestRole: z
+    .string()
+    .min(1, 'Best role is required')
+    .max(200, 'Best role must be less than 200 characters')
+    .trim(),
+  dimensions: z.number().int().positive().optional(),
+  schemaCompatible: z.boolean().optional(),
+  costPerMillionTokens: z.number().nonnegative().optional(),
+  hasFreeTier: z.boolean().optional(),
+  local: z.boolean().default(false),
+  quality: embeddingQualitySchema.optional(),
+  strengths: z.string().max(500).trim().optional(),
+  setup: z.string().max(500).trim().optional(),
+});
+
+export const bulkCreateProviderModelsSchema = z.object({
+  providerSlug: z
+    .string()
+    .min(1, 'Provider slug is required')
+    .max(50, 'Provider slug must be less than 50 characters')
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Provider slug must be lowercase alphanumeric with hyphens'
+    )
+    .trim(),
+  models: z
+    .array(bulkProviderModelRowSchema)
+    .min(1, 'At least one model is required')
+    .max(50, 'Bulk add is capped at 50 models per request'),
+});
+
 /** List provider models query — GET /api/v1/admin/orchestration/provider-models */
 export const listProviderModelsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
