@@ -19,9 +19,11 @@
  *     because the auto-probe fires immediately on mount).
  *
  * On mount, every provider with an API key (or `isLocal`) is auto-probed
- * via `POST /providers/:id/test`. The probe is cached for 10 minutes via
- * `provider-test-cache` so repeat visits and form-edit round-trips don't
- * cause a request storm.
+ * via a single `POST /providers/test-bulk` — the server runs each
+ * `testConnection()` concurrently and returns one row per id. Replaces an
+ * earlier N+1 fan-out (one POST per provider id from the browser).
+ * Results are cached client-side for 10 minutes via `provider-test-cache`
+ * so repeat visits and form-edit round-trips don't cause a request storm.
  * The model count is lazy-fetched per card after first paint with a
  * 60-second client-side cache to avoid redundant N+1 fetches.
  *
@@ -263,50 +265,55 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         return next;
       });
 
-      await Promise.all(
-        targets.map(async (p) => {
-          try {
-            const response = await apiClient.post<{ ok: boolean; models?: string[] }>(
-              API.ADMIN.ORCHESTRATION.providerTest(p.id)
-            );
-            if (cancelled) return;
-            const ok = !!response.ok;
-            const modelCount = response.models?.length ?? 0;
-            setCachedTestResult(p.id, { ok, modelCount });
-            setTestedOk((prev) => ({ ...prev, [p.id]: ok }));
-            setTestResults((prev) => ({
-              ...prev,
-              [p.id]: ok
-                ? { ok: true, modelCount }
-                : {
-                    ok: false,
-                    message: "Couldn't reach this provider. Check the server logs for details.",
-                  },
-            }));
-          } catch {
-            if (cancelled) return;
-            // Same shape as a failed test — server already sanitizes
-            // raw SDK errors before they reach us.
-            setCachedTestResult(p.id, { ok: false, modelCount: 0 });
-            setTestedOk((prev) => ({ ...prev, [p.id]: false }));
-            setTestResults((prev) => ({
-              ...prev,
-              [p.id]: {
-                ok: false,
-                message: "Couldn't reach this provider. Check the server logs for details.",
-              },
-            }));
-          } finally {
-            if (!cancelled) {
-              setTestingInFlight((prev) => {
-                const next = { ...prev };
-                delete next[p.id];
-                return next;
-              });
-            }
-          }
-        })
-      );
+      // Bulk endpoint runs every requested test concurrently
+      // server-side and returns one row per provider — replaces the
+      // previous N+1 client-side fan-out (one POST per provider id).
+      const FAILURE_MESSAGE = "Couldn't reach this provider. Check the server logs for details.";
+      try {
+        const response = await apiClient.post<{
+          results: Array<{ id: string; ok: boolean; models?: string[] }>;
+        }>(API.ADMIN.ORCHESTRATION.PROVIDERS_TEST_BULK, {
+          body: { providerIds: targets.map((t) => t.id) },
+        });
+        if (cancelled) return;
+
+        // Index by id so we can apply each row independently and
+        // detect any target the server didn't return (e.g. it was
+        // deleted between the list load and the bulk call).
+        const byId = new Map(response.results.map((r) => [r.id, r]));
+        for (const target of targets) {
+          const row = byId.get(target.id);
+          const ok = row?.ok ?? false;
+          const modelCount = row?.models?.length ?? 0;
+          setCachedTestResult(target.id, { ok, modelCount });
+          setTestedOk((prev) => ({ ...prev, [target.id]: ok }));
+          setTestResults((prev) => ({
+            ...prev,
+            [target.id]: ok ? { ok: true, modelCount } : { ok: false, message: FAILURE_MESSAGE },
+          }));
+        }
+      } catch {
+        if (cancelled) return;
+        // Whole-batch failure (network error, 4xx/5xx) — mark every
+        // target as failed so the UI doesn't leave them in the
+        // "testing…" pulse forever.
+        for (const target of targets) {
+          setCachedTestResult(target.id, { ok: false, modelCount: 0 });
+          setTestedOk((prev) => ({ ...prev, [target.id]: false }));
+          setTestResults((prev) => ({
+            ...prev,
+            [target.id]: { ok: false, message: FAILURE_MESSAGE },
+          }));
+        }
+      } finally {
+        if (!cancelled) {
+          setTestingInFlight((prev) => {
+            const next = { ...prev };
+            for (const target of targets) delete next[target.id];
+            return next;
+          });
+        }
+      }
     })();
     return () => {
       cancelled = true;

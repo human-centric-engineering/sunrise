@@ -560,6 +560,15 @@ export const bulkAgentActionSchema = z.object({
   agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
 });
 
+/**
+ * Bulk provider connection-test — body for POST /providers/test-bulk.
+ * Capped at 50 to match the per-request rate-limit budget; in practice
+ * orchestrators rarely have more than ~10 providers configured.
+ */
+export const bulkProviderTestSchema = z.object({
+  providerIds: z.array(cuidSchema).min(1, 'At least one providerId required').max(50),
+});
+
 // ============================================================================
 // Embed Token Schemas
 // ============================================================================

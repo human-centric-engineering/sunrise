@@ -317,11 +317,14 @@ describe('ProvidersList', () => {
   // ── Auto-probe on mount ───────────────────────────────────────────────────
 
   describe('auto-probe on mount', () => {
-    it('fires POST /providers/:id/test for each provider with an API key', async () => {
+    it('fires a single POST /providers/test-bulk with every eligible provider id', async () => {
       const { apiClient } = await import('@/lib/api/client');
+      // Bulk endpoint returns one row per requested id.
       vi.mocked(apiClient.post).mockResolvedValue({
-        ok: true,
-        models: ['m1', 'm2'],
+        results: [
+          { id: 'prov-1', ok: true, models: ['m1', 'm2'] },
+          { id: 'prov-3', ok: true, models: ['m1'] },
+        ],
       });
 
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
@@ -329,23 +332,21 @@ describe('ProvidersList', () => {
       // Anthropic (apiKeyPresent=true) and Ollama (isLocal=true) are
       // probed. OpenAI (apiKeyPresent=false, !isLocal) is skipped — it
       // already shows a red "Key missing" dot without a round-trip.
+      // The whole batch is a single HTTP call now.
       await waitFor(() => {
-        const calls = vi.mocked(apiClient.post).mock.calls.map((c) => c[0]);
-        expect(calls).toEqual(
-          expect.arrayContaining([expect.stringContaining('/providers/prov-1/test')])
-        );
-        expect(calls).toEqual(
-          expect.arrayContaining([expect.stringContaining('/providers/prov-3/test')])
-        );
-        expect(calls.some((u) => u.includes('/providers/prov-2/test'))).toBe(false);
+        const calls = vi.mocked(apiClient.post).mock.calls;
+        expect(calls.length).toBe(1);
+        expect(calls[0][0]).toContain('/providers/test-bulk');
+        const body = (calls[0][1] as { body: { providerIds: string[] } } | undefined)?.body;
+        expect(body?.providerIds).toEqual(expect.arrayContaining(['prov-1', 'prov-3']));
+        expect(body?.providerIds).not.toContain('prov-2');
       });
     });
 
     it('paints a green dot once the auto-probe resolves with ok=true', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.post).mockResolvedValue({
-        ok: true,
-        models: ['m1', 'm2', 'm3'],
+        results: [{ id: 'prov-1', ok: true, models: ['m1', 'm2', 'm3'] }],
       });
 
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
@@ -357,7 +358,9 @@ describe('ProvidersList', () => {
 
     it('renders a full-width failure message below the footer when the auto-probe returns ok=false', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ ok: false, models: [] });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: false, models: [], error: 'connection_failed' }],
+      });
 
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
@@ -370,12 +373,16 @@ describe('ProvidersList', () => {
 
     it('clearing the result on reactivate removes the old failure message', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      // First mount: probe fails → message renders.
-      vi.mocked(apiClient.post).mockResolvedValueOnce({ ok: false, models: [] });
+      // First mount: bulk probe returns ok=false for the only target.
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        results: [{ id: 'prov-1', ok: false, models: [] }],
+      });
       // Subsequent calls (reactivate PATCH, follow-up auto-probe) just
       // resolve — we only care that the old message disappears.
       vi.mocked(apiClient.patch).mockResolvedValue({});
-      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: ['m1'] });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: true, models: ['m1'] }],
+      });
 
       const inactiveProvider = makeProvider({ isActive: false });
       // The inactive provider is NOT auto-probed (filter gates on isActive),
@@ -419,7 +426,9 @@ describe('ProvidersList', () => {
       setCachedTestResult('prov-1', { ok: true, modelCount: 3 });
 
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: ['x'] });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: true, models: ['x'] }],
+      });
 
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
@@ -429,6 +438,42 @@ describe('ProvidersList', () => {
         expect(document.querySelectorAll('.bg-green-500').length).toBeGreaterThanOrEqual(1);
       });
       expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('marks targets that the server omitted as failed', async () => {
+      // Defensive branch: the bulk endpoint silently drops provider
+      // ids that no longer exist (e.g. deleted between page load and
+      // the test fan-out). The client must not leave those targets
+      // stuck in the "testing…" pulse.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        // Anthropic gets a result; the local Ollama row does NOT.
+        results: [{ id: 'prov-1', ok: true, models: ['m1'] }],
+      });
+
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      // The omitted-id (Ollama) should fall back to ok=false → its
+      // "couldn't reach this provider" message renders. We can't
+      // disambiguate which row owns the message in the multi-card
+      // layout, so we rely on the count: at least one failure message
+      // appears even though we returned a green result for prov-1.
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+    });
+
+    it('marks every target as failed when the bulk endpoint rejects', async () => {
+      // Whole-batch error path — the catch branch must cover every
+      // requested target so the spinner doesn't hang.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('network'));
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
     });
   });
 

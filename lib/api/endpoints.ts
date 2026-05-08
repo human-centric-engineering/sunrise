@@ -101,6 +101,7 @@ export const API = {
       DISCOVERY_MODELS: '/api/v1/admin/orchestration/discovery/models',
       PROVIDERS: '/api/v1/admin/orchestration/providers',
       PROVIDERS_DETECT: '/api/v1/admin/orchestration/providers/detect',
+      PROVIDERS_TEST_BULK: '/api/v1/admin/orchestration/providers/test-bulk',
       providerById: (id: string): string => `/api/v1/admin/orchestration/providers/${id}`,
       providerTest: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/test`,
       providerTestModel: (id: string): string =>

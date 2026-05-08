@@ -43,6 +43,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/providers/:id/health`                   | GET, POST          | Read / reset circuit breaker state                                                                   | 5.1     |
 | `/providers/:id/models`                   | GET                | Provider-reported models                                                                             | 3.2     |
 | `/providers/detect`                       | GET                | Scan `process.env` for known provider API keys; returns booleans + suggested config (no values)      | 5.3     |
+| `/providers/test-bulk`                    | POST               | Run `testConnection()` on up to 50 providers in one round trip — replaces the list-mount N+1 fan-out | 5.3     |
 | `/models`                                 | GET                | Aggregated model registry                                                                            | 3.2     |
 | `/provider-models`                        | GET, POST          | List / create provider model entries (selection matrix)                                              | 5.2     |
 | `/provider-models/bulk`                   | POST               | Bulk-create up to 50 models in one request (powers the discovery dialog)                             | 5.3     |
@@ -299,6 +300,10 @@ Asks the provider directly. Same error-sanitization guarantee as `/test`.
 ### `GET /providers/detect`
 
 Scans `process.env` for known LLM provider API keys (catalogue: `lib/orchestration/llm/known-providers.ts`) and returns one row per known provider with `apiKeyPresent: boolean`, `apiKeyEnvVar: string | null`, `alreadyConfigured: boolean`, plus the suggested `defaultBaseUrl` and per-task model picks. **Env-var values never leave the server** — only the var _name_ is reported when the key is present, never its value. Used by the setup wizard's "We detected X — configure now?" cards on a fresh install. `alreadyConfigured` is keyed off the existing `slug` so the wizard can hide duplicates.
+
+### `POST /providers/test-bulk`
+
+Body: `{ providerIds: string[] }` (1–50 cuids). Loads every requested provider in a single `findMany`, runs `testConnection()` for each concurrently with `Promise.allSettled`, and returns `{ results: Array<{ id, ok, models, error? }> }`. Replaces the previous client-side N+1 pattern where `providers-list.tsx` fired one `POST /providers/:id/test` per provider on mount. Each row carries the same sanitised error contract as the single-id endpoint — raw SDK errors are logged server-side but never forwarded to the caller, so the route can't be used as a blind-SSRF port scanner. Provider ids that don't exist in the database are silently dropped from the response (mirrors how the single-id endpoint would 404).
 
 ### `GET /models`
 
