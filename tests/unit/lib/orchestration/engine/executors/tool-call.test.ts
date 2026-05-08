@@ -20,7 +20,18 @@ vi.mock('@/lib/orchestration/engine/executor-registry', () => ({
 vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
   capabilityDispatcher: {
     dispatch: vi.fn(),
+    loadFromDatabase: vi.fn().mockResolvedValue(undefined),
+    getRegistryEntry: vi.fn().mockReturnValue(undefined),
   },
+}));
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>
+    turnIndex !== undefined
+      ? `${executionId}:${stepId}:turn=${turnIndex}`
+      : `${executionId}:${stepId}`
+  ),
+  lookupDispatch: vi.fn().mockResolvedValue(null),
+  recordDispatch: vi.fn().mockResolvedValue(true),
 }));
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────

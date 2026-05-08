@@ -43,6 +43,16 @@ vi.mock('@/emails/workflow-notification', () => ({
   WorkflowNotification: vi.fn(() => null),
 }));
 
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>
+    turnIndex !== undefined
+      ? `${executionId}:${stepId}:turn=${turnIndex}`
+      : `${executionId}:${stepId}`
+  ),
+  lookupDispatch: vi.fn().mockResolvedValue(null),
+  recordDispatch: vi.fn().mockResolvedValue(true),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import '@/lib/orchestration/engine/executors/notification'; // triggers registerStepType

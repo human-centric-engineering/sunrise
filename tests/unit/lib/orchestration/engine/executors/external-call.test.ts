@@ -35,6 +35,15 @@ vi.mock('@/lib/logging', () => ({
     debug: vi.fn(),
   },
 }));
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>
+    turnIndex !== undefined
+      ? `${executionId}:${stepId}:turn=${turnIndex}`
+      : `${executionId}:${stepId}`
+  ),
+  lookupDispatch: vi.fn().mockResolvedValue(null),
+  recordDispatch: vi.fn().mockResolvedValue(true),
+}));
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
