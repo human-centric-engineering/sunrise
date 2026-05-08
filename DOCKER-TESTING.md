@@ -174,9 +174,21 @@ docker-compose down -v  # Remove volumes (deletes database data)
 
 ### 2.1 Build Production Image
 
+The build needs four env vars passed as `--build-arg`. Next.js 16 evaluates server modules during page-data collection, which runs the Zod env validation in `lib/env.ts` — without these args the build fails with `Invalid environment variables`.
+
 ```bash
-docker build -t sunrise:latest .
+docker build -t sunrise:latest \
+  --build-arg DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sunrise" \
+  --build-arg BETTER_AUTH_URL="http://localhost:3000" \
+  --build-arg BETTER_AUTH_SECRET="$(openssl rand -base64 32)" \
+  --build-arg NEXT_PUBLIC_APP_URL="http://localhost:3000" \
+  .
 ```
+
+**About these values:**
+
+- `NEXT_PUBLIC_APP_URL` is **embedded at build time** — for a real production image, set it to the actual public URL (must match `BETTER_AUTH_URL`).
+- `DATABASE_URL`, `BETTER_AUTH_URL`, and `BETTER_AUTH_SECRET` are read from the runtime env at startup, so the values baked in here are overridden by `--env-file` / `docker run -e` when you run the container. Placeholder values that satisfy the Zod schema are fine for the build itself.
 
 **What to look for:**
 
@@ -417,8 +429,13 @@ docker-compose down            # Stop dev environment
 docker-compose logs -f web     # View logs
 docker-compose restart web     # Restart app
 
-# Production
-docker build -t sunrise:latest .
+# Production (build args required — see Test 2.1)
+docker build -t sunrise:latest \
+  --build-arg DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sunrise" \
+  --build-arg BETTER_AUTH_URL="http://localhost:3000" \
+  --build-arg BETTER_AUTH_SECRET="$(openssl rand -base64 32)" \
+  --build-arg NEXT_PUBLIC_APP_URL="http://localhost:3000" \
+  .
 docker-compose -f docker-compose.prod.yml up -d
 docker-compose -f docker-compose.prod.yml down
 
