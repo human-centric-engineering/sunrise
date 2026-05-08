@@ -610,7 +610,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                     </TableCell>
                     <TableCell className="text-xs">
                       {agent.provider === '' && agent.model === '' ? (
-                        <Tip label="Resolves to the configured provider + system default chat model at runtime. Set in the Settings page or via the setup wizard.">
+                        <Tip label="At runtime this agent uses the first active provider plus the default chat model from Orchestration Settings. Set the default chat model on the Settings page (Default models card) or via the setup wizard's 'Default models' step.">
                           <Badge
                             variant="secondary"
                             className="px-1.5 py-0 text-[10px] font-medium"

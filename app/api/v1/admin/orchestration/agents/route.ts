@@ -30,7 +30,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
 
   const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, provider, q } = validateQueryParams(
+  const { page, limit, isActive, provider, isSystem, q } = validateQueryParams(
     searchParams,
     listAgentsQuerySchema
   );
@@ -39,6 +39,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const where: Prisma.AiAgentWhereInput = {};
   if (isActive !== undefined) where.isActive = isActive;
   if (provider) where.provider = provider;
+  if (isSystem !== undefined) where.isSystem = isSystem;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },

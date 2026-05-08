@@ -17,7 +17,12 @@ import { parseStoredDefaults } from '@/lib/orchestration/settings';
 export interface SetupState {
   /** True if at least one `AiProviderConfig` row exists. */
   hasProvider: boolean;
-  /** True if at least one `AiAgent` row exists (any kind). */
+  /**
+   * True if at least one user-created (`isSystem: false`) agent exists.
+   * Excludes system seeds (pattern-advisor, quiz-master, mcp-system,
+   * model-auditor) because they're present on every install and don't
+   * reflect operator setup progress.
+   */
   hasAgent: boolean;
   /** True if `AiOrchestrationSettings.defaultModels.chat` is a non-empty string. */
   hasDefaultChatModel: boolean;
@@ -32,7 +37,7 @@ export async function getSetupState(): Promise<SetupState> {
   try {
     const [providerCount, agentCount, settingsRow] = await Promise.all([
       prisma.aiProviderConfig.count(),
-      prisma.aiAgent.count(),
+      prisma.aiAgent.count({ where: { isSystem: false } }),
       prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } }),
     ]);
 

@@ -3,37 +3,40 @@
 /**
  * Setup Wizard
  *
- * Six-step guided flow that walks a new admin from "fresh install" to
- * "I have a working agent I can chat with":
+ * Four-step config-oriented flow for developers setting up a fresh
+ * Sunrise instance:
  *
- *   1. What are you building?      — pattern advisor chat
- *   2. Configure a provider        — env-var detection cards + manual flavour picker
- *   3. Confirm default models      — chat + embedding model selectors
- *   4. Create your first agent     — provider/model dropdowns sourced from /providers
- *   5. Test your agent             — SSE chat consumer
- *   6. What's next                 — static links, marks wizard complete
+ *   1. Configure a provider   — env-var detection cards (one-click) plus
+ *                                a "Configure manually →" link out to
+ *                                /providers/new for custom or self-hosted
+ *                                endpoints.
+ *   2. Confirm default models — chat + embedding model selectors written
+ *                                to `AiOrchestrationSettings.defaultModels`.
+ *   3. Smoke test              — `/providers/:id/test` followed by
+ *                                `/providers/:id/test-model` against the
+ *                                configured default chat model. Proves
+ *                                the provider → API key → LLM chain
+ *                                round-trips without touching agents or
+ *                                the knowledge base.
+ *   4. Done                    — links out to /agents/new, /knowledge,
+ *                                and /workflows/new.
  *
- * The wizard is provider-agnostic: it does not assume Anthropic. The
- * provider step calls `/providers/detect` to surface "We detected
- * `ANTHROPIC_API_KEY` — configure now?" cards, then writes the
- * suggested chat / embedding model to `AiOrchestrationSettings` so the
- * 5 system-seeded agents (which ship with empty provider/model)
- * resolve their binding through the operator's choice.
+ * Provider-agnostic: never assumes Anthropic. The 5 system-seeded agents
+ * (pattern-advisor, quiz-master, mcp-system, model-auditor) ship with
+ * empty `provider`/`model` and resolve dynamically through the operator's
+ * choice — the wizard's only job is to wire the provider, set defaults,
+ * and prove the chain works.
  *
  * Errors never throw out of the dialog. Fetch failures become friendly
  * inline messages — the raw `err.message` from a fetch is not forwarded
  * to the UI (could leak provider SDK internals). Detailed errors are
- * logged to the server via `logger.error` in the underlying API routes,
- * not from this client component.
+ * logged to the server via `logger.error` in the underlying API routes.
  */
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Loader2, X } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
 
-import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
-import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -53,18 +56,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
-import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
+import { cn } from '@/lib/utils';
 
-// Bumped from v1 → v2 because TOTAL_STEPS grew from 5 → 6 and the
-// agent-draft default values changed (no more hardcoded 'anthropic' /
-// 'claude-opus-4-6'). Old persisted state would point users at the
-// wrong step or pre-fill with stale defaults.
-const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v2';
-const TOTAL_STEPS = 6;
+// Bumped v2 → v3 because the layout changed shape: 6 steps → 4 steps,
+// agentDraft and createdAgentSlug removed from persisted state.
+const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v3';
+const TOTAL_STEPS = 4;
 
 interface ProviderDraft {
   name: string;
@@ -80,21 +80,9 @@ interface ProviderDraft {
   suggestedEmbeddingModel: string;
 }
 
-interface AgentDraft {
-  name: string;
-  slug: string;
-  description: string;
-  systemInstructions: string;
-  model: string;
-  provider: string;
-}
-
 interface WizardState {
   stepIndex: number;
   providerDraft: ProviderDraft;
-  agentDraft: AgentDraft;
-  /** Slug of the agent created by the wizard — used by the chat test step. */
-  createdAgentSlug: string | null;
 }
 
 const DEFAULT_STATE: WizardState = {
@@ -108,16 +96,6 @@ const DEFAULT_STATE: WizardState = {
     suggestedDefaultChatModel: '',
     suggestedEmbeddingModel: '',
   },
-  agentDraft: {
-    name: '',
-    slug: '',
-    description: '',
-    systemInstructions: '',
-    // Empty by default — populated from the configured provider on mount.
-    model: '',
-    provider: '',
-  },
-  createdAgentSlug: null,
 };
 
 export interface SetupWizardProps {
@@ -152,27 +130,25 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
 
     void (async () => {
       try {
-        const [providerRes, agentRes] = await Promise.all([
-          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`, {
-            credentials: 'include',
-          }),
-          fetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=1`, { credentials: 'include' }),
-        ]);
+        const providerRes = await fetch(
+          `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`,
+          { credentials: 'include' }
+        );
 
         if (cancelled) return;
 
         const hasProvider = await paginatedTotalGt0(providerRes);
-        const hasAgent = await paginatedTotalGt0(agentRes);
 
-        // Jump to the first incomplete step. Step 0 (intro) is always
-        // shown the first time. Step indexes for the 6-step layout:
-        //   0 intro · 1 provider · 2 default models · 3 agent · 4 test · 5 done
-        // If an agent already exists, skip past creation to the test
-        // step (4). If a provider exists but no agent, skip to default
-        // models (2) so the operator confirms before creating an agent.
-        if (state.stepIndex === 0 && (hasProvider || hasAgent)) {
-          if (hasAgent) wiz.goTo(4);
-          else if (hasProvider) wiz.goTo(2);
+        // 4-step layout:
+        //   0 provider · 1 defaults · 2 smoke test · 3 done
+        //
+        // Without a provider configured, the only valid step is 0
+        // (Provider). Snap back if persisted state points further —
+        // typically because the dialog was closed mid-flow or the
+        // operator deleted the provider after wizard progress was
+        // saved.
+        if (!hasProvider && state.stepIndex > 0) {
+          wiz.goTo(0);
         }
       } catch {
         if (!cancelled)
@@ -215,33 +191,19 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
           </div>
         )}
 
+        <WizardStepIndicator currentIndex={wiz.stepIndex} onJump={(idx) => wiz.goTo(idx)} />
+
         <div className="min-h-[300px] py-4">
-          {wiz.stepIndex === 0 && <StepIntro onSkip={() => wiz.next()} />}
-          {wiz.stepIndex === 1 && (
+          {wiz.stepIndex === 0 && (
             <StepProvider
               draft={state.providerDraft}
               setDraft={(draft) => setState((prev) => ({ ...prev, providerDraft: draft }))}
               onComplete={() => wiz.next()}
             />
           )}
-          {wiz.stepIndex === 2 && <StepDefaultModels onComplete={() => wiz.next()} />}
-          {wiz.stepIndex === 3 && (
-            <StepAgent
-              draft={state.agentDraft}
-              setDraft={(draft) => setState((prev) => ({ ...prev, agentDraft: draft }))}
-              onCreated={(slug) => {
-                setState((prev) => ({ ...prev, createdAgentSlug: slug }));
-                wiz.next();
-              }}
-            />
-          )}
-          {wiz.stepIndex === 4 && (
-            <StepTestAgent
-              agentSlug={state.createdAgentSlug ?? state.agentDraft.slug}
-              onNext={() => wiz.next()}
-            />
-          )}
-          {wiz.stepIndex === 5 && <StepDone />}
+          {wiz.stepIndex === 1 && <StepDefaultModels onComplete={() => wiz.next()} />}
+          {wiz.stepIndex === 2 && <StepSmokeTest onNext={() => wiz.next()} />}
+          {wiz.stepIndex === 3 && <StepDone />}
         </div>
 
         <DialogFooter className="sm:justify-between">
@@ -270,13 +232,100 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
 }
 
 const STEP_LABELS: Record<number, string> = {
-  0: 'What are you building?',
-  1: 'Configure a provider',
-  2: 'Confirm default models',
-  3: 'Create your first agent',
-  4: 'Test your agent',
-  5: "What's next",
+  0: 'Configure a provider',
+  1: 'Confirm default models',
+  2: 'Smoke test the wiring',
+  3: "What's next",
 };
+
+/**
+ * Short labels for the inline progress indicator. The full labels live
+ * in `STEP_LABELS` (used by the dialog description); the pill row needs
+ * compact text so all 4 fit comfortably in the 2xl dialog.
+ */
+const STEP_PILL_LABELS: Record<number, string> = {
+  0: 'Provider',
+  1: 'Defaults',
+  2: 'Smoke test',
+  3: 'Done',
+};
+
+interface WizardStepIndicatorProps {
+  currentIndex: number;
+  /** Called when the user clicks a completed step (current/upcoming are not clickable). */
+  onJump: (index: number) => void;
+}
+
+/**
+ * Horizontal stepper above the wizard content. Each pill shows
+ *   - ✓ + label for steps already completed (clickable to revisit)
+ *   - ● + label for the current step
+ *   - ○ + label for upcoming steps (disabled)
+ *
+ * "Completed" is defined as `index < currentIndex` — the wizard's
+ * step machine only advances past a step on success, so this is a
+ * safe proxy for "this step has been satisfied".
+ */
+function WizardStepIndicator({
+  currentIndex,
+  onJump,
+}: WizardStepIndicatorProps): React.ReactElement {
+  return (
+    <ol
+      aria-label="Setup progress"
+      className="flex flex-wrap items-center gap-1 text-xs sm:gap-1.5"
+    >
+      {Array.from({ length: TOTAL_STEPS }, (_, i) => {
+        const status: 'completed' | 'current' | 'upcoming' =
+          i < currentIndex ? 'completed' : i === currentIndex ? 'current' : 'upcoming';
+        const label = STEP_PILL_LABELS[i] ?? `Step ${i + 1}`;
+        const fullLabel = STEP_LABELS[i] ?? '';
+        const clickable = status === 'completed';
+
+        return (
+          <li key={i} className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              aria-current={status === 'current' ? 'step' : undefined}
+              aria-label={`Step ${i + 1}: ${fullLabel}${
+                status === 'completed' ? ' (completed)' : status === 'current' ? ' (current)' : ''
+              }`}
+              disabled={!clickable}
+              onClick={clickable ? () => onJump(i) : undefined}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 transition-colors',
+                status === 'completed' &&
+                  'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 cursor-pointer',
+                status === 'current' &&
+                  'border-primary bg-primary text-primary-foreground font-medium',
+                status === 'upcoming' &&
+                  'border-muted-foreground/20 text-muted-foreground cursor-not-allowed'
+              )}
+            >
+              {status === 'completed' ? (
+                <Check className="h-3 w-3" aria-hidden="true" />
+              ) : status === 'current' ? (
+                <span className="bg-primary-foreground inline-block h-1.5 w-1.5 rounded-full" />
+              ) : (
+                <span className="border-muted-foreground/40 inline-block h-1.5 w-1.5 rounded-full border" />
+              )}
+              <span>{label}</span>
+            </button>
+            {i < TOTAL_STEPS - 1 && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'h-px w-2 sm:w-3',
+                  i < currentIndex ? 'bg-primary/40' : 'bg-muted-foreground/20'
+                )}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 async function paginatedTotalGt0(res: Response): Promise<boolean> {
   if (!res.ok) return false;
@@ -289,66 +338,7 @@ async function paginatedTotalGt0(res: Response): Promise<boolean> {
 }
 
 // ----------------------------------------------------------------------------
-// Step 1 — Intro / Pattern advisor placeholder
-// ----------------------------------------------------------------------------
-
-const WIZARD_STARTER_PROMPTS = [
-  'I want to build a customer support bot',
-  'Help me design a content moderation pipeline',
-  'I need a research assistant that searches documents',
-  'I want an agent that generates and reviews code',
-];
-
-function StepIntro({ onSkip }: { onSkip: () => void }) {
-  const router = useRouter();
-  const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
-
-  const handleStreamComplete = useCallback((fullText: string) => {
-    const definition = extractWorkflowDefinition(fullText);
-    if (definition) {
-      setWorkflowRecommendation(definition);
-    }
-  }, []);
-
-  const handleCreateWorkflow = useCallback(() => {
-    if (!workflowRecommendation) return;
-    router.push(
-      `/admin/orchestration/workflows/new?definition=${encodeURIComponent(workflowRecommendation)}`
-    );
-  }, [router, workflowRecommendation]);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm">
-        Tell us what you&apos;re trying to build and we&apos;ll suggest a pattern — a reflection
-        agent, a multi-step workflow, a retrieval-augmented chat, or something else.
-      </p>
-      <ChatInterface
-        agentSlug="pattern-advisor"
-        embedded
-        starterPrompts={WIZARD_STARTER_PROMPTS}
-        onStreamComplete={handleStreamComplete}
-        className="h-[350px]"
-      />
-      {workflowRecommendation && (
-        <div className="bg-muted/30 flex items-center justify-between rounded-md border p-3">
-          <span className="text-sm">The advisor recommended a workflow definition.</span>
-          <Button size="sm" onClick={handleCreateWorkflow}>
-            Create this workflow
-          </Button>
-        </div>
-      )}
-      <div className="flex justify-end">
-        <Button variant="ghost" size="sm" onClick={onSkip}>
-          Skip, I&apos;ll configure manually →
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Step 2 — Provider configuration
+// Step 1 — Provider configuration
 // ----------------------------------------------------------------------------
 
 interface StepProviderProps {
@@ -367,6 +357,8 @@ interface DetectionRow {
   alreadyConfigured: boolean;
   isLocal: boolean;
   suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
   suggestedEmbeddingModel: string | null;
 }
 
@@ -422,22 +414,34 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   );
 
   async function persistSuggestedDefaults(row: DetectionRow): Promise<void> {
-    // Best-effort: write the suggested chat / embedding model into the
-    // settings singleton, but only if the slot isn't already populated
-    // (operator edits always win).
+    // Write suggested chat / routing / reasoning / embedding models into
+    // the settings singleton, but only for slots the operator hasn't
+    // already saved. Strict-mode runtime now throws when a slot is
+    // unset, so writing all four keeps the system functional after a
+    // single Configure click.
+    //
+    // Reads `defaultModelsStored` (raw saved subset), NOT `defaultModels`
+    // — the latter is always populated by hydration so its keys would
+    // make the empty-slot check falsy.
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' });
       if (!res.ok) return;
       const body = (await res.json()) as {
         success?: boolean;
-        data?: { defaultModels?: Record<string, string> };
+        data?: { defaultModelsStored?: Partial<Record<string, string>> };
       };
-      const current = body.success ? (body.data?.defaultModels ?? {}) : {};
+      const stored = body.success ? (body.data?.defaultModelsStored ?? {}) : {};
       const patch: Record<string, string> = {};
-      if (row.suggestedDefaultChatModel && !current.chat) {
+      if (row.suggestedDefaultChatModel && !stored.chat) {
         patch.chat = row.suggestedDefaultChatModel;
       }
-      if (row.suggestedEmbeddingModel && !current.embeddings) {
+      if (row.suggestedRoutingModel && !stored.routing) {
+        patch.routing = row.suggestedRoutingModel;
+      }
+      if (row.suggestedReasoningModel && !stored.reasoning) {
+        patch.reasoning = row.suggestedReasoningModel;
+      }
+      if (row.suggestedEmbeddingModel && !stored.embeddings) {
         patch.embeddings = row.suggestedEmbeddingModel;
       }
       if (Object.keys(patch).length === 0) return;
@@ -588,14 +592,12 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
                   className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
                   aria-hidden="true"
                 />
-                <div className="flex-1">
+                <div className="flex-1 space-y-1.5">
                   <div className="text-sm font-medium">{row.name}</div>
                   <div className="text-muted-foreground text-xs">
                     Detected <code>{row.apiKeyEnvVar}</code>
-                    {row.suggestedDefaultChatModel
-                      ? ` · suggests model ${row.suggestedDefaultChatModel}`
-                      : ''}
                   </div>
+                  <DetectionCardPreview row={row} />
                 </div>
               </button>
             </li>
@@ -758,8 +760,71 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   );
 }
 
+/**
+ * Pre-click preview of what clicking this detection card will write
+ * into `AiOrchestrationSettings.defaultModels`. Mirrors the same
+ * helper in `provider-detections-banner.tsx` so the wizard and the
+ * providers-list banner share a contract:
+ *
+ *   - Show the suggested chat + embedding models from
+ *     `lib/orchestration/llm/known-providers.ts`.
+ *   - If the chosen provider has no embedding model (Anthropic, Groq,
+ *     Together, Fireworks), warn that knowledge-base search needs a
+ *     separate provider.
+ *   - If the chosen provider has no chat model (Voyage), warn that
+ *     agent conversations need a separate provider.
+ *
+ * Defaults are only written into empty slots, so the preview also
+ * notes that existing operator-set defaults are never overwritten.
+ */
+function DetectionCardPreview({ row }: { row: DetectionRow }): React.ReactElement {
+  const noEmbedding = !row.suggestedEmbeddingModel && !row.isLocal;
+  const noChat = !row.suggestedDefaultChatModel;
+
+  return (
+    <div className="space-y-1 text-xs">
+      {row.suggestedDefaultChatModel && (
+        <div className="text-muted-foreground">
+          Default chat model:{' '}
+          <code className="bg-muted/60 rounded px-1 py-0.5">{row.suggestedDefaultChatModel}</code>
+        </div>
+      )}
+
+      {row.suggestedEmbeddingModel && (
+        <div className="text-muted-foreground">
+          Default embedding model:{' '}
+          <code className="bg-muted/60 rounded px-1 py-0.5">{row.suggestedEmbeddingModel}</code>
+        </div>
+      )}
+
+      {noEmbedding && (
+        <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>
+            {row.name} doesn&apos;t offer embeddings — knowledge-base search needs a separate
+            embedding provider (Voyage AI, OpenAI, or Ollama).
+          </span>
+        </div>
+      )}
+
+      {noChat && (
+        <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>
+            {row.name} is embeddings-only — agent conversations need a separate chat provider.
+          </span>
+        </div>
+      )}
+
+      <div className="text-muted-foreground/70 italic">
+        These are platform suggestions. Existing defaults are never overwritten.
+      </div>
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------------------
-// Step 3 (new) — Confirm default chat / embedding models
+// Step 2 — Confirm default chat / embedding models
 // ----------------------------------------------------------------------------
 
 interface StepDefaultModelsProps {
@@ -934,318 +999,282 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
 }
 
 // ----------------------------------------------------------------------------
-// Step 4 — Agent creation
+// Step 3 — Smoke test the wiring
 // ----------------------------------------------------------------------------
 
-interface StepAgentProps {
-  draft: AgentDraft;
-  setDraft: (draft: AgentDraft) => void;
-  onCreated: (slug: string) => void;
+interface StepSmokeTestProps {
+  onNext: () => void;
 }
 
-interface ProviderOption {
+interface ProviderTestRow {
+  id: string;
   slug: string;
   name: string;
+  isLocal: boolean;
+  apiKeyPresent: boolean;
 }
 
-function StepAgent({ draft, setDraft, onCreated }: StepAgentProps): React.ReactElement {
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [providers, setProviders] = useState<ProviderOption[]>([]);
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+type TestStatus = 'idle' | 'running' | 'ok' | 'failed';
+
+interface ProviderTestResult {
+  status: TestStatus;
+  message?: string;
+  /** Round-trip latency from /test-model when status === 'ok'. */
+  latencyMs?: number;
+}
+
+/**
+ * Step 3 — exercises the configured provider+model end-to-end without
+ * touching agents or the knowledge base. For each active provider:
+ *
+ *   1. POST /providers/:id/test         → checks API key + connectivity.
+ *   2. POST /providers/:id/test-model   → sends "Say hello." via the
+ *                                          configured default chat model
+ *                                          and reports latency.
+ *
+ * If both succeed, the operator has proof the chain (provider → key →
+ * model) round-trips. System agents (pattern-advisor, etc.) reuse the
+ * same chain at runtime, so a green smoke test means they'll work too.
+ */
+function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
+  const [loading, setLoading] = useState(true);
+  const [providers, setProviders] = useState<ProviderTestRow[]>([]);
+  const [chatModel, setChatModel] = useState<string>('');
+  const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
+  const [running, setRunning] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [providersRes, modelsRes] = await Promise.all([
+        const [providersRes, settingsRes] = await Promise.all([
           fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50&isActive=true`, {
             credentials: 'include',
           }),
-          fetch(API.ADMIN.ORCHESTRATION.MODELS, { credentials: 'include' }),
+          fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' }),
         ]);
         if (cancelled) return;
 
         if (providersRes.ok) {
           const body = (await providersRes.json()) as {
             success?: boolean;
-            data?: ProviderOption[];
+            data?: ProviderTestRow[];
           };
           if (body.success && Array.isArray(body.data)) {
             setProviders(body.data);
-            // Default to the first provider on mount if not already set.
-            if (!draft.provider && body.data[0]) {
-              setDraft({ ...draft, provider: body.data[0].slug });
-            }
           }
         }
-        if (modelsRes.ok) {
-          const body = (await modelsRes.json()) as { success?: boolean; data?: ModelOption[] };
-          if (body.success && Array.isArray(body.data)) {
-            setModels(body.data);
+
+        if (settingsRes.ok) {
+          const body = (await settingsRes.json()) as {
+            success?: boolean;
+            data?: { defaultModels?: Record<string, string> };
+          };
+          if (body.success) {
+            setChatModel(body.data?.defaultModels?.chat ?? '');
           }
         }
       } catch {
-        // Silent — empty selectors render fallback message.
+        // Intentionally silent — empty providers list renders the
+        // "no providers" message below.
       } finally {
-        if (!cancelled) setHydrated(true);
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredModels = useMemo(
-    () => models.filter((m) => m.provider === draft.provider),
-    [models, draft.provider]
-  );
+  async function runTest(row: ProviderTestRow): Promise<void> {
+    setRunning(row.id);
+    setResults((prev) => ({ ...prev, [row.id]: { status: 'running' } }));
 
-  // When provider changes, default model to the first available for that provider
-  // if the current one doesn't belong to it.
-  useEffect(() => {
-    if (!hydrated || !draft.provider) return;
-    const valid = filteredModels.some((m) => m.id === draft.model);
-    if (!valid && filteredModels.length > 0) {
-      setDraft({ ...draft, model: filteredModels[0].id });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.provider, hydrated]);
-
-  async function handleSubmit(event: React.FormEvent): Promise<void> {
-    event.preventDefault();
-    setError(null);
-
-    if (
-      !draft.name.trim() ||
-      !draft.slug.trim() ||
-      !draft.description.trim() ||
-      !draft.systemInstructions.trim() ||
-      !draft.provider.trim() ||
-      !draft.model.trim()
-    ) {
-      setError('All fields are required.');
-      return;
-    }
-
-    setSubmitting(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.AGENTS, {
+      // 1. Provider connectivity check — POST /providers/:id/test
+      const testRes = await fetch(API.ADMIN.ORCHESTRATION.providerTest(row.id), {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!testRes.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'Connectivity check failed. Verify the API key and base URL.',
+          },
+        }));
+        return;
+      }
+      const testBody = (await testRes.json()) as {
+        success?: boolean;
+        data?: { ok?: boolean; error?: string };
+      };
+      if (!testBody.success || !testBody.data?.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'The provider rejected the connection. Check logs for details.',
+          },
+        }));
+        return;
+      }
+
+      // 2. Round-trip a single message — POST /providers/:id/test-model
+      if (!chatModel) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'No default chat model is set. Go back to step 2 and pick one.',
+          },
+        }));
+        return;
+      }
+      const modelRes = await fetch(API.ADMIN.ORCHESTRATION.providerTestModel(row.id), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: draft.name.trim(),
-          slug: draft.slug.trim(),
-          description: draft.description.trim(),
-          systemInstructions: draft.systemInstructions,
-          model: draft.model.trim(),
-          provider: draft.provider.trim(),
-        }),
+        body: JSON.stringify({ model: chatModel }),
       });
-      if (!res.ok) {
-        setError('Could not create the agent. Check the fields and try again.');
+      if (!modelRes.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message:
+              'The model call failed. Check that the configured model id is valid for this provider.',
+          },
+        }));
         return;
       }
-      onCreated(draft.slug.trim());
+      const modelBody = (await modelRes.json()) as {
+        success?: boolean;
+        data?: { ok?: boolean; latencyMs?: number };
+      };
+      if (modelBody.success && modelBody.data?.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'ok',
+            ...(typeof modelBody.data?.latencyMs === 'number'
+              ? { latencyMs: modelBody.data.latencyMs }
+              : {}),
+          },
+        }));
+      } else {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'The model returned an error. Check logs for details.',
+          },
+        }));
+      }
     } catch {
-      setError('Could not reach the server. Check your network and try again.');
+      setResults((prev) => ({
+        ...prev,
+        [row.id]: {
+          status: 'failed',
+          message: 'Could not reach the server. Check your network and try again.',
+        },
+      }));
     } finally {
-      setSubmitting(false);
+      setRunning(null);
     }
   }
 
-  if (providers.length === 0 && hydrated) {
+  if (loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Loading configured providers…
+      </div>
+    );
+  }
+
+  if (providers.length === 0) {
     return (
       <div className="space-y-4">
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
           <p className="font-medium">No active providers found.</p>
-          <p className="mt-1 text-xs">Go back and configure a provider before creating an agent.</p>
+          <p className="mt-1 text-xs">
+            Go back and configure a provider before running the smoke test.
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <form
-      onSubmit={(e) => {
-        void handleSubmit(e);
-      }}
-      className="space-y-4"
-    >
-      <p className="text-sm">
-        An agent is a named persona with a system prompt, a provider, and a model. You can edit any
-        of this later from the Agents page.
-      </p>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-name">
-          Name{' '}
-          <FieldHelp title="Agent name">
-            A friendly display name like &quot;Support triage&quot; or &quot;Code reviewer&quot;.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="agent-name"
-          required
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-slug">
-          Slug{' '}
-          <FieldHelp title="Agent slug">
-            URL-safe identifier. Used in the chat stream URL and referenced by workflows. Example:{' '}
-            <code>support-triage</code>.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="agent-slug"
-          required
-          pattern="[a-z0-9-]+"
-          value={draft.slug}
-          onChange={(e) => setDraft({ ...draft, slug: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-description">
-          Description{' '}
-          <FieldHelp title="Agent description">
-            One or two sentences explaining what this agent is for.
-          </FieldHelp>
-        </Label>
-        <Textarea
-          id="agent-description"
-          required
-          rows={2}
-          value={draft.description}
-          onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-system">
-          System instructions{' '}
-          <FieldHelp title="System instructions">
-            The prompt the agent sees before every conversation. Defines its tone, capabilities, and
-            constraints.
-          </FieldHelp>
-        </Label>
-        <Textarea
-          id="agent-system"
-          required
-          rows={5}
-          value={draft.systemInstructions}
-          onChange={(e) => setDraft({ ...draft, systemInstructions: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="agent-provider">
-            Provider{' '}
-            <FieldHelp title="LLM provider">
-              Pick from the providers you&apos;ve already configured.
-            </FieldHelp>
-          </Label>
-          <Select
-            value={draft.provider || undefined}
-            onValueChange={(value) => setDraft({ ...draft, provider: value })}
-            disabled={submitting}
-          >
-            <SelectTrigger id="agent-provider">
-              <SelectValue placeholder="Pick a provider" />
-            </SelectTrigger>
-            <SelectContent>
-              {providers.map((p) => (
-                <SelectItem key={p.slug} value={p.slug}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="agent-model">
-            Model{' '}
-            <FieldHelp title="LLM model">
-              The exact model identifier the provider exposes.{' '}
-              <Link href="/admin/orchestration/learning" className="underline">
-                Learn more
-              </Link>
-              .
-            </FieldHelp>
-          </Label>
-          <Select
-            value={draft.model || undefined}
-            onValueChange={(value) => setDraft({ ...draft, model: value })}
-            disabled={submitting || filteredModels.length === 0}
-          >
-            <SelectTrigger id="agent-model">
-              <SelectValue placeholder="Pick a model" />
-            </SelectTrigger>
-            <SelectContent>
-              {filteredModels.length === 0 ? (
-                <SelectItem value="__none" disabled>
-                  No models for this provider
-                </SelectItem>
-              ) : (
-                filteredModels.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.id}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {error && <div className="text-destructive text-sm">{error}</div>}
-
-      <div className="flex justify-end">
-        <Button type="submit" size="sm" disabled={submitting}>
-          {submitting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-              Creating…
-            </>
-          ) : (
-            'Create agent'
-          )}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Step 4 — Test agent via SSE chat
-// ----------------------------------------------------------------------------
-
-interface StepTestAgentProps {
-  agentSlug: string;
-  onNext: () => void;
-}
-
-function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
-  return (
     <div className="space-y-4">
       <p className="text-sm">
-        Send a quick test message. If you see a reply, your agent, provider, and LLM wiring are all
-        working.
+        Each provider is exercised end-to-end: connectivity check, then a single &quot;Say
+        hello.&quot; round-trip through the configured default chat model. A green result means the
+        provider → API key → LLM chain works — system agents and any agents you create later will
+        use the same chain.
       </p>
 
-      <AgentTestChat agentSlug={agentSlug} />
+      {!chatModel && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
+          No default chat model is set. Go back to step 2 and pick one before running the test.
+        </div>
+      )}
+
+      <ul className="space-y-2">
+        {providers.map((row) => {
+          const result = results[row.id] ?? { status: 'idle' as const };
+          const isRunning = running === row.id;
+          return (
+            <li
+              key={row.id}
+              className="bg-background flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex items-start gap-3">
+                <SmokeTestStatusIcon status={result.status} />
+                <div>
+                  <div className="text-sm font-medium">{row.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    <code>{row.slug}</code>
+                    {result.status === 'ok' && typeof result.latencyMs === 'number' && (
+                      <>
+                        {' · '}
+                        <span className="text-green-700 dark:text-green-400">
+                          {result.latencyMs}ms round-trip
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {result.status === 'failed' && result.message && (
+                    <div className="text-destructive mt-1 text-xs">{result.message}</div>
+                  )}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant={result.status === 'ok' ? 'outline' : 'default'}
+                onClick={() => {
+                  void runTest(row);
+                }}
+                disabled={isRunning || !chatModel}
+                className="shrink-0"
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                    Testing…
+                  </>
+                ) : result.status === 'ok' ? (
+                  'Run again'
+                ) : (
+                  'Run test'
+                )}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
 
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={onNext}>
@@ -1256,8 +1285,41 @@ function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
   );
 }
 
+function SmokeTestStatusIcon({ status }: { status: TestStatus }): React.ReactElement {
+  if (status === 'ok') {
+    return (
+      <CheckCircle2
+        className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
+        aria-label="Test passed"
+      />
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <AlertTriangle
+        className="text-destructive mt-0.5 h-4 w-4 shrink-0"
+        aria-label="Test failed"
+      />
+    );
+  }
+  if (status === 'running') {
+    return (
+      <Loader2
+        className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 animate-spin"
+        aria-label="Test running"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className="border-muted-foreground/40 mt-0.5 inline-block h-4 w-4 shrink-0 rounded-full border"
+    />
+  );
+}
+
 // ----------------------------------------------------------------------------
-// Step 5 — Done / next steps
+// Step 4 — Done / next steps
 // ----------------------------------------------------------------------------
 
 function StepDone() {

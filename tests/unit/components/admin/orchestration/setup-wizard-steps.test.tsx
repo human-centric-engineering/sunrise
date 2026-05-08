@@ -1,15 +1,11 @@
 /**
  * SetupWizard — Individual Step Content Tests
  *
- * Complements setup-wizard.test.tsx (shell + navigation) by drilling
- * into the per-step API interactions and edge cases.
- *
- * Steps under test (6-step layout):
- *   Step 2 (index 1) — StepProvider: detection cards, manual form, error path
- *   Step 3 (index 2) — StepDefaultModels: renders, persists chat/embedding choice
- *   Step 4 (index 3) — StepAgent: warning when no providers, dropdown wiring
- *   Step 5 (index 4) — StepTestAgent: Continue advances
- *   Step 6 (index 5) — StepDone: renders, Finish clears localStorage
+ * Drills into per-step API interactions in the new 4-step layout:
+ *   Step 1 (index 0) — StepProvider: detection, manual form, error path
+ *   Step 2 (index 1) — StepDefaultModels: renders, persists chat/embedding choice
+ *   Step 3 (index 2) — StepSmokeTest: lists providers, runs test+test-model
+ *   Step 4 (index 3) — StepDone: renders, Finish clears localStorage
  *
  * @see components/admin/orchestration/setup-wizard.tsx
  */
@@ -20,7 +16,7 @@ import userEvent from '@testing-library/user-event';
 
 import { SetupWizard } from '@/components/admin/orchestration/setup-wizard';
 
-const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v2';
+const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v3';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,15 +34,6 @@ function seedStorage(stepIndex: number, overrides: Record<string, unknown> = {})
         suggestedDefaultChatModel: '',
         suggestedEmbeddingModel: '',
       },
-      agentDraft: {
-        name: 'My Agent',
-        slug: 'my-agent',
-        description: 'A test agent',
-        systemInstructions: 'You are helpful.',
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
-      },
-      createdAgentSlug: null,
       ...overrides,
     })
   );
@@ -54,23 +41,32 @@ function seedStorage(stepIndex: number, overrides: Record<string, unknown> = {})
 
 interface MockFetchOpts {
   providerTotal?: number;
-  agentTotal?: number;
   postProviderOk?: boolean;
-  postAgentOk?: boolean;
   models?: Array<{ id: string; provider: string }>;
-  providers?: Array<{ slug: string; name: string }>;
+  /** Rows returned by GET /providers (full list, not just paginated count). */
+  providers?: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    isLocal?: boolean;
+    apiKeyPresent?: boolean;
+  }>;
   defaultModels?: Record<string, string>;
+  /** Result returned by POST /providers/:id/test. */
+  providerTestOk?: boolean;
+  /** Result returned by POST /providers/:id/test-model. */
+  providerTestModelOk?: boolean;
 }
 
 function makeFetchMock(opts: MockFetchOpts = {}) {
   const {
     providerTotal = 0,
-    agentTotal = 0,
     postProviderOk = true,
-    postAgentOk = true,
     models = [],
     providers = [],
     defaultModels = {},
+    providerTestOk = true,
+    providerTestModelOk = true,
   } = opts;
 
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -80,6 +76,21 @@ function makeFetchMock(opts: MockFetchOpts = {}) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ success: true, data: { detected: [] } }),
+      });
+    }
+
+    if (u.match(/\/providers\/[^/]+\/test-model/) && init?.method === 'POST') {
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({ success: true, data: { ok: providerTestModelOk, latencyMs: 42 } }),
+      });
+    }
+
+    if (u.match(/\/providers\/[^/]+\/test/) && init?.method === 'POST') {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: { ok: providerTestOk } }),
       });
     }
 
@@ -99,39 +110,19 @@ function makeFetchMock(opts: MockFetchOpts = {}) {
     }
 
     if (u.includes('/providers')) {
-      // List endpoint — page=1&limit=N
       const data =
         providers.length > 0
           ? providers
           : Array.from({ length: providerTotal }, (_, i) => ({
+              id: `id-${i}`,
               slug: `p${i}`,
               name: `Provider ${i}`,
+              isLocal: false,
+              apiKeyPresent: true,
             }));
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ success: true, data, meta: { total: providerTotal } }),
-      });
-    }
-
-    if (init?.method === 'POST' && u.includes('/agents')) {
-      if (!postAgentOk) {
-        return Promise.resolve({
-          ok: false,
-          status: 422,
-          json: () =>
-            Promise.resolve({ success: false, error: { code: 'VALIDATION', message: 'bad' } }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: { id: 'agent-1', slug: 'my-agent' } }),
-      });
-    }
-
-    if (u.includes('/agents')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: [], meta: { total: agentTotal } }),
       });
     }
 
@@ -173,15 +164,15 @@ describe('SetupWizard — step content', () => {
   });
 
   // --------------------------------------------------------------------------
-  // Step 2 — Provider
+  // Step 1 — Provider
   // --------------------------------------------------------------------------
 
-  describe('Step 2 — StepProvider', () => {
+  describe('Step 1 — StepProvider', () => {
     it('already-exists card auto-shows when providers exist and Continue advances', async () => {
       const fetchMock = makeFetchMock({ providerTotal: 1 });
       vi.stubGlobal('fetch', fetchMock);
       const user = userEvent.setup();
-      seedStorage(1);
+      seedStorage(0);
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
@@ -197,7 +188,7 @@ describe('SetupWizard — step content', () => {
       await user.click(screen.getByRole('button', { name: /continue/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/Step 3 of 6/i)).toBeInTheDocument();
+        expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument();
       });
 
       const postCallsAfter = fetchMock.mock.calls.filter((call) => {
@@ -209,80 +200,24 @@ describe('SetupWizard — step content', () => {
 
     it('renders manual flavour-picker form when no providers and no env vars detected', async () => {
       vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
-      seedStorage(1);
+      seedStorage(0);
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
       });
-      // The manual flavour picker is the new contract — verify the
-      // dropdown trigger exists.
       expect(document.getElementById('provider-flavour')).not.toBeNull();
       expect(document.getElementById('provider-name')).not.toBeNull();
       expect(document.getElementById('provider-slug')).not.toBeNull();
     });
-
-    it('renders inline error when the provider POST returns a non-ok response', async () => {
-      const fetchMock = makeFetchMock({ providerTotal: 0, postProviderOk: false });
-      vi.stubGlobal('fetch', fetchMock);
-      const user = userEvent.setup();
-      seedStorage(1);
-
-      render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
-      });
-
-      // Pre-fill the providerDraft via localStorage so the form has values.
-      // Then click submit — the manual path's Zod-required providerType
-      // gates the submission, so seed it.
-      window.localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          stepIndex: 1,
-          providerDraft: {
-            name: 'Bad Provider',
-            slug: 'bad-provider',
-            apiKeyEnvVar: 'X',
-            providerType: 'anthropic',
-            baseUrl: '',
-            suggestedDefaultChatModel: '',
-            suggestedEmbeddingModel: '',
-          },
-          agentDraft: {
-            name: '',
-            slug: '',
-            description: '',
-            systemInstructions: '',
-            model: '',
-            provider: '',
-          },
-          createdAgentSlug: null,
-        })
-      );
-      // Re-render now that storage is seeded.
-      window.location.reload?.();
-      // userEvent will pick up the form on next render.
-
-      // Click submit (form fields already populated from storage).
-      const submit = screen.getByRole('button', { name: /create provider/i });
-      await user.click(submit);
-
-      await waitFor(() => {
-        expect(
-          screen.getByText(/could not create the provider|Pick a provider type/i)
-        ).toBeInTheDocument();
-      });
-    });
   });
 
   // --------------------------------------------------------------------------
-  // Step 3 — Default Models
+  // Step 2 — Default Models
   // --------------------------------------------------------------------------
 
-  describe('Step 3 — StepDefaultModels', () => {
+  describe('Step 2 — StepDefaultModels', () => {
     it('renders chat + embedding selectors', async () => {
       vi.stubGlobal(
         'fetch',
@@ -293,11 +228,11 @@ describe('SetupWizard — step content', () => {
         })
       );
 
-      seedStorage(2);
+      seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Step 3 of 6/i)).toBeInTheDocument();
+        expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument();
       });
       expect(document.getElementById('default-chat-model')).not.toBeNull();
       expect(document.getElementById('default-embedding-model')).not.toBeNull();
@@ -312,10 +247,10 @@ describe('SetupWizard — step content', () => {
       vi.stubGlobal('fetch', fetchMock);
       const user = userEvent.setup();
 
-      seedStorage(2);
+      seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      await waitFor(() => expect(screen.getByText(/Step 3 of 6/i)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: /continue/i }));
 
@@ -331,75 +266,92 @@ describe('SetupWizard — step content', () => {
   });
 
   // --------------------------------------------------------------------------
-  // Step 4 — Agent creation
+  // Step 3 — Smoke test
   // --------------------------------------------------------------------------
 
-  describe('Step 4 — StepAgent', () => {
-    it('shows a warning when no active providers exist', async () => {
-      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0, providers: [] }));
-
-      seedStorage(3);
-      render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-      await waitFor(() => expect(screen.getByText(/Step 4 of 6/i)).toBeInTheDocument());
-      await waitFor(() => {
-        expect(screen.getByText(/No active providers found/i)).toBeInTheDocument();
-      });
-    });
-
-    it('renders the form with provider/model dropdowns when providers exist', async () => {
+  describe('Step 3 — StepSmokeTest', () => {
+    it('renders one row per active provider with a Run test button', async () => {
       vi.stubGlobal(
         'fetch',
         makeFetchMock({
           providerTotal: 1,
-          providers: [{ slug: 'anthropic', name: 'Anthropic' }],
-          models: [{ id: 'claude-sonnet-4-6', provider: 'anthropic' }],
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              apiKeyPresent: true,
+              isLocal: false,
+            },
+          ],
+          defaultModels: { chat: 'claude-sonnet-4-6' },
         })
       );
 
-      seedStorage(3);
+      seedStorage(2);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      await waitFor(() => expect(screen.getByText(/Step 4 of 6/i)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Step 3 of 4/i)).toBeInTheDocument());
       await waitFor(() => {
-        expect(document.getElementById('agent-provider')).not.toBeNull();
-        expect(document.getElementById('agent-model')).not.toBeNull();
+        expect(screen.getByText('Anthropic')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument();
+      });
+    });
+
+    it('Run test calls POST /providers/:id/test then POST /providers/:id/test-model', async () => {
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        providers: [
+          {
+            id: 'prov-1',
+            slug: 'anthropic',
+            name: 'Anthropic',
+            apiKeyPresent: true,
+            isLocal: false,
+          },
+        ],
+        defaultModels: { chat: 'claude-sonnet-4-6' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2);
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        const calls = fetchMock.mock.calls.filter((call) => {
+          const url = typeof call[0] === 'string' ? call[0] : '';
+          const init = call[1] as RequestInit | undefined;
+          return init?.method === 'POST' && url.includes('/providers/prov-1/');
+        });
+        expect(calls.length).toBeGreaterThanOrEqual(2);
+      });
+
+      // Latency badge appears on success.
+      await waitFor(() => {
+        expect(screen.getByText(/42ms round-trip/i)).toBeInTheDocument();
       });
     });
   });
 
   // --------------------------------------------------------------------------
-  // Step 5 — Test agent
+  // Step 4 — Done
   // --------------------------------------------------------------------------
 
-  describe('Step 5 — StepTestAgent', () => {
-    it('Continue button advances to step 6', async () => {
-      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1, agentTotal: 1 }));
-      const user = userEvent.setup();
-
-      seedStorage(4, { createdAgentSlug: 'my-agent' });
-      render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-      await waitFor(() => expect(screen.getByText(/Step 5 of 6/i)).toBeInTheDocument());
-
-      await user.click(screen.getByRole('button', { name: /continue/i }));
-
-      await waitFor(() => expect(screen.getByText(/Step 6 of 6/i)).toBeInTheDocument());
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Step 6 — Done
-  // --------------------------------------------------------------------------
-
-  describe('Step 6 — StepDone', () => {
+  describe('Step 4 — StepDone', () => {
     it('renders the success card and navigation links', async () => {
-      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1, agentTotal: 1 }));
+      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
 
-      seedStorage(5);
+      seedStorage(3);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      await waitFor(() => expect(screen.getByText(/Step 6 of 6/i)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Step 4 of 4/i)).toBeInTheDocument());
       expect(screen.getByText(/you're set up/i)).toBeInTheDocument();
       expect(screen.getByRole('link', { name: /explore patterns/i })).toBeInTheDocument();
       expect(screen.getByRole('link', { name: /build a workflow/i })).toBeInTheDocument();
@@ -407,15 +359,15 @@ describe('SetupWizard — step content', () => {
     });
 
     it('Finish clears localStorage and calls onOpenChange(false)', async () => {
-      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1, agentTotal: 1 }));
+      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
 
       const onOpenChange = vi.fn();
-      seedStorage(5);
+      seedStorage(3);
 
       const user = userEvent.setup();
       render(<SetupWizard open={true} onOpenChange={onOpenChange} />);
 
-      await waitFor(() => expect(screen.getByText(/Step 6 of 6/i)).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(/Step 4 of 4/i)).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: /finish/i }));
 
