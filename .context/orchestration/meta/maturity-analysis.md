@@ -6,7 +6,7 @@ Competitive assessment of Sunrise's agent orchestration against production-ready
 
 ## TL;DR
 
-Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 11 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026), named-metric evaluation (faithfulness/groundedness/relevance, also May 2026), in-product trace observability (timeline strip, aggregates, per-step latency attribution, per-call cost breakdown — shipped late May 2026), and external observability via a deliberately curated OTLP-only path (vendor-neutral tracer interface with a no-op default and a first-party `OtelTracer` adapter — shipped May 2026; forks point any OTLP backend at the spans, including Datadog, Honeycomb, Grafana Tempo, Langfuse, and MLflow ≥ 2.20). It **trails** on multi-agent coordination patterns and horizontal scaling (in-memory circuit breaker + budget mutex). The OTLP-only stance is a curation choice, not a gap — vendor-native SDKs (Langfuse, Datadog, MLflow) are deliberately out-of-scope for the starter template, layering on top in forks that need vendor-specific features rather than bundling for everyone.
+Sunrise is a **full-stack agent orchestration platform** embedded in a production-grade Next.js/TypeScript application — not a standalone library or managed service. Against 12 evaluated platforms, it **leads** on cost/budget enforcement, provider resilience (circuit breakers + fallback chains), chat handler completeness, MCP server implementation with audit logging, and inline citation grounding (envelope through API + chat + embed widget + opt-in citation guard). It is **competitive** on DAG execution (15 step types), capability dispatch, security (input/output guards, SSRF protection), scheduling/webhooks, embeddable chat, knowledge-base RAG (hybrid BM25-flavoured + vector search shipped May 2026), named-metric evaluation (faithfulness/groundedness/relevance, also May 2026), in-product trace observability (timeline strip, aggregates, per-step latency attribution, per-call cost breakdown — shipped late May 2026), and external observability via a deliberately curated OTLP-only path (vendor-neutral tracer interface with a no-op default and a first-party `OtelTracer` adapter — shipped May 2026; forks point any OTLP backend at the spans, including Datadog, Honeycomb, Grafana Tempo, Langfuse, and MLflow ≥ 2.20). It **trails** on multi-agent coordination patterns and horizontal scaling (in-memory circuit breaker + budget mutex). The OTLP-only stance is a curation choice, not a gap — vendor-native SDKs (Langfuse, Datadog, MLflow) are deliberately out-of-scope for the starter template, layering on top in forks that need vendor-specific features rather than bundling for everyone.
 
 The key differentiator is integration depth: teams using LangGraph, CrewAI, or similar frameworks still need to build auth, admin UI, API layer, consumer chat, deployment, and database management around the orchestration engine. Sunrise ships all of this as a single typed codebase with shared validation, making the path from "we need an AI feature" to a deployed, budget-enforced agent with admin controls significantly shorter.
 
@@ -16,13 +16,15 @@ The key differentiator is integration depth: teams using LangGraph, CrewAI, or s
 
 ## Platform Landscape
 
-Eleven platforms evaluated across the agent orchestration space, grouped by type:
+Twelve platforms evaluated across the agent orchestration space, grouped by type:
 
 | Type                          | Platforms                                                                            |
 | ----------------------------- | ------------------------------------------------------------------------------------ |
 | **Code-first frameworks**     | LangGraph, CrewAI, AutoGen, Semantic Kernel, Haystack, OpenAI Agents SDK, Google ADK |
 | **Visual/low-code platforms** | Dify, Flowise, n8n                                                                   |
-| **Managed cloud services**    | AWS Bedrock Agents, Azure AI Foundry Agent Service                                   |
+| **Managed cloud services**    | AWS Bedrock Agents, Azure AI Foundry Agent Service, OpenAI AgentKit                  |
+
+OpenAI AgentKit straddles the visual / managed boundary — it ships a hosted Agent Builder canvas plus an open-sourced ChatKit embed library, but the orchestration runtime itself is OpenAI-hosted. Listed under managed services since the engine is not self-hostable.
 
 Sunrise occupies a distinct position: a **code-first, self-hosted orchestration platform** embedded in a Next.js application — not a standalone framework or managed cloud service. This means it competes on engine design and integrated features rather than ecosystem breadth or managed infrastructure.
 
@@ -49,78 +51,78 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### LLM Provider Management
 
-| Capability                     | Sunrise | LangGraph | CrewAI   | Haystack | Semantic Kernel | Bedrock  | Azure Foundry |
-| ------------------------------ | ------- | --------- | -------- | -------- | --------------- | -------- | ------------- |
-| Multi-provider abstraction     | Strong  | Strong    | Adequate | Strong   | Strong          | Adequate | Adequate      |
-| Provider count (8+)            | Strong  | Strong    | Weak     | Strong   | Strong          | Adequate | Adequate      |
-| Circuit breaker                | Strong  | None      | None     | None     | None            | N/A      | N/A           |
-| Fallback chains (per-agent)    | Strong  | None      | None     | None     | None            | N/A      | N/A           |
-| Model registry with tiers      | Strong  | None      | None     | None     | None            | Adequate | Adequate      |
-| Provider selector (task-based) | Strong  | None      | None     | None     | None            | None     | None          |
-| Provider health monitoring     | Strong  | None      | None     | None     | None            | N/A      | N/A           |
+| Capability                     | Sunrise | LangGraph | CrewAI   | Haystack | Semantic Kernel | Bedrock  | Azure Foundry | AgentKit |
+| ------------------------------ | ------- | --------- | -------- | -------- | --------------- | -------- | ------------- | -------- |
+| Multi-provider abstraction     | Strong  | Strong    | Adequate | Strong   | Strong          | Adequate | Adequate      | None     |
+| Provider count (8+)            | Strong  | Strong    | Weak     | Strong   | Strong          | Adequate | Adequate      | None     |
+| Circuit breaker                | Strong  | None      | None     | None     | None            | N/A      | N/A           | None     |
+| Fallback chains (per-agent)    | Strong  | None      | None     | None     | None            | N/A      | N/A           | None     |
+| Model registry with tiers      | Strong  | None      | None     | None     | None            | Adequate | Adequate      | Adequate |
+| Provider selector (task-based) | Strong  | None      | None     | None     | None            | None     | None          | None     |
+| Provider health monitoring     | Strong  | None      | None     | None     | None            | N/A      | N/A           | N/A      |
 
-**Sunrise advantages:** Circuit breaker, explicit fallback chains, and task-based model recommendation are ahead of every evaluated framework. No major framework ships provider-level resilience as a first-class feature. **Key gap:** Circuit breaker state is in-memory — breaks under horizontal scaling.
+**Sunrise advantages:** Circuit breaker, explicit fallback chains, and task-based model recommendation are ahead of every evaluated framework. No major framework ships provider-level resilience as a first-class feature. OpenAI AgentKit is the most pointed contrast — by design it is OpenAI-only, so the entire multi-provider / fallback / health-monitoring axis is structurally absent rather than missing. **Key gap:** Circuit breaker state is in-memory — breaks under horizontal scaling.
 
 ### Cost & Budget Management
 
-| Capability                           | Sunrise  | LangGraph | CrewAI | AutoGen | Haystack | Bedrock | Azure Foundry |
-| ------------------------------------ | -------- | --------- | ------ | ------- | -------- | ------- | ------------- |
-| Per-operation cost logging           | Strong   | Weak      | None   | None    | Weak     | Weak    | Weak          |
-| Per-agent monthly budgets            | Strong   | None      | None   | None    | None     | None    | None          |
-| Global monthly budget cap            | Strong   | None      | None   | None    | None     | None    | None          |
-| 80% threshold warnings               | Strong   | None      | None   | None    | None     | None    | None          |
-| Budget enforcement in execution loop | Strong   | None      | None   | None    | None     | None    | None          |
-| Concurrent request mutex             | Adequate | None      | None   | None    | None     | N/A     | N/A           |
-| Cost breakdown API                   | Strong   | Weak      | None   | None    | None     | Weak    | Weak          |
+| Capability                           | Sunrise  | LangGraph | CrewAI | AutoGen | Haystack | Bedrock | Azure Foundry | AgentKit |
+| ------------------------------------ | -------- | --------- | ------ | ------- | -------- | ------- | ------------- | -------- |
+| Per-operation cost logging           | Strong   | Weak      | None   | None    | Weak     | Weak    | Weak          | Adequate |
+| Per-agent monthly budgets            | Strong   | None      | None   | None    | None     | None    | None          | None     |
+| Global monthly budget cap            | Strong   | None      | None   | None    | None     | None    | None          | None     |
+| 80% threshold warnings               | Strong   | None      | None   | None    | None     | None    | None          | None     |
+| Budget enforcement in execution loop | Strong   | None      | None   | None    | None     | None    | None          | None     |
+| Concurrent request mutex             | Adequate | None      | None   | None    | None     | N/A     | N/A           | N/A      |
+| Cost breakdown API                   | Strong   | Weak      | None   | None    | None     | Weak    | Weak          | Adequate |
 
-**Sunrise advantage: This is the strongest differentiator.** No evaluated platform enforces budgets inside the execution loop. All others delegate to external billing dashboards. **Key gap:** Budget mutex is in-memory — concurrent requests across instances can overspend.
+**Sunrise advantage: This is the strongest differentiator.** No evaluated platform enforces budgets inside the execution loop — including OpenAI AgentKit, which surfaces token usage in the Usage dashboard but does not gate execution against a budget. All others delegate to external billing dashboards. **Key gap:** Budget mutex is in-memory — concurrent requests across instances can overspend.
 
 ### Tool / Capability System
 
-| Capability                                           | Sunrise | LangGraph | CrewAI   | Haystack | OpenAI SDK | Dify     | Google ADK |
-| ---------------------------------------------------- | ------- | --------- | -------- | -------- | ---------- | -------- | ---------- |
-| Capability registry (DB-backed)                      | Strong  | None      | None     | None     | None       | Adequate | None       |
-| Dispatch pipeline (7-stage)                          | Strong  | Adequate  | Weak     | Adequate | Adequate   | Adequate | Adequate   |
-| Rate limiting per capability                         | Strong  | None      | None     | None     | None       | None     | None       |
-| Approval gating                                      | Strong  | Strong    | None     | None     | Adequate   | None     | Adequate   |
-| Zod validation on args                               | Strong  | Adequate  | Weak     | Adequate | Strong     | None     | Adequate   |
-| Default-allow dispatch / default-deny LLM visibility | Strong  | None      | None     | None     | None       | None     | None       |
-| Built-in capability library + recipe cookbook        | Strong  | Strong    | Adequate | Strong   | Strong     | Strong   | Strong     |
-| MCP integration                                      | Strong  | Adequate  | Adequate | None     | Strong     | Adequate | Strong     |
-| Third-party tool integrations                        | Weak    | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   |
+| Capability                                           | Sunrise | LangGraph | CrewAI   | Haystack | OpenAI SDK | Dify     | Google ADK | AgentKit |
+| ---------------------------------------------------- | ------- | --------- | -------- | -------- | ---------- | -------- | ---------- | -------- |
+| Capability registry (DB-backed)                      | Strong  | None      | None     | None     | None       | Adequate | None       | Strong   |
+| Dispatch pipeline (7-stage)                          | Strong  | Adequate  | Weak     | Adequate | Adequate   | Adequate | Adequate   | Adequate |
+| Rate limiting per capability                         | Strong  | None      | None     | None     | None       | None     | None       | None     |
+| Approval gating                                      | Strong  | Strong    | None     | None     | Adequate   | None     | Adequate   | Adequate |
+| Zod validation on args                               | Strong  | Adequate  | Weak     | Adequate | Strong     | None     | Adequate   | Strong   |
+| Default-allow dispatch / default-deny LLM visibility | Strong  | None      | None     | None     | None       | None     | None       | None     |
+| Built-in capability library + recipe cookbook        | Strong  | Strong    | Adequate | Strong   | Strong     | Strong   | Strong     | Strong   |
+| MCP integration                                      | Strong  | Adequate  | Adequate | None     | Strong     | Adequate | Strong     | Strong   |
+| Third-party tool integrations                        | Weak    | Strong    | Adequate | Strong   | Adequate   | Strong   | Adequate   | Strong   |
 
-**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. The 10 curated built-in capabilities + the `call_external_api` outbound-HTTP primitive + a comprehensive recipes cookbook (transactional email, payments, chat notifications, calendar events, document rendering — see `.context/orchestration/recipes/`) cover the integrations Sunrise's deployment profile actually needs without bundling vendor SDKs. The deliberate trade vs. LangChain's "1000+ tool integrations" is curation: every capability and recipe is verified end-to-end and dependency-free; LangChain's count includes community-contributed integrations of variable maintenance status.
+**Sunrise advantages:** The 7-stage dispatch pipeline (registry → binding → rate limit → approval → validation → timeout → cost log) and the default-allow/default-deny split are architecturally clean. OpenAI AgentKit's Connector Registry covers the registry + admin-managed integration surface and ships richer first-party tools (web search, file search, computer use, code interpreter) but does not gate dispatch on per-capability rate limits or expose a separate visibility-vs-allowed-call axis. The approval queue provides a full admin UI plus token-authenticated external channel endpoints — admins can approve from the browser, while Slack/email/SMS integrations use pre-signed HMAC tokens via webhook consumers. The 10 curated built-in capabilities + the `call_external_api` outbound-HTTP primitive + a comprehensive recipes cookbook (transactional email, payments, chat notifications, calendar events, document rendering — see `.context/orchestration/recipes/`) cover the integrations Sunrise's deployment profile actually needs without bundling vendor SDKs. The deliberate trade vs. LangChain's "1000+ tool integrations" is curation: every capability and recipe is verified end-to-end and dependency-free; LangChain's count includes community-contributed integrations of variable maintenance status.
 
 ### Multi-Agent Coordination
 
-| Capability                    | Sunrise  | LangGraph | AutoGen  | Google ADK | CrewAI   | Semantic Kernel |
-| ----------------------------- | -------- | --------- | -------- | ---------- | -------- | --------------- |
-| Planner LLM delegation        | Strong   | Strong    | Adequate | Strong     | Adequate | Adequate        |
-| Explicit handoff primitives   | None     | Strong    | Strong   | Strong     | Adequate | Adequate        |
-| Supervisor/worker topology    | Adequate | Strong    | Strong   | Strong     | Strong   | Adequate        |
-| Swarm coordination            | None     | Strong    | Strong   | None       | None     | None            |
-| Agent-to-agent protocol (A2A) | None     | None      | None     | Strong     | None     | None            |
-| Recursion depth guard         | Strong   | Adequate  | Adequate | Adequate   | None     | None            |
-| Named coordination patterns   | Weak     | Strong    | Strong   | Strong     | Adequate | Adequate        |
-| Sub-agent context isolation   | Adequate | Strong    | Strong   | Strong     | Adequate | Adequate        |
+| Capability                    | Sunrise  | LangGraph | AutoGen  | Google ADK | CrewAI   | Semantic Kernel | AgentKit |
+| ----------------------------- | -------- | --------- | -------- | ---------- | -------- | --------------- | -------- |
+| Planner LLM delegation        | Strong   | Strong    | Adequate | Strong     | Adequate | Adequate        | Strong   |
+| Explicit handoff primitives   | None     | Strong    | Strong   | Strong     | Adequate | Adequate        | Strong   |
+| Supervisor/worker topology    | Adequate | Strong    | Strong   | Strong     | Strong   | Adequate        | Strong   |
+| Swarm coordination            | None     | Strong    | Strong   | None       | None     | None            | None     |
+| Agent-to-agent protocol (A2A) | None     | None      | None     | Strong     | None     | None            | None     |
+| Recursion depth guard         | Strong   | Adequate  | Adequate | Adequate   | None     | None            | Adequate |
+| Named coordination patterns   | Weak     | Strong    | Strong   | Strong     | Adequate | Adequate        | Strong   |
+| Sub-agent context isolation   | Adequate | Strong    | Strong   | Strong     | Adequate | Adequate        | Strong   |
 
-**Sunrise position:** Multi-agent exists via the `orchestrator` step and `agent_call`, but coordination semantics are informal — the planner LLM decides routing rather than explicit typed patterns (handoff, swarm, round-robin, selector). LangGraph and AutoGen have 4–5 named, tested coordination topologies. Google ADK's A2A inter-agent protocol is an emerging standard worth tracking.
+**Sunrise position:** Multi-agent exists via the `orchestrator` step and `agent_call`, but coordination semantics are informal — the planner LLM decides routing rather than explicit typed patterns (handoff, swarm, round-robin, selector). LangGraph and AutoGen have 4–5 named, tested coordination topologies. Google ADK's A2A inter-agent protocol is an emerging standard worth tracking. OpenAI AgentKit (Agent Builder canvas) ships explicit handoff primitives between agents wired visually, plus supervisor topologies — Sunrise is behind on the named-pattern axis here too.
 
 ### Chat & Streaming
 
-| Capability                                 | Sunrise | LangGraph | OpenAI SDK | Dify     | CrewAI   |
-| ------------------------------------------ | ------- | --------- | ---------- | -------- | -------- |
-| SSE streaming with tool loop               | Strong  | Strong    | Strong     | Strong   | Adequate |
-| Rolling conversation summary               | Strong  | Adequate  | None       | None     | None     |
-| Input guard (injection detection)          | Strong  | None      | Adequate   | Adequate | None     |
-| Output guard (content filtering)           | Strong  | None      | Adequate   | Adequate | None     |
-| Citation guard (under-cite / hallucinated) | Strong  | None      | None       | None     | None     |
-| Inline citation envelope on responses      | Strong  | None      | None       | None     | None     |
-| Provider fallback mid-stream               | Strong  | None      | None       | None     | None     |
-| User memory system                         | Strong  | Adequate  | Adequate   | Adequate | Adequate |
-| Message caps (per-user, per-conversation)  | Strong  | None      | None       | Adequate | None     |
-| SSE keepalive / auto-reconnect             | Strong  | Adequate  | N/A        | Adequate | None     |
-| Budget check mid-loop                      | Strong  | None      | None       | None     | None     |
+| Capability                                 | Sunrise | LangGraph | OpenAI SDK | Dify     | CrewAI   | AgentKit |
+| ------------------------------------------ | ------- | --------- | ---------- | -------- | -------- | -------- |
+| SSE streaming with tool loop               | Strong  | Strong    | Strong     | Strong   | Adequate | Strong   |
+| Rolling conversation summary               | Strong  | Adequate  | None       | None     | None     | Adequate |
+| Input guard (injection detection)          | Strong  | None      | Adequate   | Adequate | None     | Strong   |
+| Output guard (content filtering)           | Strong  | None      | Adequate   | Adequate | None     | Strong   |
+| Citation guard (under-cite / hallucinated) | Strong  | None      | None       | None     | None     | Adequate |
+| Inline citation envelope on responses      | Strong  | None      | None       | None     | None     | Adequate |
+| Provider fallback mid-stream               | Strong  | None      | None       | None     | None     | None     |
+| User memory system                         | Strong  | Adequate  | Adequate   | Adequate | Adequate | Strong   |
+| Message caps (per-user, per-conversation)  | Strong  | None      | None       | Adequate | None     | None     |
+| SSE keepalive / auto-reconnect             | Strong  | Adequate  | N/A        | Adequate | None     | Adequate |
+| Budget check mid-loop                      | Strong  | None      | None       | None     | None     | None     |
 
 **Sunrise advantages:** The chat handler is comprehensive — mid-stream provider failover, input/output guards, rolling summaries, budget checks inside the tool loop, and a structured citation envelope (markers in the LLM-bound tool result, `[N]` rendered inline by chat / trace / embed surfaces, opt-in citation guard for under-cited or hallucinated markers) are all ahead of the field. This is the most production-hardened component.
 
@@ -141,18 +143,18 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Observability & Evaluation
 
-| Capability                   | Sunrise  | Haystack | LangGraph | Semantic Kernel | Dify     | Bedrock  |
-| ---------------------------- | -------- | -------- | --------- | --------------- | -------- | -------- |
-| OTEL span emission           | Strong   | Strong   | None      | Strong          | None     | None     |
-| Langfuse integration         | Adequate | Strong   | None      | None            | None     | None     |
-| MLflow integration           | None     | Strong   | None      | None            | None     | None     |
-| Datadog / external APM       | Adequate | Strong   | None      | Adequate        | None     | Adequate |
-| Built-in trace UI            | Strong   | Adequate | Strong    | None            | Strong   | Adequate |
-| Per-step latency attribution | Adequate | Strong   | Strong    | None            | Strong   | Adequate |
-| Named evaluation metrics     | Adequate | Strong   | Strong    | None            | Adequate | None     |
-| Regression testing           | Adequate | Strong   | Strong    | None            | None     | None     |
-| Cost attribution per step    | Strong   | Adequate | Weak      | None            | Adequate | Weak     |
-| Audit log (config changes)   | Strong   | None     | None      | None            | Adequate | None     |
+| Capability                   | Sunrise  | Haystack | LangGraph | Semantic Kernel | Dify     | Bedrock  | AgentKit |
+| ---------------------------- | -------- | -------- | --------- | --------------- | -------- | -------- | -------- |
+| OTEL span emission           | Strong   | Strong   | None      | Strong          | None     | None     | None     |
+| Langfuse integration         | Adequate | Strong   | None      | None            | None     | None     | None     |
+| MLflow integration           | None     | Strong   | None      | None            | None     | None     | None     |
+| Datadog / external APM       | Adequate | Strong   | None      | Adequate        | None     | Adequate | None     |
+| Built-in trace UI            | Strong   | Adequate | Strong    | None            | Strong   | Adequate | Strong   |
+| Per-step latency attribution | Adequate | Strong   | Strong    | None            | Strong   | Adequate | Strong   |
+| Named evaluation metrics     | Adequate | Strong   | Strong    | None            | Adequate | None     | Strong   |
+| Regression testing           | Adequate | Strong   | Strong    | None            | None     | None     | Strong   |
+| Cost attribution per step    | Strong   | Adequate | Weak      | None            | Adequate | Weak     | Adequate |
+| Audit log (config changes)   | Strong   | None     | None      | None            | Adequate | None     | Adequate |
 
 **External observability shipped in May 2026 as a deliberately curated OTLP-only path.** Item 13 (OTEL plug-in, Tier 3 in `improvement-priorities.md`) added a vendor-neutral tracer interface in `lib/orchestration/tracing/` with a no-op default and a first-party `OtelTracer` adapter; forks point any OTLP-compatible backend (Datadog Agent's OTLP receiver, Honeycomb, Grafana Tempo, Langfuse-via-OTLP, MLflow ≥ 2.20's OTLP receiver) at the spans by constructing their own `TracerProvider` and calling `registerOtelTracer()`. Span attributes follow OpenTelemetry GenAI semantic conventions plus Sunrise extensions for execution / step / agent / cost correlation. `AiCostLog` rows gained nullable `traceId` / `spanId` columns so external trace backends can join cost data back to the originating span.
 
@@ -164,34 +166,34 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 ### Knowledge Base
 
-| Capability                              | Sunrise | Dify     | Haystack | LangGraph | Bedrock  |
-| --------------------------------------- | ------- | -------- | -------- | --------- | -------- |
-| Multi-format ingestion                  | Strong  | Strong   | Strong   | None      | Strong   |
-| Semantic chunking                       | Strong  | Strong   | Strong   | None      | Adequate |
-| CSV row-level retrieval                 | Strong  | Adequate | Adequate | None      | Adequate |
-| Vector search (pgvector)                | Strong  | Strong   | Strong   | None      | Strong   |
-| Hybrid search (BM25-flavoured + vector) | Strong  | Adequate | Strong   | None      | Adequate |
-| Inline citation envelope to UI / API    | Strong  | None     | None     | None      | Adequate |
-| Document lifecycle management           | Strong  | Strong   | Adequate | None      | Adequate |
-| PDF preview/confirm flow                | Strong  | None     | None     | None      | None     |
-| Per-page scanned-PDF diagnostics        | Strong  | None     | None     | None      | None     |
-| PDF table extraction (opt-in)           | Strong  | Adequate | Strong   | None      | Strong   |
-| Namespace/team isolation                | None    | Adequate | Adequate | None      | Adequate |
-| Incremental document updates            | None    | Adequate | Adequate | None      | Adequate |
+| Capability                              | Sunrise | Dify     | Haystack | LangGraph | Bedrock  | AgentKit |
+| --------------------------------------- | ------- | -------- | -------- | --------- | -------- | -------- |
+| Multi-format ingestion                  | Strong  | Strong   | Strong   | None      | Strong   | Strong   |
+| Semantic chunking                       | Strong  | Strong   | Strong   | None      | Adequate | Strong   |
+| CSV row-level retrieval                 | Strong  | Adequate | Adequate | None      | Adequate | Adequate |
+| Vector search (pgvector)                | Strong  | Strong   | Strong   | None      | Strong   | Strong   |
+| Hybrid search (BM25-flavoured + vector) | Strong  | Adequate | Strong   | None      | Adequate | Adequate |
+| Inline citation envelope to UI / API    | Strong  | None     | None     | None      | Adequate | Adequate |
+| Document lifecycle management           | Strong  | Strong   | Adequate | None      | Adequate | Strong   |
+| PDF preview/confirm flow                | Strong  | None     | None     | None      | None     | None     |
+| Per-page scanned-PDF diagnostics        | Strong  | None     | None     | None      | None     | None     |
+| PDF table extraction (opt-in)           | Strong  | Adequate | Strong   | None      | Strong   | Strong   |
+| Namespace/team isolation                | None    | Adequate | Adequate | None      | Adequate | Adequate |
+| Incremental document updates            | None    | Adequate | Adequate | None      | Adequate | Adequate |
 
 **Sunrise advantages:** PDF preview/confirm workflow is unique. Document lifecycle (pending → processing → ready) is well-designed. Hybrid search (PR #139, May 2026) and the citation envelope (May 2026) close two prior gaps and pull RAG quality and trustworthiness ahead of all evaluated peers. Document-ingestion robustness (this PR, May 2026) adds CSV row-level chunking (a 50k-row CSV lets queries surface a single matching row), per-page scanned-PDF diagnostics that pinpoint which page ranges need external OCR, and an opt-in vector-grid table extraction — all delivered without bundling a new third-party dependency. **Key gaps:** No per-team scoping, no incremental document updates, no bundled OCR (deliberate — external workflow documented).
 
 ### Production Deployment & Scaling
 
-| Capability                       | Sunrise  | LangGraph | Bedrock | Azure Foundry | Dify     |
-| -------------------------------- | -------- | --------- | ------- | ------------- | -------- |
-| Self-hosted deployment           | Strong   | Strong    | N/A     | N/A           | Strong   |
-| Managed hosting option           | None     | Strong    | Strong  | Strong        | Strong   |
-| Horizontal scaling safety        | Weak     | Strong    | Strong  | Strong        | Adequate |
-| Distributed task queue           | None     | Strong    | N/A     | N/A           | None     |
-| Background execution model       | Weak     | Strong    | Strong  | Strong        | Adequate |
-| Workflow versioning (git-native) | None     | Strong    | None    | Adequate      | None     |
-| RBAC (admin/operator/consumer)   | Adequate | N/A       | Strong  | Strong        | Strong   |
+| Capability                       | Sunrise  | LangGraph | Bedrock | Azure Foundry | Dify     | AgentKit |
+| -------------------------------- | -------- | --------- | ------- | ------------- | -------- | -------- |
+| Self-hosted deployment           | Strong   | Strong    | N/A     | N/A           | Strong   | None     |
+| Managed hosting option           | None     | Strong    | Strong  | Strong        | Strong   | Strong   |
+| Horizontal scaling safety        | Weak     | Strong    | Strong  | Strong        | Adequate | Strong   |
+| Distributed task queue           | None     | Strong    | N/A     | N/A           | None     | N/A      |
+| Background execution model       | Weak     | Strong    | Strong  | Strong        | Adequate | Strong   |
+| Workflow versioning (git-native) | None     | Strong    | None    | Adequate      | None     | Adequate |
+| RBAC (admin/operator/consumer)   | Adequate | N/A       | Strong  | Strong        | Strong   | Adequate |
 
 **Key gaps:** Three in-memory stores (circuit breaker, budget mutex, maintenance tick) break under multiple instances. No distributed task queue for workflow execution. No background execution model for long-running workflows triggered by cron/webhooks.
 
@@ -231,7 +233,7 @@ Rating scale: **Strong** (best-in-class or competitive), **Adequate** (functiona
 
 12. **Human-in-the-loop depth** — `human_approval` with admin UI, token-authenticated external channel endpoints, notification dispatcher, and approver scoping covers the production use case well. Lacks LangGraph's multi-interrupt, state-edit, and crash-recovery capabilities.
 
-13. **Evaluation tooling** — LLM-driven completion handler vs. Haystack's 8 named evaluators or LangSmith's regression testing.
+13. **Evaluation tooling** — three named-metric scorers (faithfulness, groundedness, relevance) plus an LLM-driven completion handler is behind Haystack's 8 named evaluators, LangSmith's regression testing harness, and OpenAI AgentKit's Evals product (datasets, trace grading, prompt optimisation, automated graders). Sunrise's eval surface is functional but narrower than the eval-platform-style tooling shipped by these competitors.
 
 14. **Third-party integration breadth (raw count).** LangChain ships 1000+ community-contributed tool integrations; Sunrise curates 10 trusted built-ins plus the `call_external_api` outbound-HTTP primitive plus 5 recipe-driven patterns covering the most common shapes (email, payments, chat, calendar, document render). The trade is deliberate — curation + extensibility over count — but if a buyer's evaluation rubric is purely raw integration count, Sunrise will look thin. Mitigation is the recipe + `/orchestration-capability-builder` skill path: any new integration is a documented short walk away.
 
@@ -351,15 +353,15 @@ Sunrise ships a multi-layered security model built into the orchestration core:
 
 ### Security Comparison Matrix
 
-| Capability                     | Sunrise  | OpenAI SDK | Bedrock | Azure Foundry | LangGraph | Dify     | CrewAI   |
-| ------------------------------ | -------- | ---------- | ------- | ------------- | --------- | -------- | -------- |
-| Input injection detection      | Strong   | Adequate   | Strong  | Strong        | Adequate  | Adequate | Weak     |
-| Output content filtering       | Strong   | Adequate   | Strong  | Strong        | Adequate  | Adequate | Weak     |
-| SSRF protection                | Adequate | N/A        | N/A     | N/A           | None      | Adequate | None     |
-| Credential management          | Strong   | N/A        | Strong  | Strong        | None      | Strong   | Weak     |
-| Code execution sandbox         | None     | Strong     | Strong  | Strong        | None      | Adequate | Adequate |
-| Multi-tenancy / data isolation | Strong   | N/A        | Strong  | Strong        | None      | Adequate | Weak     |
-| OWASP Agentic Top 10 coverage  | Adequate | Adequate   | Strong  | Strong        | Weak      | Adequate | Weak     |
+| Capability                     | Sunrise  | OpenAI SDK | Bedrock | Azure Foundry | LangGraph | Dify     | CrewAI   | AgentKit |
+| ------------------------------ | -------- | ---------- | ------- | ------------- | --------- | -------- | -------- | -------- |
+| Input injection detection      | Strong   | Adequate   | Strong  | Strong        | Adequate  | Adequate | Weak     | Strong   |
+| Output content filtering       | Strong   | Adequate   | Strong  | Strong        | Adequate  | Adequate | Weak     | Strong   |
+| SSRF protection                | Adequate | N/A        | N/A     | N/A           | None      | Adequate | None     | N/A      |
+| Credential management          | Strong   | N/A        | Strong  | Strong        | None      | Strong   | Weak     | Strong   |
+| Code execution sandbox         | None     | Strong     | Strong  | Strong        | None      | Adequate | Adequate | Strong   |
+| Multi-tenancy / data isolation | Strong   | N/A        | Strong  | Strong        | None      | Adequate | Weak     | Adequate |
+| OWASP Agentic Top 10 coverage  | Adequate | Adequate   | Strong  | Strong        | Weak      | Adequate | Weak     | Strong   |
 
 **Context:** OWASP published the Top 10 for Agentic Applications in December 2025 — the first formal risk taxonomy for autonomous AI agents. The EU AI Act's high-risk obligations take effect August 2026. Microsoft's open-source Agent Governance Toolkit (April 2026) covers all 10 OWASP categories and works with any framework.
 
@@ -385,15 +387,15 @@ Sunrise ships a **full MCP server** (`lib/orchestration/mcp/`, `app/api/v1/mcp/r
 
 ### MCP Comparison Matrix
 
-| Capability                | Sunrise | OpenAI SDK | LangGraph | CrewAI | Haystack | Google ADK | Azure Foundry | Dify   |
-| ------------------------- | ------- | ---------- | --------- | ------ | -------- | ---------- | ------------- | ------ |
-| MCP server implementation | Strong  | None       | None      | None   | Strong   | None       | Adequate      | None   |
-| MCP client (tool calling) | None    | Strong     | Adequate  | Strong | Strong   | Strong     | Strong        | Strong |
-| MCP tools exposure        | Strong  | N/A        | N/A       | N/A    | Strong   | N/A        | Adequate      | N/A    |
-| MCP resources             | Strong  | N/A        | N/A       | N/A    | None     | N/A        | None          | N/A    |
-| MCP audit logging         | Strong  | None       | None      | None   | None     | None       | None          | None   |
-| MCP API key auth          | Strong  | N/A        | N/A       | N/A    | N/A      | N/A        | Adequate      | N/A    |
-| Session management        | Strong  | N/A        | N/A       | N/A    | None     | N/A        | None          | N/A    |
+| Capability                | Sunrise | OpenAI SDK | LangGraph | CrewAI | Haystack | Google ADK | Azure Foundry | Dify   | AgentKit |
+| ------------------------- | ------- | ---------- | --------- | ------ | -------- | ---------- | ------------- | ------ | -------- |
+| MCP server implementation | Strong  | None       | None      | None   | Strong   | None       | Adequate      | None   | None     |
+| MCP client (tool calling) | None    | Strong     | Adequate  | Strong | Strong   | Strong     | Strong        | Strong | Strong   |
+| MCP tools exposure        | Strong  | N/A        | N/A       | N/A    | Strong   | N/A        | Adequate      | N/A    | N/A      |
+| MCP resources             | Strong  | N/A        | N/A       | N/A    | None     | N/A        | None          | N/A    | N/A      |
+| MCP audit logging         | Strong  | None       | None      | None   | None     | None       | None          | None   | None     |
+| MCP API key auth          | Strong  | N/A        | N/A       | N/A    | N/A      | N/A        | Adequate      | N/A    | N/A      |
+| Session management        | Strong  | N/A        | N/A       | N/A    | None     | N/A        | None          | N/A    | N/A      |
 
 **Sunrise position:** Most platforms support MCP as a **client** (calling MCP tools). Sunrise is one of very few that implements an MCP **server** — exposing its capabilities to external MCP clients. Haystack's Hayhooks also acts as an MCP server (exposing pipelines as tools). Azure Foundry added MCP server support in preview (mid-2025). The audit logging and API key auth on MCP are unique to Sunrise.
 
@@ -465,17 +467,17 @@ Sunrise has a consumer-facing deployment path:
 
 ### Embed Comparison Matrix
 
-| Capability                  | Sunrise | Dify     | Flowise  | n8n  | LangGraph | CrewAI | Haystack |
-| --------------------------- | ------- | -------- | -------- | ---- | --------- | ------ | -------- |
-| Embeddable chat widget      | Strong  | Strong   | Strong   | None | None      | None   | None     |
-| Shadow DOM isolation        | Strong  | None     | None     | N/A  | N/A       | N/A    | N/A      |
-| Iframe embed                | None    | Strong   | Adequate | None | None      | None   | None     |
-| Token-based auth            | Strong  | Adequate | Adequate | N/A  | N/A       | N/A    | N/A      |
-| Embed proxy (hide API host) | None    | None     | Strong   | N/A  | N/A       | N/A    | N/A      |
-| Widget customisation        | Strong  | Strong   | Strong   | N/A  | N/A       | N/A    | N/A      |
-| Agent visibility modes      | Strong  | Adequate | Weak     | N/A  | N/A       | N/A    | N/A      |
+| Capability                  | Sunrise | Dify     | Flowise  | n8n  | LangGraph | CrewAI | Haystack | AgentKit |
+| --------------------------- | ------- | -------- | -------- | ---- | --------- | ------ | -------- | -------- |
+| Embeddable chat widget      | Strong  | Strong   | Strong   | None | None      | None   | None     | Strong   |
+| Shadow DOM isolation        | Strong  | None     | None     | N/A  | N/A       | N/A    | N/A      | Strong   |
+| Iframe embed                | None    | Strong   | Adequate | None | None      | None   | None     | None     |
+| Token-based auth            | Strong  | Adequate | Adequate | N/A  | N/A       | N/A    | N/A      | Strong   |
+| Embed proxy (hide API host) | None    | None     | Strong   | N/A  | N/A       | N/A    | N/A      | None     |
+| Widget customisation        | Strong  | Strong   | Strong   | N/A  | N/A       | N/A    | N/A      | Strong   |
+| Agent visibility modes      | Strong  | Adequate | Weak     | N/A  | N/A       | N/A    | N/A      | Adequate |
 
-**Sunrise position:** The embed widget with Shadow DOM isolation is architecturally clean — prevents CSS/JS conflicts that iframe-based embeds avoid but at the cost of cross-origin complexity. The 3 visibility modes (internal/public/invite_only) with invite tokens is more granular than Dify's or Flowise's approach. Code-first frameworks (LangGraph, CrewAI, Haystack, AutoGen) don't ship embed widgets — they are libraries, not platforms.
+**Sunrise position:** The embed widget with Shadow DOM isolation is architecturally clean — prevents CSS/JS conflicts that iframe-based embeds avoid but at the cost of cross-origin complexity. The 3 visibility modes (internal/public/invite_only) with invite tokens is more granular than Dify's or Flowise's approach. Code-first frameworks (LangGraph, CrewAI, Haystack, AutoGen) don't ship embed widgets — they are libraries, not platforms. OpenAI AgentKit's ChatKit (open-sourced October 2025) is the closest peer — a Shadow-DOM-isolated React embed library that talks to an OpenAI-hosted agent runtime. The widget itself is comparable; the trade is at the runtime layer (OpenAI-only, OpenAI-billed) rather than the embed layer.
 
 > **Resolved:** Widget customisation (Tier 2 #7 in `improvement-priorities.md`) — shipped May 2026. Per-agent `widgetConfig` JSONB column (colours, fonts, header copy, conversation starters, footer caption) loaded by the widget on boot via a new public `/api/v1/embed/widget-config` endpoint. Inline `<style>` references CSS custom properties (`--sw-primary`, `--sw-surface`, `--sw-text`, `--sw-font`, …) so a single property write cascades through the Shadow DOM tree per partner site. Copy fields rendered via `textContent` / `setAttribute` (XSS-safe). Admin form's Embed tab gains a live preview pane and a soft WCAG AA contrast warning. Roundtrips through the per-agent export bundle, clone route, and full system backup.
 
@@ -487,22 +489,23 @@ Sunrise has a consumer-facing deployment path:
 
 Sunrise is a self-hosted starter template with no licensing cost. This positions it differently from commercial platforms and managed services.
 
-| Platform            | License                        | Free Tier                   | Paid Tier                                                   | Key Commercial Lock-in                     |
-| ------------------- | ------------------------------ | --------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| **Sunrise**         | Proprietary (starter template) | Full self-hosted            | None                                                        | None                                       |
-| **LangGraph**       | MIT (library)                  | OSS unlimited               | Platform: LangSmith $39/seat/mo, Agent Server custom        | LangSmith for production observability     |
-| **CrewAI**          | MIT (library)                  | 50 workflow executions      | $25–$120K/yr (Ultra)                                        | Enterprise tier for SOC2, SSO, PII masking |
-| **AutoGen/AG2**     | Apache 2.0                     | Full OSS                    | None                                                        | None — community-driven                    |
-| **Semantic Kernel** | MIT                            | Full OSS                    | Azure services priced separately                            | Azure ecosystem bias                       |
-| **Haystack**        | Apache 2.0                     | Full OSS                    | Enterprise Starter (support), Enterprise Platform (managed) | None — no vendor lock-in                   |
-| **Dify**            | Apache 2.0 + conditions        | Self-hosted unlimited       | Dify Cloud, AWS Marketplace Premium                         | License terms differ from plain Apache 2.0 |
-| **Flowise**         | Apache 2.0                     | Self-hosted unlimited       | Enterprise (SSO, features)                                  | Acquired by Workday (Aug 2025)             |
-| **OpenAI SDK**      | MIT                            | OSS unlimited               | OpenAI API usage costs                                      | Model lock-in (OpenAI-first design)        |
-| **Google ADK**      | Apache 2.0                     | Full OSS                    | Vertex AI Agent Engine usage-based                          | Google Cloud bias                          |
-| **Bedrock Agents**  | Proprietary (managed)          | None                        | Usage-based + Lambda costs                                  | AWS-only                                   |
-| **Azure Foundry**   | Proprietary (managed)          | Azure free account services | Usage-based + hosting                                       | Azure-only                                 |
+| Platform            | License                                                 | Free Tier                                 | Paid Tier                                                             | Key Commercial Lock-in                                          |
+| ------------------- | ------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **Sunrise**         | Proprietary (starter template)                          | Full self-hosted                          | None                                                                  | None                                                            |
+| **LangGraph**       | MIT (library)                                           | OSS unlimited                             | Platform: LangSmith $39/seat/mo, Agent Server custom                  | LangSmith for production observability                          |
+| **CrewAI**          | MIT (library)                                           | 50 workflow executions                    | $25–$120K/yr (Ultra)                                                  | Enterprise tier for SOC2, SSO, PII masking                      |
+| **AutoGen/AG2**     | Apache 2.0                                              | Full OSS                                  | None                                                                  | None — community-driven                                         |
+| **Semantic Kernel** | MIT                                                     | Full OSS                                  | Azure services priced separately                                      | Azure ecosystem bias                                            |
+| **Haystack**        | Apache 2.0                                              | Full OSS                                  | Enterprise Starter (support), Enterprise Platform (managed)           | None — no vendor lock-in                                        |
+| **Dify**            | Apache 2.0 + conditions                                 | Self-hosted unlimited                     | Dify Cloud, AWS Marketplace Premium                                   | License terms differ from plain Apache 2.0                      |
+| **Flowise**         | Apache 2.0                                              | Self-hosted unlimited                     | Enterprise (SSO, features)                                            | Acquired by Workday (Aug 2025)                                  |
+| **OpenAI SDK**      | MIT                                                     | OSS unlimited                             | OpenAI API usage costs                                                | Model lock-in (OpenAI-first design)                             |
+| **OpenAI AgentKit** | Proprietary (managed runtime); ChatKit + Guardrails OSS | None for runtime; ChatKit/Guardrails free | Token usage + tool surcharges (web search, file search, computer use) | OpenAI-only (model + runtime); evals/traces in OpenAI dashboard |
+| **Google ADK**      | Apache 2.0                                              | Full OSS                                  | Vertex AI Agent Engine usage-based                                    | Google Cloud bias                                               |
+| **Bedrock Agents**  | Proprietary (managed)                                   | None                                      | Usage-based + Lambda costs                                            | AWS-only                                                        |
+| **Azure Foundry**   | Proprietary (managed)                                   | Azure free account services               | Usage-based + hosting                                                 | Azure-only                                                      |
 
-**Key insight:** The commercial lock-in risk in this space is not the framework license — it's the observability/deployment platform. LangGraph is MIT but production use practically requires LangSmith ($39/seat/mo + per-trace). CrewAI is MIT but Enterprise features (SOC2, SSO) start at custom pricing. Sunrise avoids this pattern by building observability and deployment into the platform itself — though the current observability gap (no OTEL) means teams might still reach for LangSmith or Langfuse as an external dependency.
+**Key insight:** The commercial lock-in risk in this space is not the framework license — it's the observability/deployment platform. LangGraph is MIT but production use practically requires LangSmith ($39/seat/mo + per-trace). CrewAI is MIT but Enterprise features (SOC2, SSO) start at custom pricing. OpenAI AgentKit takes the most opinionated stance: ChatKit and Guardrails are open-source, but the orchestration runtime, Evals, traces, and Agent Builder are all OpenAI-hosted and OpenAI-only — adoption locks in the model vendor as well as the platform vendor. Sunrise avoids both patterns by building observability and deployment into the platform itself, with OTLP-only external tracing for forks that want vendor-native dashboards.
 
 ---
 
@@ -609,6 +612,31 @@ Not a competitor on orchestration complexity, but the gold standard for observab
 Newest entrant, but the A2A inter-agent protocol is potentially industry-defining. If A2A gains adoption, systems without it become isolated. Worth tracking and implementing early if multi-system agent coordination is on the roadmap.
 
 **What to learn from:** A2A protocol, explicit coordination patterns (Sequential/Parallel/Loop agents).
+
+### OpenAI AgentKit — Hosted Visual Platform with Same-Surface Overlap
+
+The most direct overlap with Sunrise's product surface. Where AgentKit and Sunrise both ship: visual workflow builder, embeddable chat widget, knowledge / file search, named eval metrics, trace viewer, guardrails, admin-managed connectors. The fundamental trade is the runtime — AgentKit's orchestration engine is OpenAI-hosted and OpenAI-only; Sunrise self-hosts and is multi-provider with circuit breakers and per-agent fallback chains. AgentKit launched in late 2025 and consolidates what previously required stitching together the Agents SDK + Responses API + a hand-rolled UI; this raises the bar on "what good looks like" for everyone in the space.
+
+**Where AgentKit leads:**
+
+- **Evals product** — datasets, automated graders, trace grading, prompt optimisation, RFT integration. More mature than Sunrise's three-metric scorer.
+- **Built-in tools** — web search, file search, computer use, code interpreter exposed through the Responses API as first-class capabilities. Sunrise's `call_external_api` + recipes cookbook is curation-first; AgentKit's are vendor-bundled.
+- **Named handoff primitives** — Agent Builder canvas wires agent-to-agent handoffs explicitly. Sunrise's `orchestrator` step is informal planner-driven coordination.
+- **Code execution sandbox** — Code Interpreter is a managed sandbox; Sunrise has none.
+- **Managed scaling** — horizontal scaling, background execution, distributed state are OpenAI's problem, not the adopter's.
+
+**Where Sunrise leads:**
+
+- **Provider freedom** — AgentKit cannot fall back to Anthropic, Google, Mistral, or local models on degradation. Sunrise's circuit breaker + per-agent fallback chains have no AgentKit equivalent.
+- **Cost / budget enforcement in-loop** — AgentKit surfaces token usage in the dashboard but does not gate execution against per-agent or global budgets.
+- **Self-hosting + source access** — every line of orchestration logic is in the fork; AgentKit's runtime is a black box.
+- **Inline citation envelope** — Sunrise's `Citation` envelope flowing through the LLM tool result, SSE stream, and persisted message metadata is more end-to-end than AgentKit's file-search citations.
+- **MCP server** — AgentKit consumes MCP; Sunrise also exposes capabilities to external MCP clients with audit logging and API-key auth.
+- **Application-stack integration** — Sunrise's auth, RBAC, audit log, admin UI, consumer chat, and database all live in one TypeScript codebase; AgentKit gives you a runtime, not an application.
+
+**What to learn from:** Evals product structure (dataset + grader + baseline comparison), Agent Builder's named handoff/supervisor primitives on a visual canvas, the Connector Registry as an admin abstraction, ChatKit's customisation surface.
+
+**Buyer-profile distinction:** AgentKit suits teams that have already standardised on OpenAI models, want zero-ops orchestration, and value evaluation tooling depth over runtime control. Sunrise suits teams that need multi-provider resilience, in-loop cost enforcement, source-level customisation, or an integrated full application stack rather than a runtime to graft onto an existing app.
 
 ### Managed Services (Bedrock, Azure Foundry) — Different Category
 
