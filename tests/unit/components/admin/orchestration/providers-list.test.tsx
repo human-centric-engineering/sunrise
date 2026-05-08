@@ -355,6 +355,65 @@ describe('ProvidersList', () => {
       });
     });
 
+    it('renders a full-width failure message below the footer when the auto-probe returns ok=false', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: false, models: [] });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/couldn't reach this provider\. check the server logs for details/i)
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('clearing the result on reactivate removes the old failure message', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      // First mount: probe fails → message renders.
+      vi.mocked(apiClient.post).mockResolvedValueOnce({ ok: false, models: [] });
+      // Subsequent calls (reactivate PATCH, follow-up auto-probe) just
+      // resolve — we only care that the old message disappears.
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: ['m1'] });
+
+      const inactiveProvider = makeProvider({ isActive: false });
+      // The inactive provider is NOT auto-probed (filter gates on isActive),
+      // so seed a failure message via the test-cache + state combo by
+      // rendering with a manual click instead. Easier approach: render
+      // active provider, await failure message, then assert clearing
+      // requires manual reactivate flow on inactive.
+      const failingProvider = makeProvider({ isActive: true });
+
+      const user = userEvent.setup();
+      const { rerender } = render(<ProvidersList initialProviders={[failingProvider]} />);
+
+      // Wait for the auto-probe failure message to appear.
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+
+      // Now simulate the row going inactive, then reactivating. Re-render
+      // with isActive: false to mirror what soft-delete does, then click
+      // Reactivate on the dropdown.
+      rerender(
+        <ProvidersList initialProviders={[{ ...inactiveProvider, id: failingProvider.id }]} />
+      );
+      const moreBtn = document.querySelectorAll('button[aria-haspopup="menu"]')[0];
+      await user.click(moreBtn as HTMLElement);
+      const reactivate = await screen.findByRole('menuitem', {
+        name: /^reactivate$/i,
+        hidden: true,
+      });
+      await user.click(reactivate);
+
+      // The reactivate handler clears `testResults[id]`, so the old
+      // failure message must be gone before the next auto-probe lands.
+      await waitFor(() => {
+        expect(screen.queryByText(/couldn't reach this provider/i)).not.toBeInTheDocument();
+      });
+    });
+
     it('skips the probe when a recent cached result already exists', async () => {
       const { setCachedTestResult } = await import('@/lib/orchestration/provider-test-cache');
       setCachedTestResult('prov-1', { ok: true, modelCount: 3 });

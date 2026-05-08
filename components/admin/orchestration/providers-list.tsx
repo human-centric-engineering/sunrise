@@ -74,7 +74,10 @@ import {
   type ProviderModelInfo,
 } from '@/components/admin/orchestration/provider-models-panel';
 import { ProviderDetectionsBanner } from '@/components/admin/orchestration/provider-detections-banner';
-import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+import {
+  ProviderTestButton,
+  type ProviderTestResult,
+} from '@/components/admin/orchestration/provider-test-button';
 import {
   clearCachedTestResult,
   getCachedTestResult,
@@ -142,6 +145,20 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     for (const p of initialProviders) {
       const cached = getCachedTestResult(p.id);
       if (cached) seed[p.id] = cached.ok;
+    }
+    return seed;
+  });
+  // Per-provider test result for the controlled `<ProviderTestButton>`.
+  // Carries the failure message so the footer can render it in a
+  // full-width row below the button row instead of cramming it into
+  // the right-hand column. Hydrated from cache (success only — we don't
+  // persist failure messages) so the green check survives navigation.
+  const [testResults, setTestResults] = useState<Record<string, ProviderTestResult | null>>(() => {
+    if (typeof window === 'undefined') return {};
+    const seed: Record<string, ProviderTestResult | null> = {};
+    for (const p of initialProviders) {
+      const cached = getCachedTestResult(p.id);
+      if (cached?.ok) seed[p.id] = { ok: true, modelCount: cached.modelCount };
     }
     return seed;
   });
@@ -237,6 +254,14 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         for (const p of targets) next[p.id] = true;
         return next;
       });
+      // Clear any stale message from a previous failed run before the
+      // new probe settles — a freshly-reactivated provider shouldn't
+      // briefly flash the old error while the auto-probe is in flight.
+      setTestResults((prev) => {
+        const next = { ...prev };
+        for (const p of targets) next[p.id] = null;
+        return next;
+      });
 
       await Promise.all(
         targets.map(async (p) => {
@@ -249,12 +274,28 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
             const modelCount = response.models?.length ?? 0;
             setCachedTestResult(p.id, { ok, modelCount });
             setTestedOk((prev) => ({ ...prev, [p.id]: ok }));
+            setTestResults((prev) => ({
+              ...prev,
+              [p.id]: ok
+                ? { ok: true, modelCount }
+                : {
+                    ok: false,
+                    message: "Couldn't reach this provider. Check the server logs for details.",
+                  },
+            }));
           } catch {
             if (cancelled) return;
             // Same shape as a failed test — server already sanitizes
             // raw SDK errors before they reach us.
             setCachedTestResult(p.id, { ok: false, modelCount: 0 });
             setTestedOk((prev) => ({ ...prev, [p.id]: false }));
+            setTestResults((prev) => ({
+              ...prev,
+              [p.id]: {
+                ok: false,
+                message: "Couldn't reach this provider. Check the server logs for details.",
+              },
+            }));
           } finally {
             if (!cancelled) {
               setTestingInFlight((prev) => {
@@ -335,6 +376,11 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         delete next[deleteTarget.id];
         return next;
       });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
       setProviders((prev) =>
         prev.map((p) => (p.id === deleteTarget.id ? { ...p, isActive: false } : p))
       );
@@ -369,6 +415,11 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         delete next[permanentTarget.id];
         return next;
       });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[permanentTarget.id];
+        return next;
+      });
       // Drop the row from local state — the server actually deleted it.
       setProviders((prev) => prev.filter((p) => p.id !== permanentTarget.id));
       setPermanentTarget(null);
@@ -391,9 +442,17 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       });
       // Reactivation could mean the operator changed env vars / base
       // URL since the last test ran — invalidate so the dot defaults to
-      // grey until they retest.
+      // grey until they retest. Also clear the controlled `testResults`
+      // entry so any old failure message disappears immediately, and the
+      // auto-probe `useEffect` re-fires (filter checks `testedOk[id] ===
+      // undefined`).
       clearCachedTestResult(providerId);
       setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setTestResults((prev) => {
         const next = { ...prev };
         delete next[providerId];
         return next;
@@ -416,9 +475,15 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       // Breaker reset means recent failures have been forgiven —
       // invalidate the cached test result so the operator runs a fresh
       // check rather than trusting an old "tested OK" from before the
-      // failures.
+      // failures. Clear the controlled result so the old failure
+      // message vanishes when the auto-probe re-fires.
       clearCachedTestResult(providerId);
       setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setTestResults((prev) => {
         const next = { ...prev };
         delete next[providerId];
         return next;
@@ -628,21 +693,49 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   </div>
                 )}
 
-                {/* ── Footer: status + test ── */}
+                {/* ── Footer: status + test (+ optional full-width message row) ── */}
                 <div
-                  className={`${p.apiKeyPresent || p.isLocal ? 'mt-auto' : ''} flex items-center justify-between border-t px-4 py-3`}
+                  className={`${p.apiKeyPresent || p.isLocal ? 'mt-auto' : ''} flex flex-col gap-2 border-t px-4 py-3`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
-                      aria-hidden="true"
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground text-xs">{statusLabel}</span>
+                    </div>
+                    <ProviderTestButton
+                      providerId={p.id}
+                      // Controlled mode — `testResults[p.id]` is the source of
+                      // truth for what icon/state the button displays. Lets the
+                      // mount-time auto-probe and the reactivate / breaker-reset
+                      // flows clear the stale red X without remounting.
+                      result={testResults[p.id] ?? null}
+                      onResult={(r) => {
+                        setTestedOk((prev) => ({ ...prev, [p.id]: r.ok }));
+                        setTestResults((prev) => ({ ...prev, [p.id]: r }));
+                      }}
+                      onTestStart={() => {
+                        // Clear the stale message before the new test settles
+                        // so a re-run from a previous failure doesn't briefly
+                        // show the old red row while in flight.
+                        setTestResults((prev) => {
+                          const next = { ...prev };
+                          next[p.id] = null;
+                          return next;
+                        });
+                      }}
+                      // Suppress the inline message — we render it full-width
+                      // below so long sentences ("Couldn't reach this provider…
+                      // Check the server logs for details.") have room.
+                      inlineMessage={false}
                     />
-                    <span className="text-muted-foreground text-xs">{statusLabel}</span>
                   </div>
-                  <ProviderTestButton
-                    providerId={p.id}
-                    onResult={(ok) => setTestedOk((prev) => ({ ...prev, [p.id]: ok }))}
-                  />
+                  {(() => {
+                    const r = testResults[p.id];
+                    return r && !r.ok ? <p className="text-xs text-red-600">{r.message}</p> : null;
+                  })()}
                 </div>
               </div>
             );

@@ -97,7 +97,7 @@ describe('ProviderTestButton', () => {
       });
     });
 
-    it('calls onResult(true) on success', async () => {
+    it('calls onResult({ ok: true, modelCount }) on success', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.post).mockResolvedValue({
         ok: true,
@@ -111,7 +111,7 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(true);
+        expect(onResult).toHaveBeenCalledWith({ ok: true, modelCount: 3 });
       });
     });
 
@@ -213,7 +213,7 @@ describe('ProviderTestButton', () => {
       });
     });
 
-    it('calls onResult(false) on failure', async () => {
+    it('calls onResult({ ok: false, message }) on failure', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Network error'));
 
@@ -224,7 +224,9 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(false);
+        expect(onResult).toHaveBeenCalledWith(
+          expect.objectContaining({ ok: false, message: expect.stringMatching(/.+/) })
+        );
       });
     });
   });
@@ -253,7 +255,7 @@ describe('ProviderTestButton', () => {
       expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
-    it('calls onResult(false) when providerId is null', async () => {
+    it('calls onResult({ ok: false, message }) when providerId is null', async () => {
       const onResult = vi.fn();
       const user = userEvent.setup();
       render(<ProviderTestButton providerId={null} onResult={onResult} />);
@@ -261,7 +263,9 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(false);
+        expect(onResult).toHaveBeenCalledWith(
+          expect.objectContaining({ ok: false, message: expect.stringMatching(/.+/) })
+        );
       });
     });
 
