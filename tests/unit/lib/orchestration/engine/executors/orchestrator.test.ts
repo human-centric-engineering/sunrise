@@ -954,3 +954,295 @@ describe('multi-turn checkpoint resume', () => {
     expect(output.finalAnswer).toBe('New round answer.');
   });
 });
+
+// ─── Config defaults and prompt formatting ──────────────────────────────────
+
+describe('config defaults and prompt formatting', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('agent with null description renders fallback string in planner system prompt', async () => {
+    // Arrange — one agent has description=null, the fallback must reach the planner
+    // verbatim so it can still discover/select that agent.
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { slug: 'researcher', name: 'Researcher', description: 'Finds information' },
+      { slug: 'silent', name: 'Silent Agent', description: null },
+    ] as never);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    // Act
+    await executeOrchestrator(
+      makeStep({ availableAgentSlugs: ['researcher', 'silent'] }),
+      makeCtx()
+    );
+
+    // Assert — capture the prompt sent to the planner and verify the null-desc
+    // fallback rendered. If a regression replaced the `??` with a non-fallback
+    // (e.g. an empty string or `String(null)`), this assertion fails.
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+    const prompt = vi.mocked(runLlmCall).mock.calls[0][1].prompt;
+    expect(prompt).toContain('**Silent Agent** (slug: `silent`): No description provided.');
+    expect(prompt).toContain('**Researcher** (slug: `researcher`): Finds information');
+  });
+
+  it('non-string delegation output is JSON-stringified into the next round prompt', async () => {
+    // Arrange — round 1 delegates and the agent returns a structured object;
+    // round 2's prompt must contain that object as JSON, not "[object Object]".
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce(
+        makePlannerResponse({
+          delegations: [{ agentSlug: 'researcher', message: 'analyze' }],
+        })
+      )
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'synthesized' }));
+
+    const structured = { metric: 'growth', value: 25, unit: 'percent' };
+    vi.mocked(executeAgentCall).mockResolvedValueOnce({
+      output: structured,
+      tokensUsed: 100,
+      costUsd: 0.003,
+    });
+
+    // Act
+    await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — round 2 prompt contains JSON.stringify of the structured output.
+    // Regression check: dropping the typeof-string branch and just substituting
+    // `${d.output}` would produce "[object Object]" here.
+    expect(runLlmCall).toHaveBeenCalledTimes(2);
+    const round2Prompt = vi.mocked(runLlmCall).mock.calls[1][1].prompt;
+    expect(round2Prompt).toContain(JSON.stringify(structured));
+    expect(round2Prompt).not.toContain('[object Object]');
+    // Sanity — the stringified form actually reflects the values, not a degraded render
+    expect(round2Prompt).toContain('"metric":"growth"');
+    expect(round2Prompt).toContain('"value":25');
+  });
+
+  it('string delegation output is passed through unchanged (no JSON wrapping) in next round prompt', async () => {
+    // Arrange — string output should appear as plain text in the planner prompt,
+    // NOT wrapped in JSON quotes. This is the consequent arm of the
+    // `typeof d.output === 'string' ? d.output : JSON.stringify(d.output)` cond.
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce(
+        makePlannerResponse({
+          delegations: [{ agentSlug: 'researcher', message: 'summarize' }],
+        })
+      )
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'final' }));
+
+    vi.mocked(executeAgentCall).mockResolvedValueOnce({
+      output: 'Plain string research result',
+      tokensUsed: 100,
+      costUsd: 0.003,
+    });
+
+    // Act
+    await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — round 2 prompt contains the raw string and NOT the JSON-quoted form
+    const round2Prompt = vi.mocked(runLlmCall).mock.calls[1][1].prompt;
+    expect(round2Prompt).toContain('researcher: Plain string research result');
+    expect(round2Prompt).not.toContain('"Plain string research result"');
+  });
+
+  it('non-Error throw from delegation captured as stringified error in delegation result', async () => {
+    // Arrange — executeAgentCall rejects with a non-Error value (a plain string).
+    // runDelegation's catch must use `String(err)` for non-Error throws so the
+    // error field is human-readable rather than `[object Object]` or undefined.
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce(
+        makePlannerResponse({
+          delegations: [{ agentSlug: 'researcher', message: 'work' }],
+        })
+      )
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    // String thrown — not an Error instance
+    vi.mocked(executeAgentCall).mockRejectedValueOnce('connection reset by peer');
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — the delegation's error field captured the string verbatim.
+    // Regression: dropping the non-Error branch would yield `undefined` or
+    // `[object Object]` here.
+    const rounds = (result.output as Record<string, unknown>).rounds as Array<
+      Record<string, unknown>
+    >;
+    const delegations = rounds[0].delegations as Array<Record<string, unknown>>;
+    expect(delegations[0]).toMatchObject({
+      agentSlug: 'researcher',
+      error: 'connection reset by peer',
+      output: null,
+      tokensUsed: 0,
+      costUsd: 0,
+    });
+  });
+
+  it('string ctx.inputData passes through to planner prompt without JSON-stringification', async () => {
+    // Arrange — ctx.inputData is already a string; the executor should NOT
+    // JSON.stringify it (which would add wrapping quotes). The planner sees the
+    // raw user query.
+    vi.mocked(runLlmCall).mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    // Act — `inputData` is typed as Record<string, unknown> at compile time, but
+    // the orchestrator's runtime handles `typeof ctx.inputData === 'string'`
+    // (workflow triggers can supply a raw string). Cast through unknown to
+    // exercise the consequent arm of that cond-expr.
+    await executeOrchestrator(
+      makeStep(),
+      makeCtx({ inputData: 'find me the latest AI news' as unknown as Record<string, unknown> })
+    );
+
+    // Assert — prompt contains the raw string, NOT a JSON-quoted version
+    const prompt = vi.mocked(runLlmCall).mock.calls[0][1].prompt;
+    expect(prompt).toContain('Task:\nfind me the latest AI news');
+    expect(prompt).not.toContain('"find me the latest AI news"');
+  });
+
+  it('default maxRounds (3) applied when config omits it: loop runs 3 times then stops with max_rounds', async () => {
+    // Arrange — every round delegates, never returns finalAnswer.
+    // The default of 3 is the contract: omitting maxRounds caps at 3 rounds.
+    vi.mocked(runLlmCall).mockResolvedValue(
+      makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'keep going' }],
+      })
+    );
+    vi.mocked(executeAgentCall).mockResolvedValue({
+      output: 'still working',
+      tokensUsed: 50,
+      costUsd: 0.001,
+    });
+
+    // Act — explicitly do NOT pass maxRounds in step config
+    const result = await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — exactly 3 rounds executed (the default), stopReason max_rounds
+    expect(result.output).toMatchObject({
+      stopReason: 'max_rounds',
+      totalDelegations: 3,
+    });
+    expect(runLlmCall).toHaveBeenCalledTimes(3);
+    expect(executeAgentCall).toHaveBeenCalledTimes(3);
+  });
+
+  it('default maxDelegationsPerRound (5) applied when config omits it: extra delegations dropped', async () => {
+    // Arrange — planner returns 7 delegations to a known-active slug; default
+    // cap of 5 must clip to 5. This is THE behavior protecting against runaway
+    // fan-out when the cap is omitted.
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce(
+        makePlannerResponse({
+          delegations: Array.from({ length: 7 }, (_, i) => ({
+            agentSlug: 'researcher',
+            message: `task ${i}`,
+          })),
+        })
+      )
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    vi.mocked(executeAgentCall).mockResolvedValue({
+      output: 'r',
+      tokensUsed: 10,
+      costUsd: 0.001,
+    });
+
+    // Act — omit maxDelegationsPerRound entirely
+    const result = await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — exactly 5 delegations dispatched in round 1 (not 7).
+    // Regression: dropping the `?? DEFAULT_MAX_DELEGATIONS_PER_ROUND` would
+    // either error (undefined.slice) or pass all 7 through.
+    expect(executeAgentCall).toHaveBeenCalledTimes(5);
+    expect(result.output).toMatchObject({ totalDelegations: 5 });
+  });
+
+  it('default temperature (0.3) applied to BOTH initial planner call and retry on JSON parse failure', async () => {
+    // Arrange — first planner response is invalid JSON, second succeeds.
+    // Both runLlmCall invocations should pass temperature: 0.3 (the default)
+    // when the step config omits temperature. Covers the `?? DEFAULT_TEMPERATURE`
+    // branch on BOTH the initial call AND the retry path.
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce({
+        content: 'not valid json {',
+        tokensUsed: 50,
+        costUsd: 0.001,
+        model: 'gpt-4o',
+      })
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'recovered' }));
+
+    // Act — explicitly omit temperature in step config
+    await executeOrchestrator(makeStep(), makeCtx());
+
+    // Assert — both calls used the default temperature, not undefined
+    expect(runLlmCall).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].temperature).toBe(0.3);
+    expect(vi.mocked(runLlmCall).mock.calls[1][1].temperature).toBe(0.3);
+  });
+
+  it('explicit temperature overrides default and is forwarded to runLlmCall on initial AND retry', async () => {
+    // Arrange — verify the override path (consequent arm of `?? DEFAULT_TEMPERATURE`).
+    // First call returns invalid JSON to force the retry, both should use 0.7.
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce({
+        content: 'invalid {',
+        tokensUsed: 50,
+        costUsd: 0.001,
+        model: 'gpt-4o',
+      })
+      .mockResolvedValueOnce(makePlannerResponse({ finalAnswer: 'done' }));
+
+    // Act
+    await executeOrchestrator(makeStep({ temperature: 0.7 }), makeCtx());
+
+    // Assert — explicit override propagated to both calls
+    expect(vi.mocked(runLlmCall).mock.calls[0][1].temperature).toBe(0.7);
+    expect(vi.mocked(runLlmCall).mock.calls[1][1].temperature).toBe(0.7);
+  });
+
+  it('non-Error thrown by planner LLM call is wrapped via String() in ExecutorError message', async () => {
+    // Arrange — runLlmCall rejects with a non-Error (a plain string). The
+    // executor's catch must use `String(err)` so the resulting ExecutorError
+    // carries debuggable info, not "undefined" or an empty message.
+    vi.mocked(runLlmCall).mockRejectedValueOnce('rate limit exceeded');
+
+    // Act & Assert — ExecutorError contains the stringified rejection in the
+    // message; covers the alternate arm of `err instanceof Error ? err.message : String(err)`.
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'planner_call_failed',
+      message: expect.stringContaining('rate limit exceeded'),
+    });
+  });
+
+  it('Error thrown by planner LLM call propagates the .message field (not String(err))', async () => {
+    // Arrange — runLlmCall rejects with a real Error instance. The executor's
+    // catch should use `err.message` (the consequent arm of the cond-expr), not
+    // `String(err)` which would produce "Error: provider down" with the prefix.
+    vi.mocked(runLlmCall).mockRejectedValueOnce(new Error('provider down'));
+
+    // Act
+    let caught: unknown;
+    try {
+      await executeOrchestrator(makeStep(), makeCtx());
+    } catch (e) {
+      caught = e;
+    }
+
+    // Assert — the message comes from err.message (not String(err)). String(err)
+    // for an Error would prefix "Error: " — its absence proves we used .message.
+    expect(caught).toMatchObject({
+      name: 'ExecutorError',
+      code: 'planner_call_failed',
+    });
+    const msg = (caught as Error).message;
+    expect(msg).toContain('provider down');
+    // Round-1 phrasing in the source: `in round 1` confirms the wrap path was taken
+    expect(msg).toContain('round 1');
+    // String(new Error('provider down')) === 'Error: provider down' — make sure
+    // the executor did NOT take that path (it would double-prefix the message).
+    expect(msg).not.toContain('Error: Error: provider down');
+  });
+});
