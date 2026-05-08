@@ -1020,8 +1020,10 @@ export class OrchestrationEngine {
           typeof err.payload === 'object' && err.payload !== null
             ? (err.payload as Record<string, unknown>)
             : undefined;
-        await this.pauseForApproval(lease, ctx, trace, step.id, approvalData);
-        yield approvalRequired(step.id, err.payload);
+        const paused = await this.pauseForApproval(lease, ctx, trace, step.id, approvalData);
+        if (paused) {
+          yield approvalRequired(step.id, err.payload);
+        }
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
       if (err instanceof BudgetExceeded) {
@@ -1299,8 +1301,16 @@ export class OrchestrationEngine {
           typeof outcome.value.payload === 'object' && outcome.value.payload !== null
             ? (outcome.value.payload as Record<string, unknown>)
             : undefined;
-        await this.pauseForApproval(lease, ctx, trace, step.id, batchApprovalData);
-        allEvents.push(approvalRequired(step.id, outcome.value.payload));
+        const batchPausedOk = await this.pauseForApproval(
+          lease,
+          ctx,
+          trace,
+          step.id,
+          batchApprovalData
+        );
+        if (batchPausedOk) {
+          allEvents.push(approvalRequired(step.id, outcome.value.payload));
+        }
         batchPaused = true;
         continue;
       }
@@ -1743,13 +1753,21 @@ export class OrchestrationEngine {
     }
   }
 
+  /**
+   * Apply the paused-state write atomically with the lease clear. Returns `true` when the
+   * UPDATE landed (we owned the lease and the row tipped to PAUSED_FOR_APPROVAL) and `false`
+   * when `updateMany` returned `count: 0` (orphan handoff) or the write threw. Callers MUST
+   * honour the return value: yielding `approvalRequired` on a `false` return would surface a
+   * second SSE event for a row another host is driving — same single-owner-event contract as
+   * `finalize`.
+   */
   private async pauseForApproval(
     lease: LeaseHandle,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     stepId: string,
     approvalPayload?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { executionId, token } = lease;
     try {
       // Atomic terminal-state-and-lease-clear: the row stops being driven the moment its
@@ -1769,18 +1787,19 @@ export class OrchestrationEngine {
       });
       if (result.count === 0) {
         // Lease lost — the orphan sweep handed this row to a new owner who is now the
-        // source of truth. Suppress notification + hook + webhook so we don't dispatch an
-        // approval card for a row another host is driving (which would surface a confusing
-        // "approval no longer pending" error when the user clicks the link).
+        // source of truth. Suppress notification + hook + webhook + approvalRequired event
+        // so we don't dispatch an approval card for a row another host is driving (which
+        // would surface a confusing "approval no longer pending" error when the user clicks
+        // the link).
         ctx.logger.warn('pauseForApproval: lease lost — suppressing notification + hook', {
           executionId,
           stepId,
         });
-        return;
+        return false;
       }
     } catch (err) {
       ctx.logger.error('pauseForApproval: DB update failed', err, { executionId });
-      return; // Don't emit events if DB update failed
+      return false; // Don't emit events if DB update failed
     }
 
     const rawTimeout = approvalPayload?.timeoutMinutes;
@@ -1820,6 +1839,7 @@ export class OrchestrationEngine {
 
     emitHookEvent('workflow.paused_for_approval', eventData);
     void dispatchWebhookEvent('approval_required', eventData);
+    return true;
   }
 
   /**

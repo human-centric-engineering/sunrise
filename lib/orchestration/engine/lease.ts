@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { WorkflowStatus } from '@/types/orchestration';
 
 export const LEASE_DURATION_MS = 3 * 60 * 1000;
 export const HEARTBEAT_INTERVAL_MS = 60 * 1000;
@@ -81,9 +82,17 @@ export type ClaimReason = 'fresh-resume' | 'orphan-resume';
  * Used by the resume path (`fresh-resume` after approval, `orphan-resume` after a crash).
  * Fresh runs claim their lease atomically in the row-create call inside `initRun`.
  *
- * Conditional UPDATE — only succeeds when the lease is unclaimed (`leaseToken IS NULL`)
- * or already expired (`leaseExpiresAt < now`). Postgres serialises the UPDATE on the row,
- * so two hosts racing on the same orphaned row will see exactly one winner.
+ * Conditional UPDATE — only succeeds when (a) the row is in a resumable status (`running`
+ * for orphan-resume, `paused_for_approval` for fresh-resume) AND (b) the lease is unclaimed
+ * (`leaseToken IS NULL`) or already expired (`leaseExpiresAt < now`). Postgres serialises
+ * the UPDATE on the row, so two hosts racing on the same orphaned row will see exactly one
+ * winner.
+ *
+ * The status guard is what prevents a terminal row (failed/completed/cancelled) from being
+ * resurrected: the zombie reaper writes `status: FAILED` without clearing the lease columns,
+ * so a race between the reaper and the orphan sweep could otherwise leave a FAILED row with
+ * an expired lease that this function would happily re-claim and the engine would flip back
+ * to `running`.
  *
  * `recoveryAttempts` is incremented only for `orphan-resume` — the `fresh-resume` path is a
  * clean state-machine transition that should not consume a recovery slot.
@@ -91,9 +100,12 @@ export type ClaimReason = 'fresh-resume' | 'orphan-resume';
 export async function claimLease(executionId: string, reason: ClaimReason): Promise<string | null> {
   const now = new Date();
   const token = generateLeaseToken();
+  const expectedStatus =
+    reason === 'orphan-resume' ? WorkflowStatus.RUNNING : WorkflowStatus.PAUSED_FOR_APPROVAL;
   const result = await prisma.aiWorkflowExecution.updateMany({
     where: {
       id: executionId,
+      status: expectedStatus,
       OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
     },
     data: {

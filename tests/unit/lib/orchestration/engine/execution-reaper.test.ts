@@ -113,6 +113,22 @@ describe('reapZombieExecutions', () => {
     expect(result.abandonedApprovals).toBe(0);
   });
 
+  // Lease coherence — reaper must clear lease columns alongside the FAILED flip so a
+  // reaper-killed RUNNING row can't be picked back up by claimLease (the orphan-sweep
+  // race scenario from PR #167 code review).
+  it('all three FAILED writes clear leaseToken and leaseExpiresAt to null', async () => {
+    mockCounts(1, 1, 1);
+
+    await reapZombieExecutions();
+
+    expect(mockUpdateMany).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 3; i++) {
+      const data = mockUpdateMany.mock.calls[i][0].data as Record<string, unknown>;
+      expect(data['leaseToken']).toBeNull();
+      expect(data['leaseExpiresAt']).toBeNull();
+    }
+  });
+
   it('accepts custom thresholds', async () => {
     mockCounts(1, 1, 1);
 

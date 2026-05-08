@@ -731,10 +731,12 @@ describe('OrchestrationEngine', () => {
 
   // ─── pauseForApproval() DB failure ────────────────────────────────
 
-  it('pauseForApproval DB failure is logged but approval_required is still emitted', async () => {
+  it('pauseForApproval DB failure is logged AND approval_required is suppressed (single-owner contract)', async () => {
     // Arrange — the human_approval step triggers PausedForApproval; the DB
-    // update inside pauseForApproval() throws. This exercises the catch/log
-    // path in pauseForApproval() (source line ~1112).
+    // update inside pauseForApproval() throws. The function returns false so
+    // the caller skips the approvalRequired SSE yield. Same contract as the
+    // count=0 lease-loss path: if we can't confirm the row tipped to
+    // PAUSED_FOR_APPROVAL, we don't surface an approval card to the user.
     const def: WorkflowDefinition = {
       steps: [
         {
@@ -770,8 +772,8 @@ describe('OrchestrationEngine', () => {
     const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
     const types = events.map((e) => e.type);
 
-    // Assert — approval_required is still emitted even though the DB write failed.
-    expect(types).toContain('approval_required');
+    // Assert — approval_required is suppressed because we can't confirm the row tipped.
+    expect(types).not.toContain('approval_required');
     expect(types).not.toContain('workflow_completed');
     expect(types).not.toContain('workflow_failed');
   });
@@ -4078,9 +4080,12 @@ describe('OrchestrationEngine', () => {
       }) as never);
 
       // Act — must NOT throw.
-      await collect(new OrchestrationEngine(), makeWorkflow(def));
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
 
-      // Assert — neither hook nor webhook fired for the approval.
+      // Assert — no approval_required SSE event fired, no hook, no webhook. The new owner
+      // is responsible for emitting all three. This caller MUST stay silent or the user
+      // sees a duplicate approval card pointing at a row another host is driving.
+      expect(events.map((e) => e.type)).not.toContain('approval_required');
       expect(emitHookEvent).not.toHaveBeenCalledWith(
         'workflow.paused_for_approval',
         expect.anything()

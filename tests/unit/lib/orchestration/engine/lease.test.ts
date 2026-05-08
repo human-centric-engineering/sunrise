@@ -216,6 +216,26 @@ describe('claimLease', () => {
       )
     ).toBe(true);
   });
+
+  // Status guard — prevents a reaper-marked terminal row from being resurrected
+  // (race scenario from PR #167 code review: reaper writes status=FAILED without
+  // clearing lease columns, sweep already has the row, fresh-resume claim could
+  // otherwise succeed because the lease is expired).
+  it('reason=orphan-resume → WHERE clause requires status=running', async () => {
+    await claimLease('exec-status-orphan', 'orphan-resume');
+
+    const call = mockUpdateMany.mock.calls[0]?.[0];
+    const where = (call as { where: Record<string, unknown> }).where;
+    expect(where['status']).toBe('running');
+  });
+
+  it('reason=fresh-resume → WHERE clause requires status=paused_for_approval', async () => {
+    await claimLease('exec-status-fresh', 'fresh-resume');
+
+    const call = mockUpdateMany.mock.calls[0]?.[0];
+    const where = (call as { where: Record<string, unknown> }).where;
+    expect(where['status']).toBe('paused_for_approval');
+  });
 });
 
 // ─── refreshLease ─────────────────────────────────────────────────────────────
