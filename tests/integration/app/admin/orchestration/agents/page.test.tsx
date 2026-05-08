@@ -147,7 +147,7 @@ describe('AgentsListPage (server component)', () => {
 
     // Assert: page renders (empty state in table)
     expect(screen.getByRole('heading', { name: /^agents$/i })).toBeInTheDocument();
-    expect(screen.getByText(/no agents found/i)).toBeInTheDocument();
+    expect(screen.getByText(/no agents yet/i)).toBeInTheDocument();
   });
 
   it('does not throw when serverFetch rejects', async () => {

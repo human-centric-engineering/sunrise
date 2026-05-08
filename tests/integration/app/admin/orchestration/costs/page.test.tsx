@@ -89,20 +89,6 @@ const MOCK_MODELS = [
   },
 ];
 
-const MOCK_SETTINGS = {
-  id: 'settings-1',
-  slug: 'global',
-  defaultModels: {
-    routing: 'claude-haiku-4-5',
-    chat: 'claude-sonnet-4-6',
-    reasoning: 'claude-opus-4-6',
-    embeddings: 'claude-haiku-4-5',
-  },
-  globalMonthlyBudgetUsd: null,
-  createdAt: new Date('2026-01-01'),
-  updatedAt: new Date('2026-01-01'),
-};
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('CostsPage (server component)', () => {
@@ -127,8 +113,7 @@ describe('CostsPage (server component)', () => {
         success: true,
         data: { rows: [], groupBy: 'model' },
       }) // perModel
-      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } }) // models
-      .mockResolvedValueOnce({ success: true, data: MOCK_SETTINGS }); // settings
+      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } }); // models
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
@@ -148,22 +133,23 @@ describe('CostsPage (server component)', () => {
       .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY })
       .mockResolvedValueOnce({ success: true, data: { alerts: MOCK_ALERTS } })
       .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
-      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } })
-      .mockResolvedValueOnce({ success: true, data: MOCK_SETTINGS });
+      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } });
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
     // Act
     render(await CostsPage());
 
-    // Assert key sections by data-testid
+    // Assert key sections by data-testid. The default-models /
+    // settings form moved to the Settings page in this branch — the
+    // Costs page now keeps only spend-reporting sections plus a
+    // footer link to Settings.
     expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
     expect(screen.getByTestId('budget-alerts-list')).toBeInTheDocument();
     expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
     expect(screen.getByTestId('per-agent-cost-table')).toBeInTheDocument();
     expect(screen.getByTestId('per-model-breakdown-table')).toBeInTheDocument();
     expect(screen.getByTestId('local-vs-cloud-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('orchestration-settings-form')).toBeInTheDocument();
   });
 
   it('renders stable empty-state layout and does not throw when every fetch rejects', async () => {

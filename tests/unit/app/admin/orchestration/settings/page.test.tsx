@@ -16,6 +16,10 @@ vi.mock('@/components/admin/orchestration/settings-form', () => ({
   ),
 }));
 
+vi.mock('@/components/admin/orchestration/default-models-form', () => ({
+  DefaultModelsForm: () => <div data-testid="default-models-form" />,
+}));
+
 vi.mock('@/components/admin/orchestration/settings/backup-panel', () => ({
   BackupPanel: () => <div data-testid="backup-panel" />,
 }));
@@ -76,7 +80,7 @@ describe('OrchestrationSettingsPage', () => {
   it('has correct title and description metadata', () => {
     expect(metadata.title).toBe('Settings · AI Orchestration');
     expect(metadata.description).toBe(
-      'Global orchestration settings — guard modes, budget, limits, retention, approvals, and search.'
+      'Global orchestration settings — default models, guard modes, budget, limits, retention, approvals, and search.'
     );
   });
 
@@ -86,7 +90,6 @@ describe('OrchestrationSettingsPage', () => {
 
     await OrchestrationSettingsPage();
 
-    expect(serverFetch).toHaveBeenCalledTimes(1);
     expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.SETTINGS);
   });
 
@@ -168,7 +171,7 @@ describe('OrchestrationSettingsPage', () => {
 
     expect(
       screen.getByText(
-        'Global defaults for guard modes, spending caps, usage limits, retention, approvals, and search tuning.'
+        'Default models, guard modes, spending caps, usage limits, retention, approvals, and search tuning.'
       )
     ).toBeInTheDocument();
   });
