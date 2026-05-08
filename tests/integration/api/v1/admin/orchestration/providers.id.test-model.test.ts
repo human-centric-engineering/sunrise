@@ -255,4 +255,101 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(data.data.ok).toBe(false);
     });
   });
+
+  describe('Capability-aware routing', () => {
+    it('routes embedding capability through provider.embed (not chat)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      const chatMock = vi.fn();
+      const embedMock = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+      vi.mocked(getProvider).mockResolvedValue({
+        chat: chatMock,
+        embed: embedMock,
+      } as never);
+
+      const response = await POST(
+        makeRequest({ model: 'text-embedding-3-small', capability: 'embedding' }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { ok: boolean; latencyMs: number | null; capability: string };
+      }>(response);
+      expect(data.data.ok).toBe(true);
+      expect(typeof data.data.latencyMs).toBe('number');
+      expect(data.data.capability).toBe('embedding');
+      expect(embedMock).toHaveBeenCalledTimes(1);
+      expect(chatMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses unsupported capabilities without invoking the SDK', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      const chatMock = vi.fn();
+      const embedMock = vi.fn();
+      vi.mocked(getProvider).mockResolvedValue({
+        chat: chatMock,
+        embed: embedMock,
+      } as never);
+
+      const response = await POST(
+        makeRequest({ model: 'o3-pro', capability: 'reasoning' }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { ok: boolean; capability: string; error: string; message: string };
+      }>(response);
+      expect(data.data.ok).toBe(false);
+      expect(data.data.capability).toBe('reasoning');
+      expect(data.data.error).toBe('unsupported_test_capability');
+      expect(data.data.message).toMatch(/reasoning models use/i);
+      // Crucially — neither SDK surface should be touched. A real
+      // chat call here would 404 (the bug that motivated Phase B).
+      expect(chatMock).not.toHaveBeenCalled();
+      expect(embedMock).not.toHaveBeenCalled();
+    });
+
+    it('returns the unsupported response for image / audio / moderation / unknown', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(getProvider).mockResolvedValue({
+        chat: vi.fn(),
+        embed: vi.fn(),
+      } as never);
+
+      for (const capability of ['image', 'audio', 'moderation', 'unknown'] as const) {
+        const response = await POST(makeRequest({ model: 'whatever', capability }), makeParams());
+        expect(response.status).toBe(200);
+        const data = await parseJson<{
+          data: { ok: boolean; capability: string; error: string };
+        }>(response);
+        expect(data.data.ok).toBe(false);
+        expect(data.data.capability).toBe(capability);
+        expect(data.data.error).toBe('unsupported_test_capability');
+      }
+    });
+
+    it('defaults to chat capability when omitted (backwards compat)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      const chatMock = vi.fn().mockResolvedValue({ content: 'Hello' });
+      vi.mocked(getProvider).mockResolvedValue({
+        chat: chatMock,
+        embed: vi.fn(),
+      } as never);
+
+      // No capability in body — pre-Phase B callers (wizard smoke
+      // test, agent-form test card) keep working.
+      const response = await POST(makeRequest({ model: MODEL }), makeParams());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: { ok: boolean; capability: string } }>(response);
+      expect(data.data.ok).toBe(true);
+      expect(data.data.capability).toBe('chat');
+      expect(chatMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

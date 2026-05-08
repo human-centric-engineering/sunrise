@@ -22,9 +22,35 @@ import { getClientIP } from '@/lib/security/ip';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { cuidSchema } from '@/lib/validations/common';
 
+const capabilitySchema = z.enum([
+  'chat',
+  'reasoning',
+  'embedding',
+  'image',
+  'audio',
+  'moderation',
+  'unknown',
+]);
+
 const bodySchema = z.object({
   model: z.string().min(1).max(200),
+  // Optional for backwards compatibility — pre-Phase B callers (the
+  // wizard smoke test, the agent-form test card) only know about
+  // chat. Default 'chat' so they keep working unchanged.
+  capability: capabilitySchema.optional(),
 });
+
+// Friendly per-capability message for the panel's disabled-state
+// tooltip. Returned alongside ok: false when the route refuses to
+// run a test for an unsupported capability.
+const UNSUPPORTED_TEST_MESSAGES: Record<string, string> = {
+  reasoning:
+    'Reasoning models use the /v1/responses API — testing through this panel is not supported yet.',
+  image: "Image generation models can't be tested through this panel.",
+  audio: "Audio models (transcription / synthesis) can't be tested through this panel.",
+  moderation: "Moderation models can't be tested through this panel.",
+  unknown: "Unknown model type — we don't have a test surface for this capability.",
+};
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -46,41 +72,78 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       model: bodyResult.error.issues.map((i) => i.message),
     });
   }
-  const { model } = bodyResult.data;
+  const { model, capability = 'chat' } = bodyResult.data;
 
   const providerRow = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!providerRow) throw new NotFoundError(`Provider ${id} not found`);
 
+  // Refuse early for capabilities we can't meaningfully test. No SDK
+  // call, no latency measurement — just a structured response so the
+  // panel can render a clear "not supported" affordance instead of
+  // surfacing a chat 404 / SSRF-shaped error.
+  if (capability !== 'chat' && capability !== 'embedding') {
+    log.info('Model test skipped — unsupported capability', {
+      providerId: id,
+      slug: providerRow.slug,
+      model,
+      capability,
+      adminId: session.user.id,
+    });
+    return successResponse({
+      ok: false,
+      latencyMs: null,
+      model,
+      capability,
+      error: 'unsupported_test_capability',
+      message: UNSUPPORTED_TEST_MESSAGES[capability] ?? UNSUPPORTED_TEST_MESSAGES.unknown,
+    });
+  }
+
   try {
     const provider = await getProvider(providerRow.slug);
     const start = Date.now();
-    await provider.chat([{ role: 'user', content: 'Say hello.' }], {
-      model,
-      maxTokens: 10,
-      temperature: 0,
-    });
+
+    if (capability === 'embedding') {
+      // Single-input embedding round-trip. Cheaper than chat and
+      // exercises the same auth + base URL surface.
+      await provider.embed('hello');
+    } else {
+      await provider.chat([{ role: 'user', content: 'Say hello.' }], {
+        model,
+        maxTokens: 10,
+        temperature: 0,
+      });
+    }
     const latencyMs = Date.now() - start;
 
     log.info('Model tested', {
       providerId: id,
       slug: providerRow.slug,
       model,
+      capability,
       latencyMs,
       adminId: session.user.id,
     });
 
-    return successResponse({ ok: true, latencyMs, model });
+    return successResponse({ ok: true, latencyMs, model, capability });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn('Model test failed', {
       providerId: id,
       slug: providerRow.slug,
       model,
+      capability,
       error: message,
     });
     // The raw SDK error is intentionally NOT forwarded to the client:
     // in a blind-SSRF scenario the verbatim error leaks information
     // about the baseUrl target. Log it server-side, return a generic code.
-    return successResponse({ ok: false, latencyMs: null, model, error: 'model_test_failed' });
+    return successResponse({
+      ok: false,
+      latencyMs: null,
+      model,
+      capability,
+      error: 'model_test_failed',
+    });
   }
 });
