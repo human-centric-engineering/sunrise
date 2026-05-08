@@ -25,7 +25,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { StepResult, WorkflowStep } from '@/types/orchestration';
+import type { OrchestratorTurn, StepResult, WorkflowStep } from '@/types/orchestration';
 import {
   orchestratorConfigSchema,
   orchestratorPlannerResponseSchema,
@@ -242,16 +242,65 @@ export async function executeOrchestrator(
     typeof ctx.inputData === 'string' ? ctx.inputData : JSON.stringify(ctx.inputData);
   const interpolatedInput = interpolatePrompt(inputStr, ctx);
 
-  // Orchestration loop
-  const rounds: RoundResult[] = [];
-  let totalTokensUsed = 0;
-  let totalCostUsd = 0;
+  // Resume restoration: if the engine handed us prior `OrchestratorTurn`
+  // entries (a crash re-drove this step), pick up at the next round instead
+  // of replanning from round 0. Each round's planner LLM call AND its
+  // delegations counted against the cost — re-running them would burn the
+  // budget twice. The dispatch cache (`ai_workflow_step_dispatch`) handles
+  // tool-level dedup inside each delegation's `agent_call`, but the planner
+  // call itself isn't keyed on side effects, so per-round caching is what
+  // makes resume cheap.
+  const priorOrchTurns: OrchestratorTurn[] = (ctx.resumeTurns ?? []).flatMap((t) =>
+    t.kind === 'orchestrator' ? [t] : []
+  );
+
+  const rounds: RoundResult[] = priorOrchTurns.map((t) => ({
+    round: t.round,
+    plannerReasoning: t.plannerReasoning,
+    delegations: t.delegations,
+    plannerTokensUsed: t.plannerTokensUsed,
+    plannerCostUsd: t.plannerCostUsd,
+  }));
+  let totalTokensUsed = priorOrchTurns.reduce(
+    (s, t) => s + t.plannerTokensUsed + t.delegations.reduce((sd, d) => sd + d.tokensUsed, 0),
+    0
+  );
+  let totalCostUsd = priorOrchTurns.reduce(
+    (s, t) => s + t.plannerCostUsd + t.delegations.reduce((sd, d) => sd + d.costUsd, 0),
+    0
+  );
   let finalAnswer: string | undefined;
   let stopReason: StopReason = 'max_rounds';
 
-  const startTime = Date.now();
+  // If the prior attempt already produced a final answer, the step is
+  // effectively complete — return the cached result without re-firing the
+  // planner. Same short-circuit pattern as `reflect`'s converged check.
+  const lastPrior = priorOrchTurns[priorOrchTurns.length - 1];
+  if (lastPrior?.finalAnswer) {
+    return {
+      output: {
+        finalAnswer: lastPrior.finalAnswer,
+        rounds,
+        totalDelegations: rounds.reduce((s, r) => s + r.delegations.length, 0),
+        stopReason: 'final_answer',
+      },
+      tokensUsed: totalTokensUsed,
+      costUsd: totalCostUsd,
+    };
+  }
 
-  for (let round = 0; round < maxRounds; round++) {
+  const startTime = Date.now();
+  const startRound = priorOrchTurns.length;
+
+  if (startRound > 0) {
+    logger.info('orchestrator: resuming from prior rounds', {
+      stepId: step.id,
+      priorRounds: startRound,
+      maxRounds,
+    });
+  }
+
+  for (let round = startRound; round < maxRounds; round++) {
     // Timeout check
     if (Date.now() - startTime > timeoutMs) {
       stopReason = 'timeout';
@@ -343,6 +392,20 @@ export async function executeOrchestrator(
         plannerCostUsd: plannerResult.costUsd,
       });
 
+      // Checkpoint: record the final-answer round so a re-drive short-circuits
+      // via the `lastPrior?.finalAnswer` check above instead of re-firing the
+      // planner. Recorded BEFORE the break so the entry lands in the cache
+      // even if a crash interrupts the trace write below.
+      await ctx.recordTurn?.({
+        kind: 'orchestrator',
+        round: round + 1,
+        plannerReasoning: plannerResponse.reasoning,
+        delegations: [],
+        plannerTokensUsed: plannerResult.tokensUsed,
+        plannerCostUsd: plannerResult.costUsd,
+        finalAnswer: plannerResponse.finalAnswer,
+      });
+
       logger.info('orchestrator: planner provided final answer', {
         stepId: step.id,
         round: round + 1,
@@ -382,6 +445,17 @@ export async function executeOrchestrator(
     if (delegationsToRun.length === 0) {
       stopReason = 'no_delegations';
       rounds.push({
+        round: round + 1,
+        plannerReasoning: plannerResponse.reasoning,
+        delegations: [],
+        plannerTokensUsed: plannerResult.tokensUsed,
+        plannerCostUsd: plannerResult.costUsd,
+      });
+      // Checkpoint the empty round — a re-drive's planner won't re-issue
+      // delegations either, but recording the round preserves the trace's
+      // observability of WHY the step stopped.
+      await ctx.recordTurn?.({
+        kind: 'orchestrator',
         round: round + 1,
         plannerReasoning: plannerResponse.reasoning,
         delegations: [],
@@ -428,6 +502,20 @@ export async function executeOrchestrator(
     }
 
     rounds.push({
+      round: round + 1,
+      plannerReasoning: plannerResponse.reasoning,
+      delegations: completedDelegations,
+      plannerTokensUsed: plannerResult.tokensUsed,
+      plannerCostUsd: plannerResult.costUsd,
+    });
+
+    // Checkpoint: persist the completed round so a crash AFTER this point
+    // resumes at round + 1 instead of replanning from this round. The
+    // delegations' tool_call dispatches were already cached individually by
+    // the dispatch cache (commit 2), but the PLANNER's LLM call wasn't —
+    // this entry is what saves that token cost on re-drive.
+    await ctx.recordTurn?.({
+      kind: 'orchestrator',
       round: round + 1,
       plannerReasoning: plannerResponse.reasoning,
       delegations: completedDelegations,
