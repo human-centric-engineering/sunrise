@@ -370,6 +370,8 @@ The Zod schema (`turnEntrySchema` in `lib/validations/orchestration.ts`) is a di
 
 `recordStepTurn` (`lib/orchestration/engine/orchestration-engine.ts`) is the lease-guarded write. Posture matches `markCurrentStep` and `checkpoint`: a DB hiccup mid-step is non-fatal — the in-memory turns array is the source of truth for THIS attempt; worst case is a re-drive starts from one turn earlier, with the dispatch cache preventing side-effect duplication on the replay.
 
+The log level branches on the call: a normal turn-record write logs `warn` on DB failure (the standard non-fatal posture); the empty-array clear-write fired by `onAttemptStart` between retry attempts logs `error` (still non-fatal, but the failure mode is more dangerous — see [Retry-clear](#retry-clear) below).
+
 **Resume restoration per executor.**
 
 - **`reflect`** — filter `ctx.resumeTurns` for `kind === 'reflect'`; restore `draft` from the last entry's `draft` field, set `iterations` to `last.iteration + 1`, accumulate prior tokens/cost. If the last entry has `converged: true`, return the cached final draft immediately (no LLM call).
@@ -378,6 +380,8 @@ The Zod schema (`turnEntrySchema` in `lib/validations/orchestration.ts`) is a di
 - **`agent_call` (multi-turn mode)** — **explicitly NOT supported** in the current implementation. The mode falls back to a fresh start on re-drive; the dispatch cache (commit 2 of PR 2) ensures inner tool calls aren't double-fired, so re-running outer turns 0..N pays only the LLM token cost, not the side-effect duplication. The blocker is that multi-turn mode interleaves outer-turn user-followup messages between `runSingleTurn` calls; the user-followup content isn't captured in `AgentCallTurn`'s shape, so a faithful conversation rebuild would need an additional outer-turn boundary marker. Documented as a known limitation; revisit if multi-turn becomes load-bearing in practice.
 
 **Retry-clear.** `runStepWithStrategy` accepts an `onAttemptStart(attempt: number)` callback called before retry attempts (1+, never before attempt 0). `executeSingleStep` provides one that resets the in-memory `stepTurns` accumulator, clears `ctx.resumeTurns`, and writes `[]` to `currentStepTurns` — failed attempts' turns must not leak into the next attempt's replay state. The dispatch cache handles side-effect duplication across retry attempts; the turn-history reset handles correctness of the executor's reconstructed in-memory state. Resume replay (`ctx.resumeTurns`) is intentionally for attempt 0 only — retries always start fresh.
+
+If the `[]` clear-write itself fails AND the host then crashes before attempt N+1's first successful turn record, a subsequent resume reads attempt N's stale entries from `currentStepTurns`. The dispatch cache stops side-effect duplication, but the executor's reconstructed in-memory state (orchestrator round counter, agent_call message history, reflect draft) diverges from reality — token cost for the dropped attempt's partial work is lost. `recordStepTurn` logs the clear-write failure at `error` level (vs `warn` for normal turn writes) so operators can monitor; behaviour stays non-fatal because a failed retry-clear is marginally better than a failed retry attempt itself.
 
 **Idempotency notes for executors and capability authors.** See [`workflows.md`](./workflows.md#idempotency-and-crash-safety) for per-step-type behaviour, the `isIdempotent` capability flag, and the `lookupDispatch` / `recordDispatch` contract.
 

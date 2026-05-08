@@ -221,7 +221,14 @@ import {
 } from '@/lib/orchestration/engine/dispatch-cache';
 
 const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
-const cached = await lookupDispatch<StepResult>(cacheKey);
+let cached: StepResult | null = null;
+try {
+  cached = await lookupDispatch<StepResult>(cacheKey);
+} catch (err) {
+  // Treat lookup failures as a cache miss (warn-and-continue) — symmetric with
+  // the post-fire recordDispatch error posture below.
+  ctx.logger.warn('dispatch cache lookup failed; treating as miss', { ... });
+}
 if (cached !== null) {
   return cached; // skip the side effect entirely
 }
@@ -230,10 +237,13 @@ if (cached !== null) {
 const stepResult = await fireSideEffect();
 
 try {
+  // recordDispatch derives the idempotency key from the parts internally —
+  // callers pass executionId/stepId/turnIndex (DispatchKeyParts), never the
+  // pre-built key string. This eliminates the parallel-parameter drift class
+  // where lookup and record could disagree.
   await recordDispatch({
     executionId: ctx.executionId,
     stepId: step.id,
-    idempotencyKey: cacheKey,
     result: stepResult,
   });
 } catch (err) {
@@ -245,7 +255,7 @@ try {
 return stepResult;
 ```
 
-`recordDispatch` returns `boolean`: `true` on insert, `false` on the P2002 unique-constraint violation. A `false` return means another host won the race (the brief window between the orphan sweep claiming a row and the original host's heartbeat noticing it lost the lease — see [`engine.md`](./engine.md#recovery-model)). The loser logs and treats its in-flight result as discarded; the lease-loss check on the next checkpoint will stop the loser's run anyway, so the cache row stays consistent with the winner.
+`recordDispatch` returns `boolean`: `true` on insert, `false` on the P2002 unique-constraint violation. A `false` return means another host won the race (the brief window between the orphan sweep claiming a row and the original host's heartbeat noticing it lost the lease — see [`engine.md`](./engine.md#recovery-model)). All three side-effecting executors deliberately discard the boolean: the loser of the dispatch-row race is by definition the loser of the lease race, and PR 1's lease-loss model cancels the loser's terminal events on the next checkpoint write. The loser's in-flight result is computed but never observed downstream, so re-reading the winner's cached result would be wasted work.
 
 Catching P2002 explicitly avoids the read-then-write race a `findUnique` + `create` pattern would introduce.
 
