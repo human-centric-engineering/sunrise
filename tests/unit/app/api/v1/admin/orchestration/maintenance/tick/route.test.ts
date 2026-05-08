@@ -51,6 +51,7 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/lib/orchestration/scheduling', () => ({
   processDueSchedules: vi.fn(),
   processPendingExecutions: vi.fn(),
+  processOrphanedExecutions: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
@@ -78,7 +79,11 @@ vi.mock('@/lib/orchestration/retention', () => ({
 import { auth } from '@/lib/auth/config';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { logger } from '@/lib/logging';
-import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
+import {
+  processDueSchedules,
+  processPendingExecutions,
+  processOrphanedExecutions,
+} from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
@@ -132,6 +137,7 @@ const DEFAULT_RETENTION_RESULT = {
   auditLogsDeleted: 0,
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
+const DEFAULT_ORPHAN_RESULT = { recovered: 0, exhausted: 0, errors: [] };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -159,6 +165,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT as never);
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
     vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
+    vi.mocked(processOrphanedExecutions).mockResolvedValue(DEFAULT_ORPHAN_RESULT);
   });
 
   // ── Authentication ───────────────────────────────────────────────────────
@@ -224,9 +231,11 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(body.success).toBe(true);
     expect(body.data.schedules).toEqual(DEFAULT_SCHEDULE_RESULT);
+    // Full ordered array — position of 'orphanSweep' between 'hookRetries' and 'zombieReaper' is contract
     expect(body.data.backgroundTasks).toEqual([
       'webhookRetries',
       'hookRetries',
+      'orphanSweep',
       'zombieReaper',
       'embeddingBackfill',
       'retention',
@@ -242,6 +251,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(body.data).not.toHaveProperty('webhookRetries');
     expect(body.data).not.toHaveProperty('hookRetries');
+    expect(body.data).not.toHaveProperty('orphanSweep');
     expect(body.data).not.toHaveProperty('zombieReaper');
     expect(body.data).not.toHaveProperty('embeddingBackfill');
     expect(body.data).not.toHaveProperty('retention');
@@ -256,6 +266,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(processDueSchedules).toHaveBeenCalledTimes(1);
     expect(processPendingRetries).toHaveBeenCalledTimes(1);
     expect(processPendingHookRetries).toHaveBeenCalledTimes(1);
+    // orphanSweep takes no args — a parameter regression would be caught here
+    expect(processOrphanedExecutions).toHaveBeenCalledTimes(1);
+    expect(processOrphanedExecutions).toHaveBeenCalledWith();
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
@@ -271,6 +284,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       expect.objectContaining({
         webhookRetries: DEFAULT_RETRY_RESULT,
         hookRetries: DEFAULT_HOOK_RETRY_RESULT,
+        orphanSweep: DEFAULT_ORPHAN_RESULT,
         zombieReaper: DEFAULT_REAPER_RESULT,
         embeddingBackfill: DEFAULT_EMBEDDER_RESULT,
         retention: DEFAULT_RETENTION_RESULT,
@@ -307,8 +321,8 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
-    // Background tasks still kick off even when schedules fail.
-    expect(body.data.backgroundTasks).toHaveLength(6);
+    // Background tasks still kick off even when schedules fail (7 tasks since orphanSweep added).
+    expect(body.data.backgroundTasks).toHaveLength(7);
   });
 
   it('still kicks off background tasks when schedules reject', async () => {
@@ -320,6 +334,37 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(processPendingRetries).toHaveBeenCalledTimes(1);
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
+  });
+
+  it('orphanSweep rejection surfaces as { error } in background summary', async () => {
+    // Arrange: processOrphanedExecutions rejects; Promise.allSettled catches it and
+    // the route maps it to { error: String(reason) } in the summary log.
+    vi.mocked(processOrphanedExecutions).mockRejectedValue(new Error('DB down'));
+
+    // Act
+    await POST(makeRequest());
+    // Drain microtasks so the Promise.allSettled chain settles and logger.info fires.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Assert: the summary log contains orphanSweep mapped to an error object,
+    // not the raw rejection reason — this is the route's contract for rejected tasks.
+    expect(logger.info).toHaveBeenCalledWith(
+      'Maintenance tick background tasks completed',
+      expect.objectContaining({
+        orphanSweep: { error: expect.stringContaining('DB down') },
+      })
+    );
+  });
+
+  it('does not call processOrphanedExecutions when unauthenticated', async () => {
+    // Arrange: no session — withAdminAuth should short-circuit before any tasks run.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+    // Act
+    await POST(makeRequest());
+
+    // Assert: guard fires before the background chain is ever constructed
+    expect(processOrphanedExecutions).not.toHaveBeenCalled();
   });
 
   // ── Overlap guard ────────────────────────────────────────────────────────
@@ -427,6 +472,33 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
         'Maintenance tick: background chain exceeded max duration; releasing guard',
         expect.any(Object)
       );
+    });
+
+    it('releases tickRunning after the background chain settles immediately (watchdog !tickRunning arm)', async () => {
+      // Arrange: all tasks resolve in microtasks (default mock setup).
+      // The background chain settles and calls .finally before the watchdog fires.
+      // The watchdog's `!tickRunning` guard must short-circuit and NOT emit a warning.
+      const first = await POST(makeRequest());
+      expect(first.status).toBe(202);
+
+      // Drain microtasks — background chain settles and releases tickRunning.
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Advance past the watchdog timeout. tickRunning is now false so the
+      // watchdog body's early return (`!tickRunning`) fires — no warn logged.
+      await vi.advanceTimersByTimeAsync(BACKGROUND_TASK_MAX_MS + 1);
+
+      // Assert: watchdog warn NOT emitted because the chain already settled.
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.any(Object)
+      );
+
+      // tickRunning released — a subsequent tick must not be skipped.
+      const second = await POST(makeRequest());
+      expect(second.status).toBe(202);
+      const secondBody = await parseJson<{ data: { skipped?: boolean } }>(second);
+      expect(secondBody.data.skipped).toBeUndefined();
     });
 
     it('a late-settling old chain does not release a newer tick guard (token ownership)', async () => {

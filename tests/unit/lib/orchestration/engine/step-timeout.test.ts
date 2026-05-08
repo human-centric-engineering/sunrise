@@ -16,11 +16,17 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
       create: vi.fn(),
-      update: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUnique: vi.fn(),
     },
   },
+}));
+
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
@@ -31,6 +37,7 @@ import {
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
@@ -69,6 +76,11 @@ describe('Per-step timeout and retriable errors', () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const mockFindUnique = prisma.aiWorkflowExecution.findUnique as ReturnType<typeof vi.fn>;
     mockFindUnique.mockResolvedValue({ status: 'running' });
+
+    // Lease module — fresh stop function per test so heartbeat setInterval
+    // (which would fire against the fake timer pool) stays isolated.
+    vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+    vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
   });
 
   afterEach(() => {
