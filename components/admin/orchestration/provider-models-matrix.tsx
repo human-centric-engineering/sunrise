@@ -9,7 +9,7 @@
 
 import Link from 'next/link';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ArrowUpDown, ClipboardCheck, Plus } from 'lucide-react';
+import { ArrowUpDown, ClipboardCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -30,6 +30,7 @@ import {
 import { cn } from '@/lib/utils';
 import { FieldHelp } from '@/components/ui/field-help';
 import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
+import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
 
 export interface ModelRow {
@@ -196,6 +197,7 @@ export function ProviderModelsMatrix({
   const [capabilityFilter, setCapabilityFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('providerSlug');
   const [auditOpen, setAuditOpen] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
 
   const providers = useMemo(
@@ -297,11 +299,9 @@ export function ProviderModelsMatrix({
             serves as a framework reference implementation, exercising 10 of 15 step types
             end-to-end.
           </FieldHelp>
-          <Button asChild>
-            <Link href="/admin/orchestration/provider-models/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Add model
-            </Link>
+          <Button onClick={() => setDiscoverOpen(true)}>
+            <Sparkles className="mr-2 h-4 w-4" />
+            Discover models
           </Button>
         </div>
       </div>
@@ -446,6 +446,11 @@ export function ProviderModelsMatrix({
 
       {/* Audit dialog */}
       <AuditModelsDialog open={auditOpen} onOpenChange={setAuditOpen} models={initialModels} />
+
+      {/* Discover dialog — replaces the legacy free-text "New Provider Model" form
+          as the primary entry point. The legacy form stays mounted on
+          /provider-models/[id] for editing. */}
+      <DiscoverModelsDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
 
       {/* Decision heuristic */}
       <div className="rounded-md border">
