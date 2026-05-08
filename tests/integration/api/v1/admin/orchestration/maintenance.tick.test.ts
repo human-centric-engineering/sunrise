@@ -8,7 +8,7 @@
  * Key assertions:
  * - Admin auth required
  * - Returns 202 with schedules result + backgroundTasks list
- * - Invokes all 7 maintenance functions (one synchronous, six background)
+ * - Invokes all 8 maintenance functions (one synchronous, seven background)
  * - Schedules error is captured in payload; background still kicks off
  * - Overlap guard prevents concurrent ticks
  */
@@ -61,6 +61,7 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/scheduling', () => ({
   processDueSchedules: vi.fn(),
+  processOrphanedExecutions: vi.fn(),
   processPendingExecutions: vi.fn(),
 }));
 
@@ -88,7 +89,11 @@ vi.mock('@/lib/orchestration/retention', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { logger } from '@/lib/logging';
-import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
+import {
+  processDueSchedules,
+  processOrphanedExecutions,
+  processPendingExecutions,
+} from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
@@ -143,6 +148,11 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       failed: 0,
       errors: [],
     });
+    vi.mocked(processOrphanedExecutions).mockResolvedValue({
+      recovered: 0,
+      exhausted: 0,
+      errors: [],
+    });
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -177,6 +187,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.backgroundTasks).toEqual([
       'webhookRetries',
       'hookRetries',
+      'orphanSweep',
       'zombieReaper',
       'embeddingBackfill',
       'retention',
@@ -185,7 +196,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });
 
-  it('still invokes the six background maintenance functions', async () => {
+  it('still invokes the seven background maintenance functions', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
     await POST(makeRequest());
@@ -193,6 +204,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(processPendingRetries).toHaveBeenCalledTimes(1);
     expect(processPendingHookRetries).toHaveBeenCalledTimes(1);
+    expect(processOrphanedExecutions).toHaveBeenCalledTimes(1);
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).toHaveBeenCalledTimes(1);
@@ -210,6 +222,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       expect.objectContaining({
         webhookRetries: 3,
         hookRetries: 2,
+        orphanSweep: { recovered: 0, exhausted: 0, errors: [] },
         zombieReaper: { reaped: 1, stalePending: 0, abandonedApprovals: 0 },
         embeddingBackfill: { processed: 5, failed: 0 },
         retention: RETENTION_RESULT,

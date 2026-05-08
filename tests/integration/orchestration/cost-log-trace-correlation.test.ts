@@ -29,10 +29,20 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
     aiCostLog: { create: vi.fn().mockResolvedValue({ id: 'cost_1' }) },
   },
+}));
+
+// Mock the lease module to keep claimLease/startHeartbeat out of the cost-log trace
+// correlation assertions and avoid setInterval timer leaks across tests.
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 vi.mock('@/lib/env', () => ({
@@ -68,6 +78,7 @@ import {
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { registerTracer, SPAN_LLM_CALL } from '@/lib/orchestration/tracing';
@@ -124,6 +135,9 @@ function seedExecutionMocks(): void {
     const { where, data } = args as { where: { id: string }; data: Record<string, unknown> };
     return { id: where.id, ...data };
   }) as never);
+  vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+  vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+  vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
 }
 
 async function collectEvents(

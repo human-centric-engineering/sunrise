@@ -23,6 +23,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
   },
@@ -41,6 +42,15 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
 
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the lease module so the real claimLease/startHeartbeat don't issue prisma calls
+// or leak setInterval timers between OTEL span-tree assertions.
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 // Mock approval-related helpers so PausedForApproval tests don't need crypto setup.
@@ -62,6 +72,7 @@ import {
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { ExecutorError, PausedForApproval } from '@/lib/orchestration/engine/errors';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { registerTracer } from '@/lib/orchestration/tracing';
 import { resetTracer } from '@/lib/orchestration/tracing/registry';
@@ -120,6 +131,12 @@ beforeEach(() => {
   vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue(BASE_EXECUTION_ROW as never);
 
   vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+  // Engine writes go through updateMany (lease-guarded). Default count=1 so the lease-loss
+  // path stays inactive in OTEL span-tree assertions.
+  vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+  // Lease helpers — claimLease returns a valid token; startHeartbeat returns a no-op stop fn.
+  vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+  vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
 });
 
 afterEach(() => {

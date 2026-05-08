@@ -24,6 +24,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
   },
@@ -44,12 +45,24 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Engine integration tests run the real engine, which calls into the real lease helpers
+// (claimLease, startHeartbeat) — those would issue prisma.updateMany calls and a real
+// setInterval timer that leaks between tests. Mock the lease module here so the lease
+// surface stays out of the trace-capture assertions.
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
+}));
+
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import {
   __resetRegistryForTests,
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 import { prisma } from '@/lib/db/client';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
@@ -85,10 +98,14 @@ beforeEach(() => {
     updatedAt: new Date(),
   } as never);
 
-  vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-    const { where, data } = args as { where: { id: string }; data: Record<string, unknown> };
-    return { id: where.id, ...data };
-  }) as never);
+  // Engine helpers (markCurrentStep, checkpoint, pauseForApproval, finalize) use
+  // updateMany with a leaseToken guard. Default count=1 so the lease-loss path stays inactive.
+  vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+  // Lease helpers default to a valid token so resume tests don't trip the lease-conflict
+  // throw, and startHeartbeat returns a no-op stop fn so no real setInterval leaks.
+  vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+  vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
 });
 
 afterEach(() => {
@@ -107,7 +124,9 @@ async function collect(
 }
 
 function lastWrittenRawTrace(): unknown {
-  const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+  // The engine writes the trace via updateMany (with a leaseToken guard) since the lease
+  // refactor — older revisions of this test inspected `.update.mock.calls`.
+  const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
   for (let i = calls.length - 1; i >= 0; i--) {
     const args = calls[i][0] as { data?: { executionTrace?: unknown } };
     if (Array.isArray(args.data?.executionTrace)) {
