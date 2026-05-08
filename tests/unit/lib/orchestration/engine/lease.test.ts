@@ -98,20 +98,20 @@ describe('claimLease', () => {
 
   // Happy path
   it('returns a non-null non-empty UUID token when the DB reports count 1 (won the race)', async () => {
-    const token = await claimLease('exec-1');
+    const token = await claimLease('exec-1', 'fresh-resume');
     expect(token).not.toBeNull();
     expect(token).toMatch(UUID_PATTERN);
   });
 
   it('returns null when the DB reports count 0 (another host holds a live lease)', async () => {
     mockUpdateMany.mockResolvedValue({ count: 0 });
-    const token = await claimLease('exec-1');
+    const token = await claimLease('exec-1', 'fresh-resume');
     expect(token).toBeNull();
   });
 
   // WHERE clause structural integrity
   it('WHERE clause contains both the unclaimed arm (leaseToken: null) and the expired arm', async () => {
-    await claimLease('exec-2');
+    await claimLease('exec-2', 'fresh-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     expect(call).toBeDefined();
@@ -131,7 +131,7 @@ describe('claimLease', () => {
   // The WHERE uses { lt: now }, meaning `leaseExpiresAt < now`, so a row whose lease
   // expires exactly AT now is NOT considered expired and must be left alone.
   it('uses strict lt comparison — a lease expiring exactly at now is NOT in the expired arm', async () => {
-    await claimLease('exec-lt-boundary');
+    await claimLease('exec-lt-boundary', 'fresh-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     expect(call).toBeDefined();
@@ -151,7 +151,7 @@ describe('claimLease', () => {
 
   // Data payload
   it('data payload includes leaseToken, leaseExpiresAt, and lastHeartbeatAt', async () => {
-    await claimLease('exec-3');
+    await claimLease('exec-3', 'fresh-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     const data = (call as { data: Record<string, unknown> }).data;
@@ -167,9 +167,9 @@ describe('claimLease', () => {
     expect(data['lastHeartbeatAt']).toBeInstanceOf(Date);
   });
 
-  // recoveryAttempts branch
-  it('incrementRecoveryAttempts: true → data includes { increment: 1 } for recoveryAttempts', async () => {
-    await claimLease('exec-4', { incrementRecoveryAttempts: true });
+  // ClaimReason branch — orphan-resume increments, fresh-resume does not
+  it('reason=orphan-resume → data includes { increment: 1 } for recoveryAttempts', async () => {
+    await claimLease('exec-4', 'orphan-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     const data = (call as { data: Record<string, unknown> }).data;
@@ -177,17 +177,8 @@ describe('claimLease', () => {
     expect(data['recoveryAttempts']).toEqual({ increment: 1 });
   });
 
-  it('default (options omitted) → data does NOT include recoveryAttempts key', async () => {
-    await claimLease('exec-5');
-
-    const call = mockUpdateMany.mock.calls[0]?.[0];
-    const data = (call as { data: Record<string, unknown> }).data;
-
-    expect(data).not.toHaveProperty('recoveryAttempts');
-  });
-
-  it('incrementRecoveryAttempts: false → data does NOT include recoveryAttempts key', async () => {
-    await claimLease('exec-6', { incrementRecoveryAttempts: false });
+  it('reason=fresh-resume → data does NOT include recoveryAttempts key', async () => {
+    await claimLease('exec-5', 'fresh-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     const data = (call as { data: Record<string, unknown> }).data;
@@ -200,7 +191,7 @@ describe('claimLease', () => {
     // The DB honours the WHERE by returning count: 1 for an unclaimed row.
     // We assert the WHERE contains the null-arm so a regression that removes it would be caught.
     mockUpdateMany.mockResolvedValue({ count: 1 });
-    const token = await claimLease('exec-unclaimed');
+    const token = await claimLease('exec-unclaimed', 'fresh-resume');
     expect(token).not.toBeNull();
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
@@ -211,7 +202,7 @@ describe('claimLease', () => {
   // Behavioural: expired row is claimable
   it('expired row qualifies via the leaseExpiresAt lt arm of the OR clause', async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
-    const token = await claimLease('exec-expired');
+    const token = await claimLease('exec-expired', 'fresh-resume');
     expect(token).not.toBeNull();
 
     const call = mockUpdateMany.mock.calls[0]?.[0];

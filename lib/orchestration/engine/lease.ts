@@ -31,6 +31,26 @@ import { logger } from '@/lib/logging';
 export const LEASE_DURATION_MS = 3 * 60 * 1000;
 export const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
+/**
+ * The execution-row identity + claim-token pair that authorises a write.
+ *
+ * The four engine DB-write paths (`markCurrentStep`, `checkpoint`, `pauseForApproval`,
+ * `finalize`) match `where: { id, leaseToken }` so a stale-token holder's write silently
+ * no-ops via `count: 0`. Packaging the two strings as one object inside a typed boundary
+ * is a swap-bug guard: a misordered `markCurrentStep(stepId, executionId, leaseToken, …)`
+ * (three strings in a row) would compile but fail at runtime as a silent no-op against the
+ * wrong row. Wrapping them as `LeaseHandle` makes that mistake a compile error — `string`
+ * is not assignable to `LeaseHandle`.
+ *
+ * The handle is engine-private. The executor surface (`ExecutionContext`) deliberately
+ * does NOT carry it — executors are user-pluggable and have no business reading or
+ * forging leases.
+ */
+export interface LeaseHandle {
+  readonly executionId: string;
+  readonly token: string;
+}
+
 export function generateLeaseToken(): string {
   return randomUUID();
 }
@@ -40,20 +60,35 @@ export function leaseExpiry(now: Date = new Date()): Date {
 }
 
 /**
+ * The two semantically-distinct reasons a host claims a lease on an existing row.
+ *
+ * - `'fresh-resume'`: the row was paused for approval and the user has just approved.
+ *   Recovery is free — the user pause is a clean state boundary, not a crash signal.
+ * - `'orphan-resume'`: the orphan sweep found a `running` row whose lease has expired
+ *   (host died mid-step). This counts toward `MAX_RECOVERY_ATTEMPTS` so deterministic
+ *   failures can't loop the sweep forever.
+ *
+ * Encoding the reason explicitly (rather than as an `incrementRecoveryAttempts` boolean)
+ * makes call sites self-document — operators reading a stack trace see "orphan-resume"
+ * and understand exactly which path is running.
+ */
+export type ClaimReason = 'fresh-resume' | 'orphan-resume';
+
+/**
  * Claim a lease on an execution row. Returns the new `leaseToken` on success, `null` when
  * another host already owns a fresh lease.
  *
- * Used by the resume path (approval-resume and orphan re-drive). Fresh runs claim their
- * lease atomically in the row-create call inside `initRun`.
+ * Used by the resume path (`fresh-resume` after approval, `orphan-resume` after a crash).
+ * Fresh runs claim their lease atomically in the row-create call inside `initRun`.
  *
  * Conditional UPDATE — only succeeds when the lease is unclaimed (`leaseToken IS NULL`)
  * or already expired (`leaseExpiresAt < now`). Postgres serialises the UPDATE on the row,
  * so two hosts racing on the same orphaned row will see exactly one winner.
+ *
+ * `recoveryAttempts` is incremented only for `orphan-resume` — the `fresh-resume` path is a
+ * clean state-machine transition that should not consume a recovery slot.
  */
-export async function claimLease(
-  executionId: string,
-  options?: { incrementRecoveryAttempts?: boolean }
-): Promise<string | null> {
+export async function claimLease(executionId: string, reason: ClaimReason): Promise<string | null> {
   const now = new Date();
   const token = generateLeaseToken();
   const result = await prisma.aiWorkflowExecution.updateMany({
@@ -65,7 +100,7 @@ export async function claimLease(
       leaseToken: token,
       leaseExpiresAt: leaseExpiry(now),
       lastHeartbeatAt: now,
-      ...(options?.incrementRecoveryAttempts ? { recoveryAttempts: { increment: 1 } } : {}),
+      ...(reason === 'orphan-resume' ? { recoveryAttempts: { increment: 1 } } : {}),
     },
   });
   return result.count === 1 ? token : null;

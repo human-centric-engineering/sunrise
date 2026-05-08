@@ -3734,7 +3734,7 @@ describe('OrchestrationEngine', () => {
 
     // ── Orphan-resume increments recoveryAttempts ─────────────────────────
 
-    it('orphan-resume (status=running): claimLease called with incrementRecoveryAttempts=true', async () => {
+    it("orphan-resume (status=running): claimLease called with reason='orphan-resume'", async () => {
       // Arrange — row is in RUNNING state → orphan path.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
         id: 'exec_orphan',
@@ -3764,16 +3764,13 @@ describe('OrchestrationEngine', () => {
         resumeFromExecutionId: 'exec_orphan',
       });
 
-      // Assert — the RUNNING status makes isOrphanResume=true → must increment.
-      expect(vi.mocked(claimLease)).toHaveBeenCalledWith(
-        'exec_orphan',
-        expect.objectContaining({ incrementRecoveryAttempts: true })
-      );
+      // Assert — the RUNNING status maps to 'orphan-resume' which is the increment branch.
+      expect(vi.mocked(claimLease)).toHaveBeenCalledWith('exec_orphan', 'orphan-resume');
     });
 
     // ── Approval-resume does NOT increment recoveryAttempts ──────────────
 
-    it('approval-resume (status=paused_for_approval): claimLease called with incrementRecoveryAttempts=false', async () => {
+    it("approval-resume (status=paused_for_approval): claimLease called with reason='fresh-resume'", async () => {
       // Arrange — row is in PAUSED_FOR_APPROVAL state → clean-resume path.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
         id: 'exec_approval_resume',
@@ -3805,10 +3802,7 @@ describe('OrchestrationEngine', () => {
 
       // Assert — approval-resume is a clean boundary; must NOT charge the recovery cap.
       // Paired with the orphan test above to lock the conditional asymmetry.
-      expect(vi.mocked(claimLease)).toHaveBeenCalledWith(
-        'exec_approval_resume',
-        expect.objectContaining({ incrementRecoveryAttempts: false })
-      );
+      expect(vi.mocked(claimLease)).toHaveBeenCalledWith('exec_approval_resume', 'fresh-resume');
     });
 
     // ── Heartbeat lifecycle — happy path ──────────────────────────────────
