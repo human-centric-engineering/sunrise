@@ -139,13 +139,36 @@ async function runDelegation(
     nextSteps: [],
   };
 
-  // Increment agent call depth for recursion guard
+  // Build the delegation's child context. Two things are deliberately scrubbed
+  // alongside the recursion-depth bump:
+  //
+  //  - `resumeTurns` — the orchestrator's resume entries are kind:'orchestrator'
+  //    only by source contract, but the delegation reads `ctx.resumeTurns` as a
+  //    flat array and filters by kind. If we propagate the orchestrator's
+  //    resumeTurns to the delegation, the child's filter (`kind === 'agent_call'
+  //    && outerTurn === undefined` in agent-call.ts) would pick up nothing today
+  //    — but a bug in the kind-tagging contract or a future extension that
+  //    writes mixed-kind entries to the orchestrator's `currentStepTurns` would
+  //    silently leak into the delegation's resume state. Clear it explicitly.
+  //
+  //  - `recordTurn` — the orchestrator's per-round checkpoint closure captures
+  //    `stepTurns` keyed to the orchestrator's lease. Forwarding it to the
+  //    delegation would cause every inner agent_call iteration to push
+  //    `kind: 'agent_call'` entries into the orchestrator's accumulator AND
+  //    write them to the orchestrator's `currentStepTurns` column. Cross-step
+  //    pollution; quadratic JSON growth across rounds × delegations × tool
+  //    iterations. The delegation is its own step boundary — checkpointing the
+  //    inner agent_call's per-iteration state at the orchestrator level isn't
+  //    meaningful (the orchestrator's own `OrchestratorTurn` records the
+  //    delegation outcome). Clear explicitly.
   const childCtx: ExecutionContext = {
     ...ctx,
     variables: {
       ...ctx.variables,
       agentCallDepth: ((ctx.variables.agentCallDepth as number) ?? 0) + 1,
     },
+    resumeTurns: undefined,
+    recordTurn: undefined,
   };
 
   try {

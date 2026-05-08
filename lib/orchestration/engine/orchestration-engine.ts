@@ -1070,7 +1070,14 @@ export class OrchestrationEngine {
         // approval-resume's initRun reads to repopulate ctx.resumeTurns. The
         // trace entry's `turns` field is for observability; the column is for
         // resume.
+        //
+        // Clearing both context fields here prevents the next step's executor
+        // — or, more dangerously, sibling code paths like `runStepToCompletion`
+        // (parallel batches) — from inheriting a stale closure pointing at this
+        // step's `stepTurns` array and lease. The contract is: `ctx.recordTurn`
+        // is bound by `executeSingleStep` for the duration of one step only.
         ctx.resumeTurns = undefined;
+        ctx.recordTurn = undefined;
         const approvalData =
           typeof err.payload === 'object' && err.payload !== null
             ? (err.payload as Record<string, unknown>)
@@ -1132,6 +1139,7 @@ export class OrchestrationEngine {
         ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
       });
       ctx.resumeTurns = undefined;
+      ctx.recordTurn = undefined;
       await this.checkpoint(lease, ctx, trace);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id);
@@ -1156,6 +1164,7 @@ export class OrchestrationEngine {
       ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
     });
     ctx.resumeTurns = undefined;
+    ctx.recordTurn = undefined;
     await this.checkpoint(lease, ctx, trace);
 
     // Budget check — runs BEFORE step_completed so the event stream's
@@ -1710,9 +1719,19 @@ export class OrchestrationEngine {
             turns: parsedTurns.data.length,
           });
         } else if (!parsedTurns.success) {
+          // Operators need to identify which field/shape regressed without
+          // re-parsing the row by hand. Log the first three issue paths and
+          // messages alongside the count so a schema drift is visible from
+          // the log alone. Drops the malformed payload and falls through to
+          // a fresh-start resume — the dispatch cache prevents side-effect
+          // re-fire, but the executor's in-memory state restarts at turn 0.
           baseLogger.warn('Resume: dropped malformed currentStepTurns', {
             executionId: row.id,
             issues: parsedTurns.error.issues.length,
+            sampleIssues: parsedTurns.error.issues.slice(0, 3).map((issue) => ({
+              path: issue.path.join('.'),
+              message: issue.message,
+            })),
           });
         }
       }
@@ -1822,6 +1841,16 @@ export class OrchestrationEngine {
    * the in-memory turns array is the source of truth for THIS attempt; the worst case is a
    * crashed re-drive starts from an earlier turn (and the dispatch cache prevents
    * side-effect duplication on the replay).
+   *
+   * Log-level branch on the clear-write case (`turns.length === 0`): the empty-array write is
+   * fired by `executeSingleStep`'s `onAttemptStart` callback between retry attempts. If THAT
+   * write fails AND the host then crashes before attempt N+1's first successful turn record,
+   * a subsequent resume will replay attempt N's stale turns. The dispatch cache stops side-
+   * effect duplication, but the executor's reconstructed in-memory state (orchestrator round
+   * counter, agent_call message history, reflect draft) diverges from reality — token cost
+   * for the dropped attempt's partial work is lost. Surface this as `error` (not `warn`) so
+   * operators can monitor; behaviour is still non-fatal because a failed retry-clear is
+   * marginally better than a failed retry attempt itself.
    */
   private async recordStepTurn(
     lease: LeaseHandle,
@@ -1829,6 +1858,7 @@ export class OrchestrationEngine {
     logger: Logger
   ): Promise<void> {
     const { executionId, token } = lease;
+    const isClearWrite = turns.length === 0;
     try {
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken: token },
@@ -1839,13 +1869,18 @@ export class OrchestrationEngine {
         },
       });
     } catch (err) {
-      logger.warn(
-        'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
-        {
-          executionId,
-          error: err instanceof Error ? err.message : String(err),
-        }
-      );
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (isClearWrite) {
+        logger.error(
+          'recordStepTurn: retry-clear write failed — next retry attempt may inherit stale turns on a subsequent crash; investigate DB connectivity',
+          { executionId, error: errorMessage }
+        );
+      } else {
+        logger.warn(
+          'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
+          { executionId, error: errorMessage }
+        );
+      }
     }
   }
 

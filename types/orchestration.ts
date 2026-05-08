@@ -293,6 +293,16 @@ export type ExecutionEvent =
  */
 export type TurnEntry = AgentCallTurn | OrchestratorTurn | ReflectTurn;
 
+// TODO(pr3): tighten AgentCallTurn to a discriminated sub-union — see
+// PR 2 type-design-analyzer T1. Today `toolCall` and `toolResult` are
+// independently optional, but the runtime contract is paired (continuing
+// iteration: both set) or absent (terminal iteration: both undefined). The
+// 4-state type permits 2 runtime-illegal combinations a future maintainer
+// could write by accident; the replay path on `agent-call.ts` reads each
+// independently so a one-sided entry would silently rebuild a malformed
+// LLM message history. PR 3 split: `AgentCallTurnContinuing` (toolCall +
+// toolResult required) | `AgentCallTurnTerminal` (both forbidden). Mirror
+// in Zod with z.union + .refine() for the mutual-exclusion check.
 export interface AgentCallTurn {
   kind: 'agent_call';
   /** 0-indexed tool-iteration counter within the step. Increments per LLM call. */

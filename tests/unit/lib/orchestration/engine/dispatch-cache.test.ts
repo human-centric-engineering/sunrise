@@ -205,7 +205,6 @@ describe('recordDispatch', () => {
     const result = await recordDispatch({
       executionId: 'exec-abc',
       stepId: 'step-xyz',
-      idempotencyKey: 'exec-abc:step-xyz',
       result: { ok: true },
     });
 
@@ -221,7 +220,6 @@ describe('recordDispatch', () => {
     await recordDispatch({
       executionId: 'exec-abc',
       stepId: 'step-xyz',
-      idempotencyKey: 'exec-abc:step-xyz',
       result: { statusCode: 200 },
     });
 
@@ -245,7 +243,6 @@ describe('recordDispatch', () => {
       executionId: 'exec-abc',
       stepId: 'step-xyz',
       turnIndex: 3,
-      idempotencyKey: 'exec-abc:step-xyz:turn=3',
       result: { token: 'resp-xyz' },
     });
 
@@ -269,7 +266,6 @@ describe('recordDispatch', () => {
     await recordDispatch({
       executionId: 'exec-abc',
       stepId: 'step-xyz',
-      idempotencyKey: 'exec-abc:step-xyz',
       result: { ok: true },
     });
 
@@ -289,7 +285,6 @@ describe('recordDispatch', () => {
     const result = await recordDispatch({
       executionId: 'exec-abc',
       stepId: 'step-xyz',
-      idempotencyKey: 'exec-abc:step-xyz',
       result: { ok: true },
     });
 
@@ -318,7 +313,6 @@ describe('recordDispatch', () => {
       recordDispatch({
         executionId: 'exec-abc',
         stepId: 'step-xyz',
-        idempotencyKey: 'exec-abc:step-xyz',
         result: { ok: true },
       })
     ).rejects.toThrow();
@@ -337,7 +331,6 @@ describe('recordDispatch', () => {
       recordDispatch({
         executionId: 'exec-abc',
         stepId: 'step-xyz',
-        idempotencyKey: 'exec-abc:step-xyz',
         result: { ok: true },
       })
     ).rejects.toThrow('boom');

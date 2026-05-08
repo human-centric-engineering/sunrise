@@ -1183,10 +1183,11 @@ describe('executeExternalCall', () => {
       // Assert: recordDispatch is called with the deterministic cache key and
       // the step's result. This verifies the executor actually writes to the
       // cache after a successful call — not just that it passes mock data through.
+      // T2 fix: idempotencyKey is now derived inside recordDispatch from
+      // executionId/stepId/turnIndex; callers no longer pass it.
       expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
         executionId: 'exec_1',
         stepId: 'ext1',
-        idempotencyKey: 'exec_1:ext1',
         result: expect.objectContaining({ output: { status: 200, body: responseBody } }),
       });
       expect(result).toMatchObject({ output: { status: 200, body: responseBody } });

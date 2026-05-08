@@ -81,8 +81,21 @@ export async function executeExternalCall(
   // step within a single execution) — independent of the `Idempotency-Key`
   // header sent to the remote, which the author may override or set to 'auto'
   // for a fresh UUID per call. See `lib/orchestration/engine/dispatch-cache.ts`.
+  //
+  // Posture symmetry with `recordDispatch`: a transient DB hiccup at lookup
+  // time treats as cache miss (warn-and-continue), matching the post-write
+  // recordDispatch failure handling. Keeps cache-availability errors from
+  // killing a step before its side effect would have fired.
   const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
-  const cached = await lookupDispatch<StepResult>(cacheKey);
+  let cached: StepResult | null = null;
+  try {
+    cached = await lookupDispatch<StepResult>(cacheKey);
+  } catch (err) {
+    ctx.logger.warn('external_call: dispatch cache lookup failed; treating as miss', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   if (cached !== null) {
     ctx.logger.info('external_call: dispatch cache hit, skipping HTTP request', {
       stepId: step.id,
@@ -238,15 +251,22 @@ export async function executeExternalCall(
 
   // Record the dispatch so a re-drive after a crash returns the cached result
   // instead of re-firing the HTTP call. P2002 means another host won the race
-  // (handled inside `recordDispatch`); other DB errors are non-fatal — the
-  // step already succeeded, so we log and continue. Worst-case on a re-drive
-  // that misses the cache: the call fires again, and the cooperative remote's
-  // `Idempotency-Key` honour is the second layer of dedup.
+  // — `recordDispatch` returns `false`. We deliberately discard that boolean:
+  // the loser of the dispatch-row race is by definition the loser of the lease
+  // race, and PR 1's lease-loss model cancels the loser's terminal events on
+  // the next checkpoint write (`finalize` returns `false` on `count: 0` and
+  // suppresses the `workflow_completed` yield + hooks + webhook). The loser's
+  // `stepResult` is computed but never observed downstream, so re-reading the
+  // winner's cached result here would be wasted work.
+  //
+  // Other DB errors are non-fatal — the step already succeeded, so we log and
+  // continue. Worst-case on a re-drive that misses the cache: the call fires
+  // again, and the cooperative remote's `Idempotency-Key` honour is the second
+  // layer of dedup.
   try {
     await recordDispatch({
       executionId: ctx.executionId,
       stepId: step.id,
-      idempotencyKey: cacheKey,
       result: stepResult,
     });
   } catch (err) {

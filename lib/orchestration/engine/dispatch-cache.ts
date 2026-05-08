@@ -32,12 +32,25 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
-export interface DispatchKeyParts {
-  executionId: string;
-  stepId: string;
-  /** Set for multi-turn step types where each turn dispatches independently. */
-  turnIndex?: number;
-}
+/**
+ * The deterministic shape that maps to one dispatch-cache row's primary axis.
+ *
+ * Discriminated union of two cases — single-shot vs multi-turn — so the type
+ * system enforces "did you mean turn 0 or no turn at all?" at every call site.
+ * The two variants share `executionId` and `stepId`; multi-turn additionally
+ * carries `turnIndex: number`. Single-shot omits the field entirely (NOT
+ * `turnIndex: undefined`), which means a falsy-zero check (`if (turnIndex)`)
+ * elsewhere in the codebase can't accidentally collapse turn 0 into the
+ * "single-shot" branch — the type doesn't allow constructing a single-shot
+ * variant by passing `turnIndex: 0`.
+ *
+ * The implementation guards on `turnIndex !== undefined` (correct), and the
+ * union shape now backs that with a compile-time guarantee that each call
+ * site picks one variant explicitly.
+ */
+export type DispatchKeyParts =
+  | { executionId: string; stepId: string; turnIndex?: undefined }
+  | { executionId: string; stepId: string; turnIndex: number };
 
 /**
  * Build the deterministic idempotency key the dispatch cache is keyed on.
@@ -65,33 +78,33 @@ export async function lookupDispatch<T = unknown>(idempotencyKey: string): Promi
   return row ? (row.result as T) : null;
 }
 
-export interface RecordDispatchInput {
-  executionId: string;
-  stepId: string;
-  /** Set for multi-turn step types; omit for single-shot steps. */
-  turnIndex?: number;
-  idempotencyKey: string;
-  result: unknown;
-}
+export type RecordDispatchInput = DispatchKeyParts & { result: unknown };
 
 /**
  * Record a successful dispatch. Returns `true` when the row was inserted,
  * `false` when another host had already recorded one for the same key
  * (P2002 — unique constraint violation on `idempotencyKey`). The caller
  * should treat `false` as "I lost the race; my in-flight result is the
- * loser" and look up the winner's via `lookupDispatch` if it needs to
- * read the cached result.
+ * loser" — the lease-loss check on the next checkpoint will stop the loser's
+ * run before its in-flight result is observed downstream (PR 1's lease model
+ * cancels the loser's terminal events). No need to re-read the winner's
+ * cached result.
  *
  * Any other Prisma error is rethrown — the executor's outer try/catch
  * decides whether to fail the step.
+ *
+ * The idempotency key is derived from the parts inside this function — callers
+ * pass `DispatchKeyParts` and never construct the key string themselves. This
+ * removes the parallel-parameter drift bug class where a caller's `lookupDispatch`
+ * key and `recordDispatch` key could disagree (PR 2 type-design-analyzer T2).
  */
 export async function recordDispatch({
   executionId,
   stepId,
   turnIndex,
-  idempotencyKey,
   result,
 }: RecordDispatchInput): Promise<boolean> {
+  const idempotencyKey = buildIdempotencyKey({ executionId, stepId, turnIndex });
   try {
     await prisma.aiWorkflowStepDispatch.create({
       data: {

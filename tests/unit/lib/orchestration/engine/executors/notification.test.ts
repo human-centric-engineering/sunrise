@@ -397,11 +397,12 @@ describe('executeNotification', () => {
       // Act
       await executor(step, ctx);
 
-      // Assert: recordDispatch called with the exact shape the source builds
+      // Assert: recordDispatch called with the exact shape the source builds.
+      // T2 fix: idempotencyKey is derived inside recordDispatch from
+      // executionId/stepId/turnIndex; callers no longer pass it.
       expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
         executionId: 'exec-1',
         stepId: 'notify-1',
-        idempotencyKey: 'exec-1:notify-1',
         result: {
           output: { sent: true, channel: 'email', status: 'sent' },
           tokensUsed: 0,
@@ -418,11 +419,11 @@ describe('executeNotification', () => {
       // Act
       await executor(step, ctx);
 
-      // Assert: recordDispatch called with the webhook-shaped result the source builds
+      // Assert: recordDispatch called with the webhook-shaped result the source builds.
+      // T2 fix: no idempotencyKey field — derived inside recordDispatch.
       expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
         executionId: 'exec-2',
         stepId: 'notify-2',
-        idempotencyKey: 'exec-2:notify-2',
         result: {
           output: { sent: true, channel: 'webhook', url: 'https://example.com/hook' },
           tokensUsed: 0,

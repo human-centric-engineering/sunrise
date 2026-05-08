@@ -53,8 +53,20 @@ async function executeNotification(
   // email/webhook and recorded its result, return the cached StepResult and
   // skip re-firing. The cache key is `${executionId}:${stepId}`. See
   // `lib/orchestration/engine/dispatch-cache.ts`.
+  //
+  // Posture symmetry with `recordDispatch`: a transient DB hiccup at lookup
+  // time is treated as a cache miss (warn-and-continue), matching the
+  // post-send recordDispatch failure handling.
   const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
-  const cached = await lookupDispatch<StepResult>(cacheKey);
+  let cached: StepResult | null = null;
+  try {
+    cached = await lookupDispatch<StepResult>(cacheKey);
+  } catch (err) {
+    logger.warn('Notification step: dispatch cache lookup failed; treating as miss', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   if (cached !== null) {
     logger.info('Notification step: dispatch cache hit, skipping send', {
       stepId: step.id,
@@ -150,15 +162,16 @@ async function executeNotification(
   }
 
   // Record the dispatch so a re-drive after a crash returns the cached result.
-  // P2002 is handled inside `recordDispatch`; other DB errors are non-fatal —
-  // the notification already went out, so we log and continue. A re-drive that
+  // `recordDispatch` returns `false` on a P2002 race-loss; we discard the
+  // boolean because the loser's run is cancelled by lease loss on the next
+  // checkpoint write (PR 1 model). Other DB errors are non-fatal — the
+  // notification already went out, so we log and continue. A re-drive that
   // misses the cache will re-send (no provider-side dedup for our generic
   // webhook path) — this is the documented trade-off of the cache miss window.
   try {
     await recordDispatch({
       executionId: ctx.executionId,
       stepId: step.id,
-      idempotencyKey: cacheKey,
       result: stepResult,
     });
   } catch (err) {

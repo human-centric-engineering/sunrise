@@ -315,12 +315,12 @@ describe('executeToolCall', () => {
       // Act
       await executeToolCall(makeStep(), makeCtx());
 
-      // Assert: dispatch was called, then result was recorded with correct shape
+      // Assert: dispatch was called, then result was recorded with correct shape.
+      // T2 fix: idempotencyKey is derived inside recordDispatch; callers don't pass it.
       expect(capabilityDispatcher.dispatch).toHaveBeenCalledTimes(1);
       expect(recordDispatch).toHaveBeenCalledWith({
         executionId: 'exec_1',
         stepId: 'step1',
-        idempotencyKey: 'exec_1:step1',
         result: { output: { answer: 'yes' }, tokensUsed: 0, costUsd: 0 },
       });
     });

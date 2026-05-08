@@ -59,9 +59,22 @@ export async function executeToolCall(
   // by `${executionId}:${stepId}`. A cache hit returns the cached result and
   // the dispatcher is never re-invoked. Idempotent capabilities skip this
   // (their destination handles dedup; a re-invocation is harmless).
+  //
+  // Posture symmetry with `recordDispatch`: a transient DB hiccup at lookup
+  // time is treated as a cache miss (warn-and-continue), matching the
+  // post-dispatch recordDispatch failure handling.
   const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
   if (!isIdempotent) {
-    const cached = await lookupDispatch<StepResult>(cacheKey);
+    let cached: StepResult | null = null;
+    try {
+      cached = await lookupDispatch<StepResult>(cacheKey);
+    } catch (err) {
+      ctx.logger.warn('tool_call: dispatch cache lookup failed; treating as miss', {
+        stepId: step.id,
+        slug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     if (cached !== null) {
       ctx.logger.info('tool_call: dispatch cache hit, skipping capability invocation', {
         stepId: step.id,
@@ -114,14 +127,16 @@ export async function executeToolCall(
 
   // Record the dispatch so a re-drive after a crash returns this result instead
   // of re-invoking. Skipped for idempotent capabilities — no need to grow the
-  // cache when the destination already handles re-runs. P2002 is handled
-  // inside `recordDispatch`; other DB errors are non-fatal.
+  // cache when the destination already handles re-runs. `recordDispatch`
+  // returns `false` on a P2002 race-loss; we discard the boolean because the
+  // loser of the dispatch-row race is the loser of the lease race, and PR 1's
+  // lease-loss model cancels the loser's terminal events. Other DB errors are
+  // non-fatal — log and continue.
   if (!isIdempotent) {
     try {
       await recordDispatch({
         executionId: ctx.executionId,
         stepId: step.id,
-        idempotencyKey: cacheKey,
         result: stepResult,
       });
     } catch (err) {
