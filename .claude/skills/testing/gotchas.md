@@ -645,6 +645,84 @@ it('calls notFound() when serverFetch returns 404', async () => {
 
 ---
 
+### 22. Module-Mock Defaults Leak Across Describe Blocks Under `vi.clearAllMocks()`
+
+**Problem**: A test file mocks a module with `.mockResolvedValue(default)` at the top:
+
+```typescript
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId }) => `${executionId}:${stepId}`),
+  lookupDispatch: vi.fn().mockResolvedValue(null), // default = cache miss
+  recordDispatch: vi.fn().mockResolvedValue(true), // default = insert success
+}));
+```
+
+The outer `beforeEach` calls `vi.clearAllMocks()` which clears **call history and pending `mockResolvedValueOnce` queues** — but it does NOT reset the base `mockResolvedValue`. So the default behaviour SURVIVES `clearAllMocks`.
+
+That sounds fine — until a sibling describe block uses `mockResolvedValueOnce(differentValue)` to override for one test. The override fires once, then the baseline default returns. So far still fine.
+
+The real failure mode: a NEW describe block added later (e.g. `describe('dispatch cache integration', ...)` for cache-hit tests) needs the lookup to return a non-null cached value. The new tests use `mockResolvedValueOnce(cached)` ... but if a sibling test failed mid-suite OR if test ordering shifts, the `Once` queue can be out of sync with what the new test expects, and call counts accumulated across all 17+ prior tests pollute `toHaveBeenCalledWith` / `toHaveBeenCalledTimes` assertions.
+
+**Solution**: For cache-style mocks where the new describe block needs a fresh slate, add a NESTED `beforeEach` that calls `.mockReset()` on each function and re-applies the desired defaults:
+
+```typescript
+describe('dispatch cache integration', () => {
+  beforeEach(() => {
+    vi.mocked(lookupDispatch).mockReset().mockResolvedValue(null);
+    vi.mocked(recordDispatch).mockReset().mockResolvedValue(true);
+  });
+
+  it('cache hit returns cached StepResult without firing send', async () => {
+    vi.mocked(lookupDispatch).mockResolvedValueOnce(cachedResult);
+    // ...
+  });
+});
+```
+
+`.mockReset()` clears history AND removes mock implementations / queued return values. Re-applying the default with `.mockResolvedValue(...)` restores the baseline. The block stays isolated from the 17+ siblings without touching the outer `beforeEach` (which other tests still rely on).
+
+**Don't reach for `vi.resetAllMocks()` instead.** It's the same thing applied globally and would break the existing 17 tests that depend on the module's other mocked functions (sendEmail, dispatchWebhookEvent, etc.) keeping their defaults.
+
+**Signal for `/test-write`**: when ADDing a new describe block to a file with module-level mocks that have `.mockResolvedValue` defaults, scope a nested `beforeEach` rather than relying on the outer `vi.clearAllMocks()`. The new block's tests should be isolated regardless of execution order.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing Sprint 1 Batch 1.4 (PR 2 of orchestration item #15) on `tests/unit/lib/orchestration/engine/executors/notification.test.ts`. Two cache-hit tests initially failed because cross-test state from the outer `vi.clearAllMocks()` left `lookupDispatch`'s call count contaminated. Nested `beforeEach` with `.mockReset()` + restored defaults fixed it cleanly.
+
+---
+
+### 23. `mockImplementation(throw)` for Anti-Green-Bar Fail-Loudly Leaks Across Tests
+
+**Problem**: Anti-green-bar tests want a "fail loudly if this is called" signal — common pattern is `vi.mocked(sideEffect).mockImplementation(() => { throw new Error('SHOULD NOT BE CALLED') })`. Inside the cache-hit test it works as advertised.
+
+The catch: `vi.clearAllMocks()` resets **call history** but does NOT clear `mockImplementation`. The throw-on-call implementation persists across siblings, breaking the next test that legitimately wants the side effect to fire.
+
+`mockImplementationOnce` looks like the fix — but on a cache-hit path, the implementation is NEVER consumed (the source short-circuits before calling). The queued `Once` implementation leaks to the next test that DOES invoke the mock — and that test now suddenly throws "SHOULD NOT BE CALLED" for no apparent reason.
+
+**Solution**: Drop the `mockImplementation(throw)` pattern in favour of `expect(sideEffect).not.toHaveBeenCalled()` after the action. This still proves the contract — if the source regresses and fails to short-circuit, the assertion fails with a clear "expected mock not to have been called" message — and there's no leaky implementation to clean up.
+
+```typescript
+// ❌ DON'T — leaks across tests
+vi.mocked(capabilityDispatcher.dispatch).mockImplementation(() => {
+  throw new Error('SHOULD NOT BE CALLED');
+});
+const result = await executeToolCall(step, ctx);
+expect(result).toEqual(cachedResult);
+
+// ✅ DO — explicit assertion, no leak
+const result = await executeToolCall(step, ctx);
+expect(result).toEqual(cachedResult);
+expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled();
+```
+
+The fail-loudly intent is preserved: a regression that fails to short-circuit fails the `not.toHaveBeenCalled()` assertion before it even reaches the equality check, with a message that names the mock.
+
+**Use `mockImplementation(throw)` only when**: (1) the throw needs to interrupt mid-test setup (rare), or (2) the side effect's call site is reached but you want to assert IT specifically by surfacing a custom error message. For "this should never run on this path", `not.toHaveBeenCalled()` is cleaner and leak-free.
+
+**Signal for `/test-write`**: when the agent prompt says "use `mockImplementation(throw)` to fail loudly" for a no-call path, prefer `not.toHaveBeenCalled()` instead. Note the deviation in the agent's report so the next planner sees the substitution pattern.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing Sprint 1 Batch 1.2 (PR 2 of orchestration item #15) on `tests/unit/lib/orchestration/engine/executors/tool-call.test.ts`. Initial implementation per the plan's anti-green-bar guidance caused mock-impl bleed-through across 12 sibling tests; agent flagged the deviation and switched to `not.toHaveBeenCalled()`.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:
