@@ -3,8 +3,8 @@
  *
  * The engine claims a lease when a run starts (or resumes) and refreshes it on every
  * checkpoint plus a periodic heartbeat. If the host driving the run dies, its lease
- * elapses; the orphan sweep in `execution-reaper.ts` then re-claims the row and re-drives
- * it through the standard resume path.
+ * elapses; the orphan sweep `processOrphanedExecutions()` in `scheduling/scheduler.ts`
+ * then re-claims the row and re-drives it through the standard resume path.
  *
  * Why a lease + heartbeat (not just a row-level "host_id"):
  *  - A simple host-id can't recover from the host going away — the row is stuck forever.

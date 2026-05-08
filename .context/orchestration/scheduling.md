@@ -51,7 +51,7 @@ Called every ~60 seconds by an external cron job hitting `POST /api/v1/admin/orc
 
 Returns `{ processed, succeeded, failed, errors }`.
 
-**Engine-crash handling.** If the engine throws an uncaught error inside `drainEngine`, `finalize()` never runs — so the engine's normal `workflow.failed` hook is not emitted. To prevent silent zombification, the catch block updates the execution row to `failed` (with `errorMessage` and `completedAt`) and dispatches the crash to **both** notification subsystems: the `workflow.execution.failed` event hook (for code-configured filterable dispatch) and the `execution_crashed` webhook subscription event (for admin-UI-configured durable delivery). Both payloads carry the same sanitised error. Subscribers and `GET /executions/:id/status` see consistent state immediately rather than waiting for the next reaper sweep. See [Hooks — Event Types](./hooks.md#event-types) for the distinction between `workflow.failed` and `workflow.execution.failed`, and the [Webhook UI](../admin/orchestration-webhooks.md) for admin-driven subscription management.
+**Engine-crash handling.** If the engine throws an uncaught error inside `drainEngine`, `finalize()` never runs — so the engine's normal `workflow.failed` hook is not emitted. To prevent silent zombification, the catch block updates the execution row to `failed` (with `errorMessage`, `completedAt`, AND `leaseToken: null` + `leaseExpiresAt: null` to clear the lease so it doesn't pin a terminal row) and dispatches the crash to **both** notification subsystems: the `workflow.execution.failed` event hook (for code-configured filterable dispatch) and the `execution_crashed` webhook subscription event (for admin-UI-configured durable delivery). Both payloads carry the same sanitised error. Subscribers and `GET /executions/:id/status` see consistent state immediately rather than waiting for the next reaper sweep. The lease-clear is also enforced structurally by the SQL CHECK constraint `ai_workflow_execution_lease_pair_coherent` — see [`engine.md` — Recovery model](./engine.md#recovery-model). See [Hooks — Event Types](./hooks.md#event-types) for the distinction between `workflow.failed` and `workflow.execution.failed`, and the [Webhook UI](../admin/orchestration-webhooks.md) for admin-driven subscription management.
 
 ### `processPendingExecutions(staleThresholdMs?)`
 
@@ -70,7 +70,7 @@ Lease-aware recovery sweep that picks up `AiWorkflowExecution` rows stuck in `ru
 1. Queries executions where `status = 'running' AND leaseExpiresAt < now()` (max 20 per sweep)
 2. Marks `failed` with `errorMessage = "Recovery exhausted after N attempts"` if `recoveryAttempts >= MAX_RECOVERY_ATTEMPTS` (= 3); also emits `workflow.execution.failed` hook + `execution_crashed` webhook
 3. Marks `failed` if the workflow has been deactivated, has no published version, or has an invalid definition
-4. Otherwise invokes `drainEngine()` fire-and-forget; the engine's `initRun` claims the lease atomically (`claimLease` with `incrementRecoveryAttempts: true`) and resumes from `row.currentStep`
+4. Otherwise invokes `drainEngine()` fire-and-forget; the engine's `initRun` claims the lease atomically via `claimLease(executionId, 'orphan-resume')` (the `'orphan-resume'` reason increments `recoveryAttempts` in the same UPDATE — `'fresh-resume'` is the approval-pause variant that does NOT consume a recovery slot) and resumes from `row.currentStep`
 
 Detection latency is `LEASE_DURATION_MS + tick cadence` — typically under 4 minutes after a crash. Returns `{ recovered, exhausted, errors }`.
 
@@ -96,15 +96,16 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
-`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining six tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle.
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining seven tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle.
 
 1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
 2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_
 3. `processPendingHookRetries()` — event-hook delivery retry queue _(background)_
-4. `reapZombieExecutions()` — mark stale `running` executions as `failed`, 30 min threshold _(background)_
-5. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding _(background)_
-6. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows _(background)_
-7. `processPendingExecutions()` — recover orphaned `pending` workflow executions _(background)_
+4. `processOrphanedExecutions()` — re-drive `running` executions whose lease has expired (lease-aware crash recovery) _(background)_
+5. `reapZombieExecutions()` — mark stale `running` executions as `failed`, 30 min threshold (absolute backstop) _(background)_
+6. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding _(background)_
+7. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows _(background)_
+8. `processPendingExecutions()` — recover orphaned `pending` workflow executions _(background)_
 
 **Response shape:**
 
@@ -116,6 +117,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
     "backgroundTasks": [
       "webhookRetries",
       "hookRetries",
+      "orphanSweep",
       "zombieReaper",
       "embeddingBackfill",
       "retention",
