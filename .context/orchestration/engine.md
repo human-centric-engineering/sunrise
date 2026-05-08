@@ -333,15 +333,31 @@ The `pending` → `running` transition happens inside `initRun()` when the engin
 
 The terminal `failed` status is normally written by the engine's own `finalize()` (and accompanied by a `workflow.failed` hook). When the engine itself throws an uncaught error, `finalize()` never runs — in that case `drainEngine` (`lib/orchestration/scheduling/scheduler.ts`) writes `failed` directly from its catch block and emits a distinct `workflow.execution.failed` hook, so subscribers and `/executions/:id/status` see consistent terminal state immediately rather than waiting for the zombie reaper. See [Hooks — Event Types](./hooks.md#event-types) for the distinction.
 
+## Recovery model
+
+A long-running execution can be killed mid-step by a deploy, an OOM, a Vercel function timeout, or any other process restart. The engine treats this as a normal case: it survives the crash, picks up the row on the next maintenance tick, and resumes from the last completed step.
+
+**Lease + heartbeat.** Every running execution holds a lease — `leaseToken` + `leaseExpiresAt` columns on `AiWorkflowExecution`. The host driving the run claims the lease in `initRun` (or atomically inside the row-create call for fresh runs) and refreshes it on every step boundary plus a periodic `setInterval` heartbeat (`HEARTBEAT_INTERVAL_MS = 60s`, lease duration `LEASE_DURATION_MS = 3 min`). Refreshes are token-scoped — only the holder of the current `leaseToken` can extend the lease, so a respawned-but-stale process can't clobber a fresh owner.
+
+**Orphan sweep.** `processOrphanedExecutions()` (`lib/orchestration/scheduling/scheduler.ts`) queries `WHERE status='running' AND leaseExpiresAt < now()` and re-drives each row through the standard resume path (`drainEngine(resumeFromExecutionId=row.id)`). Detection latency is bounded by `LEASE_DURATION_MS + tick cadence` — typically under 4 minutes after the host disappears. The sweep runs as a background task inside the maintenance tick alongside the zombie reaper.
+
+**Recovery cap.** `MAX_RECOVERY_ATTEMPTS = 3`. The lease claim's atomic UPDATE increments `recoveryAttempts` whenever it picks up a row that was already `running` (orphan resume) — approval-pause resumes don't count. Past the cap, the orphan sweep marks the row `failed` with `errorMessage = "Recovery exhausted after N attempts"` and emits the `workflow.execution.failed` hook + `execution_crashed` webhook so operators get paged. The cap protects against deterministic-failure runs that would otherwise eat the tick budget forever.
+
+**What survives a crash.** The trace already records every completed step (`checkpoint()` writes after each step returns). On resume, `initRun` rehydrates `ctx.totalTokensUsed`, `ctx.totalCostUsd`, and `ctx.stepOutputs` from the trace and seeds the DAG queue with successors of `row.currentStep`. Steps 1..N−1 are intact; step N (the in-flight one when the crash hit) re-runs from scratch. Side-effecting executors (`external_call`, `send_notification`, `tool_call`, `agent_call`, `orchestrator`) need to be safe under re-run — see the idempotency notes in [`workflows.md`](./workflows.md).
+
+**Lease loss is a soft signal.** `checkpoint()` and `finalize()` use `updateMany` with a `where: { id, leaseToken }` guard. `count: 0` means another host has taken over (the orphan sweep beat us). The engine logs and continues — the new owner's writes are the source of truth. A rare race where two hosts emit terminal events for the same execution is preferred over a hard abort, since the row's terminal state is already correct.
+
+**Single-instance deployment profile.** No distributed leader election or coordination service is involved (per `.context/orchestration/meta/improvement-priorities.md` Tier 4). Postgres row UPDATEs serialise on the row, which is sufficient at this scale.
+
 ## Zombie reaper
 
-The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) sweeps for orphaned execution rows and marks them `failed`:
+The **execution reaper** (`lib/orchestration/engine/execution-reaper.ts`) is the **absolute backstop** for rows the orphan sweep didn't pick up — typically legacy rows that pre-date the lease migration, or rows where recovery attempts somehow left them `running` without a fresh lease. Three sweeps:
 
-- **Running zombies**: rows stuck in `running` beyond a 30-minute threshold (process crash or disconnect). Uses `updatedAt` so that resumed executions (which preserve the original `startedAt`) aren't prematurely reaped — the resume path refreshes `updatedAt` when it flips status back to `running`.
+- **Running zombies**: rows stuck in `running` beyond a 30-minute `updatedAt` threshold. With the recovery model in place, healthy runs have their `updatedAt` refreshed by the heartbeat — only genuinely-stuck rows fall here.
 - **Stale pending**: rows stuck in `pending` beyond 1 hour (client never reconnected after approve/retry). Uses `createdAt` (not `updatedAt`) so incidental DB writes don't reset the reap timer.
 - **Abandoned approvals**: rows stuck in `paused_for_approval` beyond 7 days (approval never acted on).
 
-Called by the unified maintenance tick endpoint.
+Called by the unified maintenance tick endpoint **after** the orphan sweep, so any row a recoverable orphan sweep can drive will already have been picked up.
 
 ## Adding a new step type
 

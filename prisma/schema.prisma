@@ -453,6 +453,16 @@ model AiWorkflowExecution {
   triggerSource     String?   @db.VarChar(50)
   triggerExternalId String?
   dedupKey          String?
+  // Recovery state for crash-survival. `leaseToken` identifies the host currently driving
+  // the run; the orphan sweep claims rows whose `leaseExpiresAt` has elapsed and re-drives
+  // them through the resume path. `lastHeartbeatAt` is observability-only. `recoveryAttempts`
+  // caps re-drives — after the cap the row is failed permanently. See
+  // `lib/orchestration/engine/orchestration-engine.ts` (claim/refresh/clear) and
+  // `lib/orchestration/engine/execution-reaper.ts` (sweep).
+  leaseToken        String?
+  leaseExpiresAt    DateTime?
+  lastHeartbeatAt   DateTime?
+  recoveryAttempts  Int       @default(0)
   userId            String
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -476,6 +486,7 @@ model AiWorkflowExecution {
   @@index([status, startedAt]) // Zombie reaper: RUNNING rows past threshold
   @@index([status, createdAt]) // Stale-pending reaper + execution list filters
   @@index([status, updatedAt]) // Abandoned-approval reaper
+  @@index([status, leaseExpiresAt]) // Orphan sweep: RUNNING rows with expired lease
   @@index([userId, status, createdAt]) // Execution list with user + status + sort
   @@map("ai_workflow_execution")
 }

@@ -63,6 +63,19 @@ Recovery sweep that picks up `AiWorkflowExecution` rows stuck in `pending` statu
 
 Called automatically by the unified maintenance tick.
 
+### `processOrphanedExecutions()`
+
+Lease-aware recovery sweep that picks up `AiWorkflowExecution` rows stuck in `running` status whose host died mid-step. See [`engine.md` — Recovery model](./engine.md#recovery-model) for the lease semantics.
+
+1. Queries executions where `status = 'running' AND leaseExpiresAt < now()` (max 20 per sweep)
+2. Marks `failed` with `errorMessage = "Recovery exhausted after N attempts"` if `recoveryAttempts >= MAX_RECOVERY_ATTEMPTS` (= 3); also emits `workflow.execution.failed` hook + `execution_crashed` webhook
+3. Marks `failed` if the workflow has been deactivated, has no published version, or has an invalid definition
+4. Otherwise invokes `drainEngine()` fire-and-forget; the engine's `initRun` claims the lease atomically (`claimLease` with `incrementRecoveryAttempts: true`) and resumes from `row.currentStep`
+
+Detection latency is `LEASE_DURATION_MS + tick cadence` — typically under 4 minutes after a crash. Returns `{ recovered, exhausted, errors }`.
+
+Called automatically by the unified maintenance tick **before** `reapZombieExecutions`, so any recoverable orphan is re-driven before the 30-minute zombie reaper would mark it failed.
+
 ## API Endpoints
 
 ### Schedule CRUD (admin-auth required)

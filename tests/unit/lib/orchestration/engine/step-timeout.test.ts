@@ -17,6 +17,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUnique: vi.fn(),
     },
   },
@@ -64,8 +65,8 @@ describe('Per-step timeout and retriable errors', () => {
       id: 'exec_test',
       status: 'running',
     });
-    const mockUpdate = prisma.aiWorkflowExecution.update as ReturnType<typeof vi.fn>;
-    mockUpdate.mockResolvedValue({});
+    const mockUpdateMany = prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>;
+    mockUpdateMany.mockResolvedValue({ count: 1 });
     const mockFindUnique = prisma.aiWorkflowExecution.findUnique as ReturnType<typeof vi.fn>;
     mockFindUnique.mockResolvedValue({ status: 'running' });
   });

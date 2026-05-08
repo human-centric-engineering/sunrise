@@ -68,6 +68,12 @@ import {
   PausedForApproval,
 } from '@/lib/orchestration/engine/errors';
 import {
+  claimLease,
+  generateLeaseToken,
+  leaseExpiry,
+  startHeartbeat,
+} from '@/lib/orchestration/engine/lease';
+import {
   approvalRequired,
   budgetWarning,
   stepCompleted,
@@ -165,12 +171,8 @@ export class OrchestrationEngine {
     // --------------------------------------------------------------
     // 1. Row creation / resume
     // --------------------------------------------------------------
-    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId } = await this.initRun(
-      workflow,
-      inputData,
-      options,
-      baseLogger
-    );
+    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId, leaseToken } =
+      await this.initRun(workflow, inputData, options, baseLogger);
 
     yield workflowStarted(executionId, workflow.id);
     emitHookEvent('workflow.started', {
@@ -179,32 +181,42 @@ export class OrchestrationEngine {
       userId: options.userId,
     });
 
-    // `withSpanGenerator` activates the workflow.execute span as the OTEL
-    // active context across yields. Nested workflow.step spans (sequential
-    // and parallel) and any deeper helper-`withSpan` calls automatically
-    // see workflow.execute as their parent in OTLP backends — one trace
-    // per execution, end-to-end.
-    yield* withSpanGenerator(
-      SPAN_WORKFLOW_EXECUTE,
-      {
-        [SUNRISE_EXECUTION_ID]: executionId,
-        [SUNRISE_WORKFLOW_ID]: workflow.id,
-        [SUNRISE_USER_ID]: options.userId,
-      },
-      (workflowSpan) =>
-        this.executeInner(
-          workflowSpan,
-          workflow,
-          executionId,
-          trace,
-          budgetLimitUsd,
-          ctx,
-          resumeAfterStepId,
-          baseLogger,
-          options
-        ),
-      { manualStatus: true }
-    );
+    // Heartbeat extends the lease while a long single step (multi-minute LLM call,
+    // slow external_call) is in flight, so the orphan sweep doesn't claim a healthy run.
+    // `try/finally` ensures the timer is cleared on early termination — cancellation,
+    // throw, or generator return — even if the consumer stops iterating.
+    const stopHeartbeat = startHeartbeat(executionId, leaseToken);
+    try {
+      // `withSpanGenerator` activates the workflow.execute span as the OTEL
+      // active context across yields. Nested workflow.step spans (sequential
+      // and parallel) and any deeper helper-`withSpan` calls automatically
+      // see workflow.execute as their parent in OTLP backends — one trace
+      // per execution, end-to-end.
+      yield* withSpanGenerator(
+        SPAN_WORKFLOW_EXECUTE,
+        {
+          [SUNRISE_EXECUTION_ID]: executionId,
+          [SUNRISE_WORKFLOW_ID]: workflow.id,
+          [SUNRISE_USER_ID]: options.userId,
+        },
+        (workflowSpan) =>
+          this.executeInner(
+            workflowSpan,
+            workflow,
+            executionId,
+            leaseToken,
+            trace,
+            budgetLimitUsd,
+            ctx,
+            resumeAfterStepId,
+            baseLogger,
+            options
+          ),
+        { manualStatus: true }
+      );
+    } finally {
+      stopHeartbeat();
+    }
   }
 
   /**
@@ -219,6 +231,7 @@ export class OrchestrationEngine {
     workflowSpan: Span,
     workflow: ExecuteWorkflowArg,
     executionId: string,
+    leaseToken: string,
     trace: ExecutionTraceEntry[],
     budgetLimitUsd: number | undefined,
     ctx: ExecutionContext,
@@ -365,6 +378,7 @@ export class OrchestrationEngine {
             ctx,
             trace,
             executionId,
+            leaseToken,
             budgetLimitUsd,
             baseLogger
           );
@@ -533,6 +547,7 @@ export class OrchestrationEngine {
           ctx,
           trace,
           executionId,
+          leaseToken,
           budgetLimitUsd,
           baseLogger
         );
@@ -576,7 +591,7 @@ export class OrchestrationEngine {
       // 3. Terminal event
       // --------------------------------------------------------------
       if (!failed) {
-        await this.finalize(executionId, ctx, trace, WorkflowStatus.COMPLETED, null);
+        await this.finalize(executionId, leaseToken, ctx, trace, WorkflowStatus.COMPLETED, null);
         yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
         emitHookEvent('workflow.completed', {
           executionId,
@@ -588,6 +603,7 @@ export class OrchestrationEngine {
       } else {
         await this.finalize(
           executionId,
+          leaseToken,
           ctx,
           trace,
           WorkflowStatus.FAILED,
@@ -861,6 +877,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
+    leaseToken: string,
     budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): AsyncGenerator<
@@ -889,6 +906,7 @@ export class OrchestrationEngine {
           ctx,
           trace,
           executionId,
+          leaseToken,
           budgetLimitUsd,
           baseLogger
         ),
@@ -907,6 +925,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
+    leaseToken: string,
     budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): AsyncGenerator<
@@ -926,6 +945,7 @@ export class OrchestrationEngine {
       ctx,
       trace,
       executionId,
+      leaseToken,
       budgetLimitUsd,
       baseLogger
     );
@@ -952,6 +972,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
+    leaseToken: string,
     budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): AsyncGenerator<
@@ -967,7 +988,7 @@ export class OrchestrationEngine {
     unknown
   > {
     yield stepStarted(step.id, step.type, step.name);
-    await this.markCurrentStep(executionId, step.id);
+    await this.markCurrentStep(executionId, leaseToken, step.id);
 
     const started = Date.now();
     const telemetryOut: LlmTelemetryEntry[] = [];
@@ -1003,7 +1024,7 @@ export class OrchestrationEngine {
           typeof err.payload === 'object' && err.payload !== null
             ? (err.payload as Record<string, unknown>)
             : undefined;
-        await this.pauseForApproval(executionId, ctx, trace, step.id, approvalData);
+        await this.pauseForApproval(executionId, leaseToken, ctx, trace, step.id, approvalData);
         yield approvalRequired(step.id, err.payload);
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
@@ -1056,7 +1077,7 @@ export class OrchestrationEngine {
         input: step.config,
         ...rollupTelemetry(telemetryOut),
       });
-      await this.checkpoint(executionId, ctx, trace);
+      await this.checkpoint(executionId, leaseToken, ctx, trace);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id);
       return { failed: true, paused: false, terminal: true, failureReason: reason, nextIds: [] };
@@ -1078,7 +1099,7 @@ export class OrchestrationEngine {
       input: step.config,
       ...rollupTelemetry(telemetryOut),
     });
-    await this.checkpoint(executionId, ctx, trace);
+    await this.checkpoint(executionId, leaseToken, ctx, trace);
 
     // Budget check — runs BEFORE step_completed so the event stream's
     // causality is honest. If this step's cost pushes the run over budget,
@@ -1150,6 +1171,7 @@ export class OrchestrationEngine {
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     executionId: string,
+    leaseToken: string,
     budgetLimitUsd: number | undefined,
     baseLogger: Logger
   ): Promise<{
@@ -1169,7 +1191,7 @@ export class OrchestrationEngine {
 
     // Mark all steps as current (best-effort).
     for (const step of steps) {
-      void this.markCurrentStep(executionId, step.id);
+      void this.markCurrentStep(executionId, leaseToken, step.id);
     }
 
     // Run all steps concurrently. Each step runs its full strategy
@@ -1281,7 +1303,14 @@ export class OrchestrationEngine {
           typeof outcome.value.payload === 'object' && outcome.value.payload !== null
             ? (outcome.value.payload as Record<string, unknown>)
             : undefined;
-        await this.pauseForApproval(executionId, ctx, trace, step.id, batchApprovalData);
+        await this.pauseForApproval(
+          executionId,
+          leaseToken,
+          ctx,
+          trace,
+          step.id,
+          batchApprovalData
+        );
         allEvents.push(approvalRequired(step.id, outcome.value.payload));
         batchPaused = true;
         continue;
@@ -1313,7 +1342,7 @@ export class OrchestrationEngine {
           input: step.config,
           ...rollupTelemetry(telemetryOut),
         });
-        await this.checkpoint(executionId, ctx, trace);
+        await this.checkpoint(executionId, leaseToken, ctx, trace);
         allEvents.push(workflowFailed(sanitizeError(error), step.id));
         batchFailed = true;
         batchFailureReason = sanitizeError(error);
@@ -1337,7 +1366,7 @@ export class OrchestrationEngine {
         input: step.config,
         ...rollupTelemetry(telemetryOut),
       });
-      await this.checkpoint(executionId, ctx, trace);
+      await this.checkpoint(executionId, leaseToken, ctx, trace);
 
       if (stepResult.skipped) {
         allEvents.push(stepFailed(step.id, stepResult.skipError ?? 'Step skipped', false));
@@ -1557,6 +1586,7 @@ export class OrchestrationEngine {
     budgetLimitUsd?: number;
     ctx: ExecutionContext;
     resumeAfterStepId?: string;
+    leaseToken: string;
   }> {
     if (options.resumeFromExecutionId) {
       const row = await prisma.aiWorkflowExecution.findUnique({
@@ -1564,6 +1594,16 @@ export class OrchestrationEngine {
       });
       if (!row) {
         throw new Error(`Execution row ${options.resumeFromExecutionId} not found`);
+      }
+      // Approval-resume vs. orphan-resume drives whether `recoveryAttempts` increments.
+      // Approval pauses are clean state boundaries — no recovery cost. Orphan resume re-runs
+      // the in-flight step so it counts against the cap that the orphan sweep enforces.
+      const isOrphanResume = row.status === WorkflowStatus.RUNNING;
+      const leaseToken = await claimLease(row.id, {
+        incrementRecoveryAttempts: isOrphanResume,
+      });
+      if (!leaseToken) {
+        throw new Error(`Execution ${row.id} is owned by another host (lease conflict on resume)`);
       }
       const rawTrace = row.executionTrace;
       const trace: ExecutionTraceEntry[] = Array.isArray(rawTrace)
@@ -1597,8 +1637,8 @@ export class OrchestrationEngine {
           ctx.stepOutputs[entry.stepId] = entry.output;
         }
       }
-      await prisma.aiWorkflowExecution.update({
-        where: { id: row.id },
+      await prisma.aiWorkflowExecution.updateMany({
+        where: { id: row.id, leaseToken },
         data: { status: WorkflowStatus.RUNNING, startedAt: row.startedAt ?? new Date() },
       });
       return {
@@ -1607,9 +1647,12 @@ export class OrchestrationEngine {
         budgetLimitUsd: ctx.budgetLimitUsd,
         ctx,
         resumeAfterStepId: row.currentStep ?? undefined,
+        leaseToken,
       };
     }
 
+    const leaseToken = generateLeaseToken();
+    const now = new Date();
     const row = await prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
@@ -1621,7 +1664,10 @@ export class OrchestrationEngine {
         totalTokensUsed: 0,
         totalCostUsd: 0,
         budgetLimitUsd: options.budgetLimitUsd ?? null,
-        startedAt: new Date(),
+        startedAt: now,
+        leaseToken,
+        leaseExpiresAt: leaseExpiry(now),
+        lastHeartbeatAt: now,
       },
     });
 
@@ -1636,7 +1682,13 @@ export class OrchestrationEngine {
       logger: baseLogger.withContext({ executionId: row.id }),
     });
 
-    return { executionId: row.id, trace: [], budgetLimitUsd: options.budgetLimitUsd, ctx };
+    return {
+      executionId: row.id,
+      trace: [],
+      budgetLimitUsd: options.budgetLimitUsd,
+      ctx,
+      leaseToken,
+    };
   }
 
   /** Walk edges from a given step id without executing it (resume helper). */
@@ -1646,11 +1698,21 @@ export class OrchestrationEngine {
     return step.nextSteps.map((e) => e.targetStepId);
   }
 
-  private async markCurrentStep(executionId: string, stepId: string): Promise<void> {
+  private async markCurrentStep(
+    executionId: string,
+    leaseToken: string,
+    stepId: string
+  ): Promise<void> {
     try {
-      await prisma.aiWorkflowExecution.update({
-        where: { id: executionId },
-        data: { currentStep: stepId },
+      // Lease-guarded: a stale-token holder's update silently no-ops via count=0.
+      // Refresh the lease in the same UPDATE so step transitions also extend ownership.
+      await prisma.aiWorkflowExecution.updateMany({
+        where: { id: executionId, leaseToken },
+        data: {
+          currentStep: stepId,
+          leaseExpiresAt: leaseExpiry(),
+          lastHeartbeatAt: new Date(),
+        },
       });
     } catch (err) {
       // Non-fatal.
@@ -1660,18 +1722,29 @@ export class OrchestrationEngine {
 
   private async checkpoint(
     executionId: string,
+    leaseToken: string,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[]
   ): Promise<void> {
     try {
-      await prisma.aiWorkflowExecution.update({
-        where: { id: executionId },
+      const result = await prisma.aiWorkflowExecution.updateMany({
+        where: { id: executionId, leaseToken },
         data: {
           executionTrace: trace as unknown as object,
           totalTokensUsed: ctx.totalTokensUsed,
           totalCostUsd: ctx.totalCostUsd,
+          leaseExpiresAt: leaseExpiry(),
+          lastHeartbeatAt: new Date(),
         },
       });
+      if (result.count === 0) {
+        // Lease lost — another host has claimed this run. The orphan sweep handed it off
+        // because our heartbeat lapsed. Future writes from this run will keep no-opping;
+        // the new owner is the source of truth.
+        ctx.logger.warn('Checkpoint: lease lost — another host owns this run', {
+          executionId,
+        });
+      }
     } catch (err) {
       ctx.logger.error('Checkpoint failed — in-memory trace may diverge from DB', {
         executionId,
@@ -1682,20 +1755,26 @@ export class OrchestrationEngine {
 
   private async pauseForApproval(
     executionId: string,
+    leaseToken: string,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     stepId: string,
     approvalPayload?: Record<string, unknown>
   ): Promise<void> {
     try {
-      await prisma.aiWorkflowExecution.update({
-        where: { id: executionId },
+      // Atomic terminal-state-and-lease-clear: the row stops being driven the moment its
+      // status flips, so a separate releaseLease() call would leave a brief window where
+      // the orphan sweep could mistake a paused row for a stuck-running one.
+      await prisma.aiWorkflowExecution.updateMany({
+        where: { id: executionId, leaseToken },
         data: {
           status: WorkflowStatus.PAUSED_FOR_APPROVAL,
           currentStep: stepId,
           executionTrace: trace as unknown as object,
           totalTokensUsed: ctx.totalTokensUsed,
           totalCostUsd: ctx.totalCostUsd,
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
     } catch (err) {
@@ -1744,14 +1823,18 @@ export class OrchestrationEngine {
 
   private async finalize(
     executionId: string,
+    leaseToken: string,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     status: WorkflowStatus,
     errorMessage: string | null
   ): Promise<void> {
     try {
-      await prisma.aiWorkflowExecution.update({
-        where: { id: executionId },
+      // Atomic terminal-state-and-lease-clear (same rationale as pauseForApproval).
+      // updateMany returns count=0 if the lease is gone — log + return so we don't
+      // throw on a benign race where the orphan sweep beat us by a hair.
+      const result = await prisma.aiWorkflowExecution.updateMany({
+        where: { id: executionId, leaseToken },
         data: {
           status,
           executionTrace: trace as unknown as object,
@@ -1761,8 +1844,16 @@ export class OrchestrationEngine {
           errorMessage,
           outputData:
             status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull,
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
+      if (result.count === 0) {
+        ctx.logger.warn('finalize: lease lost before terminal write — another host owns this run', {
+          executionId,
+          status,
+        });
+      }
     } catch (err) {
       ctx.logger.error('finalize: DB update failed — execution row is stale', err, {
         executionId,

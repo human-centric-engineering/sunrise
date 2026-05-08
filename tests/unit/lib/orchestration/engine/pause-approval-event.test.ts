@@ -17,6 +17,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUnique: vi.fn(),
     },
   },
@@ -117,13 +118,8 @@ describe('pauseForApproval event emission', () => {
       updatedAt: new Date(),
     } as never);
 
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-      const { where, data } = args as {
-        where: { id: string };
-        data: Record<string, unknown>;
-      };
-      return { id: where.id, ...data };
-    }) as never);
+    // Engine helpers use updateMany. Default count=1 — lease-loss path stays inactive.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   afterEach(() => {
@@ -207,7 +203,7 @@ describe('pauseForApproval event emission', () => {
   });
 
   it('does not emit events when DB update fails', async () => {
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (args: unknown) => {
       const { data } = args as { data: Record<string, unknown> };
       if (data.status === 'paused_for_approval') {
         throw new Error('DB connection lost');

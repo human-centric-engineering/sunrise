@@ -16,6 +16,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
   },
@@ -132,13 +133,10 @@ describe('OrchestrationEngine', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as never);
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-      const { where, data } = args as {
-        where: { id: string };
-        data: Record<string, unknown>;
-      };
-      return { id: where.id, ...data };
-    }) as never);
+    // Engine helpers (markCurrentStep, checkpoint, pauseForApproval, finalize) use
+    // updateMany with a leaseToken guard. Default mock returns count=1 so the
+    // lease-loss path doesn't fire in tests that don't explicitly exercise it.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   afterEach(() => {
@@ -165,9 +163,9 @@ describe('OrchestrationEngine', () => {
 
     // Checkpoint after each completed step: verify the trace and cost totals
     // are written on the step-checkpoint call (nac=1 / mp=1 fix).
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith(
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'exec_test' },
+        where: expect.objectContaining({ id: 'exec_test' }),
         data: expect.objectContaining({
           executionTrace: expect.any(Array),
           totalTokensUsed: expect.any(Number),
@@ -273,7 +271,7 @@ describe('OrchestrationEngine', () => {
 
     // Row should have been flipped to paused_for_approval.
     const pauseCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(
         ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
       );
@@ -545,7 +543,7 @@ describe('OrchestrationEngine', () => {
     expect(firstStarted.type === 'step_started' && firstStarted.stepId).toBe('b');
 
     // Row should have been flipped to RUNNING during resume
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith(
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'running' }) })
     );
   });
@@ -672,7 +670,7 @@ describe('OrchestrationEngine', () => {
 
     // Make checkpoint (update) fail on all but the first call (create needs to work)
     let updateCalls = 0;
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
       updateCalls++;
       if (updateCalls <= 2) throw new Error('DB down');
       return {};
@@ -692,7 +690,7 @@ describe('OrchestrationEngine', () => {
     // SSE consumer sees an error rather than a clean workflow_completed.
     registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
 
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (args: unknown) => {
       const { data } = args as { data: Record<string, unknown> };
       if ('completedAt' in data) throw new Error('finalize DB down');
       return {};
@@ -737,7 +735,7 @@ describe('OrchestrationEngine', () => {
 
     // Make all update calls fail so the pauseForApproval write (which sets
     // status: 'paused_for_approval') also fails.
-    vi.mocked(prisma.aiWorkflowExecution.update).mockRejectedValue(
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockRejectedValue(
       new Error('pauseForApproval DB down')
     );
 
@@ -1369,7 +1367,7 @@ describe('OrchestrationEngine', () => {
 
     await collect(new OrchestrationEngine(), makeWorkflow(def));
 
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     const lastTrace = calls
       .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
       .filter(Array.isArray)
@@ -1408,7 +1406,7 @@ describe('OrchestrationEngine', () => {
 
     // The persisted trace entry for the failed step should reflect both
     // attempts' partial cost (sum: 100 tokens / $0.010).
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     const lastTrace = calls
       .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
       .filter(Array.isArray)
@@ -1615,7 +1613,7 @@ describe('OrchestrationEngine', () => {
 
     // DB row must have been flipped to paused_for_approval.
     const pauseCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(
         ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
       );
@@ -2205,7 +2203,7 @@ describe('OrchestrationEngine', () => {
 
     // DB update during resume must have been called with a non-null startedAt.
     const resumeUpdateCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(([arg]) => {
         const { data } = arg as { data: { status?: string; startedAt?: Date } };
         return data.status === 'running' && data.startedAt instanceof Date;
@@ -2381,7 +2379,7 @@ describe('OrchestrationEngine', () => {
     }));
 
     let updateCalls = 0;
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
       updateCalls++;
       if (updateCalls === 2) {
         // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -2927,7 +2925,7 @@ describe('OrchestrationEngine', () => {
 
   /** Pull the persisted trace out of the most recent prisma.update call. */
   function lastWrittenTrace(): unknown[] {
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     for (let i = calls.length - 1; i >= 0; i--) {
       const args = calls[i][0] as { data?: { executionTrace?: unknown } };
       if (Array.isArray(args.data?.executionTrace)) {
