@@ -1,24 +1,43 @@
 'use client';
 
 /**
- * ProviderModelsPanel (Phase 4 Session 4.3)
+ * ProviderModelsPanel
  *
  * Model catalogue for a single provider, rendered inside a dialog on
  * the providers list page. Fetches `GET /providers/:id/models` on
- * mount. Local providers (`isLocal: true`) hide pricing columns
- * because pricing is N/A for self-hosted inference.
+ * mount; the route LEFT JOINs against `AiProviderModel` so each row
+ * carries `inMatrix`, `capabilities`, and `tierRole` annotations
+ * (Phase A). Local providers (`isLocal: true`) hide pricing columns.
  *
- * Each model row has a "Test" button that sends a trivial prompt via
- * POST /providers/:id/test-model and reports round-trip latency.
+ * The panel offers three controls so the operator can navigate large
+ * vendor catalogues without the dialog turning into a wall of rows:
+ *
+ *   - Search input — substring match on `id` + `name`
+ *   - Capability filter chips (Chat / Embedding / Image / Audio /
+ *     Other) — multi-select; "Other" buckets reasoning, moderation,
+ *     and unknown
+ *   - Two sections — "In your matrix" (matched against the curated
+ *     `AiProviderModel` rows, default expanded) and "Discovered"
+ *     (everything else, default expanded only when no matrix rows
+ *     match — keeps the dialog tight by default)
+ *
+ * Per-row Test button is capability-aware (Phase B/C): chat and
+ * embedding rows trigger the live SDK roundtrip via
+ * `POST /providers/:id/test-model` with the inferred capability;
+ * everything else renders a disabled button with a Tip explaining
+ * why (e.g. "Reasoning models use the /v1/responses API — testing
+ * through this panel is not supported yet").
  *
  * Errors are never raw — the server route already sanitizes the
  * upstream SDK error; we layer a friendly fallback on top.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Play, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Loader2, Play, RefreshCw } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -27,6 +46,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
@@ -40,10 +60,7 @@ export interface ProviderModelInfo {
   maxContext: number;
   supportsTools: boolean;
   available?: boolean;
-  // Phase A enrichment — matrix LEFT JOIN + capability inference. The
-  // panel uses these to show "In matrix" badges, capability filters,
-  // and to route the per-row Test button by capability instead of
-  // blindly calling chat.completions.
+  // Phase A enrichment.
   inMatrix?: boolean;
   matrixId?: string | null;
   capabilities?: string[];
@@ -56,10 +73,13 @@ interface ProviderModelsResponse {
   models: ProviderModelInfo[];
 }
 
+type Capability = 'chat' | 'reasoning' | 'embedding' | 'image' | 'audio' | 'moderation' | 'unknown';
+
 interface TestModelResult {
   ok: boolean;
   latencyMs: number | null;
   error?: string;
+  message?: string;
 }
 
 export interface ProviderModelsPanelProps {
@@ -70,18 +90,66 @@ export interface ProviderModelsPanelProps {
   apiKeyPresent?: boolean;
 }
 
+// Filter chip buckets — "Other" lumps together reasoning / moderation
+// / unknown so the chips stay readable even on OpenAI's catalogue.
+type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
+
+const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'embedding', label: 'Embedding' },
+  { id: 'image', label: 'Image' },
+  { id: 'audio', label: 'Audio' },
+  { id: 'other', label: 'Other' },
+];
+
+const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding'];
+
+// Per-capability reason for a disabled test button. Shown in the Tip
+// label so the operator understands why the button isn't actionable
+// instead of assuming the panel is broken.
+const UNTESTABLE_REASON: Partial<Record<Capability, string>> = {
+  reasoning:
+    'Reasoning models use the /v1/responses API — testing through this panel is not supported yet.',
+  image: "Image generation models can't be tested through this panel.",
+  audio: "Audio models (transcription / synthesis) can't be tested through this panel.",
+  moderation: "Moderation models can't be tested through this panel.",
+  unknown: "Unknown model type — we don't have a test surface for this capability.",
+};
+
+function primaryCapability(model: ProviderModelInfo): Capability {
+  // Default to 'chat' when the route didn't enrich. Keeps backwards
+  // compat with anything that calls listModels() without the matrix
+  // LEFT JOIN — they get a usable test button instead of a disabled
+  // one.
+  const list = model.capabilities;
+  if (!list || list.length === 0) return 'chat';
+  return list[0] as Capability;
+}
+
+function bucketFor(cap: Capability): FilterBucket {
+  if (cap === 'chat') return 'chat';
+  if (cap === 'embedding') return 'embedding';
+  if (cap === 'image') return 'image';
+  if (cap === 'audio') return 'audio';
+  return 'other';
+}
+
 export function ProviderModelsPanel({
   providerId,
   providerName,
   isLocal,
   apiKeyPresent = true,
-}: ProviderModelsPanelProps) {
+}: ProviderModelsPanelProps): React.ReactElement {
   const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
   const shouldFetch = apiKeyPresent || isLocal;
   const [loading, setLoading] = useState(shouldFetch);
   const [error, setError] = useState<string | null>(null);
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestModelResult>>({});
+  const [search, setSearch] = useState('');
+  const [activeBuckets, setActiveBuckets] = useState<Set<FilterBucket>>(new Set());
+  const [discoveredOpen, setDiscoveredOpen] = useState(false);
+  const [matrixOpen, setMatrixOpen] = useState(true);
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -90,7 +158,14 @@ export function ProviderModelsPanel({
       const response = await apiClient.get<ProviderModelsResponse>(
         API.ADMIN.ORCHESTRATION.providerModels(providerId)
       );
-      setModels(response.models ?? []);
+      const list = response.models ?? [];
+      setModels(list);
+      // Auto-expand Discovered when the matrix has zero matches —
+      // otherwise the dialog looks empty until the operator clicks
+      // through. When it has at least one matrix match, default the
+      // section closed to keep the matched rows the focus.
+      const hasMatrix = list.some((m) => m.inMatrix);
+      setDiscoveredOpen(!hasMatrix);
     } catch {
       setError("Couldn't load models. Check the server logs for details.");
       setModels(null);
@@ -100,16 +175,20 @@ export function ProviderModelsPanel({
   }, [providerId]);
 
   const handleTestModel = useCallback(
-    async (modelId: string) => {
-      setTestingModel(modelId);
+    async (model: ProviderModelInfo) => {
+      const cap = primaryCapability(model);
+      setTestingModel(model.id);
       try {
         const result = await apiClient.post<TestModelResult>(
           API.ADMIN.ORCHESTRATION.providerTestModel(providerId),
-          { body: { model: modelId } }
+          { body: { model: model.id, capability: cap } }
         );
-        setTestResults((prev) => ({ ...prev, [modelId]: result }));
+        setTestResults((prev) => ({ ...prev, [model.id]: result }));
       } catch {
-        setTestResults((prev) => ({ ...prev, [modelId]: { ok: false, latencyMs: null } }));
+        setTestResults((prev) => ({
+          ...prev,
+          [model.id]: { ok: false, latencyMs: null },
+        }));
       } finally {
         setTestingModel(null);
       }
@@ -121,6 +200,37 @@ export function ProviderModelsPanel({
     if (!shouldFetch) return;
     void fetchModels();
   }, [fetchModels, shouldFetch]);
+
+  const toggleBucket = useCallback((bucket: FilterBucket) => {
+    setActiveBuckets((prev) => {
+      const next = new Set(prev);
+      if (next.has(bucket)) next.delete(bucket);
+      else next.add(bucket);
+      return next;
+    });
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!models) return null;
+    const q = search.trim().toLowerCase();
+    return models.filter((m) => {
+      // Substring search on id + name. Empty string matches everything.
+      if (q && !`${m.id} ${m.name}`.toLowerCase().includes(q)) return false;
+      // Empty filter set means "all" — only narrow when the operator
+      // has selected at least one chip.
+      if (activeBuckets.size === 0) return true;
+      return activeBuckets.has(bucketFor(primaryCapability(m)));
+    });
+  }, [models, search, activeBuckets]);
+
+  const matrixMatches = useMemo(
+    () => (filtered ? filtered.filter((m) => m.inMatrix) : []),
+    [filtered]
+  );
+  const discovered = useMemo(
+    () => (filtered ? filtered.filter((m) => !m.inMatrix) : []),
+    [filtered]
+  );
 
   return (
     <div className="space-y-3">
@@ -176,84 +286,229 @@ export function ProviderModelsPanel({
       )}
 
       {models && models.length > 0 && (
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Model</TableHead>
-                <TableHead>Context</TableHead>
-                <TableHead>Tier</TableHead>
-                {!isLocal && (
-                  <>
-                    <TableHead className="text-right">Input $/1M</TableHead>
-                    <TableHead className="text-right">Output $/1M</TableHead>
-                  </>
-                )}
-                <TableHead className="text-right">Available</TableHead>
-                <TableHead className="text-right">Test</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {models.map((m) => {
-                const result = testResults[m.id];
-                const isTesting = testingModel === m.id;
+        <>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              placeholder="Search models by id or name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="sm:max-w-sm"
+              aria-label="Search models"
+            />
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by capability">
+              {FILTER_BUCKETS.map((b) => {
+                const active = activeBuckets.has(b.id);
                 return (
-                  <TableRow key={m.id}>
-                    <TableCell>
-                      <div className="font-medium">{m.name}</div>
-                      <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
-                    </TableCell>
-                    <TableCell className="text-xs">{m.maxContext.toLocaleString()} tok</TableCell>
-                    <TableCell>
-                      <span className="text-xs capitalize">{m.tier}</span>
-                    </TableCell>
-                    {!isLocal && (
-                      <>
-                        <TableCell className="text-right text-xs tabular-nums">
-                          ${m.inputCostPerMillion.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-right text-xs tabular-nums">
-                          ${m.outputCostPerMillion.toFixed(2)}
-                        </TableCell>
-                      </>
-                    )}
-                    <TableCell className="text-right">
-                      {m.available === false ? (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      ) : (
-                        <span className="text-xs text-green-600">✓</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {isTesting ? (
-                        <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
-                      ) : result ? (
-                        <span
-                          className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}
-                        >
-                          {result.ok
-                            ? `${result.latencyMs} ms`
-                            : "Didn't respond — check server logs"}
-                        </span>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0"
-                          onClick={() => void handleTestModel(m.id)}
-                          title={`Test ${m.name}`}
-                        >
-                          <Play className="h-3 w-3" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                  <Button
+                    key={b.id}
+                    type="button"
+                    variant={active ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => toggleBucket(b.id)}
+                    aria-pressed={active}
+                  >
+                    {b.label}
+                  </Button>
                 );
               })}
-            </TableBody>
-          </Table>
-        </div>
+            </div>
+          </div>
+
+          {filtered && filtered.length === 0 && (
+            <p className="text-muted-foreground py-6 text-center text-sm">
+              No models match the current filters.
+            </p>
+          )}
+
+          {matrixMatches.length > 0 && (
+            <ModelSection
+              title="In your matrix"
+              count={matrixMatches.length}
+              models={matrixMatches}
+              isLocal={isLocal}
+              testingModel={testingModel}
+              testResults={testResults}
+              onTest={handleTestModel}
+              isOpen={matrixOpen}
+              onToggle={() => setMatrixOpen((v) => !v)}
+            />
+          )}
+
+          {discovered.length > 0 && (
+            <ModelSection
+              title="Discovered"
+              count={discovered.length}
+              models={discovered}
+              isLocal={isLocal}
+              testingModel={testingModel}
+              testResults={testResults}
+              onTest={handleTestModel}
+              isOpen={discoveredOpen}
+              onToggle={() => setDiscoveredOpen((v) => !v)}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface ModelSectionProps {
+  title: string;
+  count: number;
+  models: ProviderModelInfo[];
+  isLocal: boolean;
+  testingModel: string | null;
+  testResults: Record<string, TestModelResult>;
+  onTest: (m: ProviderModelInfo) => void | Promise<void>;
+  isOpen: boolean;
+  onToggle: () => void;
+}
+
+function ModelSection({
+  title,
+  count,
+  models,
+  isLocal,
+  testingModel,
+  testResults,
+  onTest,
+  isOpen,
+  onToggle,
+}: ModelSectionProps): React.ReactElement {
+  return (
+    <div className="rounded-md border">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="hover:bg-muted/50 flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
+        aria-expanded={isOpen}
+      >
+        <span className="flex items-center gap-2">
+          {isOpen ? (
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          )}
+          {title}
+          <span className="text-muted-foreground text-xs">({count})</span>
+        </span>
+      </button>
+      {isOpen && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Model</TableHead>
+              <TableHead>Capabilities</TableHead>
+              <TableHead>Context</TableHead>
+              <TableHead>Tier</TableHead>
+              {!isLocal && (
+                <>
+                  <TableHead className="text-right">Input $/1M</TableHead>
+                  <TableHead className="text-right">Output $/1M</TableHead>
+                </>
+              )}
+              <TableHead className="text-right">Available</TableHead>
+              <TableHead className="text-right">Test</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {models.map((m) => {
+              const result = testResults[m.id];
+              const isTesting = testingModel === m.id;
+              const cap = primaryCapability(m);
+              const testable = CAPABILITIES_TESTABLE.includes(cap);
+              return (
+                <TableRow key={m.id}>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium">{m.name}</span>
+                      {m.inMatrix && (
+                        <Badge
+                          variant="outline"
+                          className="border-green-600/40 text-[10px] text-green-700 dark:text-green-400"
+                        >
+                          In matrix
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(m.capabilities ?? ['chat']).map((c) => (
+                        <Badge key={c} variant="secondary" className="text-[10px] capitalize">
+                          {c}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs">{m.maxContext.toLocaleString()} tok</TableCell>
+                  <TableCell>
+                    <span className="text-xs capitalize">{m.tier}</span>
+                  </TableCell>
+                  {!isLocal && (
+                    <>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        ${m.inputCostPerMillion.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right text-xs tabular-nums">
+                        ${m.outputCostPerMillion.toFixed(2)}
+                      </TableCell>
+                    </>
+                  )}
+                  <TableCell className="text-right">
+                    {m.available === false ? (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    ) : (
+                      <span className="text-xs text-green-600">✓</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {isTesting ? (
+                      <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
+                    ) : result ? (
+                      <span className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}>
+                        {result.ok
+                          ? `${result.latencyMs} ms`
+                          : (result.message ?? "Didn't respond — check server logs")}
+                      </span>
+                    ) : testable ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => {
+                          void onTest(m);
+                        }}
+                        title={`Test ${m.name}`}
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                    ) : (
+                      <Tip label={UNTESTABLE_REASON[cap] ?? UNTESTABLE_REASON.unknown ?? ''}>
+                        <span className="inline-flex">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 opacity-50"
+                            disabled
+                            aria-label={`Test not supported for ${m.name}`}
+                          >
+                            <Play className="h-3 w-3" />
+                          </Button>
+                        </span>
+                      </Tip>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
     </div>
   );

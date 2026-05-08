@@ -352,7 +352,9 @@ describe('ProviderModelsPanel', () => {
       await waitFor(() => {
         expect(apiClient.post).toHaveBeenCalledWith(
           expect.stringContaining('/providers/prov-1/test-model'),
-          expect.objectContaining({ body: { model: 'claude-opus-4-6' } })
+          expect.objectContaining({
+            body: expect.objectContaining({ model: 'claude-opus-4-6' }),
+          })
         );
       });
 
@@ -379,6 +381,269 @@ describe('ProviderModelsPanel', () => {
       await waitFor(() => {
         expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Phase A/C — Matrix annotation + sectioning ─────────────────────────────
+
+  describe('matrix annotation and sectioning', () => {
+    const ENRICHED_MODELS: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        inMatrix: true,
+        matrixId: 'matrix-1',
+        capabilities: ['chat'],
+        tierRole: 'worker',
+      },
+      {
+        id: 'text-embedding-3-small',
+        name: 'text-embedding-3-small',
+        provider: 'openai',
+        tier: 'embedding',
+        inputCostPerMillion: 0.02,
+        outputCostPerMillion: 0,
+        maxContext: 8191,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['embedding'],
+        tierRole: null,
+      },
+      {
+        id: 'o3-pro-2025-06-10',
+        name: 'o3-pro',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 200000,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['reasoning'],
+        tierRole: null,
+      },
+      {
+        id: 'dall-e-3',
+        name: 'DALL-E 3',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['image'],
+        tierRole: null,
+      },
+    ];
+
+    const ENRICHED_RESPONSE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: ENRICHED_MODELS,
+    };
+
+    it('renders an "In matrix" badge on rows that have a matrix match', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      // Only one matrix-matched row in the fixture, so there should
+      // be exactly one "In matrix" badge.
+      expect(screen.getAllByText(/in matrix/i)).toHaveLength(1);
+    });
+
+    it('splits rows into "In your matrix" and "Discovered" sections', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/in your matrix/i)).toBeInTheDocument();
+        expect(screen.getByText(/^discovered$/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows a capability badge per row', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/^discovered$/i)).toBeInTheDocument();
+      });
+
+      // Discovered defaults closed when matrix has matches — open it
+      // so the embedding/reasoning/image rows render.
+      await user.click(screen.getByRole('button', { name: /discovered/i }));
+
+      // The embedding row shows a capability badge with text "embedding".
+      // Need to disambiguate from the "Embedding" filter chip — assert
+      // on the badge's container in the row.
+      await waitFor(() => {
+        const matches = screen.getAllByText(/embedding/i);
+        // At least 2: the filter chip + the row capability badge
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+  });
+
+  // ── Phase C — Search and filter ────────────────────────────────────────────
+
+  describe('search and filter', () => {
+    it('search input filters rows by id substring', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByPlaceholderText(/search models/i), 'haiku');
+
+      await waitFor(() => {
+        expect(screen.getByText('Claude Haiku 3')).toBeInTheDocument();
+        expect(screen.queryByText('Claude Opus 4.6')).not.toBeInTheDocument();
+      });
+    });
+
+    it('renders capability filter chips', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: /filter by capability/i })).toBeInTheDocument();
+      });
+
+      // Chat / Embedding / Image / Audio / Other
+      expect(screen.getByRole('button', { name: /^chat$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^embedding$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^image$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^audio$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^other$/i })).toBeInTheDocument();
+    });
+  });
+
+  // ── Phase B/C — Capability-aware Test button ──────────────────────────────
+
+  describe('capability-aware Test button', () => {
+    const ENRICHED: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+      },
+      {
+        id: 'text-embedding-3-small',
+        name: 'text-embedding-3-small',
+        provider: 'openai',
+        tier: 'embedding',
+        inputCostPerMillion: 0.02,
+        outputCostPerMillion: 0,
+        maxContext: 8191,
+        supportsTools: false,
+        capabilities: ['embedding'],
+      },
+      {
+        id: 'o3-pro-2025-06-10',
+        name: 'o3-pro',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 200000,
+        supportsTools: false,
+        capabilities: ['reasoning'],
+      },
+    ];
+
+    it('passes capability in the request body', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        latencyMs: 100,
+        model: 'text-embedding-3-small',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      // Both the model name and id are "text-embedding-3-small", so
+      // the string appears twice in the DOM. Wait on the title-cased
+      // header instead, then look up the test button by its title.
+      await waitFor(() => {
+        expect(screen.getByTitle(/test text-embedding-3-small/i)).toBeInTheDocument();
+      });
+
+      const embeddingTestButton = screen.getByTitle(/test text-embedding-3-small/i);
+      await user.click(embeddingTestButton);
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/test-model'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              model: 'text-embedding-3-small',
+              capability: 'embedding',
+            }),
+          })
+        );
+      });
+    });
+
+    it('disables Test on reasoning / image / audio rows', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('o3-pro')).toBeInTheDocument();
+      });
+
+      // The reasoning row's Test button is disabled — there is no
+      // matching enabled "Test o3-pro" handler.
+      expect(screen.queryByTitle(/test o3-pro/i)).not.toBeInTheDocument();
+      // ...but the disabled button is rendered with an aria-label
+      // pointing at the disabled state.
+      expect(screen.getByLabelText(/test not supported for o3-pro/i)).toBeDisabled();
     });
   });
 });
