@@ -691,4 +691,123 @@ describe('ProviderModelsPanel', () => {
       expect(screen.getByLabelText(/test not supported for o3-pro/i)).toBeDisabled();
     });
   });
+
+  // ── Phase G — Add to matrix button ─────────────────────────────────────────
+
+  describe('Add to matrix button', () => {
+    const ENRICHED: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+        inMatrix: false,
+      },
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 2.5,
+        outputCostPerMillion: 10,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+        inMatrix: true,
+      },
+    ];
+
+    it('renders an Add button on rows that are not in the matrix', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      // Non-matrix row → Add button rendered.
+      expect(screen.getByLabelText(/add gpt-4o mini to matrix/i)).toBeInTheDocument();
+      // Matrix row → no Add button (the cell shows a dash).
+      expect(screen.queryByLabelText(/^add gpt-4o to matrix$/i)).not.toBeInTheDocument();
+    });
+
+    it('clicking Add opens the discovery dialog with provider preselected', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        // Initial panel fetch returns the candidate list. The dialog's
+        // own discovery fetch reuses the same mock — return an
+        // appropriate shape for /discovery/models too so the dialog
+        // can render its candidates table.
+        if (url.includes('/discovery/models')) {
+          return Promise.resolve({
+            providerSlug: 'openai',
+            candidates: [
+              {
+                modelId: 'gpt-4o-mini',
+                name: 'GPT-4o mini',
+                sources: { vendor: true, openrouter: false },
+                inMatrix: false,
+                matrixId: null,
+                inferredCapability: 'chat',
+                suggested: {
+                  capabilities: ['chat'],
+                  tierRole: 'worker',
+                  reasoningDepth: 'medium',
+                  latency: 'fast',
+                  costEfficiency: 'very_high',
+                  contextLength: 'high',
+                  toolUse: 'strong',
+                  bestRole: 'Quick worker for tool calls',
+                  inputCostPerMillion: 0.15,
+                  outputCostPerMillion: 0.6,
+                  maxContext: 128000,
+                  slug: 'openai-gpt-4o-mini',
+                },
+              },
+            ],
+          });
+        }
+        return Promise.resolve({
+          providerId: 'prov-2',
+          slug: 'openai',
+          models: ENRICHED,
+        });
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/add gpt-4o mini to matrix/i)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText(/add gpt-4o mini to matrix/i));
+
+      // Dialog mounted — discovery step heading should be visible
+      // (provider step skipped because providerSlug was preselected).
+      await waitFor(() => {
+        // The dialog's continue button only shows in step 2/3.
+        expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument();
+      });
+
+      // The pre-checked row's checkbox is checked (via prefilledModelIds).
+      await waitFor(() => {
+        const checkbox = screen.getByRole('checkbox', {
+          name: /select gpt-4o mini/i,
+        });
+        expect(checkbox).toBeChecked();
+      });
+    });
+  });
 });

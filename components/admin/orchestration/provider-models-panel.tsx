@@ -32,7 +32,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, Plus, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,7 @@ import {
 import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 
 export interface ProviderModelInfo {
   id: string;
@@ -146,6 +147,10 @@ export function ProviderModelsPanel({
   apiKeyPresent = true,
 }: ProviderModelsPanelProps): React.ReactElement {
   const [models, setModels] = useState<ProviderModelInfo[] | null>(null);
+  // Captured from the response so the Add to matrix dialog can be
+  // pre-filled with the provider's slug (the dialog needs the slug,
+  // not the providerId, to call /discovery/models).
+  const [providerSlug, setProviderSlug] = useState<string | null>(null);
   const shouldFetch = apiKeyPresent || isLocal;
   const [loading, setLoading] = useState(shouldFetch);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +160,11 @@ export function ProviderModelsPanel({
   const [activeBuckets, setActiveBuckets] = useState<Set<FilterBucket>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  // Phase G: when set, the discover-models dialog opens with the
+  // single modelId pre-checked and the provider preselected. Closes
+  // by setting back to null. After a successful add we refetch so
+  // the row's "In matrix" badge appears immediately.
+  const [addModelId, setAddModelId] = useState<string | null>(null);
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -165,6 +175,7 @@ export function ProviderModelsPanel({
       );
       const list = response.models ?? [];
       setModels(list);
+      setProviderSlug(response.slug ?? null);
     } catch {
       setError("Couldn't load models. Check the server logs for details.");
       setModels(null);
@@ -427,6 +438,7 @@ export function ProviderModelsPanel({
                     )}
                     <TableHead className="text-right">Available</TableHead>
                     <TableHead className="text-right">Test</TableHead>
+                    <TableHead className="text-right">Add</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -526,6 +538,29 @@ export function ProviderModelsPanel({
                             </Tip>
                           )}
                         </TableCell>
+                        <TableCell className="text-right">
+                          {m.inMatrix ? (
+                            // Already curated — nothing to add. Spacer keeps the
+                            // column width stable across rows.
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            <Tip
+                              label={`Add ${m.name} to the matrix — opens the discovery dialog with this row pre-selected.`}
+                            >
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                                disabled={!providerSlug}
+                                onClick={() => setAddModelId(m.id)}
+                                aria-label={`Add ${m.name} to matrix`}
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
+                            </Tip>
+                          )}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -534,6 +569,27 @@ export function ProviderModelsPanel({
             </div>
           )}
         </>
+      )}
+
+      {/* Phase G — discovery dialog reuse. Mounted with providerSlug
+          preselected and the single modelId pre-checked, so the
+          operator goes straight to step 2 with the row ready and
+          can move on to review without re-discovering anything. */}
+      {providerSlug && (
+        <DiscoverModelsDialog
+          open={addModelId !== null}
+          onOpenChange={(next) => {
+            if (!next) {
+              setAddModelId(null);
+              // Best-effort refetch so the freshly-added row's "In
+              // matrix" annotation appears without the operator
+              // having to click Refresh.
+              void fetchModels();
+            }
+          }}
+          providerSlug={providerSlug}
+          prefilledModelIds={addModelId ? [addModelId] : []}
+        />
       )}
     </div>
   );
