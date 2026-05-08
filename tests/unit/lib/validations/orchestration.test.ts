@@ -2367,11 +2367,11 @@ describe('turnEntrySchema', () => {
     }
   });
 
-  it('rejects agent_call with phase=continuing but missing toolCall', () => {
+  it('rejects agent_call with phase=continuing but missing toolCall (differential: same input WITH the pair parses)', () => {
     // Arrange — one-sided entry: phase claims continuing but no tool data.
     // The discriminated union must refuse this; with the old optional-fields
     // shape it would have parsed silently and corrupted resume replay.
-    const input = {
+    const baseInput = {
       kind: 'agent_call',
       phase: 'continuing',
       index: 0,
@@ -2381,32 +2381,38 @@ describe('turnEntrySchema', () => {
       costUsd: 0.005,
     };
 
-    // Act
-    const result = turnEntrySchema.safeParse(input);
+    // Act + Assert — failing parse without the pair
+    const failing = turnEntrySchema.safeParse(baseInput);
+    expect(failing.success).toBe(false);
 
-    // Assert — Zod refuses the parse. The continuing-phase schema requires
-    // both toolCall and toolResult; with the old optional-fields shape this
-    // input would have parsed silently and corrupted resume replay (replay
-    // path reads turn.toolCall, turn.toolResult independently).
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      // Ensure the rejection is real (at least one issue) and not a structural
-      // mismatch we'd accidentally accept later. The exact path varies across
-      // Zod's discriminatedUnion error reporting; pin the count instead.
-      expect(result.error.issues.length).toBeGreaterThan(0);
-    }
+    // Differential: adding toolCall + toolResult to the SAME input flips the
+    // result to success. This pins the rejection cause specifically to the
+    // missing pair — an unrelated schema regression (e.g. broken
+    // `assistantContent`) would fail BOTH parses, and this test would also
+    // fail on the second assertion. The two-parse pair guarantees the
+    // refusal is about toolCall/toolResult, not coincidence.
+    const succeeding = turnEntrySchema.safeParse({
+      ...baseInput,
+      toolCall: { id: 'c1', name: 'cap', arguments: {} },
+      toolResult: { ok: true },
+    });
+    expect(succeeding.success).toBe(true);
   });
 
-  it('rejects agent_call with phase=terminal but unexpected toolCall', () => {
-    // Arrange — terminal phase with stray toolCall (the other one-sided shape).
-    // The terminal schema is a strict object so extra discriminator-relevant
-    // fields are not silently accepted.
+  it('strips stray toolCall on phase=terminal entries (Zod strip mode preserves the contract)', () => {
+    // Arrange — terminal phase with stray toolCall. Zod's default object
+    // mode is `strip`, so the unknown field is dropped rather than rejected.
+    // The contract is enforced at TWO layers:
+    //   1. Type layer: TS forbids constructing AgentCallTurnTerminal with toolCall.
+    //   2. Parse layer: terminal schema doesn't declare toolCall, so it's stripped.
+    // Under the OLD shape (single agentCallTurnSchema with optional toolCall),
+    // this input would have parsed AND preserved the toolCall in the output —
+    // which is exactly the data drift we're protecting against.
     const input = {
       kind: 'agent_call',
       phase: 'terminal',
       index: 0,
       assistantContent: 'final',
-      // toolCall here is a contract violation for terminal phase
       toolCall: { id: 'stray', name: 'cap', arguments: {} },
       tokensUsed: 50,
       costUsd: 0.005,
@@ -2415,12 +2421,11 @@ describe('turnEntrySchema', () => {
     // Act
     const result = turnEntrySchema.safeParse(input);
 
-    // Assert — Zod's default object mode is strip, so extra fields are dropped
-    // rather than rejected. The contract is enforced at the type layer (TS
-    // forbids constructing AgentCallTurnTerminal with toolCall) and at the
-    // parsed-shape layer (parsed result has no toolCall, regardless of input).
-    // This test pins that behaviour: parse succeeds, but the parsed shape
-    // CANNOT carry toolCall through.
+    // Assert — parse succeeds AND the parsed output drops the stray toolCall.
+    // Both halves of the assertion are load-bearing: under the old schema
+    // the parse would still succeed (terminal-shape input is structurally
+    // valid for the old optional shape), but the output WOULD carry the
+    // toolCall through. The `not.toHaveProperty` check is what distinguishes.
     expect(result.success).toBe(true);
     if (result.success && result.data.kind === 'agent_call') {
       expect(result.data.phase).toBe('terminal');

@@ -70,7 +70,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getCapabilityDefinitions } from '@/lib/orchestration/capabilities/registry';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
-import type { WorkflowStep } from '@/types/orchestration';
+import type { TurnEntry, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { MockTracer } from '@/tests/helpers/mock-tracer';
 import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
@@ -943,6 +943,52 @@ describe('executeAgentCall', () => {
         'agent_call: resume short-circuit — prior attempt already finalized',
         expect.objectContaining({ stepId: 'step1' })
       );
+    });
+
+    // ── Test 4b: discriminator pin — phase, not toolCall-absence ───────────
+
+    it('single-turn resume short-circuit narrows on phase=terminal even when stray toolCall is present (pins discriminator)', async () => {
+      // Arrange — contrived fixture: phase 'terminal' AND a toolCall present.
+      // This is type-illegal under AgentCallTurn, but a row written before
+      // the discriminator split (or hand-edited) could produce it. The
+      // executor MUST narrow on `phase === 'terminal'`, NOT on `!toolCall`.
+      //
+      // Anti-green-bar role: a regression to the old `if (!lastPrior.toolCall)`
+      // discriminator would FAIL to short-circuit here (toolCall is truthy)
+      // and would call the LLM. This test catches that regression even
+      // though the visible behaviour (short-circuit on a terminal turn) is
+      // unchanged. Every other resume-short-circuit test uses fixtures where
+      // phase=terminal AND toolCall is absent — those don't distinguish
+      // which discriminator the executor uses.
+      //
+      // The cast is necessary because TS rejects the contrived shape; that's
+      // the type system doing its job. We bypass it once, deliberately, to
+      // exercise the runtime check that backs the type-layer guarantee.
+      const contrived = {
+        kind: 'agent_call' as const,
+        phase: 'terminal' as const,
+        index: 0,
+        assistantContent: 'cached final answer',
+        toolCall: { id: 'stray', name: 'cap', arguments: {} },
+        tokensUsed: 50,
+        costUsd: 0.005,
+      } as unknown as TurnEntry;
+
+      const ctx = makeCtx({ resumeTurns: [contrived] });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert — short-circuit fired despite the stray toolCall: NO LLM call.
+      // Under the old `!lastPrior.toolCall` check the executor would have
+      // continued to runSingleTurn (mockChat would have been called).
+      expect(mockChat).not.toHaveBeenCalled();
+      expect(result.output).toBe('cached final answer');
+      // Tokens/cost reflect only the cached prior — proves we returned the
+      // cached result rather than running a new iteration.
+      expect(result.tokensUsed).toBe(50);
+      expect(result.costUsd).toBeCloseTo(0.005);
     });
 
     // ── Test 5: outerTurn-tagged entries excluded from single-turn resume ───
