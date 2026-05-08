@@ -210,11 +210,12 @@ async function runSingleTurn(
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           // Final-answer turn — the assistant chose not to call a tool, so the
-          // step terminates with this content. Recorded with no `toolCall` so
-          // a re-drive's resume logic short-circuits via `lastPrior.toolCall === undefined`.
+          // step terminates with this content. Recorded as `phase: 'terminal'`
+          // so a re-drive's resume short-circuits via the discriminator check.
           if (recordTurn) {
             await recordTurn({
               kind: 'agent_call',
+              phase: 'terminal',
               index: iteration,
               assistantContent: finalContent,
               tokensUsed: turnTokens,
@@ -234,8 +235,8 @@ async function runSingleTurn(
         if (capResult.skipFollowup) {
           finalContent = JSON.stringify(capResult.data ?? capResult);
           // Capability terminated the step (e.g. cost estimate that's the final
-          // answer). Record as a no-toolCall final entry — the assistantContent
-          // is the synthesized result; on re-drive this short-circuits like the
+          // answer). Record as `phase: 'terminal'` — the assistantContent is
+          // the synthesized result; on re-drive this short-circuits like the
           // no-tool-calls path above. We deliberately drop the toolCall info
           // from the entry to keep the resume short-circuit simple; the trace's
           // primary observability of the tool dispatch comes from the dispatcher
@@ -243,6 +244,7 @@ async function runSingleTurn(
           if (recordTurn) {
             await recordTurn({
               kind: 'agent_call',
+              phase: 'terminal',
               index: iteration,
               assistantContent: finalContent,
               tokensUsed: turnTokens,
@@ -255,11 +257,12 @@ async function runSingleTurn(
         // Continuing tool-iteration turn — record assistant content + the
         // chosen tool call + its dispatched result. Replay rebuilds
         // `currentMessages` by re-emitting the assistant + tool message pair
-        // for each entry; the tool dispatch itself is dedup'd by the dispatch
-        // cache, so the replay is free.
+        // for each entry; resume reads the stored toolResult directly (no
+        // re-dispatch), so replay doesn't refire the side effect.
         if (recordTurn) {
           await recordTurn({
             kind: 'agent_call',
+            phase: 'continuing',
             index: iteration,
             assistantContent: response.content,
             toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
@@ -388,11 +391,11 @@ export async function executeAgentCall(
       const resumeTokens = priorIterTurns.reduce((s, t) => s + t.tokensUsed, 0);
       const resumeCost = priorIterTurns.reduce((s, t) => s + t.costUsd, 0);
 
-      // No-toolCall last entry → the prior attempt already produced a final
+      // Terminal-phase last entry → the prior attempt already produced a final
       // answer (either via the LLM emitting no tool calls or a `skipFollowup`
       // capability). Short-circuit: return the cached result without firing
       // another LLM call. Same pattern as `reflect`'s converged check.
-      if (!lastPrior.toolCall) {
+      if (lastPrior.phase === 'terminal') {
         logger.info('agent_call: resume short-circuit — prior attempt already finalized', {
           stepId: step.id,
           priorTurns: priorIterTurns.length,
@@ -406,12 +409,13 @@ export async function executeAgentCall(
 
       // Rebuild `currentMessages` by walking the prior entries — each replays
       // as an assistant-with-toolCall message followed by the tool result.
-      // The dispatch cache makes the inner tool dispatches free to "replay"
-      // (cached results return without re-firing), so the rebuilt conversation
-      // matches what the next LLM call would expect.
+      // Resume reads the stored toolResult directly from the checkpoint (no
+      // dispatcher re-call), so replay doesn't refire the side effect. The
+      // `phase === 'continuing'` narrowing makes toolCall + toolResult
+      // statically required — no `if (turn.toolCall)` workaround.
       const restoredMessages: LlmMessage[] = [...initialMessages];
       for (const turn of priorIterTurns) {
-        if (turn.toolCall) {
+        if (turn.phase === 'continuing') {
           restoredMessages.push({
             role: 'assistant',
             content: turn.assistantContent,

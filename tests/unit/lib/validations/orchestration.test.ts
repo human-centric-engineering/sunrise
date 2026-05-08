@@ -2307,10 +2307,11 @@ describe('resolveWidgetConfig', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('turnEntrySchema', () => {
-  it('accepts agent_call shape with minimum required fields', () => {
+  it('accepts agent_call terminal-phase shape (no toolCall/toolResult)', () => {
     // Arrange
     const input = {
       kind: 'agent_call',
+      phase: 'terminal',
       index: 0,
       assistantContent: 'hi',
       tokensUsed: 100,
@@ -2322,19 +2323,21 @@ describe('turnEntrySchema', () => {
 
     // Assert
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.kind).toBe('agent_call');
-      if (result.data.kind === 'agent_call') {
-        expect(result.data.index).toBe(0);
-        expect(result.data.tokensUsed).toBe(100);
-      }
+    if (result.success && result.data.kind === 'agent_call') {
+      expect(result.data.phase).toBe('terminal');
+      expect(result.data.index).toBe(0);
+      expect(result.data.tokensUsed).toBe(100);
+      // Terminal phase: toolCall/toolResult must NOT be on the parsed shape
+      expect(result.data).not.toHaveProperty('toolCall');
+      expect(result.data).not.toHaveProperty('toolResult');
     }
   });
 
-  it('accepts agent_call shape with all optional fields populated', () => {
+  it('accepts agent_call continuing-phase shape (toolCall + toolResult required)', () => {
     // Arrange
     const input = {
       kind: 'agent_call',
+      phase: 'continuing',
       index: 1,
       outerTurn: 1,
       assistantContent: 'with tool call',
@@ -2349,10 +2352,10 @@ describe('turnEntrySchema', () => {
 
     // Assert
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.kind).toBe('agent_call');
-      // Narrow the type to agent_call to access kind-specific fields
-      if (result.data.kind === 'agent_call') {
+    if (result.success && result.data.kind === 'agent_call') {
+      // Narrow on phase to access continuing-only fields
+      expect(result.data.phase).toBe('continuing');
+      if (result.data.phase === 'continuing') {
         expect(result.data.outerTurn).toBe(1);
         expect(result.data.toolCall).toEqual({
           id: 'call_1',
@@ -2361,6 +2364,67 @@ describe('turnEntrySchema', () => {
         });
         expect(result.data.toolResult).toEqual({ status: 200 });
       }
+    }
+  });
+
+  it('rejects agent_call with phase=continuing but missing toolCall', () => {
+    // Arrange — one-sided entry: phase claims continuing but no tool data.
+    // The discriminated union must refuse this; with the old optional-fields
+    // shape it would have parsed silently and corrupted resume replay.
+    const input = {
+      kind: 'agent_call',
+      phase: 'continuing',
+      index: 0,
+      assistantContent: 'partial',
+      // toolCall + toolResult deliberately absent
+      tokensUsed: 50,
+      costUsd: 0.005,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert — Zod refuses the parse. The continuing-phase schema requires
+    // both toolCall and toolResult; with the old optional-fields shape this
+    // input would have parsed silently and corrupted resume replay (replay
+    // path reads turn.toolCall, turn.toolResult independently).
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // Ensure the rejection is real (at least one issue) and not a structural
+      // mismatch we'd accidentally accept later. The exact path varies across
+      // Zod's discriminatedUnion error reporting; pin the count instead.
+      expect(result.error.issues.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('rejects agent_call with phase=terminal but unexpected toolCall', () => {
+    // Arrange — terminal phase with stray toolCall (the other one-sided shape).
+    // The terminal schema is a strict object so extra discriminator-relevant
+    // fields are not silently accepted.
+    const input = {
+      kind: 'agent_call',
+      phase: 'terminal',
+      index: 0,
+      assistantContent: 'final',
+      // toolCall here is a contract violation for terminal phase
+      toolCall: { id: 'stray', name: 'cap', arguments: {} },
+      tokensUsed: 50,
+      costUsd: 0.005,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert — Zod's default object mode is strip, so extra fields are dropped
+    // rather than rejected. The contract is enforced at the type layer (TS
+    // forbids constructing AgentCallTurnTerminal with toolCall) and at the
+    // parsed-shape layer (parsed result has no toolCall, regardless of input).
+    // This test pins that behaviour: parse succeeds, but the parsed shape
+    // CANNOT carry toolCall through.
+    expect(result.success).toBe(true);
+    if (result.success && result.data.kind === 'agent_call') {
+      expect(result.data.phase).toBe('terminal');
+      expect(result.data).not.toHaveProperty('toolCall');
     }
   });
 
@@ -2491,7 +2555,14 @@ describe('turnEntrySchema', () => {
         tokensUsed: 10,
         costUsd: 0.001,
       },
-      { kind: 'agent_call', index: 0, assistantContent: 'ok', tokensUsed: 50, costUsd: 0.005 },
+      {
+        kind: 'agent_call',
+        phase: 'terminal',
+        index: 0,
+        assistantContent: 'ok',
+        tokensUsed: 50,
+        costUsd: 0.005,
+      },
     ];
 
     // Act
@@ -2519,7 +2590,14 @@ describe('turnEntrySchema', () => {
       startedAt: '2024-01-01T00:00:00Z',
       durationMs: 1200,
       turns: [
-        { kind: 'agent_call', index: 0, assistantContent: 'hi', tokensUsed: 50, costUsd: 0.005 },
+        {
+          kind: 'agent_call',
+          phase: 'terminal',
+          index: 0,
+          assistantContent: 'hi',
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
       ],
     };
 

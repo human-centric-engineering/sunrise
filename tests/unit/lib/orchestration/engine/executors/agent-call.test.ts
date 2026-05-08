@@ -782,13 +782,15 @@ describe('executeAgentCall', () => {
       expect(recordTurn).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: 'agent_call',
+          phase: 'terminal',
           index: 0,
           assistantContent: 'Summary result',
           tokensUsed: 150,
           costUsd: 0.01,
         })
       );
-      // Final-answer shape: no toolCall field (signals end-of-step to resume logic)
+      // Final-answer shape: phase 'terminal' AND no toolCall field — both
+      // signal end-of-step to resume logic; assert both for defence in depth.
       expect(recordTurn.mock.calls[0][0]).not.toHaveProperty('toolCall');
     });
 
@@ -815,6 +817,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -824,6 +827,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -833,6 +837,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -882,10 +887,11 @@ describe('executeAgentCall', () => {
     // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────
 
     it('single-turn resume short-circuit: lastPrior has no toolCall → returns cached result, no LLM call', async () => {
-      // Arrange: prior turns ending with a finalized entry (no toolCall field)
+      // Arrange: prior turns ending with a terminal entry (phase: 'terminal')
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -895,6 +901,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -902,9 +909,10 @@ describe('executeAgentCall', () => {
           tokensUsed: 60,
           costUsd: 0.006,
         },
-        // Final entry: no toolCall → short-circuit on resume
+        // Final entry: phase 'terminal' → short-circuit on resume
         {
           kind: 'agent_call' as const,
+          phase: 'terminal' as const,
           index: 2,
           assistantContent: 'final',
           tokensUsed: 70,
@@ -944,6 +952,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           outerTurn: 0,
           assistantContent: 'mt_a0',
@@ -1066,6 +1075,7 @@ describe('executeAgentCall', () => {
       const firstCall = recordTurn.mock.calls[0][0] as Record<string, unknown>;
       expect(firstCall).toMatchObject({
         kind: 'agent_call',
+        phase: 'continuing',
         index: 0,
         assistantContent: 'thinking',
         toolCall: { id: 'c1', name: 'cap', arguments: { q: 'x' } },
@@ -1091,12 +1101,13 @@ describe('executeAgentCall', () => {
       const call = recordTurn.mock.calls[0][0];
       expect(call).toMatchObject({
         kind: 'agent_call',
+        phase: 'terminal',
         index: 0,
         assistantContent: 'Summary result',
         tokensUsed: 150,
         costUsd: 0.01,
       });
-      // Absent-field assertion: no toolCall on final-answer turn
+      // Absent-field assertion: no toolCall on terminal-phase turn
       expect(call).not.toHaveProperty('toolCall');
     });
 
@@ -1137,12 +1148,13 @@ describe('executeAgentCall', () => {
       const call = recordTurn.mock.calls[0][0];
       expect(call).toMatchObject({
         kind: 'agent_call',
+        phase: 'terminal',
         index: 0,
         assistantContent: JSON.stringify({ result: 'foo' }),
         tokensUsed: 40, // 30 + 10
         costUsd: 0.002,
       });
-      // skipFollowup entries must NOT carry toolCall (terminal signal)
+      // skipFollowup entries must NOT carry toolCall (terminal phase)
       expect(call).not.toHaveProperty('toolCall');
     });
 
@@ -1153,6 +1165,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1162,6 +1175,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -1171,6 +1185,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -1231,6 +1246,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1240,6 +1256,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -1249,6 +1266,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -1278,6 +1296,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1287,6 +1306,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
