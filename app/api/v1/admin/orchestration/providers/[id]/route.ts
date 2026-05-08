@@ -3,7 +3,10 @@
  *
  * GET    /api/v1/admin/orchestration/providers/:id — row + `apiKeyPresent` boolean
  * PATCH  /api/v1/admin/orchestration/providers/:id — update, clears cached instance
- * DELETE /api/v1/admin/orchestration/providers/:id — soft delete (`isActive=false`)
+ * DELETE /api/v1/admin/orchestration/providers/:id           — soft delete (`isActive=false`)
+ * DELETE /api/v1/admin/orchestration/providers/:id?permanent=true
+ *        — hard delete; refuses with 409 if any agent or cost log references
+ *          the slug (chat binding, fallback list, or historical cost rows).
  *
  * Authentication: Admin role required.
  *
@@ -16,7 +19,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -129,10 +132,69 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = parseProviderId(rawId);
+  const permanent = new URL(request.url).searchParams.get('permanent') === 'true';
 
   const current = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Provider ${id} not found`);
 
+  // ── Permanent delete path ─────────────────────────────────────────
+  // Refuse if any agent (primary or fallback) or historical cost row
+  // still references the slug. Soft-delete keeps those references
+  // valid; hard-delete would orphan them. The operator can either
+  // re-point the agents/clear the cost log first, or stick with the
+  // soft-delete via the default DELETE.
+  if (permanent) {
+    const [primaryAgentCount, fallbackAgentCount, costLogCount] = await Promise.all([
+      prisma.aiAgent.count({ where: { provider: current.slug } }),
+      prisma.aiAgent.count({ where: { fallbackProviders: { has: current.slug } } }),
+      prisma.aiCostLog.count({ where: { provider: current.slug } }),
+    ]);
+
+    const totalAgentRefs = primaryAgentCount + fallbackAgentCount;
+
+    if (totalAgentRefs > 0 || costLogCount > 0) {
+      log.info('Permanent delete blocked by references', {
+        providerId: id,
+        slug: current.slug,
+        primaryAgentCount,
+        fallbackAgentCount,
+        costLogCount,
+      });
+      throw new ConflictError(
+        `Cannot permanently delete '${current.slug}' — it is referenced by ${totalAgentRefs} agent${
+          totalAgentRefs === 1 ? '' : 's'
+        } and ${costLogCount} cost log row${costLogCount === 1 ? '' : 's'}. Re-point or clear those first, or deactivate instead.`,
+        {
+          slug: current.slug,
+          primaryAgentCount,
+          fallbackAgentCount,
+          costLogCount,
+        }
+      );
+    }
+
+    await prisma.aiProviderConfig.delete({ where: { id } });
+    clearProviderCache(current.slug);
+
+    log.info('Provider permanently deleted', {
+      providerId: id,
+      slug: current.slug,
+      adminId: session.user.id,
+    });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'provider.delete',
+      entityType: 'provider',
+      entityId: id,
+      entityName: current.name,
+      clientIp: clientIP,
+      metadata: { permanent: true },
+    });
+
+    return successResponse({ id, deleted: true, permanent: true });
+  }
+
+  // ── Soft delete (default) ─────────────────────────────────────────
   if (!current.isActive) {
     log.info('Provider already inactive, skipping soft-delete', { providerId: id });
     logAdminAction({

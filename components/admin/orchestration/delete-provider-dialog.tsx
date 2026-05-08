@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * DeleteProviderDialog (Phase 4 Session 4.3)
+ * DeactivateProviderDialog
  *
- * Inline AlertDialog confirming a provider soft-delete. Loudly warns
- * that agents pointing at this slug will error on their next chat
- * turn until the provider is reactivated or swapped.
+ * Inline AlertDialog confirming a provider deactivation (soft-delete).
+ * Loudly warns that agents pointing at this slug will error on their
+ * next chat turn until the provider is reactivated or swapped.
+ *
+ * Distinct from `DeletePermanentlyDialog`, which hard-deletes after
+ * confirming no agents/cost-log rows reference the slug.
  */
 
 import {
@@ -49,12 +52,13 @@ export function DeleteProviderDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete provider</AlertDialogTitle>
+          <AlertDialogTitle>Deactivate provider</AlertDialogTitle>
           <AlertDialogDescription>
-            This soft-deletes <strong>{target?.name}</strong> (
+            This deactivates <strong>{target?.name}</strong> (
             <span className="font-mono text-xs">{target?.slug}</span>). Agents referencing this slug
             will error on their next chat turn until you reactivate the provider or reassign those
-            agents. The row itself is preserved so reactivation just flips the status back on.
+            agents. The row itself is preserved — reactivation just flips the status back on. To
+            permanently remove the row instead, use <em>Delete permanently</em> from the dropdown.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -63,11 +67,17 @@ export function DeleteProviderDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
-            className="bg-red-600 hover:bg-red-700"
+            // preventDefault so the dialog doesn't auto-close while
+            // the async deactivation is in flight — the parent flips
+            // `target` to null on success.
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+            className="bg-amber-600 hover:bg-amber-700"
             disabled={isDeleting}
           >
-            {isDeleting ? 'Deleting…' : 'Delete'}
+            {isDeleting ? 'Deactivating…' : 'Deactivate'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -30,6 +30,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
   Cpu,
@@ -37,6 +38,7 @@ import {
   Pencil,
   Plus,
   Power,
+  PowerOff,
   RotateCcw,
   Trash2,
 } from 'lucide-react';
@@ -58,10 +60,19 @@ import {
   type DeleteProviderTarget,
 } from '@/components/admin/orchestration/delete-provider-dialog';
 import {
+  PermanentDeleteProviderDialog,
+  type PermanentDeleteTarget,
+} from '@/components/admin/orchestration/permanent-delete-provider-dialog';
+import {
   ProviderModelsPanel,
   type ProviderModelInfo,
 } from '@/components/admin/orchestration/provider-models-panel';
+import { ProviderDetectionsBanner } from '@/components/admin/orchestration/provider-detections-banner';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+import {
+  clearCachedTestResult,
+  getCachedTestResult,
+} from '@/lib/orchestration/provider-test-cache';
 
 export interface ProviderRow extends AiProviderConfig {
   apiKeyPresent: boolean;
@@ -103,12 +114,36 @@ interface ModelCountState {
 }
 
 export function ProvidersList({ initialProviders }: ProvidersListProps) {
+  const router = useRouter();
   const [providers, setProviders] = useState<ProviderRow[]>(initialProviders);
+
+  // The server component (`app/admin/orchestration/providers/page.tsx`)
+  // serves the initial list via `serverFetch`. If the parent route
+  // gets revalidated (router.refresh), Next 16's data cache hands us
+  // a fresh `initialProviders` prop. Mirror that into local state so
+  // the grid actually updates without a full page reload.
+  useEffect(() => {
+    setProviders(initialProviders);
+  }, [initialProviders]);
   const [modelCounts, setModelCounts] = useState<Record<string, ModelCountState>>({});
-  const [testedOk, setTestedOk] = useState<Record<string, boolean | null>>({});
+  // Hydrate from the localStorage test cache so the dot colour survives
+  // navigation. Server components can't read localStorage so we seed
+  // with `() => initialState` to read on first client render only.
+  const [testedOk, setTestedOk] = useState<Record<string, boolean | null>>(() => {
+    if (typeof window === 'undefined') return {};
+    const seed: Record<string, boolean | null> = {};
+    for (const p of initialProviders) {
+      const cached = getCachedTestResult(p.id);
+      if (cached) seed[p.id] = cached.ok;
+    }
+    return seed;
+  });
   const [deleteTarget, setDeleteTarget] = useState<DeleteProviderTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [permanentTarget, setPermanentTarget] = useState<PermanentDeleteTarget | null>(null);
+  const [permanentDeleting, setPermanentDeleting] = useState(false);
+  const [permanentError, setPermanentError] = useState<string | null>(null);
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
   const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
@@ -165,12 +200,52 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     [testedOk]
   );
 
+  // Re-fetch the provider list and replace local state. Called by the
+  // detection banner after a one-click "Configure" so the new provider
+  // shows up in the grid without a full page reload.
+  //
+  // We do TWO things in tandem:
+  //
+  //   1. `cache: 'no-store'` on the immediate refetch so the browser /
+  //      Next 16 fetch layer doesn't hand back a cached "no providers"
+  //      response that pre-dates the just-created row.
+  //
+  //   2. `router.refresh()` so Next's server-component data cache for
+  //      this route is invalidated and a future navigation reads fresh
+  //      `initialProviders`. Without this, navigating away and back
+  //      could still show the stale empty state.
+  const refreshProviders = useCallback(async () => {
+    try {
+      const res = await fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`, {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      const body = (await res.json()) as { success?: boolean; data?: ProviderRow[] };
+      if (body.success && Array.isArray(body.data)) {
+        setProviders(body.data);
+      }
+    } catch {
+      // Silent — the banner already showed any error from the create call.
+    } finally {
+      router.refresh();
+    }
+  }, [router]);
+
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     setDeleteError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
+      // Soft-delete flips isActive=false; clear the cached test result
+      // so the row's dot doesn't keep showing green after deactivation.
+      clearCachedTestResult(deleteTarget.id);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
       setProviders((prev) =>
         prev.map((p) => (p.id === deleteTarget.id ? { ...p, isActive: false } : p))
       );
@@ -186,11 +261,53 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     }
   }, [deleteTarget]);
 
+  const confirmPermanentDelete = useCallback(async () => {
+    if (!permanentTarget) return;
+    setPermanentDeleting(true);
+    setPermanentError(null);
+    try {
+      // Hits the same DELETE /providers/:id route with ?permanent=true.
+      // The server returns 409 with a clear message if any agent or
+      // cost-log row still references the slug; that message gets
+      // surfaced verbatim in the dialog so the operator knows what to
+      // re-point first.
+      await apiClient.delete(
+        `${API.ADMIN.ORCHESTRATION.providerById(permanentTarget.id)}?permanent=true`
+      );
+      clearCachedTestResult(permanentTarget.id);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[permanentTarget.id];
+        return next;
+      });
+      // Drop the row from local state — the server actually deleted it.
+      setProviders((prev) => prev.filter((p) => p.id !== permanentTarget.id));
+      setPermanentTarget(null);
+    } catch (err) {
+      setPermanentError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't permanently delete this provider. Try again in a moment."
+      );
+    } finally {
+      setPermanentDeleting(false);
+    }
+  }, [permanentTarget]);
+
   const handleReactivate = useCallback(async (providerId: string) => {
     setReactivateError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
         body: { isActive: true },
+      });
+      // Reactivation could mean the operator changed env vars / base
+      // URL since the last test ran — invalidate so the dot defaults to
+      // grey until they retest.
+      clearCachedTestResult(providerId);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
       });
       setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
     } catch (err) {
@@ -207,6 +324,16 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     setBreakerError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
+      // Breaker reset means recent failures have been forgiven —
+      // invalidate the cached test result so the operator runs a fresh
+      // check rather than trusting an old "tested OK" from before the
+      // failures.
+      clearCachedTestResult(providerId);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
       setProviders((prev) =>
         prev.map((p) =>
           p.id === providerId
@@ -238,6 +365,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           </Link>
         </Button>
       </div>
+
+      <ProviderDetectionsBanner
+        onProviderCreated={() => {
+          void refreshProviders();
+        }}
+      />
 
       {reactivateError && (
         <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
@@ -299,7 +432,10 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                         </Badge>
                       )}
                       {!p.isActive && (
-                        <Badge variant="outline" className="text-[10px]">
+                        <Badge
+                          variant="outline"
+                          className="border-amber-300 bg-amber-50 text-[10px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        >
                           Inactive
                         </Badge>
                       )}
@@ -325,11 +461,20 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                       <DropdownMenuItem onSelect={() => setModelsDialogFor(p)}>
                         <Cpu className="mr-2 h-4 w-4" /> View models
                       </DropdownMenuItem>
+                      {p.isActive && (
+                        <DropdownMenuItem
+                          onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                        >
+                          <PowerOff className="mr-2 h-4 w-4" /> Deactivate
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         className="text-destructive"
-                        onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                        onSelect={() =>
+                          setPermanentTarget({ id: p.id, name: p.name, slug: p.slug })
+                        }
                       >
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -421,6 +566,17 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           setDeleteError(null);
         }}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <PermanentDeleteProviderDialog
+        target={permanentTarget}
+        error={permanentError}
+        isDeleting={permanentDeleting}
+        onCancel={() => {
+          setPermanentTarget(null);
+          setPermanentError(null);
+        }}
+        onConfirm={() => void confirmPermanentDelete()}
       />
 
       <Dialog

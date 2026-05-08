@@ -270,6 +270,7 @@ export const updateAgentSchema = z.object({
 export const listAgentsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
   provider: z.string().trim().max(50).optional(),
+  isSystem: queryBooleanSchema.optional(),
   q: z.string().trim().max(200).optional(),
 });
 

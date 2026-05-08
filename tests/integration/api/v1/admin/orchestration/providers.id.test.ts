@@ -37,6 +37,13 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
+    },
+    aiAgent: {
+      count: vi.fn(),
+    },
+    aiCostLog: {
+      count: vi.fn(),
     },
   },
 }));
@@ -93,12 +100,20 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeRequest(method = 'GET', body?: Record<string, unknown>): NextRequest {
+function makeRequest(
+  method = 'GET',
+  body?: Record<string, unknown>,
+  query?: Record<string, string>
+): NextRequest {
+  const url = new URL(`http://localhost:3000/api/v1/admin/orchestration/providers/${PROVIDER_ID}`);
+  if (query) {
+    for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+  }
   return {
     method,
     headers: new Headers({ 'Content-Type': 'application/json' }),
     json: () => Promise.resolve(body ?? {}),
-    url: `http://localhost:3000/api/v1/admin/orchestration/providers/${PROVIDER_ID}`,
+    url: url.toString(),
   } as unknown as NextRequest;
 }
 
@@ -480,5 +495,136 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id', () => {
 
       expect(response.status).toBe(400);
     });
+  });
+});
+
+describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+    // Default to "no references found" — individual tests override.
+    vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiCostLog.count).mockResolvedValue(0);
+  });
+
+  it('hard-deletes when no agents or cost logs reference the slug', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiProviderConfig.delete).mockResolvedValue(makeProvider() as never);
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(200);
+    const data = await parseJson<{
+      success: boolean;
+      data: { deleted: boolean; permanent: boolean };
+    }>(response);
+    expect(data.success).toBe(true);
+    expect(data.data.deleted).toBe(true);
+    expect(data.data.permanent).toBe(true);
+
+    // Real delete, NOT update.
+    expect(prisma.aiProviderConfig.delete).toHaveBeenCalledWith({ where: { id: PROVIDER_ID } });
+    expect(prisma.aiProviderConfig.update).not.toHaveBeenCalled();
+
+    // Reference checks ran against both agent paths and cost log.
+    expect(prisma.aiAgent.count).toHaveBeenCalledWith({ where: { provider: 'anthropic' } });
+    expect(prisma.aiAgent.count).toHaveBeenCalledWith({
+      where: { fallbackProviders: { has: 'anthropic' } },
+    });
+    expect(prisma.aiCostLog.count).toHaveBeenCalledWith({ where: { provider: 'anthropic' } });
+  });
+
+  it('returns 409 when agents reference the slug as primary provider', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiAgent.count)
+      .mockResolvedValueOnce(3) // primary provider count
+      .mockResolvedValueOnce(0); // fallback count
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(409);
+    const data = await parseJson<{
+      success: boolean;
+      error: { message: string; details?: unknown };
+    }>(response);
+    expect(data.success).toBe(false);
+    expect(data.error.message).toMatch(/3 agents/i);
+
+    // Refused — no actual delete or update happened.
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
+    expect(prisma.aiProviderConfig.update).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when agents reference the slug as a fallback', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiAgent.count)
+      .mockResolvedValueOnce(0) // primary
+      .mockResolvedValueOnce(2); // fallback
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(409);
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when cost log rows reference the slug', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiCostLog.count).mockResolvedValue(42);
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(409);
+    const data = await parseJson<{ error: { message: string } }>(response);
+    expect(data.error.message).toMatch(/42 cost log/i);
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the provider does not exist', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(null);
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(404);
+    expect(prisma.aiAgent.count).not.toHaveBeenCalled();
+  });
+
+  it('clears the provider cache after a successful permanent delete', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiProviderConfig.delete).mockResolvedValue(makeProvider() as never);
+
+    await DELETE(makeRequest('DELETE', undefined, { permanent: 'true' }), makeParams(PROVIDER_ID));
+
+    expect(clearCache).toHaveBeenCalledWith('anthropic');
+  });
+
+  it('soft-deletes (not hard) when permanent param is missing or false', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+    vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(
+      makeProvider({ isActive: false }) as never
+    );
+
+    // Without ?permanent=true → soft-delete branch, no reference checks.
+    const response = await DELETE(makeRequest('DELETE'), makeParams(PROVIDER_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
+    expect(prisma.aiProviderConfig.update).toHaveBeenCalled();
+    expect(prisma.aiAgent.count).not.toHaveBeenCalled();
   });
 });
