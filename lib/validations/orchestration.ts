@@ -2064,7 +2064,22 @@ export const executionTraceEntrySchema = z
         })
       )
       .optional(),
-    turns: z.array(turnEntrySchema).optional(),
+    // `.catch(() => undefined)` is backward-compat insurance: PR 3 split
+    // AgentCallTurn into a discriminated sub-union (`phase: 'continuing' |
+    // 'terminal'`), making `phase` a required field. Pre-PR-3 trace entries
+    // wrote `agent_call` turns with no `phase`; without the catch, those
+    // entries fail to parse here, get dropped by the resume path's flatMap
+    // (orchestration-engine.ts), miss seeding into the `visited` set, and
+    // the DAG walker then re-executes already-completed steps. The catch
+    // gracefully drops the malformed `turns` field while preserving the
+    // surrounding entry — observability of pre-PR turns is lost (they
+    // were unparseable anyway), but `visited` is seeded correctly so the
+    // step doesn't re-run. Forks running PR 2 in production who deploy
+    // PR 3+ rely on this; greenfield deployments never hit it.
+    turns: z
+      .array(turnEntrySchema)
+      .optional()
+      .catch(() => undefined),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by

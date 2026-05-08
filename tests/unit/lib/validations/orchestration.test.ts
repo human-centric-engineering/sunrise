@@ -2620,7 +2620,7 @@ describe('turnEntrySchema', () => {
     }
   });
 
-  it('executionTraceEntrySchema rejects an entry where turns contains a malformed entry', () => {
+  it('executionTraceEntrySchema preserves the surrounding entry when turns contains a malformed element', () => {
     // Arrange: turns contains a turn with an invalid kind
     const input = {
       stepId: 'step-2',
@@ -2638,7 +2638,79 @@ describe('turnEntrySchema', () => {
     // Act
     const result = executionTraceEntrySchema.safeParse(input);
 
-    // Assert: turns validation fails because 'unknown' is not a valid discriminant
-    expect(result.success).toBe(false);
+    // Assert — the malformed `turns` array is gracefully dropped via `.catch()`
+    // so the surrounding entry survives. Failing the whole entry would cause
+    // the engine's resume `flatMap` to drop it, the stepId would not seed
+    // `visited`, and the DAG walker would re-execute the already-completed
+    // step. This test pins the resume-safety contract: bad `turns` must NOT
+    // take the entry down with them.
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Entry-level fields preserved
+      expect((result.data as Record<string, unknown>).stepId).toBe('step-2');
+      expect((result.data as Record<string, unknown>).status).toBe('completed');
+      // `turns` field is absent from the parsed shape — observability lost,
+      // but the step is correctly recorded as completed.
+      expect((result.data as Record<string, unknown>).turns).toBeUndefined();
+    }
+  });
+
+  it('executionTraceEntrySchema preserves the entry when turns contains pre-PR-3 agent_call shape (backwards-compat)', () => {
+    // Arrange — this is the EXACT shape PR 2 wrote: `agent_call` turns with
+    // `toolCall` / `toolResult` fields but NO `phase` discriminator. PR 3
+    // made `phase` required. Without the `.catch()` on the `turns` field,
+    // the entry would fail and re-execution would follow.
+    //
+    // This test exists specifically as a regression gate: if a future
+    // refactor removes the `.catch()`, this test fails — surfacing the
+    // resume-safety regression before it ships.
+    const prePR3Entry = {
+      stepId: 'step-multi-turn',
+      stepType: 'agent_call',
+      label: 'Call Agent',
+      status: 'completed',
+      output: { answer: 'done' },
+      tokensUsed: 250,
+      costUsd: 0.025,
+      startedAt: '2024-01-01T00:00:00Z',
+      durationMs: 2400,
+      turns: [
+        {
+          kind: 'agent_call',
+          // NO `phase` field — pre-PR-3 shape
+          index: 0,
+          assistantContent: 'thinking',
+          toolCall: { id: 't0', name: 'cap', arguments: { q: 'x' } },
+          toolResult: { ok: true },
+          tokensUsed: 100,
+          costUsd: 0.01,
+        },
+        {
+          kind: 'agent_call',
+          // NO `phase` field — pre-PR-3 shape
+          index: 1,
+          assistantContent: 'done',
+          tokensUsed: 150,
+          costUsd: 0.015,
+        },
+      ],
+    };
+
+    // Act
+    const result = executionTraceEntrySchema.safeParse(prePR3Entry);
+
+    // Assert — entry survives, stepId is preserved (so the resume engine
+    // seeds `visited` correctly), turns field is dropped (catch returned
+    // undefined). The cost/tokens fields at entry level still rehydrate
+    // accurately because they live on the entry, not the turns sub-array.
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as Record<string, unknown>;
+      expect(data.stepId).toBe('step-multi-turn');
+      expect(data.status).toBe('completed');
+      expect(data.tokensUsed).toBe(250);
+      expect(data.costUsd).toBe(0.025);
+      expect(data.turns).toBeUndefined();
+    }
   });
 });
