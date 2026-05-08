@@ -7,15 +7,21 @@
  * ≤ 6 rows with distinctive state (status dot, local badge, model
  * count) that reads better as cards than a table row.
  *
+
  * State rules for the status dot:
  *
- *   - **Green** — `apiKeyPresent === true` AND a `ProviderTestButton`
- *     click in the current session returned `ok: true`.
- *   - **Red**  — test-connection returned `ok: false` this session OR
- *     `apiKeyPresent === false` on a non-local provider.
- *   - **Grey** — not tested yet this session.
+ *   - **Green** — `/test` returned `ok: true`, either from an automatic
+ *     probe on mount or a manual `ProviderTestButton` click.
+ *   - **Red**  — `/test` returned `ok: false` OR `apiKeyPresent === false`
+ *     on a non-local provider.
+ *   - **Blue (pulsing)** — automatic probe in flight.
+ *   - **Grey** — not tested (no API key check pending; rare in practice
+ *     because the auto-probe fires immediately on mount).
  *
- * Test results are held in local state only; we never persist them.
+ * On mount, every provider with an API key (or `isLocal`) is auto-probed
+ * via `POST /providers/:id/test`. The probe is cached for 10 minutes via
+ * `provider-test-cache` so repeat visits and form-edit round-trips don't
+ * cause a request storm.
  * The model count is lazy-fetched per card after first paint with a
  * 60-second client-side cache to avoid redundant N+1 fetches.
  *
@@ -72,6 +78,7 @@ import { ProviderTestButton } from '@/components/admin/orchestration/provider-te
 import {
   clearCachedTestResult,
   getCachedTestResult,
+  setCachedTestResult,
 } from '@/lib/orchestration/provider-test-cache';
 
 export interface ProviderRow extends AiProviderConfig {
@@ -87,7 +94,7 @@ export interface ProvidersListProps {
   initialProviders: ProviderRow[];
 }
 
-type StatusDot = 'green' | 'red' | 'grey';
+type StatusDot = 'green' | 'red' | 'grey' | 'testing';
 
 interface ModelCountCache {
   count: number | null;
@@ -148,6 +155,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
   const [breakerError, setBreakerError] = useState<string | null>(null);
+  const [testingInFlight, setTestingInFlight] = useState<Record<string, boolean>>({});
 
   // Lazy-fetch model counts for every visible provider after mount.
   // Uses module-level cache to avoid N+1 on every page navigation.
@@ -189,15 +197,86 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providers]);
 
+  // Auto-test every provider on mount that doesn't already have a
+  // cached result. The manual `Test connection` button hits the exact
+  // same `/test` route, which delegates to `provider.testConnection()` —
+  // for OpenAI-compatible providers that's a real `listModels` round-trip,
+  // for Anthropic it's a `messages.create` ping with `max_tokens: 1`.
+  // Both are valid connectivity probes for their respective vendors,
+  // so firing this once on landing gives every card an honest dot
+  // without the operator having to click through.
+  //
+  // Skip rules:
+  //   - No API key on a non-local provider — already shown red, would
+  //     just produce a guaranteed `ok: false`.
+  //   - Cached result exists — the localStorage cache (`provider-test-
+  //     cache`, 10-min TTL) seeded `testedOk` at construction time.
+  //   - Already in flight — guard against the effect re-running before
+  //     the first round of requests resolves.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const targets = providers.filter(
+        (p) =>
+          (p.apiKeyPresent || p.isLocal) && testedOk[p.id] === undefined && !testingInFlight[p.id]
+      );
+      if (targets.length === 0) return;
+
+      setTestingInFlight((prev) => {
+        const next = { ...prev };
+        for (const p of targets) next[p.id] = true;
+        return next;
+      });
+
+      await Promise.all(
+        targets.map(async (p) => {
+          try {
+            const response = await apiClient.post<{ ok: boolean; models?: string[] }>(
+              API.ADMIN.ORCHESTRATION.providerTest(p.id)
+            );
+            if (cancelled) return;
+            const ok = !!response.ok;
+            const modelCount = response.models?.length ?? 0;
+            setCachedTestResult(p.id, { ok, modelCount });
+            setTestedOk((prev) => ({ ...prev, [p.id]: ok }));
+          } catch {
+            if (cancelled) return;
+            // Same shape as a failed test — server already sanitizes
+            // raw SDK errors before they reach us.
+            setCachedTestResult(p.id, { ok: false, modelCount: 0 });
+            setTestedOk((prev) => ({ ...prev, [p.id]: false }));
+          } finally {
+            if (!cancelled) {
+              setTestingInFlight((prev) => {
+                const next = { ...prev };
+                delete next[p.id];
+                return next;
+              });
+            }
+          }
+        })
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // `testedOk` and `testingInFlight` are intentionally read but not
+    // listed — re-running on every state update would cause a request
+    // storm. The `providers` dependency captures the only change that
+    // should trigger a fresh round.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers]);
+
   const statusFor = useCallback(
     (p: ProviderRow): StatusDot => {
       const tested = testedOk[p.id];
       if (!p.apiKeyPresent && !p.isLocal) return 'red';
       if (tested === true) return 'green';
       if (tested === false) return 'red';
+      if (testingInFlight[p.id]) return 'testing';
       return 'grey';
     },
-    [testedOk]
+    [testedOk, testingInFlight]
   );
 
   // Re-fetch the provider list and replace local state. Called by the
@@ -403,7 +482,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                 ? 'bg-green-500'
                 : status === 'red'
                   ? 'bg-red-500'
-                  : 'bg-muted-foreground/40';
+                  : status === 'testing'
+                    ? 'bg-blue-500 animate-pulse'
+                    : 'bg-muted-foreground/40';
             const statusLabel =
               status === 'green'
                 ? 'Connected'
@@ -411,7 +492,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   ? !p.apiKeyPresent && !p.isLocal
                     ? 'Key missing'
                     : 'Test failed'
-                  : 'Not tested';
+                  : status === 'testing'
+                    ? 'Testing…'
+                    : 'Not tested';
             const mc = modelCounts[p.id];
             const breakerState = p.circuitBreaker?.state ?? 'closed';
 

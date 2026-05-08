@@ -134,13 +134,16 @@ describe('ProvidersList', () => {
     // state from a prior test doesn't bleed in and pre-paint the dot
     // green before the test under examination clicks anything.
     window.localStorage.clear();
-    // Default the lazy model-count fetch to a never-resolving promise.
-    // This prevents the useEffect-triggered setState from firing after
-    // synchronous render-based tests finish, which would otherwise cause
-    // React "not wrapped in act(...)" warnings. Tests that need the
-    // resolved state override this mock explicitly.
+    // Default the lazy model-count fetch (apiClient.get) AND the
+    // mount-time auto-probe (apiClient.post → /test) to never-resolving
+    // promises. Both run from useEffect on first paint; without this
+    // default they'd settle after the test finished and produce React
+    // "not wrapped in act(...)" warnings, or — worse — pre-paint the
+    // status dot green before the test under examination clicks anything.
+    // Tests that need a resolved state override these mocks explicitly.
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(apiClient.post).mockImplementation(() => new Promise(() => {}));
   });
 
   afterEach(() => {
@@ -298,15 +301,75 @@ describe('ProvidersList', () => {
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
-      // No green dot yet
-      expect(document.querySelectorAll('.bg-green-500').length).toBe(0);
-
+      // The mount-time auto-probe runs the same /test call that the
+      // button does, so a green dot is already plausible before the
+      // user clicks. We assert the post-click state instead — the
+      // manual click path must still drive the dot to green.
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
         const greenDots = document.querySelectorAll('.bg-green-500');
         expect(greenDots.length).toBeGreaterThanOrEqual(1);
       });
+    });
+  });
+
+  // ── Auto-probe on mount ───────────────────────────────────────────────────
+
+  describe('auto-probe on mount', () => {
+    it('fires POST /providers/:id/test for each provider with an API key', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2'],
+      });
+
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      // Anthropic (apiKeyPresent=true) and Ollama (isLocal=true) are
+      // probed. OpenAI (apiKeyPresent=false, !isLocal) is skipped — it
+      // already shows a red "Key missing" dot without a round-trip.
+      await waitFor(() => {
+        const calls = vi.mocked(apiClient.post).mock.calls.map((c) => c[0]);
+        expect(calls).toEqual(
+          expect.arrayContaining([expect.stringContaining('/providers/prov-1/test')])
+        );
+        expect(calls).toEqual(
+          expect.arrayContaining([expect.stringContaining('/providers/prov-3/test')])
+        );
+        expect(calls.some((u) => u.includes('/providers/prov-2/test'))).toBe(false);
+      });
+    });
+
+    it('paints a green dot once the auto-probe resolves with ok=true', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2', 'm3'],
+      });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(document.querySelectorAll('.bg-green-500').length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('skips the probe when a recent cached result already exists', async () => {
+      const { setCachedTestResult } = await import('@/lib/orchestration/provider-test-cache');
+      setCachedTestResult('prov-1', { ok: true, modelCount: 3 });
+
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: ['x'] });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      // Cached result hydrates testedOk on first render → green dot
+      // appears without firing /test.
+      await waitFor(() => {
+        expect(document.querySelectorAll('.bg-green-500').length).toBeGreaterThanOrEqual(1);
+      });
+      expect(apiClient.post).not.toHaveBeenCalled();
     });
   });
 
