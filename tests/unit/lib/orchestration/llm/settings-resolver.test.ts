@@ -1,16 +1,19 @@
 /**
  * Unit Tests: lib/orchestration/llm/settings-resolver
  *
- * Test Coverage:
- * - getDefaultModelForTask: returns computed default when no DB row exists
- * - getDefaultModelForTask: returns stored value from DB row when present
- * - getDefaultModelForTask: falls back to computed default for missing task keys
- * - getDefaultModelForTask: caches result and avoids second DB read within TTL
- * - getDefaultModelForTask: re-fetches from DB after cache is invalidated
- * - getDefaultModelForTask: re-fetches after TTL expires (fake timers)
- * - getDefaultModelForTask: uses computed defaults and warns when DB read fails
- * - invalidateSettingsCache: clears the cache so next call re-reads DB
- * - __resetSettingsResolverForTests: exposed helper clears state between tests
+ * Test Coverage (strict mode):
+ * - getDefaultModelForTask: returns the stored model when present
+ * - getDefaultModelForTask: throws NoDefaultModelConfiguredError when stored slot is empty
+ * - getDefaultModelForTask: throws when DB row is absent
+ * - getDefaultModelForTask: throws when stored value is the empty string
+ * - getDefaultModelForTaskOrNull: same logic but returns null instead of throwing
+ * - caching: only hits the DB once per TTL window
+ * - caching: re-fetches after invalidateSettingsCache()
+ * - caching: re-fetches after the 30-second TTL expires
+ * - error handling: DB failure throws on next read (no silent fallback)
+ *
+ * The strict-mode change means the resolver no longer hides "operator
+ * hasn't configured a default" behind a registry-derived fallback.
  *
  * @see lib/orchestration/llm/settings-resolver.ts
  */
@@ -25,15 +28,6 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
     },
   },
-}));
-
-vi.mock('@/lib/orchestration/llm/model-registry', () => ({
-  computeDefaultModelMap: vi.fn(() => ({
-    routing: 'computed-routing-model',
-    chat: 'computed-chat-model',
-    reasoning: 'computed-reasoning-model',
-    embeddings: 'computed-embeddings-model',
-  })),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -56,9 +50,11 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
-  getDefaultModelForTask,
-  invalidateSettingsCache,
+  NoDefaultModelConfiguredError,
   __resetSettingsResolverForTests,
+  getDefaultModelForTask,
+  getDefaultModelForTaskOrNull,
+  invalidateSettingsCache,
 } from '@/lib/orchestration/llm/settings-resolver';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -76,10 +72,9 @@ function makeSettingsRow(defaultModels: Record<string, string> = {}) {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('getDefaultModelForTask', () => {
+describe('getDefaultModelForTask (strict)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Always start with a clean cache so tests are independent
     __resetSettingsResolverForTests();
   });
 
@@ -88,29 +83,7 @@ describe('getDefaultModelForTask', () => {
     __resetSettingsResolverForTests();
   });
 
-  describe('DB row absent', () => {
-    it('returns the computed default when no settings row exists', async () => {
-      // Arrange: DB returns null (no row yet)
-      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
-
-      // Act
-      const result = await getDefaultModelForTask('chat');
-
-      // Assert
-      expect(result).toBe('computed-chat-model');
-    });
-
-    it('returns computed defaults for all task types when row is absent', async () => {
-      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
-
-      expect(await getDefaultModelForTask('routing')).toBe('computed-routing-model');
-      // Cache is populated now — reset so each fresh call hits DB once per task
-      // (in this test we care only that each task gets its computed default)
-      expect(await getDefaultModelForTask('reasoning')).toBe('computed-reasoning-model');
-    });
-  });
-
-  describe('DB row present', () => {
+  describe('returns stored value when present', () => {
     it('returns the stored model when the settings row has a value for the task', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
         makeSettingsRow({ chat: 'stored-chat-model' }) as never
@@ -121,47 +94,102 @@ describe('getDefaultModelForTask', () => {
       expect(result).toBe('stored-chat-model');
     });
 
-    it('falls back to computed default for tasks not present in the stored map', async () => {
-      // Only 'chat' is stored; routing/reasoning/embeddings must fall back
+    it('returns the stored model for each task type independently', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
-        makeSettingsRow({ chat: 'stored-chat-model' }) as never
+        makeSettingsRow({
+          routing: 'stored-routing',
+          chat: 'stored-chat',
+          reasoning: 'stored-reasoning',
+          embeddings: 'stored-embeddings',
+        }) as never
       );
 
-      const result = await getDefaultModelForTask('routing');
+      expect(await getDefaultModelForTask('routing')).toBe('stored-routing');
+      expect(await getDefaultModelForTask('chat')).toBe('stored-chat');
+      expect(await getDefaultModelForTask('reasoning')).toBe('stored-reasoning');
+      expect(await getDefaultModelForTask('embeddings')).toBe('stored-embeddings');
+    });
+  });
 
-      expect(result).toBe('computed-routing-model');
+  describe('strict mode: throws when slot is unset', () => {
+    it('throws NoDefaultModelConfiguredError when the DB row is absent', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      await expect(getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
     });
 
-    it('falls back to computed default when stored value is an empty string', async () => {
+    it('throws when only the requested task slot is missing from the stored map', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        // chat is present, routing is not
+        makeSettingsRow({ chat: 'stored-chat' }) as never
+      );
+
+      await expect(getDefaultModelForTask('routing')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
+      // Chat slot still resolves cleanly.
+      expect(await getDefaultModelForTask('chat')).toBe('stored-chat');
+    });
+
+    it('throws when the stored value is the empty string', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
         makeSettingsRow({ chat: '' }) as never
       );
 
-      const result = await getDefaultModelForTask('chat');
-
-      expect(result).toBe('computed-chat-model');
+      await expect(getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
     });
 
-    it('calls prisma.aiOrchestrationSettings.findUnique with slug "global"', async () => {
+    it('preserves the task name on the thrown error so callers can log it', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
 
-      await getDefaultModelForTask('chat');
+      try {
+        await getDefaultModelForTask('embeddings');
+        throw new Error('expected throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NoDefaultModelConfiguredError);
+        if (err instanceof NoDefaultModelConfiguredError) {
+          expect(err.task).toBe('embeddings');
+          expect(err.code).toBe('no_default_model_configured');
+        }
+      }
+    });
+  });
 
-      expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledWith({
-        where: { slug: 'global' },
-      });
+  describe('getDefaultModelForTaskOrNull', () => {
+    it('returns the stored value when present', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ chat: 'stored-chat' }) as never
+      );
+
+      expect(await getDefaultModelForTaskOrNull('chat')).toBe('stored-chat');
+    });
+
+    it('returns null when the slot is unset (instead of throwing)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      expect(await getDefaultModelForTaskOrNull('chat')).toBeNull();
     });
   });
 
   describe('caching behaviour', () => {
     it('only calls the DB once for multiple calls within the TTL', async () => {
-      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({
+          routing: 'r',
+          chat: 'c',
+          reasoning: 'rs',
+          embeddings: 'e',
+        }) as never
+      );
 
       await getDefaultModelForTask('chat');
       await getDefaultModelForTask('routing');
       await getDefaultModelForTask('reasoning');
 
-      // All three calls should share one DB lookup
       expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(1);
     });
 
@@ -177,7 +205,7 @@ describe('getDefaultModelForTask', () => {
       expect(second).toBe('cached-model');
     });
 
-    it('re-fetches from DB after cache is invalidated by invalidateSettingsCache()', async () => {
+    it('re-fetches from DB after invalidateSettingsCache()', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique)
         .mockResolvedValueOnce(makeSettingsRow({ chat: 'first-model' }) as never)
         .mockResolvedValueOnce(makeSettingsRow({ chat: 'second-model' }) as never);
@@ -198,7 +226,6 @@ describe('getDefaultModelForTask', () => {
         .mockResolvedValueOnce(makeSettingsRow({ chat: 'model-after-ttl' }) as never);
 
       const before = await getDefaultModelForTask('chat');
-      // Advance past the 30s TTL
       vi.advanceTimersByTime(31_000);
       const after = await getDefaultModelForTask('chat');
 
@@ -206,43 +233,46 @@ describe('getDefaultModelForTask', () => {
       expect(after).toBe('model-after-ttl');
       expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(2);
     });
+
+    it('caches the empty-stored state too — repeated calls keep throwing without a second DB hit', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      await expect(getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
+      await expect(getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
+
+      expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('error handling', () => {
-    it('uses computed defaults and logs a warning when DB read throws', async () => {
+    it('throws on next read after a DB failure (no silent fallback)', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockRejectedValue(
         new Error('Connection refused')
       );
 
-      const result = await getDefaultModelForTask('chat');
-
-      // Should still return a valid model using computed defaults
-      expect(result).toBe('computed-chat-model');
+      // Strict mode: a DB failure leaves the cache "empty stored" and
+      // the next read throws NoDefaultModelConfiguredError. The
+      // operator never receives a silently-picked model.
+      await expect(getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        NoDefaultModelConfiguredError
+      );
     });
 
-    it('calls logger.warn when the DB read fails', async () => {
+    it('logs a warning when the DB read fails', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockRejectedValue(
         new Error('DB timeout')
       );
 
-      await getDefaultModelForTask('chat');
+      await getDefaultModelForTask('chat').catch(() => {});
 
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('getDefaultModelForTask'),
         expect.objectContaining({ error: 'DB timeout' })
       );
-    });
-
-    it('still caches the computed-default result after a DB error', async () => {
-      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockRejectedValue(
-        new Error('DB timeout')
-      );
-
-      await getDefaultModelForTask('chat');
-      await getDefaultModelForTask('routing');
-
-      // Even with an error the result is cached — only one DB attempt
-      expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(1);
     });
   });
 });
@@ -258,7 +288,9 @@ describe('invalidateSettingsCache', () => {
   });
 
   it('causes the next getDefaultModelForTask call to re-read from DB', async () => {
-    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'cached' }) as never
+    );
 
     await getDefaultModelForTask('chat');
     expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(1);
@@ -284,7 +316,9 @@ describe('__resetSettingsResolverForTests', () => {
   });
 
   it('clears the cache so the next call hits the DB again', async () => {
-    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'cached' }) as never
+    );
 
     await getDefaultModelForTask('chat');
     __resetSettingsResolverForTests();

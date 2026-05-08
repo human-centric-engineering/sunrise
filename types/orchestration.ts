@@ -796,8 +796,21 @@ export interface EscalationConfig {
 export interface OrchestrationSettings {
   id: string;
   slug: 'global';
-  /** Map of `TaskType` → canonical model id. */
+  /**
+   * Hydrated map of `TaskType` → canonical model id. Empty stored slots
+   * are filled from `computeDefaultModelMap()` so runtime callers (chat
+   * handler, etc.) always have a value. Use `defaultModelsStored` to
+   * see what the operator actually saved.
+   */
   defaultModels: Record<TaskType, string>;
+  /**
+   * Raw stored map — only contains keys the operator has explicitly
+   * saved. Missing or empty-string entries mean "not set". UIs that
+   * need to distinguish "saved" from "system suggestion" (settings
+   * form, wizard's `persistSuggestedDefaults`) should read this; the
+   * runtime resolver should keep using `defaultModels`.
+   */
+  defaultModelsStored: Partial<Record<TaskType, string>>;
   /** Month-to-date global spend cap in USD, or `null` to disable. */
   globalMonthlyBudgetUsd: number | null;
   /** Tunable search weights, or `null` to use built-in defaults. */

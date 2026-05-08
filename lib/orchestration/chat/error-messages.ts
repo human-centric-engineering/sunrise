@@ -83,6 +83,11 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'No LLM provider is configured for this Sunrise instance yet.',
     action: 'Run the setup wizard at Admin → AI Orchestration to add a provider.',
   },
+  no_default_model_configured: {
+    title: 'Default Model Not Set',
+    message: 'A default model for this task has not been chosen yet.',
+    action: 'Open Admin → AI Orchestration → Settings → Default models and pick one.',
+  },
   provider_disabled: {
     title: 'Provider Disabled',
     message: "This agent's AI provider is currently disabled.",

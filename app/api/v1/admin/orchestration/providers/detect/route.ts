@@ -41,6 +41,8 @@ interface KnownProviderDetection {
   alreadyConfigured: boolean;
   isLocal: boolean;
   suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
   suggestedEmbeddingModel: string | null;
 }
 
@@ -70,6 +72,8 @@ export const GET = withAdminAuth(async (request, _session) => {
       alreadyConfigured: existingSlugs.has(p.slug),
       isLocal: p.isLocal,
       suggestedDefaultChatModel: p.suggestedDefaultChatModel,
+      suggestedRoutingModel: p.suggestedRoutingModel,
+      suggestedReasoningModel: p.suggestedReasoningModel,
       suggestedEmbeddingModel: p.suggestedEmbeddingModel,
     };
   });

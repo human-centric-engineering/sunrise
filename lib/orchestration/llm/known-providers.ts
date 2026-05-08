@@ -35,8 +35,26 @@ export interface KnownProvider {
   apiKeyEnvVars: string[];
   /** True for loopback / on-box providers that don't need an API key. */
   isLocal: boolean;
-  /** Recommended chat model id when the operator picks this provider. */
+  /**
+   * Recommended chat model id when the operator picks this provider.
+   * Used by the wizard to populate `AiOrchestrationSettings.defaultModels.chat`.
+   */
   suggestedDefaultChatModel: string | null;
+  /**
+   * Recommended routing model — used by the runtime for cheap
+   * classification work (e.g. "which agent should handle this?"). For
+   * most providers we pick the same cheap budget tier as
+   * `suggestedDefaultChatModel`. `null` for embeddings-only providers.
+   */
+  suggestedRoutingModel: string | null;
+  /**
+   * Recommended reasoning model — used by workflows that need deeper
+   * thinking. For most providers we pick the strongest frontier-tier
+   * available. Falls back to the chat suggestion when the provider
+   * doesn't expose a separate frontier model. `null` for
+   * embeddings-only providers.
+   */
+  suggestedReasoningModel: string | null;
   /** Recommended embedding model id, or `null` if the provider has none. */
   suggestedEmbeddingModel: string | null;
 }
@@ -50,6 +68,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['ANTHROPIC_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'claude-sonnet-4-6',
+    suggestedRoutingModel: 'claude-haiku-4-5',
+    suggestedReasoningModel: 'claude-opus-4-6',
     suggestedEmbeddingModel: null,
   },
   {
@@ -60,6 +80,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['OPENAI_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'gpt-4o-mini',
+    suggestedRoutingModel: 'gpt-4o-mini',
+    suggestedReasoningModel: 'gpt-4o',
     suggestedEmbeddingModel: 'text-embedding-3-small',
   },
   {
@@ -70,6 +92,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['VOYAGE_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: null,
+    suggestedRoutingModel: null,
+    suggestedReasoningModel: null,
     suggestedEmbeddingModel: 'voyage-3',
   },
   {
@@ -80,6 +104,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['GOOGLE_AI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'gemini-2.0-flash',
+    suggestedRoutingModel: 'gemini-2.0-flash',
+    suggestedReasoningModel: 'gemini-2.0-pro',
     suggestedEmbeddingModel: 'text-embedding-004',
   },
   {
@@ -90,6 +116,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['MISTRAL_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'mistral-large-latest',
+    suggestedRoutingModel: 'mistral-small-latest',
+    suggestedReasoningModel: 'mistral-large-latest',
     suggestedEmbeddingModel: 'mistral-embed',
   },
   {
@@ -100,6 +128,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['GROQ_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'llama-3.3-70b-versatile',
+    suggestedRoutingModel: 'llama-3.1-8b-instant',
+    suggestedReasoningModel: 'llama-3.3-70b-versatile',
     suggestedEmbeddingModel: null,
   },
   {
@@ -110,6 +140,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['TOGETHER_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    suggestedRoutingModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    suggestedReasoningModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     suggestedEmbeddingModel: null,
   },
   {
@@ -120,6 +152,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: ['FIREWORKS_API_KEY'],
     isLocal: false,
     suggestedDefaultChatModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    suggestedRoutingModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+    suggestedReasoningModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
     suggestedEmbeddingModel: null,
   },
   {
@@ -130,6 +164,8 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     apiKeyEnvVars: [],
     isLocal: true,
     suggestedDefaultChatModel: 'llama3.2',
+    suggestedRoutingModel: 'llama3.2',
+    suggestedReasoningModel: 'llama3.2',
     suggestedEmbeddingModel: 'nomic-embed-text',
   },
 ] as const;

@@ -1,20 +1,24 @@
 /**
- * OrchestrationSettingsForm Component Tests (Costs page variant)
+ * DefaultModelsForm Component Tests
  *
  * Test Coverage:
  * - Renders 4 Select fields populated from settings prop
  * - Save button disabled when !isDirty
- * - Budget cap shows read-only text with link to Settings page
  * - Submitting calls apiClient.patch with defaultModels payload
  * - 400 APIClientError → inline error banner shows message
  * - Saved state renders "Saved" text after successful submit
  *
- * @see components/admin/orchestration/costs/orchestration-settings-form.tsx
+ * Lives on the Settings page since the move from the Costs page —
+ * default-model selection is closer to "global config" than to cost
+ * analytics.
+ *
+ * @see components/admin/orchestration/default-models-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { OrchestrationSettingsForm } from '@/components/admin/orchestration/costs/orchestration-settings-form';
+import userEvent from '@testing-library/user-event';
+import { DefaultModelsForm } from '@/components/admin/orchestration/default-models-form';
 import type { OrchestrationSettings } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
@@ -49,6 +53,14 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   id: 'settings-1',
   slug: 'global',
   defaultModels: {
+    routing: 'claude-haiku-4-5',
+    chat: 'claude-sonnet-4-6',
+    reasoning: 'claude-opus-4-6',
+    embeddings: 'claude-haiku-4-5',
+  },
+  // Default fixture treats every slot as operator-saved — individual
+  // tests override `defaultModelsStored` to exercise the empty-slot UX.
+  defaultModelsStored: {
     routing: 'claude-haiku-4-5',
     chat: 'claude-sonnet-4-6',
     reasoning: 'claude-opus-4-6',
@@ -106,9 +118,22 @@ const MOCK_MODELS: ModelInfo[] = [
   },
 ];
 
+// At least one configured provider — without this, the form renders
+// the no-providers CTA and hides the dropdowns.
+const MOCK_PROVIDERS = [{ slug: 'anthropic', name: 'Anthropic', isActive: true }];
+
+const MOCK_EMBEDDING_MODELS = [
+  {
+    id: 'openai/text-embedding-3-small',
+    name: 'text-embedding-3-small',
+    provider: 'OpenAI',
+    model: 'text-embedding-3-small',
+  },
+];
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('OrchestrationSettingsForm', () => {
+describe('DefaultModelsForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -119,32 +144,161 @@ describe('OrchestrationSettingsForm', () => {
 
   describe('initial render', () => {
     it('renders the form with 4 task-select triggers', () => {
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       // 4 select triggers for routing, chat, reasoning, embeddings
       const combos = screen.getAllByRole('combobox');
       expect(combos.length).toBeGreaterThanOrEqual(4);
     });
 
-    it('renders budget cap as read-only text with link to Settings', () => {
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
-
-      expect(screen.getByText(/current cap: \$500/i)).toBeInTheDocument();
-      expect(screen.getByText('manage in Settings')).toHaveAttribute(
-        'href',
-        '/admin/orchestration/settings'
+    it('does not render the legacy budget-cap section', () => {
+      // The form previously included a read-only budget summary that
+      // pointed at Settings. Now that the form lives on Settings (and
+      // the actual budget editor is in <SettingsForm> on the same page)
+      // that section is gone.
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
       );
+
+      expect(screen.queryByText(/global monthly budget cap/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/manage in settings/i)).not.toBeInTheDocument();
     });
 
     it('renders the card with test id', () => {
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
-      expect(screen.getByTestId('orchestration-settings-form')).toBeInTheDocument();
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+      expect(screen.getByTestId('default-models-form')).toBeInTheDocument();
+    });
+  });
+
+  describe('stored vs suggested distinction', () => {
+    it('shows "Saved override" + Clear link for slots the operator has saved', () => {
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // The default fixture marks every slot as stored, so all four
+      // footers show the Saved override state.
+      const saved = screen.getAllByText(/Saved override/i);
+      expect(saved.length).toBe(4);
+      const clearButtons = screen.getAllByRole('button', { name: /Clear \(use suggestion\)/i });
+      expect(clearButtons.length).toBe(4);
+    });
+
+    it('shows the suggested model + Use suggestion button for empty slots', () => {
+      // Stored is empty for `chat`; the form should render Chat's
+      // dropdown empty and surface a suggestion footer.
+      const settingsWithEmptyChat: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          // chat: missing on purpose
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'claude-haiku-4-5',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyChat}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // The hydrated `defaultModels.chat` ('claude-sonnet-4-6') is
+      // surfaced as a suggestion, NOT as a saved value.
+      expect(screen.getByText(/Suggested:/i)).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /^Use suggestion$/i }).length).toBe(1);
+    });
+
+    it('Use suggestion makes the form dirty so Save lights up', async () => {
+      const settingsWithEmptyChat: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'claude-haiku-4-5',
+        },
+      };
+      const user = userEvent.setup();
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyChat}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      const saveBtn = screen.getByRole('button', { name: /save changes/i });
+      expect(saveBtn).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: /^Use suggestion$/i }));
+
+      // Picking the suggestion commits it as a saved value → form
+      // dirty → Save enabled.
+      expect(saveBtn).not.toBeDisabled();
+    });
+
+    it('Clear drops the saved override and falls back to the suggestion footer', async () => {
+      const user = userEvent.setup();
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      const clearButtons = screen.getAllByRole('button', { name: /Clear \(use suggestion\)/i });
+      // Clear the chat slot (second of the four saved overrides — order
+      // is: routing, chat, reasoning, embeddings).
+      await user.click(clearButtons[1]);
+
+      // After clearing, that slot now shows a Use-suggestion footer
+      // and the Save button is enabled (form is dirty).
+      expect(screen.getByText(/Suggested:/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /save changes/i })).not.toBeDisabled();
     });
   });
 
   describe('Save button disabled state', () => {
     it('Save button is disabled when form is not dirty', () => {
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       const saveBtn = screen.getByRole('button', { name: /save changes/i });
       expect(saveBtn).toBeDisabled();
@@ -155,10 +309,17 @@ describe('OrchestrationSettingsForm', () => {
     it('calls apiClient.patch with defaultModels payload and shows "Saved" on success', async () => {
       mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
 
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       // Submit the form directly (simulates a model select change + submit)
-      const form = screen.getByTestId('orchestration-settings-form').closest('form');
+      const form = screen.getByTestId('default-models-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
       });
@@ -194,10 +355,17 @@ describe('OrchestrationSettingsForm', () => {
         new APIClientError('Invalid model id in defaultModels', 'VALIDATION_ERROR', 400)
       );
 
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       // Submit the form directly
-      const form = screen.getByTestId('orchestration-settings-form').closest('form');
+      const form = screen.getByTestId('default-models-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
       });
@@ -214,10 +382,17 @@ describe('OrchestrationSettingsForm', () => {
     it('shows generic error message for non-APIClientError rejections', async () => {
       mockedPatch.mockRejectedValueOnce(new Error('Network failure'));
 
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       // Submit the form directly
-      const form = screen.getByTestId('orchestration-settings-form').closest('form');
+      const form = screen.getByTestId('default-models-form').closest('form');
       await act(async () => {
         fireEvent.submit(form!);
       });
@@ -234,22 +409,199 @@ describe('OrchestrationSettingsForm', () => {
   });
 
   describe('null settings — renders empty form with warning', () => {
-    it('renders "No global cap set" when settings is null', () => {
-      render(<OrchestrationSettingsForm settings={null} models={MOCK_MODELS} />);
-
-      expect(screen.getByText(/no global cap set/i)).toBeInTheDocument();
-    });
-
     it('shows amber warning banner when settings is null', () => {
-      render(<OrchestrationSettingsForm settings={null} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={null}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       expect(screen.getByText(/settings could not be loaded/i)).toBeInTheDocument();
     });
 
     it('does not show warning banner when settings is provided', () => {
-      render(<OrchestrationSettingsForm settings={MOCK_SETTINGS} models={MOCK_MODELS} />);
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
 
       expect(screen.queryByText(/settings could not be loaded/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('configured-provider gate', () => {
+    it('renders the no-providers CTA and hides the dropdowns when nothing is configured', () => {
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={[]}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      expect(screen.getByText(/No providers configured yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Open Providers/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/providers'
+      );
+      // The four task dropdowns must be absent — we don't list models
+      // the system can't actually reach.
+      expect(document.getElementById('model-chat')).toBeNull();
+      expect(document.getElementById('model-routing')).toBeNull();
+      expect(document.getElementById('model-reasoning')).toBeNull();
+      expect(document.getElementById('model-embeddings')).toBeNull();
+    });
+
+    it('treats inactive providers as not-configured for the gate', () => {
+      // A provider that's been soft-deleted (isActive=false) shouldn't
+      // unlock the form. The operator should reactivate it first.
+      render(
+        <DefaultModelsForm
+          settings={MOCK_SETTINGS}
+          models={MOCK_MODELS}
+          providers={[{ slug: 'anthropic', name: 'Anthropic', isActive: false }]}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      expect(screen.getByText(/No providers configured yet/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('per-task option filtering', () => {
+    it('chat / routing / reasoning dropdowns only show models from configured providers', async () => {
+      const mixedModels: ModelInfo[] = [
+        ...MOCK_MODELS,
+        // GPT-4o belongs to "openai" — not configured here, must be hidden.
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 2.5,
+          outputCostPerMillion: 10,
+          maxContext: 128_000,
+          supportsTools: true,
+        },
+      ];
+
+      // Settings with Anthropic-only provider: GPT-4o would be a leak.
+      const settingsWithEmptyChat: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'text-embedding-3-small',
+        },
+      };
+      const user = userEvent.setup();
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyChat}
+          models={mixedModels}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // Open the chat dropdown.
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+
+      // Anthropic options visible, GPT-4o NOT.
+      expect(screen.getByRole('option', { name: /Claude Haiku/i })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /GPT-4o/i })).not.toBeInTheDocument();
+    });
+
+    it('embeddings dropdown shows only embedding-capable models for configured providers', async () => {
+      // Configure both Anthropic and OpenAI; embedding model belongs to OpenAI.
+      const providers = [
+        { slug: 'anthropic', name: 'Anthropic', isActive: true },
+        { slug: 'openai', name: 'OpenAI', isActive: true },
+      ];
+      const settingsWithEmptyEmbed: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+        },
+      };
+      const user = userEvent.setup();
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyEmbed}
+          models={MOCK_MODELS}
+          providers={providers}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      await user.click(document.getElementById('model-embeddings') as HTMLElement);
+
+      // Only the OpenAI embedding option, not chat models.
+      expect(screen.getByRole('option', { name: /text-embedding-3-small/i })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /Claude Sonnet/i })).not.toBeInTheDocument();
+    });
+
+    it('embeddings shows the no-embedding-provider hint when none of the configured providers offer embeddings', () => {
+      // Anthropic only, no embedding-capable model in MOCK_EMBEDDING_MODELS.
+      const settingsWithEmptyEmbed: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyEmbed}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS} // OpenAI but not configured
+        />
+      );
+
+      expect(
+        screen.getByText(/None of your configured providers offer embeddings/i)
+      ).toBeInTheDocument();
+      // Suggest mentioning Voyage AI, OpenAI, Google, Mistral, Ollama.
+      expect(
+        screen.getByText(/Voyage AI, OpenAI, Google, Mistral, or local Ollama/i)
+      ).toBeInTheDocument();
+    });
+
+    it('honest placeholder reads "Not set — pick a model" when slot is empty', () => {
+      const settingsWithEmptyChat: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'text-embedding-3-small',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyChat}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      expect(screen.getByText('Not set — pick a model')).toBeInTheDocument();
     });
   });
 });
