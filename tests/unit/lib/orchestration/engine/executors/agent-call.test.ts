@@ -70,7 +70,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getCapabilityDefinitions } from '@/lib/orchestration/capabilities/registry';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
-import type { WorkflowStep } from '@/types/orchestration';
+import type { TurnEntry, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { MockTracer } from '@/tests/helpers/mock-tracer';
 import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
@@ -782,13 +782,15 @@ describe('executeAgentCall', () => {
       expect(recordTurn).toHaveBeenCalledWith(
         expect.objectContaining({
           kind: 'agent_call',
+          phase: 'terminal',
           index: 0,
           assistantContent: 'Summary result',
           tokensUsed: 150,
           costUsd: 0.01,
         })
       );
-      // Final-answer shape: no toolCall field (signals end-of-step to resume logic)
+      // Final-answer shape: phase 'terminal' AND no toolCall field — both
+      // signal end-of-step to resume logic; assert both for defence in depth.
       expect(recordTurn.mock.calls[0][0]).not.toHaveProperty('toolCall');
     });
 
@@ -815,6 +817,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -824,6 +827,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -833,6 +837,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -882,10 +887,11 @@ describe('executeAgentCall', () => {
     // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────
 
     it('single-turn resume short-circuit: lastPrior has no toolCall → returns cached result, no LLM call', async () => {
-      // Arrange: prior turns ending with a finalized entry (no toolCall field)
+      // Arrange: prior turns ending with a terminal entry (phase: 'terminal')
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -895,6 +901,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -902,9 +909,10 @@ describe('executeAgentCall', () => {
           tokensUsed: 60,
           costUsd: 0.006,
         },
-        // Final entry: no toolCall → short-circuit on resume
+        // Final entry: phase 'terminal' → short-circuit on resume
         {
           kind: 'agent_call' as const,
+          phase: 'terminal' as const,
           index: 2,
           assistantContent: 'final',
           tokensUsed: 70,
@@ -937,6 +945,52 @@ describe('executeAgentCall', () => {
       );
     });
 
+    // ── Test 4b: discriminator pin — phase, not toolCall-absence ───────────
+
+    it('single-turn resume short-circuit narrows on phase=terminal even when stray toolCall is present (pins discriminator)', async () => {
+      // Arrange — contrived fixture: phase 'terminal' AND a toolCall present.
+      // This is type-illegal under AgentCallTurn, but a row written before
+      // the discriminator split (or hand-edited) could produce it. The
+      // executor MUST narrow on `phase === 'terminal'`, NOT on `!toolCall`.
+      //
+      // Anti-green-bar role: a regression to the old `if (!lastPrior.toolCall)`
+      // discriminator would FAIL to short-circuit here (toolCall is truthy)
+      // and would call the LLM. This test catches that regression even
+      // though the visible behaviour (short-circuit on a terminal turn) is
+      // unchanged. Every other resume-short-circuit test uses fixtures where
+      // phase=terminal AND toolCall is absent — those don't distinguish
+      // which discriminator the executor uses.
+      //
+      // The cast is necessary because TS rejects the contrived shape; that's
+      // the type system doing its job. We bypass it once, deliberately, to
+      // exercise the runtime check that backs the type-layer guarantee.
+      const contrived = {
+        kind: 'agent_call' as const,
+        phase: 'terminal' as const,
+        index: 0,
+        assistantContent: 'cached final answer',
+        toolCall: { id: 'stray', name: 'cap', arguments: {} },
+        tokensUsed: 50,
+        costUsd: 0.005,
+      } as unknown as TurnEntry;
+
+      const ctx = makeCtx({ resumeTurns: [contrived] });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert — short-circuit fired despite the stray toolCall: NO LLM call.
+      // Under the old `!lastPrior.toolCall` check the executor would have
+      // continued to runSingleTurn (mockChat would have been called).
+      expect(mockChat).not.toHaveBeenCalled();
+      expect(result.output).toBe('cached final answer');
+      // Tokens/cost reflect only the cached prior — proves we returned the
+      // cached result rather than running a new iteration.
+      expect(result.tokensUsed).toBe(50);
+      expect(result.costUsd).toBeCloseTo(0.005);
+    });
+
     // ── Test 5: outerTurn-tagged entries excluded from single-turn resume ───
 
     it('single-turn resume filter: outerTurn-tagged entries excluded → treated as fresh start', async () => {
@@ -944,6 +998,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           outerTurn: 0,
           assistantContent: 'mt_a0',
@@ -1066,6 +1121,7 @@ describe('executeAgentCall', () => {
       const firstCall = recordTurn.mock.calls[0][0] as Record<string, unknown>;
       expect(firstCall).toMatchObject({
         kind: 'agent_call',
+        phase: 'continuing',
         index: 0,
         assistantContent: 'thinking',
         toolCall: { id: 'c1', name: 'cap', arguments: { q: 'x' } },
@@ -1091,12 +1147,13 @@ describe('executeAgentCall', () => {
       const call = recordTurn.mock.calls[0][0];
       expect(call).toMatchObject({
         kind: 'agent_call',
+        phase: 'terminal',
         index: 0,
         assistantContent: 'Summary result',
         tokensUsed: 150,
         costUsd: 0.01,
       });
-      // Absent-field assertion: no toolCall on final-answer turn
+      // Absent-field assertion: no toolCall on terminal-phase turn
       expect(call).not.toHaveProperty('toolCall');
     });
 
@@ -1137,12 +1194,13 @@ describe('executeAgentCall', () => {
       const call = recordTurn.mock.calls[0][0];
       expect(call).toMatchObject({
         kind: 'agent_call',
+        phase: 'terminal',
         index: 0,
         assistantContent: JSON.stringify({ result: 'foo' }),
         tokensUsed: 40, // 30 + 10
         costUsd: 0.002,
       });
-      // skipFollowup entries must NOT carry toolCall (terminal signal)
+      // skipFollowup entries must NOT carry toolCall (terminal phase)
       expect(call).not.toHaveProperty('toolCall');
     });
 
@@ -1153,6 +1211,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1162,6 +1221,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -1171,6 +1231,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -1231,6 +1292,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1240,6 +1302,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },
@@ -1249,6 +1312,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 2,
           assistantContent: 'a2',
           toolCall: { id: 't2', name: 'cap', arguments: {} },
@@ -1278,6 +1342,7 @@ describe('executeAgentCall', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 0,
           assistantContent: 'a0',
           toolCall: { id: 't0', name: 'cap', arguments: {} },
@@ -1287,6 +1352,7 @@ describe('executeAgentCall', () => {
         },
         {
           kind: 'agent_call' as const,
+          phase: 'continuing' as const,
           index: 1,
           assistantContent: 'a1',
           toolCall: { id: 't1', name: 'cap', arguments: {} },

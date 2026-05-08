@@ -1956,22 +1956,39 @@ export const updateOrchestrationSettingsSchema = z
 // (mid-flight) and the trace entry's `turns` field (post-termination). The
 // shapes mirror the discriminated union in `types/orchestration.ts`.
 
-const agentCallTurnSchema = z.object({
+const agentCallTurnContinuingSchema = z.object({
   kind: z.literal('agent_call'),
+  phase: z.literal('continuing'),
   index: z.number().int().nonnegative(),
   outerTurn: z.number().int().nonnegative().optional(),
   assistantContent: z.string(),
-  toolCall: z
-    .object({
-      id: z.string(),
-      name: z.string(),
-      arguments: z.record(z.string(), z.unknown()),
-    })
-    .optional(),
-  toolResult: z.unknown().optional(),
+  toolCall: z.object({
+    id: z.string(),
+    name: z.string(),
+    arguments: z.record(z.string(), z.unknown()),
+  }),
+  toolResult: z.unknown(),
   tokensUsed: z.number().nonnegative(),
   costUsd: z.number().nonnegative(),
 });
+
+const agentCallTurnTerminalSchema = z.object({
+  kind: z.literal('agent_call'),
+  phase: z.literal('terminal'),
+  index: z.number().int().nonnegative(),
+  outerTurn: z.number().int().nonnegative().optional(),
+  assistantContent: z.string(),
+  tokensUsed: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+});
+
+// `phase` discriminates the two valid runtime states. One-sided entries
+// (toolCall without toolResult, etc.) cannot be represented — either both
+// fields are present (continuing) or both absent (terminal).
+const agentCallTurnSchema = z.discriminatedUnion('phase', [
+  agentCallTurnContinuingSchema,
+  agentCallTurnTerminalSchema,
+]);
 
 const orchestratorTurnSchema = z.object({
   kind: z.literal('orchestrator'),
@@ -2001,7 +2018,12 @@ const reflectTurnSchema = z.object({
   costUsd: z.number().nonnegative(),
 });
 
-export const turnEntrySchema = z.discriminatedUnion('kind', [
+// `agentCallTurnSchema` is itself a discriminatedUnion (on `phase`) so it
+// can't be a member of an outer `z.discriminatedUnion('kind', ...)` — Zod
+// requires each member to be a single ZodObject. We use `z.union` here and
+// rely on `kind` for narrowing in TS; the per-member parse cost is
+// negligible for a 3-member union.
+export const turnEntrySchema = z.union([
   agentCallTurnSchema,
   orchestratorTurnSchema,
   reflectTurnSchema,
@@ -2042,7 +2064,22 @@ export const executionTraceEntrySchema = z
         })
       )
       .optional(),
-    turns: z.array(turnEntrySchema).optional(),
+    // `.catch(() => undefined)` is backward-compat insurance: PR 3 split
+    // AgentCallTurn into a discriminated sub-union (`phase: 'continuing' |
+    // 'terminal'`), making `phase` a required field. Pre-PR-3 trace entries
+    // wrote `agent_call` turns with no `phase`; without the catch, those
+    // entries fail to parse here, get dropped by the resume path's flatMap
+    // (orchestration-engine.ts), miss seeding into the `visited` set, and
+    // the DAG walker then re-executes already-completed steps. The catch
+    // gracefully drops the malformed `turns` field while preserving the
+    // surrounding entry — observability of pre-PR turns is lost (they
+    // were unparseable anyway), but `visited` is seeded correctly so the
+    // step doesn't re-run. Forks running PR 2 in production who deploy
+    // PR 3+ rely on this; greenfield deployments never hit it.
+    turns: z
+      .array(turnEntrySchema)
+      .optional()
+      .catch(() => undefined),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by

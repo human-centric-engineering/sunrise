@@ -2307,10 +2307,11 @@ describe('resolveWidgetConfig', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('turnEntrySchema', () => {
-  it('accepts agent_call shape with minimum required fields', () => {
+  it('accepts agent_call terminal-phase shape (no toolCall/toolResult)', () => {
     // Arrange
     const input = {
       kind: 'agent_call',
+      phase: 'terminal',
       index: 0,
       assistantContent: 'hi',
       tokensUsed: 100,
@@ -2322,19 +2323,21 @@ describe('turnEntrySchema', () => {
 
     // Assert
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.kind).toBe('agent_call');
-      if (result.data.kind === 'agent_call') {
-        expect(result.data.index).toBe(0);
-        expect(result.data.tokensUsed).toBe(100);
-      }
+    if (result.success && result.data.kind === 'agent_call') {
+      expect(result.data.phase).toBe('terminal');
+      expect(result.data.index).toBe(0);
+      expect(result.data.tokensUsed).toBe(100);
+      // Terminal phase: toolCall/toolResult must NOT be on the parsed shape
+      expect(result.data).not.toHaveProperty('toolCall');
+      expect(result.data).not.toHaveProperty('toolResult');
     }
   });
 
-  it('accepts agent_call shape with all optional fields populated', () => {
+  it('accepts agent_call continuing-phase shape (toolCall + toolResult required)', () => {
     // Arrange
     const input = {
       kind: 'agent_call',
+      phase: 'continuing',
       index: 1,
       outerTurn: 1,
       assistantContent: 'with tool call',
@@ -2349,10 +2352,10 @@ describe('turnEntrySchema', () => {
 
     // Assert
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.kind).toBe('agent_call');
-      // Narrow the type to agent_call to access kind-specific fields
-      if (result.data.kind === 'agent_call') {
+    if (result.success && result.data.kind === 'agent_call') {
+      // Narrow on phase to access continuing-only fields
+      expect(result.data.phase).toBe('continuing');
+      if (result.data.phase === 'continuing') {
         expect(result.data.outerTurn).toBe(1);
         expect(result.data.toolCall).toEqual({
           id: 'call_1',
@@ -2361,6 +2364,72 @@ describe('turnEntrySchema', () => {
         });
         expect(result.data.toolResult).toEqual({ status: 200 });
       }
+    }
+  });
+
+  it('rejects agent_call with phase=continuing but missing toolCall (differential: same input WITH the pair parses)', () => {
+    // Arrange — one-sided entry: phase claims continuing but no tool data.
+    // The discriminated union must refuse this; with the old optional-fields
+    // shape it would have parsed silently and corrupted resume replay.
+    const baseInput = {
+      kind: 'agent_call',
+      phase: 'continuing',
+      index: 0,
+      assistantContent: 'partial',
+      // toolCall + toolResult deliberately absent
+      tokensUsed: 50,
+      costUsd: 0.005,
+    };
+
+    // Act + Assert — failing parse without the pair
+    const failing = turnEntrySchema.safeParse(baseInput);
+    expect(failing.success).toBe(false);
+
+    // Differential: adding toolCall + toolResult to the SAME input flips the
+    // result to success. This pins the rejection cause specifically to the
+    // missing pair — an unrelated schema regression (e.g. broken
+    // `assistantContent`) would fail BOTH parses, and this test would also
+    // fail on the second assertion. The two-parse pair guarantees the
+    // refusal is about toolCall/toolResult, not coincidence.
+    const succeeding = turnEntrySchema.safeParse({
+      ...baseInput,
+      toolCall: { id: 'c1', name: 'cap', arguments: {} },
+      toolResult: { ok: true },
+    });
+    expect(succeeding.success).toBe(true);
+  });
+
+  it('strips stray toolCall on phase=terminal entries (Zod strip mode preserves the contract)', () => {
+    // Arrange — terminal phase with stray toolCall. Zod's default object
+    // mode is `strip`, so the unknown field is dropped rather than rejected.
+    // The contract is enforced at TWO layers:
+    //   1. Type layer: TS forbids constructing AgentCallTurnTerminal with toolCall.
+    //   2. Parse layer: terminal schema doesn't declare toolCall, so it's stripped.
+    // Under the OLD shape (single agentCallTurnSchema with optional toolCall),
+    // this input would have parsed AND preserved the toolCall in the output —
+    // which is exactly the data drift we're protecting against.
+    const input = {
+      kind: 'agent_call',
+      phase: 'terminal',
+      index: 0,
+      assistantContent: 'final',
+      toolCall: { id: 'stray', name: 'cap', arguments: {} },
+      tokensUsed: 50,
+      costUsd: 0.005,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert — parse succeeds AND the parsed output drops the stray toolCall.
+    // Both halves of the assertion are load-bearing: under the old schema
+    // the parse would still succeed (terminal-shape input is structurally
+    // valid for the old optional shape), but the output WOULD carry the
+    // toolCall through. The `not.toHaveProperty` check is what distinguishes.
+    expect(result.success).toBe(true);
+    if (result.success && result.data.kind === 'agent_call') {
+      expect(result.data.phase).toBe('terminal');
+      expect(result.data).not.toHaveProperty('toolCall');
     }
   });
 
@@ -2491,7 +2560,14 @@ describe('turnEntrySchema', () => {
         tokensUsed: 10,
         costUsd: 0.001,
       },
-      { kind: 'agent_call', index: 0, assistantContent: 'ok', tokensUsed: 50, costUsd: 0.005 },
+      {
+        kind: 'agent_call',
+        phase: 'terminal',
+        index: 0,
+        assistantContent: 'ok',
+        tokensUsed: 50,
+        costUsd: 0.005,
+      },
     ];
 
     // Act
@@ -2519,7 +2595,14 @@ describe('turnEntrySchema', () => {
       startedAt: '2024-01-01T00:00:00Z',
       durationMs: 1200,
       turns: [
-        { kind: 'agent_call', index: 0, assistantContent: 'hi', tokensUsed: 50, costUsd: 0.005 },
+        {
+          kind: 'agent_call',
+          phase: 'terminal',
+          index: 0,
+          assistantContent: 'hi',
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
       ],
     };
 
@@ -2537,7 +2620,7 @@ describe('turnEntrySchema', () => {
     }
   });
 
-  it('executionTraceEntrySchema rejects an entry where turns contains a malformed entry', () => {
+  it('executionTraceEntrySchema preserves the surrounding entry when turns contains a malformed element', () => {
     // Arrange: turns contains a turn with an invalid kind
     const input = {
       stepId: 'step-2',
@@ -2555,7 +2638,79 @@ describe('turnEntrySchema', () => {
     // Act
     const result = executionTraceEntrySchema.safeParse(input);
 
-    // Assert: turns validation fails because 'unknown' is not a valid discriminant
-    expect(result.success).toBe(false);
+    // Assert — the malformed `turns` array is gracefully dropped via `.catch()`
+    // so the surrounding entry survives. Failing the whole entry would cause
+    // the engine's resume `flatMap` to drop it, the stepId would not seed
+    // `visited`, and the DAG walker would re-execute the already-completed
+    // step. This test pins the resume-safety contract: bad `turns` must NOT
+    // take the entry down with them.
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Entry-level fields preserved
+      expect((result.data as Record<string, unknown>).stepId).toBe('step-2');
+      expect((result.data as Record<string, unknown>).status).toBe('completed');
+      // `turns` field is absent from the parsed shape — observability lost,
+      // but the step is correctly recorded as completed.
+      expect((result.data as Record<string, unknown>).turns).toBeUndefined();
+    }
+  });
+
+  it('executionTraceEntrySchema preserves the entry when turns contains pre-PR-3 agent_call shape (backwards-compat)', () => {
+    // Arrange — this is the EXACT shape PR 2 wrote: `agent_call` turns with
+    // `toolCall` / `toolResult` fields but NO `phase` discriminator. PR 3
+    // made `phase` required. Without the `.catch()` on the `turns` field,
+    // the entry would fail and re-execution would follow.
+    //
+    // This test exists specifically as a regression gate: if a future
+    // refactor removes the `.catch()`, this test fails — surfacing the
+    // resume-safety regression before it ships.
+    const prePR3Entry = {
+      stepId: 'step-multi-turn',
+      stepType: 'agent_call',
+      label: 'Call Agent',
+      status: 'completed',
+      output: { answer: 'done' },
+      tokensUsed: 250,
+      costUsd: 0.025,
+      startedAt: '2024-01-01T00:00:00Z',
+      durationMs: 2400,
+      turns: [
+        {
+          kind: 'agent_call',
+          // NO `phase` field — pre-PR-3 shape
+          index: 0,
+          assistantContent: 'thinking',
+          toolCall: { id: 't0', name: 'cap', arguments: { q: 'x' } },
+          toolResult: { ok: true },
+          tokensUsed: 100,
+          costUsd: 0.01,
+        },
+        {
+          kind: 'agent_call',
+          // NO `phase` field — pre-PR-3 shape
+          index: 1,
+          assistantContent: 'done',
+          tokensUsed: 150,
+          costUsd: 0.015,
+        },
+      ],
+    };
+
+    // Act
+    const result = executionTraceEntrySchema.safeParse(prePR3Entry);
+
+    // Assert — entry survives, stepId is preserved (so the resume engine
+    // seeds `visited` correctly), turns field is dropped (catch returned
+    // undefined). The cost/tokens fields at entry level still rehydrate
+    // accurately because they live on the entry, not the turns sub-array.
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as Record<string, unknown>;
+      expect(data.stepId).toBe('step-multi-turn');
+      expect(data.status).toBe('completed');
+      expect(data.tokensUsed).toBe(250);
+      expect(data.costUsd).toBe(0.025);
+      expect(data.turns).toBeUndefined();
+    }
   });
 });

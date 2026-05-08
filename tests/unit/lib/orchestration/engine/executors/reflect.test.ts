@@ -650,6 +650,7 @@ describe('executeReflect', () => {
       const priorTurns = [
         {
           kind: 'agent_call' as const,
+          phase: 'terminal' as const,
           index: 0,
           assistantContent: 'x',
           tokensUsed: 50,

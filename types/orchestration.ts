@@ -293,17 +293,11 @@ export type ExecutionEvent =
  */
 export type TurnEntry = AgentCallTurn | OrchestratorTurn | ReflectTurn;
 
-// TODO(pr3): tighten AgentCallTurn to a discriminated sub-union — see
-// PR 2 type-design-analyzer T1. Today `toolCall` and `toolResult` are
-// independently optional, but the runtime contract is paired (continuing
-// iteration: both set) or absent (terminal iteration: both undefined). The
-// 4-state type permits 2 runtime-illegal combinations a future maintainer
-// could write by accident; the replay path on `agent-call.ts` reads each
-// independently so a one-sided entry would silently rebuild a malformed
-// LLM message history. PR 3 split: `AgentCallTurnContinuing` (toolCall +
-// toolResult required) | `AgentCallTurnTerminal` (both forbidden). Mirror
-// in Zod with z.union + .refine() for the mutual-exclusion check.
-export interface AgentCallTurn {
+/**
+ * Fields shared by every `agent_call` iteration entry, regardless of phase.
+ * Not exported on its own — `AgentCallTurn` is the public union below.
+ */
+interface AgentCallTurnBase {
   kind: 'agent_call';
   /** 0-indexed tool-iteration counter within the step. Increments per LLM call. */
   index: number;
@@ -311,16 +305,39 @@ export interface AgentCallTurn {
   outerTurn?: number;
   /** Assistant content from the LLM response that closed this iteration. */
   assistantContent: string;
-  /**
-   * The tool call this turn triggered, if any. Absent when the assistant
-   * emitted a final response (no tool use) — that signals end-of-step.
-   */
-  toolCall?: { id: string; name: string; arguments: Record<string, unknown> };
-  /** The dispatcher's result for `toolCall`, JSON-serialisable. */
-  toolResult?: unknown;
   tokensUsed: number;
   costUsd: number;
 }
+
+/**
+ * A continuing iteration — the assistant called a tool and the dispatched
+ * result is captured. Replay re-emits this as the assistant + tool message
+ * pair when rebuilding `currentMessages`.
+ */
+export interface AgentCallTurnContinuing extends AgentCallTurnBase {
+  phase: 'continuing';
+  toolCall: { id: string; name: string; arguments: Record<string, unknown> };
+  /** The dispatcher's result for `toolCall`, JSON-serialisable. */
+  toolResult: unknown;
+}
+
+/**
+ * A terminal iteration — the assistant produced final content with no tool
+ * call (either the LLM declined to call a tool, or a `skipFollowup`
+ * capability synthesised the result). Resume short-circuits when the last
+ * prior turn is `terminal`.
+ */
+export interface AgentCallTurnTerminal extends AgentCallTurnBase {
+  phase: 'terminal';
+}
+
+/**
+ * Discriminated by `phase`. The 2 valid runtime states are continuing
+ * (toolCall + toolResult required) and terminal (both absent). The split
+ * makes one-sided entries (toolCall without toolResult, etc.) unrepresentable
+ * — both at the TS layer and after Zod parse.
+ */
+export type AgentCallTurn = AgentCallTurnContinuing | AgentCallTurnTerminal;
 
 export interface OrchestratorTurn {
   kind: 'orchestrator';

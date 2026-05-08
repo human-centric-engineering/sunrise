@@ -713,6 +713,7 @@ describe('multi-turn checkpoint resume', () => {
     };
     const agentCallEntry: TurnEntry = {
       kind: 'agent_call',
+      phase: 'terminal',
       index: 0,
       assistantContent: 'assistant text',
       tokensUsed: 888,
