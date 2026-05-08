@@ -345,9 +345,10 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
       });
 
-      // Find the play button (test) for the first model
-      const testButtons = screen.getAllByTitle(/test/i);
-      await user.click(testButtons[0]);
+      // Target the Test button by its tooltip title — the row order in
+      // the table now depends on the sort state, so picking element [0]
+      // would couple the assertion to the default sort.
+      await user.click(screen.getByTitle(/test claude opus 4\.6/i));
 
       await waitFor(() => {
         expect(apiClient.post).toHaveBeenCalledWith(
@@ -375,8 +376,7 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
       });
 
-      const testButtons = screen.getAllByTitle(/test/i);
-      await user.click(testButtons[0]);
+      await user.click(screen.getByTitle(/test claude opus 4\.6/i));
 
       await waitFor(() => {
         expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
@@ -452,7 +452,7 @@ describe('ProviderModelsPanel', () => {
       models: ENRICHED_MODELS,
     };
 
-    it('renders an "In matrix" badge on rows that have a matrix match', async () => {
+    it('renders an "In matrix" badge in the In matrix column for matched rows', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 
@@ -462,24 +462,53 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
       });
 
-      // Only one matrix-matched row in the fixture, so there should
-      // be exactly one "In matrix" badge.
-      expect(screen.getAllByText(/in matrix/i)).toHaveLength(1);
+      // The phrase "In matrix" appears twice in the DOM: once as the
+      // column header (rendered by SortableHead) and once as the badge
+      // on the single matrix-matched row. Two matches means the column
+      // exists AND the lone matrix row is annotated.
+      expect(screen.getAllByText(/in matrix/i)).toHaveLength(2);
     });
 
-    it('splits rows into "In your matrix" and "Discovered" sections', async () => {
+    it('renders all rows in a single combined table (no section split)', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText(/in your matrix/i)).toBeInTheDocument();
-        expect(screen.getByText(/^discovered$/i)).toBeInTheDocument();
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
       });
+
+      // Every row is visible immediately — no "In your matrix" /
+      // "Discovered" expand toggles, no rows hidden behind a closed
+      // section. The four enriched fixture rows all render in one go.
+      // text-embedding-3-small has identical id and name so it appears
+      // twice (name cell + id sub-row); getAllByText handles that.
+      expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      expect(screen.getAllByText('text-embedding-3-small').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('o3-pro')).toBeInTheDocument();
+      expect(screen.getByText('DALL-E 3')).toBeInTheDocument();
     });
 
     it('shows a capability badge per row', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      // The embedding row shows a capability badge with text "embedding".
+      // Need to disambiguate from the "Embedding" filter chip — assert
+      // on the count instead.
+      const matches = screen.getAllByText(/embedding/i);
+      // At least 2: the filter chip + the row capability badge
+      expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('clicking "In matrix" twice reverts to the default name-asc sort', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 
@@ -487,21 +516,37 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText(/^discovered$/i)).toBeInTheDocument();
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
       });
 
-      // Discovered defaults closed when matrix has matches — open it
-      // so the embedding/reasoning/image rows render.
-      await user.click(screen.getByRole('button', { name: /discovered/i }));
+      // Click 1 — group matrix rows at top.
+      const inMatrixHeader = screen.getByRole('button', { name: /^in matrix/i });
+      await user.click(inMatrixHeader);
+      let rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('GPT-4o mini');
 
-      // The embedding row shows a capability badge with text "embedding".
-      // Need to disambiguate from the "Embedding" filter chip — assert
-      // on the badge's container in the row.
+      // Click 2 — revert to name-asc, NOT flip to matrix-rows-at-bottom.
+      await user.click(inMatrixHeader);
+      rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('DALL-E 3');
+    });
+
+    it('default sort is alphabetical by model name (matrix rows interleaved)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
       await waitFor(() => {
-        const matches = screen.getAllByText(/embedding/i);
-        // At least 2: the filter chip + the row capability badge
-        expect(matches.length).toBeGreaterThanOrEqual(2);
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
       });
+
+      // Default sort is `name asc` — DALL-E 3 sorts before GPT-4o mini
+      // (the lone matrix-matched row), proving the matrix grouping is
+      // NOT applied by default. Operators opt into grouping by clicking
+      // the "In matrix" column header.
+      const rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('DALL-E 3');
     });
   });
 

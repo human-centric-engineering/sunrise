@@ -16,10 +16,9 @@
  *   - Capability filter chips (Chat / Embedding / Image / Audio /
  *     Other) — multi-select; "Other" buckets reasoning, moderation,
  *     and unknown
- *   - Two sections — "In your matrix" (matched against the curated
- *     `AiProviderModel` rows, default expanded) and "Discovered"
- *     (everything else, default expanded only when no matrix rows
- *     match — keeps the dialog tight by default)
+ *   - Sortable columns — click a column header to sort. Default sort is
+ *     alphabetical by model name; click the "In matrix" header to group
+ *     curated `AiProviderModel` rows above the vendor-discovered tail.
  *
  * Per-row Test button is capability-aware (Phase B/C): chat and
  * embedding rows trigger the live SDK roundtrip via
@@ -33,7 +32,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Play, RefreshCw } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -94,6 +93,12 @@ export interface ProviderModelsPanelProps {
 // / unknown so the chips stay readable even on OpenAI's catalogue.
 type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
 
+// Columns the operator can sort on. `name` covers the Model column
+// (sorts on display name); `inMatrix` is the default — clicking it
+// flips matrix-first → discovered-first.
+type SortKey = 'name' | 'inMatrix' | 'tier' | 'context' | 'input' | 'output';
+type SortDir = 'asc' | 'desc';
+
 const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
   { id: 'chat', label: 'Chat' },
   { id: 'embedding', label: 'Embedding' },
@@ -148,8 +153,8 @@ export function ProviderModelsPanel({
   const [testResults, setTestResults] = useState<Record<string, TestModelResult>>({});
   const [search, setSearch] = useState('');
   const [activeBuckets, setActiveBuckets] = useState<Set<FilterBucket>>(new Set());
-  const [discoveredOpen, setDiscoveredOpen] = useState(false);
-  const [matrixOpen, setMatrixOpen] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -160,12 +165,6 @@ export function ProviderModelsPanel({
       );
       const list = response.models ?? [];
       setModels(list);
-      // Auto-expand Discovered when the matrix has zero matches —
-      // otherwise the dialog looks empty until the operator clicks
-      // through. When it has at least one matrix match, default the
-      // section closed to keep the matched rows the focus.
-      const hasMatrix = list.some((m) => m.inMatrix);
-      setDiscoveredOpen(!hasMatrix);
     } catch {
       setError("Couldn't load models. Check the server logs for details.");
       setModels(null);
@@ -223,13 +222,64 @@ export function ProviderModelsPanel({
     });
   }, [models, search, activeBuckets]);
 
-  const matrixMatches = useMemo(
-    () => (filtered ? filtered.filter((m) => m.inMatrix) : []),
-    [filtered]
-  );
-  const discovered = useMemo(
-    () => (filtered ? filtered.filter((m) => !m.inMatrix) : []),
-    [filtered]
+  const sorted = useMemo(() => {
+    if (!filtered) return null;
+    const out = [...filtered];
+    out.sort((a, b) => {
+      let primary = 0;
+      switch (sortKey) {
+        case 'name':
+          primary = a.name.localeCompare(b.name);
+          break;
+        case 'inMatrix':
+          // false → 0, true → 1; ascending puts non-matrix first, so the
+          // default `desc` surfaces matrix rows at the top of the table.
+          primary = Number(a.inMatrix ?? false) - Number(b.inMatrix ?? false);
+          break;
+        case 'tier':
+          primary = a.tier.localeCompare(b.tier);
+          break;
+        case 'context':
+          primary = a.maxContext - b.maxContext;
+          break;
+        case 'input':
+          primary = a.inputCostPerMillion - b.inputCostPerMillion;
+          break;
+        case 'output':
+          primary = a.outputCostPerMillion - b.outputCostPerMillion;
+          break;
+      }
+      const directional = sortDir === 'asc' ? primary : -primary;
+      if (directional !== 0) return directional;
+      // Stable secondary sort always ascends by display name regardless of
+      // the active direction — keeps ties in a predictable order so a
+      // catalogue of dozens of identically-tiered rows doesn't flip when
+      // the user toggles the primary direction.
+      return a.name.localeCompare(b.name);
+    });
+    return out;
+  }, [filtered, sortKey, sortDir]);
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      if (sortKey === key) {
+        // `inMatrix` only has one useful direction (matrix-first). Second
+        // click on it reverts to the default `name asc` instead of flipping
+        // to non-matrix-first, which no operator would actually want.
+        if (key === 'inMatrix') {
+          setSortKey('name');
+          setSortDir('asc');
+          return;
+        }
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return;
+      }
+      setSortKey(key);
+      // First click on a new key picks the more useful direction:
+      // matrix-first for `inMatrix`, ascending for everything else.
+      setSortDir(key === 'inMatrix' ? 'desc' : 'asc');
+    },
+    [sortKey]
   );
 
   return (
@@ -315,38 +365,173 @@ export function ProviderModelsPanel({
             </div>
           </div>
 
-          {filtered && filtered.length === 0 && (
+          {sorted && sorted.length === 0 && (
             <p className="text-muted-foreground py-6 text-center text-sm">
               No models match the current filters.
             </p>
           )}
 
-          {matrixMatches.length > 0 && (
-            <ModelSection
-              title="In your matrix"
-              count={matrixMatches.length}
-              models={matrixMatches}
-              isLocal={isLocal}
-              testingModel={testingModel}
-              testResults={testResults}
-              onTest={handleTestModel}
-              isOpen={matrixOpen}
-              onToggle={() => setMatrixOpen((v) => !v)}
-            />
-          )}
-
-          {discovered.length > 0 && (
-            <ModelSection
-              title="Discovered"
-              count={discovered.length}
-              models={discovered}
-              isLocal={isLocal}
-              testingModel={testingModel}
-              testResults={testResults}
-              onTest={handleTestModel}
-              isOpen={discoveredOpen}
-              onToggle={() => setDiscoveredOpen((v) => !v)}
-            />
+          {sorted && sorted.length > 0 && (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader className="bg-background sticky top-0 z-10">
+                  <TableRow>
+                    <SortableHead
+                      label="Model"
+                      sortKey="name"
+                      activeKey={sortKey}
+                      dir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHead
+                      label="In matrix"
+                      sortKey="inMatrix"
+                      activeKey={sortKey}
+                      dir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <TableHead>Capabilities</TableHead>
+                    <SortableHead
+                      label="Context"
+                      sortKey="context"
+                      activeKey={sortKey}
+                      dir={sortDir}
+                      onSort={handleSort}
+                    />
+                    <SortableHead
+                      label="Tier"
+                      sortKey="tier"
+                      activeKey={sortKey}
+                      dir={sortDir}
+                      onSort={handleSort}
+                    />
+                    {!isLocal && (
+                      <>
+                        <SortableHead
+                          label="Input $/1M"
+                          sortKey="input"
+                          activeKey={sortKey}
+                          dir={sortDir}
+                          onSort={handleSort}
+                          align="right"
+                        />
+                        <SortableHead
+                          label="Output $/1M"
+                          sortKey="output"
+                          activeKey={sortKey}
+                          dir={sortDir}
+                          onSort={handleSort}
+                          align="right"
+                        />
+                      </>
+                    )}
+                    <TableHead className="text-right">Available</TableHead>
+                    <TableHead className="text-right">Test</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sorted.map((m) => {
+                    const result = testResults[m.id];
+                    const isTesting = testingModel === m.id;
+                    const cap = primaryCapability(m);
+                    const testable = CAPABILITIES_TESTABLE.includes(cap);
+                    return (
+                      <TableRow key={m.id}>
+                        <TableCell>
+                          <div className="font-medium">{m.name}</div>
+                          <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
+                        </TableCell>
+                        <TableCell>
+                          {m.inMatrix ? (
+                            <Badge
+                              variant="outline"
+                              className="border-green-600/40 text-[10px] text-green-700 dark:text-green-400"
+                            >
+                              In matrix
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {(m.capabilities ?? ['chat']).map((c) => (
+                              <Badge key={c} variant="secondary" className="text-[10px] capitalize">
+                                {c}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {m.maxContext.toLocaleString()} tok
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-xs capitalize">{m.tier}</span>
+                        </TableCell>
+                        {!isLocal && (
+                          <>
+                            <TableCell className="text-right text-xs tabular-nums">
+                              ${m.inputCostPerMillion.toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right text-xs tabular-nums">
+                              ${m.outputCostPerMillion.toFixed(2)}
+                            </TableCell>
+                          </>
+                        )}
+                        <TableCell className="text-right">
+                          {m.available === false ? (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          ) : (
+                            <span className="text-xs text-green-600">✓</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {isTesting ? (
+                            <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
+                          ) : result ? (
+                            <span
+                              className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}
+                            >
+                              {result.ok
+                                ? `${result.latencyMs} ms`
+                                : (result.message ?? "Didn't respond — check server logs")}
+                            </span>
+                          ) : testable ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => {
+                                void handleTestModel(m);
+                              }}
+                              title={`Test ${m.name}`}
+                            >
+                              <Play className="h-3 w-3" />
+                            </Button>
+                          ) : (
+                            <Tip label={UNTESTABLE_REASON[cap] ?? UNTESTABLE_REASON.unknown ?? ''}>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 opacity-50"
+                                  disabled
+                                  aria-label={`Test not supported for ${m.name}`}
+                                >
+                                  <Play className="h-3 w-3" />
+                                </Button>
+                              </span>
+                            </Tip>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </>
       )}
@@ -354,162 +539,42 @@ export function ProviderModelsPanel({
   );
 }
 
-interface ModelSectionProps {
-  title: string;
-  count: number;
-  models: ProviderModelInfo[];
-  isLocal: boolean;
-  testingModel: string | null;
-  testResults: Record<string, TestModelResult>;
-  onTest: (m: ProviderModelInfo) => void | Promise<void>;
-  isOpen: boolean;
-  onToggle: () => void;
+interface SortableHeadProps {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  dir: SortDir;
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
 }
 
-function ModelSection({
-  title,
-  count,
-  models,
-  isLocal,
-  testingModel,
-  testResults,
-  onTest,
-  isOpen,
-  onToggle,
-}: ModelSectionProps): React.ReactElement {
+function SortableHead({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  align = 'left',
+}: SortableHeadProps): React.ReactElement {
+  const isActive = sortKey === activeKey;
+  const Icon = !isActive ? ArrowUpDown : dir === 'asc' ? ArrowUp : ArrowDown;
   return (
-    <div className="rounded-md border">
+    <TableHead
+      className={align === 'right' ? 'text-right' : undefined}
+      // `aria-sort` belongs on the column header cell, not the button —
+      // it tells assistive tech the current sort state of the column.
+      aria-sort={isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
       <button
         type="button"
-        onClick={onToggle}
-        className="hover:bg-muted/50 flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
-        aria-expanded={isOpen}
+        onClick={() => onSort(sortKey)}
+        className={`hover:text-foreground inline-flex items-center gap-1 ${
+          align === 'right' ? 'ml-auto' : ''
+        } ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}
       >
-        <span className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronDown className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
-          )}
-          {title}
-          <span className="text-muted-foreground text-xs">({count})</span>
-        </span>
+        {label}
+        <Icon className="h-3 w-3" aria-hidden="true" />
       </button>
-      {isOpen && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Model</TableHead>
-              <TableHead>Capabilities</TableHead>
-              <TableHead>Context</TableHead>
-              <TableHead>Tier</TableHead>
-              {!isLocal && (
-                <>
-                  <TableHead className="text-right">Input $/1M</TableHead>
-                  <TableHead className="text-right">Output $/1M</TableHead>
-                </>
-              )}
-              <TableHead className="text-right">Available</TableHead>
-              <TableHead className="text-right">Test</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {models.map((m) => {
-              const result = testResults[m.id];
-              const isTesting = testingModel === m.id;
-              const cap = primaryCapability(m);
-              const testable = CAPABILITIES_TESTABLE.includes(cap);
-              return (
-                <TableRow key={m.id}>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-medium">{m.name}</span>
-                      {m.inMatrix && (
-                        <Badge
-                          variant="outline"
-                          className="border-green-600/40 text-[10px] text-green-700 dark:text-green-400"
-                        >
-                          In matrix
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {(m.capabilities ?? ['chat']).map((c) => (
-                        <Badge key={c} variant="secondary" className="text-[10px] capitalize">
-                          {c}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">{m.maxContext.toLocaleString()} tok</TableCell>
-                  <TableCell>
-                    <span className="text-xs capitalize">{m.tier}</span>
-                  </TableCell>
-                  {!isLocal && (
-                    <>
-                      <TableCell className="text-right text-xs tabular-nums">
-                        ${m.inputCostPerMillion.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums">
-                        ${m.outputCostPerMillion.toFixed(2)}
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell className="text-right">
-                    {m.available === false ? (
-                      <span className="text-muted-foreground text-xs">—</span>
-                    ) : (
-                      <span className="text-xs text-green-600">✓</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {isTesting ? (
-                      <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
-                    ) : result ? (
-                      <span className={`text-xs ${result.ok ? 'text-green-600' : 'text-red-600'}`}>
-                        {result.ok
-                          ? `${result.latencyMs} ms`
-                          : (result.message ?? "Didn't respond — check server logs")}
-                      </span>
-                    ) : testable ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 w-6 p-0"
-                        onClick={() => {
-                          void onTest(m);
-                        }}
-                        title={`Test ${m.name}`}
-                      >
-                        <Play className="h-3 w-3" />
-                      </Button>
-                    ) : (
-                      <Tip label={UNTESTABLE_REASON[cap] ?? UNTESTABLE_REASON.unknown ?? ''}>
-                        <span className="inline-flex">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 opacity-50"
-                            disabled
-                            aria-label={`Test not supported for ${m.name}`}
-                          >
-                            <Play className="h-3 w-3" />
-                          </Button>
-                        </span>
-                      </Tip>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-    </div>
+    </TableHead>
   );
 }

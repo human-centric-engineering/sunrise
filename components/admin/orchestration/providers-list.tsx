@@ -159,11 +159,15 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
 
   // Lazy-fetch model counts for every visible provider after mount.
   // Uses module-level cache to avoid N+1 on every page navigation.
+  // Inactive providers are skipped — `getProvider` rejects them with
+  // `provider_disabled` server-side, which would otherwise spam the
+  // logs with 503s for rows the operator has intentionally turned off.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       for (const p of providers) {
         if (modelCounts[p.id]) continue;
+        if (!p.isActive) continue;
 
         // Check cache first
         const cached = getCachedModelCount(p.id);
@@ -207,6 +211,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
   // without the operator having to click through.
   //
   // Skip rules:
+  //   - Inactive — `getProvider` rejects with `provider_disabled`, so a
+  //     probe would always come back red and would clutter server logs
+  //     with 503s for a row the operator has intentionally turned off.
   //   - No API key on a non-local provider — already shown red, would
   //     just produce a guaranteed `ok: false`.
   //   - Cached result exists — the localStorage cache (`provider-test-
@@ -218,7 +225,10 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     void (async () => {
       const targets = providers.filter(
         (p) =>
-          (p.apiKeyPresent || p.isLocal) && testedOk[p.id] === undefined && !testingInFlight[p.id]
+          p.isActive &&
+          (p.apiKeyPresent || p.isLocal) &&
+          testedOk[p.id] === undefined &&
+          !testingInFlight[p.id]
       );
       if (targets.length === 0) return;
 
@@ -668,17 +678,23 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           if (!open) setModelsDialogFor(null);
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4">
           <DialogHeader>
             <DialogTitle>Model catalogue</DialogTitle>
           </DialogHeader>
           {modelsDialogFor && (
-            <ProviderModelsPanel
-              providerId={modelsDialogFor.id}
-              providerName={modelsDialogFor.name}
-              isLocal={modelsDialogFor.isLocal}
-              apiKeyPresent={modelsDialogFor.apiKeyPresent}
-            />
+            // One scroll region for the whole panel — the table's sticky
+            // header keeps column labels visible while the body scrolls,
+            // and the search/filter row scrolls with everything else
+            // rather than being pinned, per UI feedback.
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <ProviderModelsPanel
+                providerId={modelsDialogFor.id}
+                providerName={modelsDialogFor.name}
+                isLocal={modelsDialogFor.isLocal}
+                apiKeyPresent={modelsDialogFor.apiKeyPresent}
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

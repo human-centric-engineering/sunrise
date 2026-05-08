@@ -110,35 +110,42 @@ export function ProviderTestButton({
   }, [providerId, onResult, disabledMessage]);
 
   return (
-    <div className="flex items-center gap-3">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => void handleTest()}
-        disabled={testing}
-      >
-        {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Test connection
-      </Button>
-      {result && result.ok && (
-        // Model count lives in the card body's meta section already —
-        // the inline label here was duplicating it and crowding the
-        // footer. A bare check icon is enough acknowledgement that the
-        // test ran; the dot color (driven by `onResult`) carries the
-        // ongoing connected/disconnected status.
-        <span
-          className="flex items-center gap-1 text-sm text-green-600"
-          aria-label={`Connection succeeded — ${result.modelCount} models available`}
-          title={`${result.modelCount} models available`}
+    // Outer is column-flex so the failure message can claim its own
+    // row instead of overflowing the providers-list card footer where
+    // there isn't enough horizontal room for sentences like "Couldn't
+    // reach this provider. Check the server logs for details." Success
+    // collapses to the icon and stays inline with the button.
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void handleTest()}
+          disabled={testing}
         >
-          <Check className="h-4 w-4" aria-hidden="true" />
-        </span>
-      )}
+          {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+          Test connection
+        </Button>
+        {result && result.ok && (
+          // Model count lives in the card body's meta section already —
+          // the inline label here was duplicating it and crowding the
+          // footer. A bare check icon is enough acknowledgement that the
+          // test ran; the dot color (driven by `onResult`) carries the
+          // ongoing connected/disconnected status.
+          <span
+            className="flex items-center gap-1 text-sm text-green-600"
+            aria-label={`Connection succeeded — ${result.modelCount} models available`}
+            title={`${result.modelCount} models available`}
+          >
+            <Check className="h-4 w-4" aria-hidden="true" />
+          </span>
+        )}
+      </div>
       {result && !result.ok && (
-        <span className="flex items-center gap-1 text-sm text-red-600">
-          <X className="h-4 w-4" />
-          {result.message}
+        <span className="flex items-start gap-1 text-right text-sm text-red-600">
+          <X className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{result.message}</span>
         </span>
       )}
     </div>
