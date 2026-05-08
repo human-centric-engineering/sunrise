@@ -339,4 +339,426 @@ describe('executeReflect', () => {
       temperature: 0.7,
     });
   });
+
+  // ─── Multi-turn checkpoint resume ───────────────────────────────────────────
+
+  describe('multi-turn checkpoint resume', () => {
+    // Nested beforeEach: reset runLlmCall to a clean slate before each resume
+    // test to prevent mock-default leak from the 16 sibling tests above
+    // (gotcha #22 — module-mock defaults survive vi.clearAllMocks()).
+    beforeEach(() => {
+      vi.mocked(runLlmCall).mockReset();
+    });
+
+    it('fresh start (no resumeTurns): startIteration=0, recordTurn fires with 0-based iteration index', async () => {
+      // Arrange: 2-iteration scenario — first produces revised content,
+      // second responds with a convergence marker.
+      vi.mocked(runLlmCall)
+        .mockResolvedValueOnce({
+          content: 'revised content',
+          tokensUsed: 10,
+          costUsd: 0.01,
+          model: 'm',
+        })
+        .mockResolvedValueOnce({
+          content: 'No further changes needed',
+          tokensUsed: 8,
+          costUsd: 0.008,
+          model: 'm',
+        });
+
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+
+      // Act
+      const result = await executeReflect(makeStep(), ctx);
+
+      // Assert: observable outcome — 2 iterations, converged
+      expect(result.output).toMatchObject({ stopReason: 'converged', iterations: 2 });
+
+      // Assert: internal effect — recordTurn called twice with correct 0-based indices
+      expect(recordTurn).toHaveBeenCalledTimes(2);
+      expect(recordTurn).toHaveBeenNthCalledWith(1, {
+        kind: 'reflect',
+        iteration: 0,
+        draft: 'revised content',
+        converged: false,
+        tokensUsed: 10,
+        costUsd: 0.01,
+      });
+      expect(recordTurn).toHaveBeenNthCalledWith(2, {
+        kind: 'reflect',
+        iteration: 1,
+        draft: 'revised content', // draft not updated on convergence
+        converged: true,
+        tokensUsed: 8,
+        costUsd: 0.008,
+      });
+    });
+
+    it('fresh start with empty resumeTurns array: behaves identically to undefined, no short-circuit', async () => {
+      // Arrange: explicit empty array — must not trigger the priorTurns path.
+      // Use maxIterations=1 so only one LLM call is needed; we're testing that
+      // the run proceeds (no short-circuit), not that it runs N times.
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'new draft',
+        tokensUsed: 5,
+        costUsd: 0.005,
+        model: 'm',
+      });
+
+      const ctx = makeCtx({ resumeTurns: [] });
+
+      // Act
+      await executeReflect(makeStep({ maxIterations: 1 }), ctx);
+
+      // Assert: LLM WAS called (no erroneous short-circuit on empty array)
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+    });
+
+    it('resume with prior non-converged turns: picks up from last draft at startIteration=lastIndex+1', async () => {
+      // Arrange: 3 prior non-converged turns
+      const priorTurns = [
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'd0',
+          converged: false,
+          tokensUsed: 10,
+          costUsd: 0.01,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 1,
+          draft: 'd1',
+          converged: false,
+          tokensUsed: 12,
+          costUsd: 0.012,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 2,
+          draft: 'd2',
+          converged: false,
+          tokensUsed: 8,
+          costUsd: 0.008,
+        },
+      ];
+      // Resume fires one more iteration starting at i=3 with draft='d2'
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'No further changes',
+        tokensUsed: 6,
+        costUsd: 0.006,
+        model: 'm',
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+
+      // Act
+      const result = await executeReflect(makeStep({ maxIterations: 4 }), ctx);
+
+      // Assert: observable outcome — started at iteration 3, ran once, total 4 iterations
+      expect(result.output).toMatchObject({ stopReason: 'converged', iterations: 4 });
+
+      // Assert: LLM called exactly once (continued from where we left off)
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+
+      // Assert: prompt included the last prior draft ('d2'), not the step seed
+      const promptPassed = vi.mocked(runLlmCall).mock.calls[0][1].prompt;
+      expect(promptPassed).toContain('d2');
+    });
+
+    it('resume with prior turns: tokens/cost accumulate across resume boundary (whole history)', async () => {
+      // Arrange: 3 prior turns with known totals, plus one new LLM call
+      const priorTurns = [
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'd0',
+          converged: false,
+          tokensUsed: 10,
+          costUsd: 0.01,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 1,
+          draft: 'd1',
+          converged: false,
+          tokensUsed: 12,
+          costUsd: 0.012,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 2,
+          draft: 'd2',
+          converged: false,
+          tokensUsed: 8,
+          costUsd: 0.008,
+        },
+      ];
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'No further changes',
+        tokensUsed: 5,
+        costUsd: 0.005,
+        model: 'm',
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+
+      // Act
+      const result = await executeReflect(makeStep({ maxIterations: 4 }), ctx);
+
+      // Assert: StepResult totals = sum of all priors (10+12+8=30) PLUS new call (5)
+      expect(result.tokensUsed).toBe(35);
+      expect(result.costUsd).toBeCloseTo(0.035);
+    });
+
+    it('resume short-circuit: converged last prior turn returns immediately without calling LLM', async () => {
+      // Arrange: prior turns where last entry has converged=true
+      const priorTurns = [
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'draft0',
+          converged: false,
+          tokensUsed: 10,
+          costUsd: 0.01,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 1,
+          draft: 'draft1',
+          converged: false,
+          tokensUsed: 12,
+          costUsd: 0.012,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 2,
+          draft: 'final',
+          converged: true,
+          tokensUsed: 5,
+          costUsd: 0.005,
+        },
+      ];
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+
+      // Act
+      const result = await executeReflect(makeStep(), ctx);
+
+      // Assert: observable outcome — short-circuit returns cached final draft
+      expect(result.output).toMatchObject({
+        finalDraft: 'final',
+        iterations: 3, // lastPrior.iteration + 1 = 2 + 1
+        stopReason: 'converged',
+      });
+
+      // Assert: no LLM call fired (not.toHaveBeenCalled per gotcha #23 — no mockImplementation leak)
+      expect(runLlmCall).not.toHaveBeenCalled();
+
+      // Assert: accumulated cost/tokens include ALL prior turns (not zero — accumulation matters)
+      expect(result.tokensUsed).toBe(27); // 10+12+5
+      expect(result.costUsd).toBeCloseTo(0.027); // 0.01+0.012+0.005
+    });
+
+    it('recordTurn called with per-iteration cost (not running cumulative)', async () => {
+      // Arrange: one non-converging iteration
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'rev1',
+        tokensUsed: 100,
+        costUsd: 0.01,
+        model: 'm',
+      });
+      // Second call converges so we stop
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'No further changes',
+        tokensUsed: 20,
+        costUsd: 0.002,
+        model: 'm',
+      });
+
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+
+      // Act
+      await executeReflect(makeStep(), ctx);
+
+      // Assert: first recordTurn call uses per-call values (100 / 0.01), NOT cumulative
+      expect(recordTurn).toHaveBeenNthCalledWith(1, {
+        kind: 'reflect',
+        iteration: 0,
+        draft: 'rev1',
+        converged: false,
+        tokensUsed: 100,
+        costUsd: 0.01,
+      });
+    });
+
+    it('recordTurn called BEFORE convergence break (converged turn persists in cache)', async () => {
+      // Arrange: single iteration that converges immediately
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'looks good as is',
+        tokensUsed: 4,
+        costUsd: 0.004,
+        model: 'm',
+      });
+
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+
+      // Act
+      await executeReflect(makeStep(), ctx);
+
+      // Assert: recordTurn was called (not skipped) even though the run converged
+      expect(recordTurn).toHaveBeenCalledTimes(1);
+      expect(recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'reflect', converged: true })
+      );
+
+      // Assert: loop did not re-fire after the convergence break
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+    });
+
+    it('recordTurn is optional: ctx without recordTurn runs without error', async () => {
+      // Arrange: ctx with no recordTurn property — must not crash on
+      // ctx.recordTurn?.() optional chaining. Use maxIterations=1 so we
+      // only need one LLM call mock, while still verifying the executor
+      // completes normally with a non-converging response.
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'reasonable draft',
+        tokensUsed: 5,
+        costUsd: 0.005,
+        model: 'm',
+      });
+
+      // ctx has no recordTurn field — optional call ctx.recordTurn?.() must handle undefined
+      const ctx = makeCtx();
+      // Explicitly confirm recordTurn is absent (makeCtx doesn't set it)
+      expect((ctx as { recordTurn?: unknown }).recordTurn).toBeUndefined();
+
+      // Act — should not throw
+      const result = await executeReflect(makeStep({ maxIterations: 1 }), ctx);
+
+      // Assert: normal execution, LLM was called, result returned
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+      expect(result.output).toMatchObject({ stopReason: 'max_iterations' });
+    });
+
+    it('filter: mixed kinds in resumeTurns — only reflect entries influence resume state', async () => {
+      // Arrange: one agent_call turn (should be filtered) + one reflect turn
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'x',
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'r0',
+          converged: false,
+          tokensUsed: 12,
+          costUsd: 0.012,
+        },
+      ];
+
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'No further changes',
+        tokensUsed: 3,
+        costUsd: 0.003,
+        model: 'm',
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+
+      // Act
+      const result = await executeReflect(makeStep(), ctx);
+
+      // Assert: startIteration=1 (only the reflect turn counted, not agent_call)
+      expect(result.output).toMatchObject({ iterations: 2, stopReason: 'converged' });
+
+      // Assert: tokens = only reflect prior (12) + new call (3), NOT 50+12+3
+      expect(result.tokensUsed).toBe(15);
+
+      // Assert: LLM received draft from the reflect turn ('r0'), not from agent_call
+      const promptPassed = vi.mocked(runLlmCall).mock.calls[0][1].prompt;
+      expect(promptPassed).toContain('r0');
+    });
+
+    it('filter: only non-reflect kinds in resumeTurns — treated as fresh start', async () => {
+      // Arrange: only an orchestrator turn in resumeTurns — no reflect entries
+      const priorTurns = [
+        {
+          kind: 'orchestrator' as const,
+          round: 1,
+          delegations: [],
+          plannerTokensUsed: 20,
+          plannerCostUsd: 0.002,
+        },
+      ];
+
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'No further changes',
+        tokensUsed: 3,
+        costUsd: 0.003,
+        model: 'm',
+      });
+
+      // Act — fresh-start behaviour: seed from last stepOutput, startIteration=0
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const result = await executeReflect(makeStep(), ctx);
+
+      // Assert: no priors influenced the run — LLM was called (no short-circuit)
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+
+      // Assert: tokens = only this new call (no orchestrator tokens rolled in)
+      expect(result.tokensUsed).toBe(3);
+
+      // Assert: prompt included the step seed ('initial draft'), not from orchestrator turn
+      const promptPassed = vi.mocked(runLlmCall).mock.calls[0][1].prompt;
+      expect(promptPassed).toContain('initial draft');
+    });
+
+    it('iterations counter on resume: 2 prior turns + 1 new non-converging call = 3 total iterations', async () => {
+      // Arrange: 2 prior turns (last.iteration=1), 1 new non-converging call
+      // maxIterations=3 so the loop runs once (i=2) then stops at max
+      const priorTurns = [
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'p0',
+          converged: false,
+          tokensUsed: 5,
+          costUsd: 0.005,
+        },
+        {
+          kind: 'reflect' as const,
+          iteration: 1,
+          draft: 'p1',
+          converged: false,
+          tokensUsed: 5,
+          costUsd: 0.005,
+        },
+      ];
+
+      vi.mocked(runLlmCall).mockResolvedValueOnce({
+        content: 'still more work to do',
+        tokensUsed: 5,
+        costUsd: 0.005,
+        model: 'm',
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+
+      // Act: maxIterations=3, startIteration=2, loop runs i=2 → iterations=i+1=3
+      const result = await executeReflect(makeStep({ maxIterations: 3 }), ctx);
+
+      // Assert: loop ran once at i=2 → final iterations count = 3
+      expect(result.output).toMatchObject({ iterations: 3, stopReason: 'max_iterations' });
+      expect(runLlmCall).toHaveBeenCalledTimes(1);
+    });
+  });
 });

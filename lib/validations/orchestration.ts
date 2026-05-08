@@ -1949,6 +1949,66 @@ export const updateOrchestrationSettingsSchema = z
  * `Json`. Used in route handlers to safely parse the raw JSON array instead
  * of blind-casting.
  */
+// ============================================================================
+// TurnEntry — multi-turn step checkpoint shapes
+// ============================================================================
+// Discriminated by `kind`. Used for the row-level `currentStepTurns` column
+// (mid-flight) and the trace entry's `turns` field (post-termination). The
+// shapes mirror the discriminated union in `types/orchestration.ts`.
+
+const agentCallTurnSchema = z.object({
+  kind: z.literal('agent_call'),
+  index: z.number().int().nonnegative(),
+  outerTurn: z.number().int().nonnegative().optional(),
+  assistantContent: z.string(),
+  toolCall: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      arguments: z.record(z.string(), z.unknown()),
+    })
+    .optional(),
+  toolResult: z.unknown().optional(),
+  tokensUsed: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+});
+
+const orchestratorTurnSchema = z.object({
+  kind: z.literal('orchestrator'),
+  round: z.number().int().nonnegative(),
+  plannerReasoning: z.string().optional(),
+  delegations: z.array(
+    z.object({
+      agentSlug: z.string(),
+      message: z.string(),
+      output: z.unknown(),
+      tokensUsed: z.number().nonnegative(),
+      costUsd: z.number().nonnegative(),
+      error: z.string().optional(),
+    })
+  ),
+  plannerTokensUsed: z.number().nonnegative(),
+  plannerCostUsd: z.number().nonnegative(),
+  finalAnswer: z.string().optional(),
+});
+
+const reflectTurnSchema = z.object({
+  kind: z.literal('reflect'),
+  iteration: z.number().int().nonnegative(),
+  draft: z.string(),
+  converged: z.boolean(),
+  tokensUsed: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+});
+
+export const turnEntrySchema = z.discriminatedUnion('kind', [
+  agentCallTurnSchema,
+  orchestratorTurnSchema,
+  reflectTurnSchema,
+]);
+
+export const turnEntriesSchema = z.array(turnEntrySchema);
+
 export const executionTraceEntrySchema = z
   .object({
     stepId: z.string(),
@@ -1982,6 +2042,7 @@ export const executionTraceEntrySchema = z
         })
       )
       .optional(),
+    turns: z.array(turnEntrySchema).optional(),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by

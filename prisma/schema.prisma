@@ -279,6 +279,12 @@ model AiCapability {
   requiresApproval   Boolean @default(false)
   approvalTimeoutMs  Int? // ms before auto-deny/allow; null = use global default
   rateLimit          Int? // calls per minute
+  // True when the capability is naturally safe to re-run — destination handles
+  // duplicates, e.g. a pure read or an upsert keyed on stable input. The engine's
+  // tool_call executor skips the dispatch cache for idempotent capabilities,
+  // avoiding an unnecessary write per call. Default false: assume side effects
+  // until the author opts in. See `lib/orchestration/engine/dispatch-cache.ts`.
+  isIdempotent      Boolean @default(false)
   isActive           Boolean @default(true)
   isSystem           Boolean @default(false)
   metadata           Json?
@@ -463,15 +469,24 @@ model AiWorkflowExecution {
   leaseExpiresAt    DateTime?
   lastHeartbeatAt   DateTime?
   recoveryAttempts  Int       @default(0)
+  // Mid-step checkpoint state for multi-turn step types (`agent_call`,
+  // `orchestrator`, `reflect`). The engine writes after each completed turn so
+  // a crashed run resumes at the next turn instead of restarting the whole
+  // step. Cleared on step transition (markCurrentStep) and workflow finalize.
+  // Single-shot step types ignore this column — their crash safety comes from
+  // the dispatch cache (`ai_workflow_step_dispatch`). See
+  // `lib/orchestration/engine/orchestration-engine.ts` (recordStepTurn).
+  currentStepTurns  Json?
   userId            String
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   // Relations
-  workflow AiWorkflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  version  AiWorkflowVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
-  user     User               @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
-  costLogs AiCostLog[]
+  workflow       AiWorkflow               @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version        AiWorkflowVersion?       @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  user           User                     @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
+  costLogs       AiCostLog[]
+  stepDispatches AiWorkflowStepDispatch[]
 
   // Inbound-trigger dedup keyed on `dedupKey`. Route computes per-channel scope:
   //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
@@ -489,6 +504,37 @@ model AiWorkflowExecution {
   @@index([status, leaseExpiresAt]) // Orphan sweep: RUNNING rows with expired lease
   @@index([userId, status, createdAt]) // Execution list with user + status + sort
   @@map("ai_workflow_execution")
+}
+
+// Side-effect dispatch cache for crash-safe re-runs. Risky executors
+// (`external_call`, `send_notification`, `tool_call`) compute a deterministic
+// idempotency key per dispatch and call `recordDispatch` after the side effect
+// completes. On re-drive after a crash, `lookupDispatch` hits this row and the
+// executor returns the cached result without re-firing the side effect. The
+// `idempotencyKey` UNIQUE constraint is the dedup gate — two hosts racing on
+// the same key see exactly one winner.
+//
+// Capabilities flagged `isIdempotent: true` on `AiCapability` opt out of this
+// cache (the destination handles duplicates), avoiding a DB write per call.
+//
+// See `lib/orchestration/engine/dispatch-cache.ts` and
+// `.context/orchestration/workflows.md` (Idempotency section).
+model AiWorkflowStepDispatch {
+  id             String   @id @default(cuid())
+  executionId    String
+  stepId         String
+  // Set for multi-turn step types (`agent_call`, `orchestrator`, `reflect`)
+  // where each turn is independently keyed; null for single-shot steps.
+  turnIndex      Int?
+  idempotencyKey String   @unique
+  result         Json
+  createdAt      DateTime @default(now())
+
+  execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId, stepId]) // resume-time replay lookup per execution+step
+  @@index([createdAt]) // future cleanup of stale cache rows
+  @@map("ai_workflow_step_dispatch")
 }
 
 // Chat sessions

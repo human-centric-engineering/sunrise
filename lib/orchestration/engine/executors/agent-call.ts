@@ -18,7 +18,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { StepResult, WorkflowStep } from '@/types/orchestration';
+import type { AgentCallTurn, StepResult, WorkflowStep } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
@@ -59,6 +59,36 @@ const DEFAULT_MAX_TURNS = 3;
 const MAX_AGENT_CALL_DEPTH = 3;
 
 /**
+ * Optional resume + recording params for `runSingleTurn`. Single-turn mode
+ * passes them through (so a crash mid-step resumes at the next iteration);
+ * multi-turn mode passes nothing — its outer-loop replay can't reuse
+ * inner-iteration entries cleanly, so it falls back to a fresh start with
+ * the dispatch cache providing tool-level dedup.
+ */
+interface RunSingleTurnOptions {
+  /** Tool-iteration index to start at; messages for prior iterations are pre-populated below. */
+  startIteration?: number;
+  /** Pre-built message array. When set, replaces the in-memory `[...initialMessages]` seed. */
+  startMessages?: LlmMessage[];
+  /** Pre-accumulated tokens/cost from prior iterations on the resumed step. */
+  startTokens?: number;
+  startCost?: number;
+  /**
+   * Pre-set finalContent. Used when resuming a step where maxIterations was
+   * already hit on the prior attempt — the loop returns immediately and
+   * finalContent should reflect the last assistant response, not empty.
+   */
+  startContent?: string;
+  /**
+   * Per-iteration checkpoint hook. The executor calls this from inside the
+   * span callback after each iteration's outcome is decided so a crash AFTER
+   * a tool dispatch (but BEFORE the next iteration's LLM call) resumes at the
+   * right point. Optional — multi-turn mode passes undefined.
+   */
+  recordTurn?: (turn: AgentCallTurn) => Promise<void>;
+}
+
+/**
  * Run a single-turn agent invocation: one prompt → one response (with
  * optional tool use loops).
  */
@@ -70,14 +100,23 @@ async function runSingleTurn(
   toolDefinitions: LlmToolDefinition[],
   provider: LlmProvider,
   usedSlug: string,
-  maxIterations: number
+  maxIterations: number,
+  options: RunSingleTurnOptions = {}
 ): Promise<StepResult> {
-  let totalTokensUsed = 0;
-  let totalCostUsd = 0;
-  let finalContent = '';
-  let currentMessages = [...initialMessages];
+  const {
+    startIteration = 0,
+    startMessages,
+    startTokens = 0,
+    startCost = 0,
+    startContent = '',
+    recordTurn,
+  } = options;
+  let totalTokensUsed = startTokens;
+  let totalCostUsd = startCost;
+  let finalContent = startContent;
+  let currentMessages = startMessages ? [...startMessages] : [...initialMessages];
 
-  for (let iteration = 0; iteration < maxIterations; iteration++) {
+  for (let iteration = startIteration; iteration < maxIterations; iteration++) {
     const turnOutcome = await withSpan(
       SPAN_AGENT_CALL_TURN,
       {
@@ -170,6 +209,18 @@ async function runSingleTurn(
         finalContent = response.content;
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
+          // Final-answer turn — the assistant chose not to call a tool, so the
+          // step terminates with this content. Recorded with no `toolCall` so
+          // a re-drive's resume logic short-circuits via `lastPrior.toolCall === undefined`.
+          if (recordTurn) {
+            await recordTurn({
+              kind: 'agent_call',
+              index: iteration,
+              assistantContent: finalContent,
+              tokensUsed: turnTokens,
+              costUsd: turnCost.totalCostUsd,
+            });
+          }
           return 'break' as const;
         }
 
@@ -182,7 +233,40 @@ async function runSingleTurn(
 
         if (capResult.skipFollowup) {
           finalContent = JSON.stringify(capResult.data ?? capResult);
+          // Capability terminated the step (e.g. cost estimate that's the final
+          // answer). Record as a no-toolCall final entry — the assistantContent
+          // is the synthesized result; on re-drive this short-circuits like the
+          // no-tool-calls path above. We deliberately drop the toolCall info
+          // from the entry to keep the resume short-circuit simple; the trace's
+          // primary observability of the tool dispatch comes from the dispatcher
+          // span and the cost log, both of which already fired.
+          if (recordTurn) {
+            await recordTurn({
+              kind: 'agent_call',
+              index: iteration,
+              assistantContent: finalContent,
+              tokensUsed: turnTokens,
+              costUsd: turnCost.totalCostUsd,
+            });
+          }
           return 'break' as const;
+        }
+
+        // Continuing tool-iteration turn — record assistant content + the
+        // chosen tool call + its dispatched result. Replay rebuilds
+        // `currentMessages` by re-emitting the assistant + tool message pair
+        // for each entry; the tool dispatch itself is dedup'd by the dispatch
+        // cache, so the replay is free.
+        if (recordTurn) {
+          await recordTurn({
+            kind: 'agent_call',
+            index: iteration,
+            assistantContent: response.content,
+            toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
+            toolResult: capResult,
+            tokensUsed: turnTokens,
+            costUsd: turnCost.totalCostUsd,
+          });
         }
 
         currentMessages = [
@@ -292,6 +376,84 @@ export async function executeAgentCall(
   const mode = config.mode ?? 'single-turn';
 
   if (mode === 'single-turn') {
+    // Resume restoration for single-turn mode. Multi-turn entries (those
+    // carrying `outerTurn`) belong to a different execution shape and are
+    // ignored — single-turn resume only reads single-turn entries.
+    const priorIterTurns: AgentCallTurn[] = (ctx.resumeTurns ?? []).flatMap((t) =>
+      t.kind === 'agent_call' && t.outerTurn === undefined ? [t] : []
+    );
+
+    if (priorIterTurns.length > 0) {
+      const lastPrior = priorIterTurns[priorIterTurns.length - 1];
+      const resumeTokens = priorIterTurns.reduce((s, t) => s + t.tokensUsed, 0);
+      const resumeCost = priorIterTurns.reduce((s, t) => s + t.costUsd, 0);
+
+      // No-toolCall last entry → the prior attempt already produced a final
+      // answer (either via the LLM emitting no tool calls or a `skipFollowup`
+      // capability). Short-circuit: return the cached result without firing
+      // another LLM call. Same pattern as `reflect`'s converged check.
+      if (!lastPrior.toolCall) {
+        logger.info('agent_call: resume short-circuit — prior attempt already finalized', {
+          stepId: step.id,
+          priorTurns: priorIterTurns.length,
+        });
+        return {
+          output: lastPrior.assistantContent,
+          tokensUsed: resumeTokens,
+          costUsd: resumeCost,
+        };
+      }
+
+      // Rebuild `currentMessages` by walking the prior entries — each replays
+      // as an assistant-with-toolCall message followed by the tool result.
+      // The dispatch cache makes the inner tool dispatches free to "replay"
+      // (cached results return without re-firing), so the rebuilt conversation
+      // matches what the next LLM call would expect.
+      const restoredMessages: LlmMessage[] = [...initialMessages];
+      for (const turn of priorIterTurns) {
+        if (turn.toolCall) {
+          restoredMessages.push({
+            role: 'assistant',
+            content: turn.assistantContent,
+            toolCalls: [turn.toolCall],
+          });
+          restoredMessages.push({
+            role: 'tool',
+            content: JSON.stringify(turn.toolResult),
+            toolCallId: turn.toolCall.id,
+          });
+        }
+      }
+
+      logger.info('agent_call: resuming single-turn from prior iterations', {
+        stepId: step.id,
+        priorIterations: priorIterTurns.length,
+        maxIterations,
+      });
+
+      return runSingleTurn(
+        step,
+        ctx,
+        agent,
+        initialMessages,
+        toolDefinitions,
+        provider,
+        usedSlug,
+        maxIterations,
+        {
+          startIteration: priorIterTurns.length,
+          startMessages: restoredMessages,
+          startTokens: resumeTokens,
+          startCost: resumeCost,
+          // `lastPrior.assistantContent` is the most recent assistant response;
+          // if maxIterations was already hit on the prior attempt, the resumed
+          // loop will exit immediately and return this as the output.
+          startContent: lastPrior.assistantContent,
+          recordTurn: ctx.recordTurn,
+        }
+      );
+    }
+
     return runSingleTurn(
       step,
       ctx,
@@ -300,9 +462,18 @@ export async function executeAgentCall(
       toolDefinitions,
       provider,
       usedSlug,
-      maxIterations
+      maxIterations,
+      ctx.recordTurn ? { recordTurn: ctx.recordTurn } : {}
     );
   }
+
+  // Multi-turn mode: no resume support in this commit. Inner tool calls are
+  // dedup'd by the dispatch cache (commit 2 of PR 2), so a crashed re-drive
+  // re-runs outer turns from 0 but doesn't double-fire side effects. The
+  // executor deliberately does NOT pass `recordTurn` down to runSingleTurn —
+  // tracking inner-iteration entries in multi-turn mode would need an outer-
+  // turn boundary marker (not part of `AgentCallTurn`'s shape) to replay
+  // correctly, which we defer.
 
   // ── Multi-turn mode ──────────────────────────────────────────────────
   // The called agent responds, and if it appears to ask a question or

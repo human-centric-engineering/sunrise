@@ -14,6 +14,11 @@
 import { z } from 'zod';
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import {
+  buildIdempotencyKey,
+  lookupDispatch,
+  recordDispatch,
+} from '@/lib/orchestration/engine/dispatch-cache';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
@@ -44,6 +49,31 @@ async function executeNotification(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
+  // Crash-safe re-run: if a prior attempt of this step already sent the
+  // email/webhook and recorded its result, return the cached StepResult and
+  // skip re-firing. The cache key is `${executionId}:${stepId}`. See
+  // `lib/orchestration/engine/dispatch-cache.ts`.
+  //
+  // Posture symmetry with `recordDispatch`: a transient DB hiccup at lookup
+  // time is treated as a cache miss (warn-and-continue), matching the
+  // post-send recordDispatch failure handling.
+  const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
+  let cached: StepResult | null = null;
+  try {
+    cached = await lookupDispatch<StepResult>(cacheKey);
+  } catch (err) {
+    logger.warn('Notification step: dispatch cache lookup failed; treating as miss', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  if (cached !== null) {
+    logger.info('Notification step: dispatch cache hit, skipping send', {
+      stepId: step.id,
+    });
+    return cached;
+  }
+
   const parsed = notificationConfigSchema.safeParse(step.config);
   if (!parsed.success) {
     throw new ExecutorError(
@@ -56,6 +86,8 @@ async function executeNotification(
   const config = parsed.data;
   const body = interpolatePrompt(config.bodyTemplate, ctx, step.id);
   const workflowName = (ctx.variables.workflowName as string) ?? 'Workflow';
+
+  let stepResult: StepResult;
 
   if (config.channel === 'email') {
     try {
@@ -81,7 +113,7 @@ async function executeNotification(
         status: result.status,
       });
 
-      return {
+      stepResult = {
         output: { sent: true, channel: 'email', status: result.status },
         tokensUsed: 0,
         costUsd: 0,
@@ -96,38 +128,60 @@ async function executeNotification(
         true
       );
     }
+  } else {
+    // Webhook channel
+    try {
+      await dispatchWebhookEvent('workflow_notification', {
+        webhookUrl: config.webhookUrl,
+        body,
+        workflowId: ctx.workflowId,
+        workflowName,
+        executionId: ctx.executionId,
+        stepId: step.id,
+      });
+
+      logger.info('Notification step: webhook dispatched', {
+        stepId: step.id,
+        webhookUrl: config.webhookUrl,
+      });
+
+      stepResult = {
+        output: { sent: true, channel: 'webhook', url: config.webhookUrl },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
+    } catch (err) {
+      throw new ExecutorError(
+        step.id,
+        'WEBHOOK_DISPATCH_ERROR',
+        `Webhook dispatch error: ${err instanceof Error ? err.message : String(err)}`,
+        err,
+        true
+      );
+    }
   }
 
-  // Webhook channel
+  // Record the dispatch so a re-drive after a crash returns the cached result.
+  // `recordDispatch` returns `false` on a P2002 race-loss; we discard the
+  // boolean because the loser's run is cancelled by lease loss on the next
+  // checkpoint write (PR 1 model). Other DB errors are non-fatal — the
+  // notification already went out, so we log and continue. A re-drive that
+  // misses the cache will re-send (no provider-side dedup for our generic
+  // webhook path) — this is the documented trade-off of the cache miss window.
   try {
-    await dispatchWebhookEvent('workflow_notification', {
-      webhookUrl: config.webhookUrl,
-      body,
-      workflowId: ctx.workflowId,
-      workflowName,
+    await recordDispatch({
       executionId: ctx.executionId,
       stepId: step.id,
+      result: stepResult,
     });
-
-    logger.info('Notification step: webhook dispatched', {
-      stepId: step.id,
-      webhookUrl: config.webhookUrl,
-    });
-
-    return {
-      output: { sent: true, channel: 'webhook', url: config.webhookUrl },
-      tokensUsed: 0,
-      costUsd: 0,
-    };
   } catch (err) {
-    throw new ExecutorError(
-      step.id,
-      'WEBHOOK_DISPATCH_ERROR',
-      `Webhook dispatch error: ${err instanceof Error ? err.message : String(err)}`,
-      err,
-      true
-    );
+    logger.warn('Notification step: failed to record dispatch; re-drive may re-send', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
+
+  return stepResult;
 }
 
 registerStepType('send_notification', executeNotification);

@@ -145,6 +145,7 @@ function setupDefaultMocks(): void {
     content: 'Summary result',
     usage: { inputTokens: 100, outputTokens: 50 },
     finishReason: 'stop',
+    model: 'claude-sonnet-4-20250514',
   });
 }
 
@@ -307,12 +308,14 @@ describe('executeAgentCall', () => {
       toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
       usage: { inputTokens: 50, outputTokens: 30 },
       finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
     });
     // Second call: model completes
     mockChat.mockResolvedValueOnce({
       content: 'Based on the search: here is the summary.',
       usage: { inputTokens: 80, outputTokens: 60 },
       finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
     });
 
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -343,6 +346,7 @@ describe('executeAgentCall', () => {
       toolCalls: [{ id: 'tc_1', name: 'get-cost', arguments: {} }],
       usage: { inputTokens: 30, outputTokens: 10 },
       finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
     });
 
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -377,11 +381,13 @@ describe('executeAgentCall', () => {
       toolCalls: [{ id: 'tc_1', name: 'search', arguments: {} }],
       usage: { inputTokens: 50, outputTokens: 30 },
       finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
     });
     mockChat.mockResolvedValueOnce({
       content: 'Done.',
       usage: { inputTokens: 100, outputTokens: 60 },
       finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
     });
 
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -402,6 +408,7 @@ describe('executeAgentCall', () => {
       toolCalls: [{ id: 'tc_1', name: 'search', arguments: {} }],
       usage: { inputTokens: 10, outputTokens: 5 },
       finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
     });
 
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -518,6 +525,7 @@ describe('executeAgentCall', () => {
       content: 'Analysis complete.',
       usage: { inputTokens: 50, outputTokens: 30 },
       finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
     });
 
     const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
@@ -539,11 +547,13 @@ describe('executeAgentCall', () => {
         content: 'Could you provide more context?',
         usage: { inputTokens: 40, outputTokens: 20 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       })
       .mockResolvedValueOnce({
         content: 'Based on the context, here is the analysis.',
         usage: { inputTokens: 60, outputTokens: 40 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       });
 
     const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
@@ -564,6 +574,7 @@ describe('executeAgentCall', () => {
       content: 'Can you clarify what you mean?',
       usage: { inputTokens: 30, outputTokens: 15 },
       finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
     });
 
     const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
@@ -596,11 +607,13 @@ describe('executeAgentCall', () => {
         content: 'Could you clarify?',
         usage: { inputTokens: 50, outputTokens: 20 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       })
       .mockResolvedValueOnce({
         content: 'Thank you for clarifying.',
         usage: { inputTokens: 80, outputTokens: 30 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       });
 
     const step = makeStep({ mode: 'multi-turn', maxTurns: 2 });
@@ -635,6 +648,7 @@ describe('executeAgentCall', () => {
         content: 'Done.',
         usage: { inputTokens: 10, outputTokens: 5 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       });
 
       // Act
@@ -653,11 +667,13 @@ describe('executeAgentCall', () => {
           toolCalls: [{ id: 'tc_1', name: 'search', arguments: { q: 'x' } }],
           usage: { inputTokens: 50, outputTokens: 20 },
           finishReason: 'tool_use',
+          model: 'claude-sonnet-4-20250514',
         })
         .mockResolvedValueOnce({
           content: 'Done.',
           usage: { inputTokens: 80, outputTokens: 40 },
           finishReason: 'stop',
+          model: 'claude-sonnet-4-20250514',
         });
 
       vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -680,6 +696,7 @@ describe('executeAgentCall', () => {
         toolCalls: [{ id: 'tc_1', name: 'get-cost', arguments: {} }],
         usage: { inputTokens: 30, outputTokens: 10 },
         finishReason: 'tool_use',
+        model: 'claude-sonnet-4-20250514',
       });
 
       vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
@@ -707,6 +724,7 @@ describe('executeAgentCall', () => {
         content: 'Could you provide more context?',
         usage: { inputTokens: 50, outputTokens: 20 },
         finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
       })
       .mockRejectedValueOnce(new Error('Provider 503'));
 
@@ -720,6 +738,591 @@ describe('executeAgentCall', () => {
       // before any successful chat() returned, so its partial is 0.
       tokensUsed: 70,
       costUsd: 0.01,
+    });
+  });
+
+  // ── Multi-turn checkpoint resume ─────────────────────────────────────────
+
+  describe('multi-turn checkpoint resume', () => {
+    // Nested beforeEach resets the LLM provider mock so each resume test
+    // gets a clean call-count slate (gotcha #22 — module-mock defaults leak
+    // across describe blocks when only vi.clearAllMocks() is in scope).
+    beforeEach(() => {
+      vi.mocked(mockChat).mockReset();
+      // Re-apply a default resolved value so tests that don't set their own
+      // still get a sensible LLM response.
+      vi.mocked(mockChat).mockResolvedValue({
+        content: 'Summary result',
+        usage: { inputTokens: 100, outputTokens: 50 },
+        finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
+      });
+      // Re-apply dispatcher default (no toolCalls path)
+      vi.mocked(capabilityDispatcher.dispatch).mockReset();
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+        success: true,
+        data: {},
+      });
+    });
+
+    // ── Test 1: Single-turn fresh start with ctx.recordTurn set ────────────
+
+    it('single-turn fresh start (no resumeTurns): recordTurn called with final-answer shape', async () => {
+      // Arrange: single-turn mode, provider returns final answer (no tool calls).
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert: one recordTurn call with the final-answer shape (no toolCall field)
+      expect(result.output).toBe('Summary result');
+      expect(recordTurn).toHaveBeenCalledTimes(1);
+      expect(recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'agent_call',
+          index: 0,
+          assistantContent: 'Summary result',
+          tokensUsed: 150,
+          costUsd: 0.01,
+        })
+      );
+      // Final-answer shape: no toolCall field (signals end-of-step to resume logic)
+      expect(recordTurn.mock.calls[0][0]).not.toHaveProperty('toolCall');
+    });
+
+    // ── Test 2: Single-turn fresh start, NO ctx.recordTurn ─────────────────
+
+    it('single-turn fresh start (no resumeTurns, no ctx.recordTurn): completes without crashing', async () => {
+      // Arrange: ctx without recordTurn — the separate sentinel fn must never fire
+      const sentinelFn = vi.fn();
+      const ctx = makeCtx(); // no recordTurn property
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert: run completed successfully, sentinel was never called
+      expect(result.output).toBe('Summary result');
+      expect(sentinelFn).not.toHaveBeenCalled();
+    });
+
+    // ── Test 3: Resume with prior turns (last has toolCall) → rebuild ───────
+
+    it('single-turn resume: lastPrior has toolCall → rebuilds conversation and continues', async () => {
+      // Arrange: three prior iterations, each with a toolCall (not finalized)
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'a0',
+          toolCall: { id: 't0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 1,
+          assistantContent: 'a1',
+          toolCall: { id: 't1', name: 'cap', arguments: {} },
+          toolResult: { x: 2 },
+          tokensUsed: 60,
+          costUsd: 0.006,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 2,
+          assistantContent: 'a2',
+          toolCall: { id: 't2', name: 'cap', arguments: {} },
+          toolResult: { x: 3 },
+          tokensUsed: 70,
+          costUsd: 0.007,
+        },
+      ];
+
+      // Mock provider to return a final (no-tool) answer on the resumed call
+      vi.mocked(mockChat).mockResolvedValueOnce({
+        content: 'Final answer after resume',
+        usage: { inputTokens: 40, outputTokens: 20 },
+        finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
+      });
+      vi.mocked(calculateCost).mockReturnValueOnce({
+        totalCostUsd: 0.003,
+        isLocal: false,
+        inputCostUsd: 0.001,
+        outputCostUsd: 0.002,
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert: provider.chat called exactly once (one new iteration after rebuild)
+      expect(mockChat).toHaveBeenCalledTimes(1);
+
+      // Tokens accumulate: sum of prior turns + the resumed iteration's tokens
+      // (inputTokens: 40 + outputTokens: 20 = 60 from the mockResolvedValueOnce above)
+      const priorTokensTotal = priorTurns.reduce((s, t) => s + t.tokensUsed, 0); // 50+60+70=180
+      const resumedIterationTokens = 40 + 20; // matches mockResolvedValueOnce usage
+      expect(result.tokensUsed).toBe(priorTokensTotal + resumedIterationTokens);
+
+      // logger.info fired with the resume message
+      const { logger } = await import('@/lib/logging');
+      expect(logger.info).toHaveBeenCalledWith(
+        'agent_call: resuming single-turn from prior iterations',
+        expect.objectContaining({ stepId: 'step1' })
+      );
+    });
+
+    // ── Test 4: Resume short-circuit (lastPrior has NO toolCall) ───────────
+
+    it('single-turn resume short-circuit: lastPrior has no toolCall → returns cached result, no LLM call', async () => {
+      // Arrange: prior turns ending with a finalized entry (no toolCall field)
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'a0',
+          toolCall: { id: 't0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 1,
+          assistantContent: 'a1',
+          toolCall: { id: 't1', name: 'cap', arguments: {} },
+          toolResult: { x: 2 },
+          tokensUsed: 60,
+          costUsd: 0.006,
+        },
+        // Final entry: no toolCall → short-circuit on resume
+        {
+          kind: 'agent_call' as const,
+          index: 2,
+          assistantContent: 'final',
+          tokensUsed: 70,
+          costUsd: 0.007,
+        },
+      ];
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert: NO LLM call fired (gotcha #23 — prefer not.toHaveBeenCalled)
+      expect(mockChat).not.toHaveBeenCalled();
+
+      // Output is the last prior's assistantContent
+      expect(result.output).toBe('final');
+      // Tokens/cost = sum of all priors — derived from fixture to stay in sync
+      const priorTokensTotal = priorTurns.reduce((s, t) => s + t.tokensUsed, 0);
+      const priorCostTotal = priorTurns.reduce((s, t) => s + t.costUsd, 0);
+      expect(result.tokensUsed).toBe(priorTokensTotal);
+      expect(result.costUsd).toBeCloseTo(priorCostTotal);
+
+      // logger.info fired with the short-circuit message
+      const { logger } = await import('@/lib/logging');
+      expect(logger.info).toHaveBeenCalledWith(
+        'agent_call: resume short-circuit — prior attempt already finalized',
+        expect.objectContaining({ stepId: 'step1' })
+      );
+    });
+
+    // ── Test 5: outerTurn-tagged entries excluded from single-turn resume ───
+
+    it('single-turn resume filter: outerTurn-tagged entries excluded → treated as fresh start', async () => {
+      // Arrange: priorTurns contains only a multi-turn entry (outerTurn set)
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          outerTurn: 0,
+          assistantContent: 'mt_a0',
+          toolCall: { id: 'mt_t0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+      ];
+
+      const { logger } = await import('@/lib/logging');
+      vi.mocked(logger.info).mockClear();
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act: fresh start — no single-turn prior entries found after filter
+      await executeAgentCall(step, ctx);
+
+      // Assert: resume logger.info messages were NOT fired (fresh start path)
+      const resumeCalls = vi
+        .mocked(logger.info)
+        .mock.calls.filter(
+          (call) => typeof call[0] === 'string' && call[0].startsWith('agent_call: resume')
+        );
+      expect(resumeCalls).toHaveLength(0);
+    });
+
+    // ── Test 6: non-agent_call kinds excluded from single-turn resume ───────
+
+    it('single-turn resume filter: non-agent_call kind entries excluded → treated as fresh start', async () => {
+      // Arrange: priorTurns contains only a reflect turn (different kind)
+      const priorTurns = [
+        {
+          kind: 'reflect' as const,
+          iteration: 0,
+          draft: 'r',
+          converged: false,
+          tokensUsed: 99,
+          costUsd: 0.099,
+        },
+      ];
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act: fresh start
+      await executeAgentCall(step, ctx);
+
+      // Assert: provider.chat IS called (no short-circuit)
+      expect(mockChat).toHaveBeenCalledTimes(1);
+
+      // Tokens do NOT include the reflect turn's 99 tokens
+      // (default mock returns inputTokens: 100, outputTokens: 50 = 150 total)
+      const result2 = await executeAgentCall(step, makeCtx({ resumeTurns: priorTurns }));
+      expect(result2.tokensUsed).toBe(150); // only from the single new LLM call, not 99+150
+    });
+
+    // ── Test 7: Multi-turn mode: recordTurn NEVER called ───────────────────
+
+    it('multi-turn mode: recordTurn never called even when ctx.recordTurn is defined', async () => {
+      // Arrange: configure for multi-turn mode with 1 turn, non-question response
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+      const step = makeStep({ mode: 'multi-turn', maxTurns: 1 });
+
+      // Act
+      await executeAgentCall(step, ctx);
+
+      // Assert: the executor deliberately does NOT pass recordTurn to runSingleTurn
+      // in multi-turn mode — so recordTurn must never fire
+      expect(recordTurn).not.toHaveBeenCalled();
+    });
+
+    // ── Test 8: recordTurn shape (continuing tool-iteration) ───────────────
+
+    it('recordTurn shape (continuing tool-iteration): includes toolCall and toolResult', async () => {
+      // Arrange: two iterations — first calls a tool, second gives final answer
+      vi.mocked(mockChat)
+        .mockResolvedValueOnce({
+          content: 'thinking',
+          toolCalls: [{ id: 'c1', name: 'cap', arguments: { q: 'x' } }],
+          usage: { inputTokens: 40, outputTokens: 20 },
+          finishReason: 'tool_use',
+          model: 'claude-sonnet-4-20250514',
+        })
+        .mockResolvedValueOnce({
+          content: 'final',
+          usage: { inputTokens: 30, outputTokens: 15 },
+          finishReason: 'stop',
+          model: 'claude-sonnet-4-20250514',
+        });
+
+      const capResult = { success: true, data: { found: 'result' } };
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValueOnce(capResult);
+
+      vi.mocked(calculateCost)
+        .mockReturnValueOnce({
+          totalCostUsd: 0.002,
+          isLocal: false,
+          inputCostUsd: 0.001,
+          outputCostUsd: 0.001,
+        })
+        .mockReturnValueOnce({
+          totalCostUsd: 0.0015,
+          isLocal: false,
+          inputCostUsd: 0.0007,
+          outputCostUsd: 0.0008,
+        });
+
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      await executeAgentCall(step, ctx);
+
+      // Assert: first recordTurn call = continuing tool-iteration shape
+      expect(recordTurn).toHaveBeenCalledTimes(2);
+      const firstCall = recordTurn.mock.calls[0][0] as Record<string, unknown>;
+      expect(firstCall).toMatchObject({
+        kind: 'agent_call',
+        index: 0,
+        assistantContent: 'thinking',
+        toolCall: { id: 'c1', name: 'cap', arguments: { q: 'x' } },
+        toolResult: capResult,
+        tokensUsed: 60, // 40 + 20
+        costUsd: 0.002,
+      });
+    });
+
+    // ── Test 9: recordTurn shape (final no-tool-call answer) ───────────────
+
+    it('recordTurn shape (final no-tool-call): no toolCall field present', async () => {
+      // Arrange: single iteration, no tool calls returned
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act: default mockChat returns no toolCalls
+      await executeAgentCall(step, ctx);
+
+      // Assert: one recordTurn call with no toolCall field
+      expect(recordTurn).toHaveBeenCalledTimes(1);
+      const call = recordTurn.mock.calls[0][0];
+      expect(call).toMatchObject({
+        kind: 'agent_call',
+        index: 0,
+        assistantContent: 'Summary result',
+        tokensUsed: 150,
+        costUsd: 0.01,
+      });
+      // Absent-field assertion: no toolCall on final-answer turn
+      expect(call).not.toHaveProperty('toolCall');
+    });
+
+    // ── Test 10: recordTurn shape (skipFollowup termination) ───────────────
+
+    it('recordTurn shape (skipFollowup): synthesized assistantContent, no toolCall field', async () => {
+      // Arrange: capability returns skipFollowup=true
+      vi.mocked(mockChat).mockResolvedValueOnce({
+        content: 'thinking',
+        toolCalls: [{ id: 'c1', name: 'cap', arguments: {} }],
+        usage: { inputTokens: 30, outputTokens: 10 },
+        finishReason: 'tool_use',
+        model: 'claude-sonnet-4-20250514',
+      });
+
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValueOnce({
+        success: true,
+        data: { result: 'foo' },
+        skipFollowup: true,
+      });
+
+      vi.mocked(calculateCost).mockReturnValueOnce({
+        totalCostUsd: 0.002,
+        isLocal: false,
+        inputCostUsd: 0.001,
+        outputCostUsd: 0.001,
+      });
+
+      const recordTurn = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCtx({ recordTurn });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      await executeAgentCall(step, ctx);
+
+      // Assert: recordTurn called once with synthesized content from capResult.data
+      expect(recordTurn).toHaveBeenCalledTimes(1);
+      const call = recordTurn.mock.calls[0][0];
+      expect(call).toMatchObject({
+        kind: 'agent_call',
+        index: 0,
+        assistantContent: JSON.stringify({ result: 'foo' }),
+        tokensUsed: 40, // 30 + 10
+        costUsd: 0.002,
+      });
+      // skipFollowup entries must NOT carry toolCall (terminal signal)
+      expect(call).not.toHaveProperty('toolCall');
+    });
+
+    // ── Test 11: Conversation rebuild on resume ─────────────────────────────
+
+    it('conversation rebuild on resume: messages include rebuilt assistant+tool pairs', async () => {
+      // Arrange: three prior iterations each with a toolCall
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'a0',
+          toolCall: { id: 't0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 1,
+          assistantContent: 'a1',
+          toolCall: { id: 't1', name: 'cap', arguments: {} },
+          toolResult: { x: 2 },
+          tokensUsed: 60,
+          costUsd: 0.006,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 2,
+          assistantContent: 'a2',
+          toolCall: { id: 't2', name: 'cap', arguments: {} },
+          toolResult: { x: 3 },
+          tokensUsed: 70,
+          costUsd: 0.007,
+        },
+      ];
+
+      // Mock final answer on the resumed call
+      vi.mocked(mockChat).mockResolvedValueOnce({
+        content: 'Final',
+        usage: { inputTokens: 20, outputTokens: 10 },
+        finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      await executeAgentCall(step, ctx);
+
+      // Assert: messages passed to provider.chat include initial messages +
+      // 2 messages per prior turn (assistant + tool) = initialMessages.length + 6
+      const messages = mockChat.mock.calls[0][0] as Array<{ role: string }>;
+
+      // Initial messages = system + user = 2
+      const initialCount = 2;
+      expect(messages).toHaveLength(initialCount + 6);
+
+      // Verify rebuilt assistant messages
+      expect(messages[initialCount]).toEqual(
+        expect.objectContaining({ role: 'assistant', content: 'a0' })
+      );
+      expect(messages[initialCount + 1]).toEqual(
+        expect.objectContaining({ role: 'tool', toolCallId: 't0' })
+      );
+      expect(messages[initialCount + 2]).toEqual(
+        expect.objectContaining({ role: 'assistant', content: 'a1' })
+      );
+      expect(messages[initialCount + 3]).toEqual(
+        expect.objectContaining({ role: 'tool', toolCallId: 't1' })
+      );
+      expect(messages[initialCount + 4]).toEqual(
+        expect.objectContaining({ role: 'assistant', content: 'a2' })
+      );
+      expect(messages[initialCount + 5]).toEqual(
+        expect.objectContaining({ role: 'tool', toolCallId: 't2' })
+      );
+    });
+
+    // ── Test 12: Resume + maxIterations exhausted ───────────────────────────
+
+    it('resume + maxIterations exhausted: loop exits immediately, no LLM call', async () => {
+      // Arrange: priorTurns.length === maxToolIterations AND lastPrior has toolCall
+      const maxToolIterations = 3;
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'a0',
+          toolCall: { id: 't0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 30,
+          costUsd: 0.003,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 1,
+          assistantContent: 'a1',
+          toolCall: { id: 't1', name: 'cap', arguments: {} },
+          toolResult: { x: 2 },
+          tokensUsed: 30,
+          costUsd: 0.003,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 2,
+          assistantContent: 'a2',
+          toolCall: { id: 't2', name: 'cap', arguments: {} },
+          toolResult: { x: 3 },
+          tokensUsed: 30,
+          costUsd: 0.003,
+        },
+      ];
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      // maxToolIterations = 3 → startIteration (3) >= maxIterations (3) → loop doesn't run
+      const step = makeStep({ mode: 'single-turn', maxToolIterations });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Assert: no new LLM call (loop body never executes)
+      expect(mockChat).not.toHaveBeenCalled();
+      // Output = startContent = lastPrior.assistantContent
+      expect(result.output).toBe('a2');
+    });
+
+    // ── Test 13: Tokens accumulate across resume ────────────────────────────
+
+    it('tokens accumulate across resume: prior + new iteration sums correctly', async () => {
+      // Arrange: two prior turns (both with toolCall), one new iteration
+      const priorTurns = [
+        {
+          kind: 'agent_call' as const,
+          index: 0,
+          assistantContent: 'a0',
+          toolCall: { id: 't0', name: 'cap', arguments: {} },
+          toolResult: { x: 1 },
+          tokensUsed: 30,
+          costUsd: 0.003,
+        },
+        {
+          kind: 'agent_call' as const,
+          index: 1,
+          assistantContent: 'a1',
+          toolCall: { id: 't1', name: 'cap', arguments: {} },
+          toolResult: { x: 2 },
+          tokensUsed: 40,
+          costUsd: 0.004,
+        },
+      ];
+
+      // New iteration: 15 input + 10 output = 25 tokens, $0.0025
+      vi.mocked(mockChat).mockResolvedValueOnce({
+        content: 'Done after resume',
+        usage: { inputTokens: 15, outputTokens: 10 },
+        finishReason: 'stop',
+        model: 'claude-sonnet-4-20250514',
+      });
+      vi.mocked(calculateCost).mockReturnValueOnce({
+        totalCostUsd: 0.0025,
+        isLocal: false,
+        inputCostUsd: 0.001,
+        outputCostUsd: 0.0015,
+      });
+
+      const ctx = makeCtx({ resumeTurns: priorTurns });
+      const step = makeStep({ mode: 'single-turn' });
+
+      // Act
+      const result = await executeAgentCall(step, ctx);
+
+      // Derive expected totals from fixtures so assertion stays in sync if fixture values change
+      const priorTokensTotal = priorTurns.reduce((s, t) => s + t.tokensUsed, 0); // 30+40=70
+      const newIterationTokens = 15 + 10; // matches mockResolvedValueOnce usage above (inputTokens: 15 + outputTokens: 10)
+      const priorCostTotal = priorTurns.reduce((s, t) => s + t.costUsd, 0); // 0.003+0.004=0.007
+      const newIterationCost = 0.0025; // matches mockReturnValueOnce totalCostUsd above
+      expect(result.tokensUsed).toBe(priorTokensTotal + newIterationTokens);
+      expect(result.costUsd).toBeCloseTo(priorCostTotal + newIterationCost);
     });
   });
 });

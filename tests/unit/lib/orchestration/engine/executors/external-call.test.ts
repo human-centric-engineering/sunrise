@@ -35,6 +35,15 @@ vi.mock('@/lib/logging', () => ({
     debug: vi.fn(),
   },
 }));
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>
+    turnIndex !== undefined
+      ? `${executionId}:${stepId}:turn=${turnIndex}`
+      : `${executionId}:${stepId}`
+  ),
+  lookupDispatch: vi.fn().mockResolvedValue(null),
+  recordDispatch: vi.fn().mockResolvedValue(true),
+}));
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
@@ -42,7 +51,12 @@ import { executeExternalCall } from '@/lib/orchestration/engine/executors/extern
 import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
 import { resetOutboundRateLimiters } from '@/lib/orchestration/engine/outbound-rate-limiter';
 import { logger } from '@/lib/logging';
-import type { WorkflowStep } from '@/types/orchestration';
+import {
+  buildIdempotencyKey,
+  lookupDispatch,
+  recordDispatch,
+} from '@/lib/orchestration/engine/dispatch-cache';
+import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -825,14 +839,16 @@ describe('executeExternalCall', () => {
   // ─── Env-var template substitution ───────────────────────────────────
 
   describe('${env:VAR} substitution', () => {
-    const originalEnv = process.env;
+    // Renamed from `originalEnv` to avoid shadowing the outer-describe declaration (Finding 9).
+    const innerOriginalEnv = process.env;
 
     beforeEach(() => {
-      process.env = { ...originalEnv, ORCHESTRATION_ALLOWED_HOSTS: 'api.allowed.com' };
+      // Override to a single-host allowlist — env-var tests only call api.allowed.com
+      process.env = { ...innerOriginalEnv, ORCHESTRATION_ALLOWED_HOSTS: 'api.allowed.com' };
     });
 
     afterEach(() => {
-      process.env = originalEnv;
+      process.env = innerOriginalEnv;
     });
 
     it('resolves ${env:VAR} in url config (no workflow-context interpolation needed)', async () => {
@@ -1105,6 +1121,255 @@ describe('executeExternalCall', () => {
       await expect(executeExternalCall(step, makeCtx())).rejects.toMatchObject({
         code: 'multipart_hmac_unsupported',
       });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Dispatch cache integration ──────────────────────────────────────
+
+  describe('dispatch cache integration', () => {
+    const cachedResult: StepResult = {
+      output: { status: 200, body: { cached: true } },
+      tokensUsed: 0,
+      costUsd: 0,
+    };
+
+    it('cache hit returns cached StepResult without firing HTTP request', async () => {
+      // Arrange: cache already holds a result for this execution+step
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cachedResult);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      // Act
+      const result = await executeExternalCall(makeStep(), makeCtx());
+
+      // Assert: the cached result is returned AND fetch was never called
+      // (regression: if cache lookup is removed or short-circuit is broken,
+      //  fetch will be called and this assertion fails clearly)
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result).toEqual(cachedResult);
+    });
+
+    it('cache hit logs info with stepId before returning', async () => {
+      // Arrange
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cachedResult);
+      const ctx = makeCtx();
+
+      // Act
+      await executeExternalCall(makeStep(), ctx);
+
+      // Assert: the ctx.logger.info was called with the cache-hit message
+      // (regression: if logging is removed after the cache check, this fails)
+      expect(ctx.logger.info).toHaveBeenCalledWith(
+        'external_call: dispatch cache hit, skipping HTTP request',
+        { stepId: 'ext1' }
+      );
+      expect(ctx.logger.info).toHaveBeenCalledTimes(1);
+    });
+
+    it('cache miss fires HTTP then calls recordDispatch with correct args', async () => {
+      // Arrange: cache returns null (default), HTTP returns 200
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      const responseBody = { ok: true };
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify(responseBody), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      // Act
+      const result = await executeExternalCall(makeStep(), makeCtx());
+
+      // Assert: recordDispatch is called with the deterministic cache key and
+      // the step's result. This verifies the executor actually writes to the
+      // cache after a successful call — not just that it passes mock data through.
+      // T2 fix: idempotencyKey is now derived inside recordDispatch from
+      // executionId/stepId/turnIndex; callers no longer pass it.
+      expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
+        executionId: 'exec_1',
+        stepId: 'ext1',
+        result: expect.objectContaining({ output: { status: 200, body: responseBody } }),
+      });
+      expect(result).toMatchObject({ output: { status: 200, body: responseBody } });
+    });
+
+    it('buildIdempotencyKey called with executionId and stepId (no turnIndex)', async () => {
+      // Arrange: cache miss so the full flow runs
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      );
+
+      // Act
+      await executeExternalCall(makeStep(), makeCtx());
+
+      // Assert: the key builder is called without turnIndex — external_call is
+      // a single-shot step, not multi-turn. Regression: if someone adds turnIndex
+      // to the external_call invocation, the cache key changes and old cached
+      // results are missed.
+      expect(vi.mocked(buildIdempotencyKey)).toHaveBeenCalledWith({
+        executionId: 'exec_1',
+        stepId: 'ext1',
+      });
+      // Verify it was NOT called with turnIndex
+      const calls = vi.mocked(buildIdempotencyKey).mock.calls;
+      expect(calls[0]?.[0]).not.toHaveProperty('turnIndex');
+    });
+
+    it('author omits idempotencyKey → fetch receives Idempotency-Key header equal to cache key', async () => {
+      // Arrange: no idempotencyKey in config; cache miss
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+      // Act: step has no idempotencyKey config (default makeStep has none)
+      await executeExternalCall(makeStep(), makeCtx());
+
+      // Assert: auto-derived idempotency key (== cache key) is forwarded to fetch
+      // Regression: if the default-to-cache-key path is removed, the header
+      // will be absent and this objectContaining check will fail.
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const headers = init.headers as Record<string, string>;
+      expect(headers['Idempotency-Key']).toBe('exec_1:ext1');
+    });
+
+    it('author supplies literal idempotencyKey → header uses verbatim value, not cache key', async () => {
+      // Arrange: author set a literal key
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+      // Act
+      await executeExternalCall(makeStep({ idempotencyKey: 'my-static-key' }), makeCtx());
+
+      // Assert: the author-supplied literal takes precedence over the cache key.
+      // Regression: if the override path is broken, the header will be 'exec_1:ext1'
+      // instead of 'my-static-key', and this toBe check will fail.
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const headers = init.headers as Record<string, string>;
+      expect(headers['Idempotency-Key']).toBe('my-static-key');
+    });
+
+    it('author supplies idempotencyKey: "auto" → header forwarded as "auto" (HTTP layer mints UUID)', async () => {
+      // Arrange: author set 'auto'; HTTP layer (resolveIdempotencyHeader) converts
+      // 'auto' to a UUID — we assert the executor does NOT replace 'auto' with
+      // the cache key before handing off to the HTTP layer.
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+        );
+
+      // Act
+      await executeExternalCall(makeStep({ idempotencyKey: 'auto' }), makeCtx());
+
+      // Assert: the UUID-minted header is a UUID string, not the cache key or literal 'auto'.
+      // (resolveIdempotencyHeader converts 'auto' → randomUUID() inside the HTTP layer)
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const headers = init.headers as Record<string, string>;
+      const headerValue = headers['Idempotency-Key'];
+      // UUID pattern: 8-4-4-4-12 hex
+      expect(headerValue).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
+      expect(headerValue).not.toBe('exec_1:ext1');
+      expect(headerValue).not.toBe('auto');
+    });
+
+    it('recordDispatch race-loss (returns false) → step returns its result normally, no warn', async () => {
+      // Arrange: cache miss, HTTP success, but recordDispatch lost the race
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      vi.mocked(recordDispatch).mockResolvedValueOnce(false);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      const ctx = makeCtx();
+
+      // Act: must not throw
+      const result = await executeExternalCall(makeStep(), ctx);
+
+      // Assert: result is returned normally even though we lost the cache race
+      // Regression: if a race-loss return value of false causes a throw, this fails
+      expect(result).toMatchObject({ output: { status: 200 } });
+      // ctx.logger.warn must NOT be called — false is a race loss, not an error
+      expect(ctx.logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('recordDispatch throws non-P2002 → ctx.logger.warn called, step still returns result', async () => {
+      // Arrange: cache miss, HTTP success, recordDispatch throws a generic error
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      const dbError = new Error('connection timeout');
+      vi.mocked(recordDispatch).mockRejectedValueOnce(dbError);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      const ctx = makeCtx();
+
+      // Act: must not throw — the DB error is non-fatal
+      const result = await executeExternalCall(makeStep(), ctx);
+
+      // Assert: result is returned and the warn log includes the error message
+      // Regression: if the outer try/catch around recordDispatch is removed,
+      // the DB error propagates and this resolves check fails
+      expect(result).toMatchObject({ output: { status: 200 } });
+      expect(ctx.logger.warn).toHaveBeenCalledWith(
+        'external_call: failed to record dispatch; re-drive may re-fire',
+        { stepId: 'ext1', error: 'connection timeout' }
+      );
+    });
+
+    it('cache miss → HTTP throws → recordDispatch NOT called (no caching of failures)', async () => {
+      // Arrange: cache miss, then HTTP request returns a 400 status (treated as
+      // ExecutorError by the source's HTTP failure path)
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(null);
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response('{"error":"bad request"}', {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      // Act: the source should throw an ExecutorError for the 400 response
+      await expect(executeExternalCall(makeStep(), makeCtx())).rejects.toMatchObject({
+        name: 'ExecutorError',
+      });
+
+      // Assert: no successful result to cache — recordDispatch must NOT have been called
+      // Regression: if recordDispatch is moved before the HTTP-error check, it would
+      // fire here and cache a partial/wrong result.
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
+    });
+
+    it('cache hit short-circuits BEFORE config validation (proves lookup is the first operation)', async () => {
+      // Arrange: cache hit + deliberately invalid config (empty URL)
+      // If the lookup came AFTER config validation, this would throw 'missing_url'.
+      // The cache hit must be the very first async operation in executeExternalCall.
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cachedResult);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      // Step has an invalid URL that would normally throw ExecutorError('missing_url')
+      const stepWithBadUrl = makeStep({ url: '' });
+
+      // Act
+      const result = await executeExternalCall(stepWithBadUrl, makeCtx());
+
+      // Assert: no throw, cached result returned, fetch never called
+      // Regression: if cache lookup is moved to after schema/url validation,
+      // this will throw ExecutorError('missing_url') instead of returning cachedResult
+      expect(result).toEqual(cachedResult);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });

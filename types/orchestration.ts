@@ -271,6 +271,88 @@ export type ExecutionEvent =
  * optional so historical rows continue to parse cleanly — `executionTraceSchema`
  * is back-compatible.
  */
+/**
+ * One turn within a multi-turn step (`agent_call`, `orchestrator`, `reflect`).
+ *
+ * Persisted mid-flight to `AiWorkflowExecution.currentStepTurns` so a crashed
+ * run resumes from the next turn rather than restarting the whole step. On
+ * step termination the engine moves the array into the trace entry's `turns`
+ * field; from then on the entries are read-only history.
+ *
+ * Discriminated by `kind` so each step type carries the state shape its
+ * executor needs to resume:
+ *  - `agent_call` — one tool-iteration: assistant content + the tool call/
+ *    result it triggered. Replay rebuilds `currentMessages` for the next LLM
+ *    call without re-firing the tool dispatch (the dispatch cache handles
+ *    that).
+ *  - `orchestrator` — one round: the planner's reasoning + every delegation's
+ *    outcome + a final-answer hint. Replay restores the `rounds` array; the
+ *    next planner call sees them as prior context.
+ *  - `reflect` — one iteration: the draft after this round's revision +
+ *    convergence flag. Replay restores the latest draft and resumes the loop.
+ */
+export type TurnEntry = AgentCallTurn | OrchestratorTurn | ReflectTurn;
+
+// TODO(pr3): tighten AgentCallTurn to a discriminated sub-union — see
+// PR 2 type-design-analyzer T1. Today `toolCall` and `toolResult` are
+// independently optional, but the runtime contract is paired (continuing
+// iteration: both set) or absent (terminal iteration: both undefined). The
+// 4-state type permits 2 runtime-illegal combinations a future maintainer
+// could write by accident; the replay path on `agent-call.ts` reads each
+// independently so a one-sided entry would silently rebuild a malformed
+// LLM message history. PR 3 split: `AgentCallTurnContinuing` (toolCall +
+// toolResult required) | `AgentCallTurnTerminal` (both forbidden). Mirror
+// in Zod with z.union + .refine() for the mutual-exclusion check.
+export interface AgentCallTurn {
+  kind: 'agent_call';
+  /** 0-indexed tool-iteration counter within the step. Increments per LLM call. */
+  index: number;
+  /** Outer turn index when in multi-turn mode; absent in single-turn mode. */
+  outerTurn?: number;
+  /** Assistant content from the LLM response that closed this iteration. */
+  assistantContent: string;
+  /**
+   * The tool call this turn triggered, if any. Absent when the assistant
+   * emitted a final response (no tool use) — that signals end-of-step.
+   */
+  toolCall?: { id: string; name: string; arguments: Record<string, unknown> };
+  /** The dispatcher's result for `toolCall`, JSON-serialisable. */
+  toolResult?: unknown;
+  tokensUsed: number;
+  costUsd: number;
+}
+
+export interface OrchestratorTurn {
+  kind: 'orchestrator';
+  /** 1-indexed round number, matching the `rounds` array shape. */
+  round: number;
+  plannerReasoning?: string;
+  delegations: Array<{
+    agentSlug: string;
+    message: string;
+    output: unknown;
+    tokensUsed: number;
+    costUsd: number;
+    error?: string;
+  }>;
+  plannerTokensUsed: number;
+  plannerCostUsd: number;
+  /** Final answer if the planner returned one this round (signals stop). */
+  finalAnswer?: string;
+}
+
+export interface ReflectTurn {
+  kind: 'reflect';
+  /** 0-indexed iteration counter. */
+  iteration: number;
+  /** Draft text after this iteration's critique/revision. */
+  draft: string;
+  /** True when this iteration triggered the convergence stop ("no further changes"). */
+  converged: boolean;
+  tokensUsed: number;
+  costUsd: number;
+}
+
 export interface ExecutionTraceEntry {
   stepId: string;
   stepType: WorkflowStepType;
@@ -319,6 +401,13 @@ export interface ExecutionTraceEntry {
     targetStepId: string;
     exhausted?: boolean;
   }>;
+  /**
+   * Per-turn checkpoints for multi-turn step types. Absent for single-shot
+   * steps. Populated from the engine's in-memory accumulator on step
+   * termination, so a completed multi-turn step's full turn history is
+   * preserved in the trace for the admin viewer.
+   */
+  turns?: TurnEntry[];
 }
 
 /**

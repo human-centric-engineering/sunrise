@@ -43,6 +43,16 @@ vi.mock('@/emails/workflow-notification', () => ({
   WorkflowNotification: vi.fn(() => null),
 }));
 
+vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
+  buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>
+    turnIndex !== undefined
+      ? `${executionId}:${stepId}:turn=${turnIndex}`
+      : `${executionId}:${stepId}`
+  ),
+  lookupDispatch: vi.fn().mockResolvedValue(null),
+  recordDispatch: vi.fn().mockResolvedValue(true),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import '@/lib/orchestration/engine/executors/notification'; // triggers registerStepType
@@ -51,6 +61,8 @@ import { sendEmail } from '@/lib/email/send';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { lookupDispatch, recordDispatch } from '@/lib/orchestration/engine/dispatch-cache';
+import { logger } from '@/lib/logging';
 
 type StepExecutorFn = (
   step: WorkflowStep,
@@ -299,6 +311,157 @@ describe('executeNotification', () => {
         name: 'ExecutorError',
         code: 'INVALID_CONFIG',
       });
+    });
+  });
+
+  // ── Dispatch cache integration ─────────────────────────────────────────────
+
+  describe('dispatch cache integration', () => {
+    // The outer beforeEach resets sendEmail/dispatchWebhookEvent but not the
+    // dispatch-cache mocks. Reset them here so call-count assertions are clean.
+    beforeEach(() => {
+      vi.mocked(lookupDispatch).mockReset();
+      vi.mocked(lookupDispatch).mockResolvedValue(null); // default: cache miss
+      vi.mocked(recordDispatch).mockReset();
+      vi.mocked(recordDispatch).mockResolvedValue(true); // default: insert succeeded
+    });
+
+    it('cache hit (email path): returns cached result without calling sendEmail', async () => {
+      // Arrange: prime the cache with an email-shaped result
+      const cached = {
+        output: { sent: true, channel: 'email', status: 'queued' },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cached);
+
+      // Act
+      const result = await executor(makeEmailStep(), makeCtx());
+
+      // Assert: short-circuit — sendEmail never fires and no new record is written
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
+      // The return value is the cached object, not a freshly constructed one
+      expect(result).toEqual(cached);
+    });
+
+    it('cache hit (webhook path): returns cached result without calling dispatchWebhookEvent', async () => {
+      // Arrange: prime the cache with a webhook-shaped result
+      const cached = {
+        output: { sent: true, channel: 'webhook', url: 'https://example.com/hook' },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cached);
+
+      // Act
+      const result = await executor(makeWebhookStep(), makeCtx());
+
+      // Assert: short-circuit — dispatchWebhookEvent never fires and no new record is written
+      expect(vi.mocked(dispatchWebhookEvent)).not.toHaveBeenCalled();
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
+      expect(result).toEqual(cached);
+    });
+
+    it('cache hit logs info with stepId', async () => {
+      // Arrange
+      const stepId = 'notify-1';
+      const cached = {
+        output: { sent: true, channel: 'email', status: 'sent' },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
+      vi.mocked(lookupDispatch).mockResolvedValueOnce(cached);
+
+      // Act
+      await executor(makeEmailStep(), makeCtx());
+
+      // Assert: the source logs the cache-hit message with the step's id
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+        'Notification step: dispatch cache hit, skipping send',
+        { stepId }
+      );
+      // Assert: side effects are NOT triggered on a cache hit — a regression where
+      // the logger fires AND the email/record side effects ALSO run would slip past
+      // the logger assertion alone.
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
+    });
+
+    it('cache miss (email path): calls recordDispatch with the email-shaped StepResult', async () => {
+      // Arrange: cache miss is the default (null), sendEmail returns 'sent'
+      const ctx = makeCtx({ executionId: 'exec-1' });
+      const step = makeEmailStep(); // stepId: 'notify-1'
+      vi.mocked(sendEmail).mockResolvedValue({ status: 'sent', success: true });
+
+      // Act
+      await executor(step, ctx);
+
+      // Assert: recordDispatch called with the exact shape the source builds.
+      // T2 fix: idempotencyKey is derived inside recordDispatch from
+      // executionId/stepId/turnIndex; callers no longer pass it.
+      expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
+        executionId: 'exec-1',
+        stepId: 'notify-1',
+        result: {
+          output: { sent: true, channel: 'email', status: 'sent' },
+          tokensUsed: 0,
+          costUsd: 0,
+        },
+      });
+    });
+
+    it('cache miss (webhook path): calls recordDispatch with the webhook-shaped StepResult', async () => {
+      // Arrange: cache miss is the default (null), dispatchWebhookEvent resolves
+      const ctx = makeCtx({ executionId: 'exec-2' });
+      const step = makeWebhookStep({ webhookUrl: 'https://example.com/hook' }); // stepId: 'notify-2'
+
+      // Act
+      await executor(step, ctx);
+
+      // Assert: recordDispatch called with the webhook-shaped result the source builds.
+      // T2 fix: no idempotencyKey field — derived inside recordDispatch.
+      expect(vi.mocked(recordDispatch)).toHaveBeenCalledWith({
+        executionId: 'exec-2',
+        stepId: 'notify-2',
+        result: {
+          output: { sent: true, channel: 'webhook', url: 'https://example.com/hook' },
+          tokensUsed: 0,
+          costUsd: 0,
+        },
+      });
+    });
+
+    it('recordDispatch race-loss (returns false): step still returns StepResult; sendEmail called exactly once; no logger.warn', async () => {
+      // Arrange: cache miss then recordDispatch loses the unique-key race (returns false)
+      vi.mocked(recordDispatch).mockResolvedValueOnce(false);
+
+      // Act
+      const result = await executor(makeEmailStep(), makeCtx());
+
+      // Assert: notification was sent exactly once (no double-fire)
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
+      // Assert: step returns the result the source computed (not suppressed)
+      expect(result.output).toMatchObject({ sent: true, channel: 'email' });
+      // Assert: false is the documented non-error race outcome; no warning logged
+      expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+    });
+
+    it('recordDispatch throws non-P2002: logger.warn called with message and stepId; step still returns StepResult', async () => {
+      // Arrange: cache miss then recordDispatch throws a non-race DB error
+      const dbError = new Error('connection lost');
+      vi.mocked(recordDispatch).mockRejectedValueOnce(dbError);
+
+      // Act — should NOT throw even though recordDispatch threw
+      const result = await executor(makeEmailStep(), makeCtx());
+
+      // Assert: source logs the non-fatal warning with the documented message and stepId
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Notification step: failed to record dispatch; re-drive may re-send',
+        { stepId: 'notify-1', error: 'connection lost' }
+      );
+      // Assert: step still returns the result (notification already sent)
+      expect(result.output).toMatchObject({ sent: true, channel: 'email' });
     });
   });
 });

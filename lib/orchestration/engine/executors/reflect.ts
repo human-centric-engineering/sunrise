@@ -17,7 +17,7 @@
  * Output: `{ finalDraft, iterations, stopReason }`.
  */
 
-import type { StepResult, WorkflowStep } from '@/types/orchestration';
+import type { ReflectTurn, StepResult, WorkflowStep } from '@/types/orchestration';
 import { reflectConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
@@ -50,17 +50,49 @@ export async function executeReflect(
   const maxIterations =
     typeof config.maxIterations === 'number' && config.maxIterations > 0 ? config.maxIterations : 3;
 
-  // Seed the loop with the most recent step's output.
-  const stepIds = Object.keys(ctx.stepOutputs);
-  const lastStepId = stepIds.length > 0 ? stepIds[stepIds.length - 1] : undefined;
-  let draft = lastStepId ? stringifyValue(ctx.stepOutputs[lastStepId]) : '';
+  // Resume restoration: if the engine handed us prior turns (a crash or
+  // approval pause re-drove this step), pick up where the prior attempt left
+  // off. The accumulated tokens/cost on the prior turns roll forward so the
+  // step's final StepResult reflects the WHOLE iteration history, not just
+  // the post-resume work — same accounting rule as the engine's retry path.
+  const priorReflectTurns: ReflectTurn[] = (ctx.resumeTurns ?? []).flatMap((t) =>
+    t.kind === 'reflect' ? [t] : []
+  );
 
+  let draft: string;
   let totalTokens = 0;
   let totalCost = 0;
-  let iterations = 0;
   let stopReason: 'converged' | 'max_iterations' = 'max_iterations';
+  let startIteration = 0;
 
-  for (let i = 0; i < maxIterations; i++) {
+  if (priorReflectTurns.length > 0) {
+    const last = priorReflectTurns[priorReflectTurns.length - 1];
+    draft = last.draft;
+    totalTokens = priorReflectTurns.reduce((s, t) => s + t.tokensUsed, 0);
+    totalCost = priorReflectTurns.reduce((s, t) => s + t.costUsd, 0);
+    startIteration = last.iteration + 1;
+    if (last.converged) {
+      // Already converged on the prior attempt — return the cached final
+      // draft without firing another LLM call. The dispatch cache makes the
+      // re-drive cheap, but for `reflect` (which doesn't go through the
+      // dispatch cache, since its LLM calls aren't keyed on side effects),
+      // an explicit short-circuit is the right thing.
+      return {
+        output: { finalDraft: draft, iterations: startIteration, stopReason: 'converged' },
+        tokensUsed: totalTokens,
+        costUsd: totalCost,
+      };
+    }
+  } else {
+    // Fresh start — seed the loop with the most recent step's output.
+    const stepIds = Object.keys(ctx.stepOutputs);
+    const lastStepId = stepIds.length > 0 ? stepIds[stepIds.length - 1] : undefined;
+    draft = lastStepId ? stringifyValue(ctx.stepOutputs[lastStepId]) : '';
+  }
+
+  let iterations = startIteration;
+
+  for (let i = startIteration; i < maxIterations; i++) {
     iterations = i + 1;
     const prompt =
       `${critiquePrompt}\n\n` +
@@ -79,11 +111,28 @@ export async function executeReflect(
     totalCost += result.costUsd;
 
     const lowered = result.content.toLowerCase();
-    if (NO_CHANGE_MARKERS.some((m) => lowered.includes(m))) {
+    const converged = NO_CHANGE_MARKERS.some((m) => lowered.includes(m));
+    if (!converged) {
+      draft = result.content;
+    }
+
+    // Checkpoint: persist the iteration's outcome so a crash AFTER this point
+    // resumes from i+1. Recorded BEFORE the break so the convergence-marker
+    // turn lands in the cache and a re-drive sees `last.converged === true`
+    // and returns the cached draft without re-firing.
+    await ctx.recordTurn?.({
+      kind: 'reflect',
+      iteration: i,
+      draft,
+      converged,
+      tokensUsed: result.tokensUsed,
+      costUsd: result.costUsd,
+    });
+
+    if (converged) {
       stopReason = 'converged';
       break;
     }
-    draft = result.content;
   }
 
   return {

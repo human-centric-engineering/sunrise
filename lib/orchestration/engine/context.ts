@@ -12,7 +12,7 @@
  */
 
 import type { Logger } from '@/lib/logging';
-import type { LlmTelemetryEntry, StepResult } from '@/types/orchestration';
+import type { LlmTelemetryEntry, StepResult, TurnEntry } from '@/types/orchestration';
 
 /**
  * Context passed to each step executor.
@@ -59,6 +59,32 @@ export interface ExecutionContext {
    * (engine, `runLlmCall`, `agent_call`) all set or guard the array.
    */
   stepTelemetry?: LlmTelemetryEntry[];
+  /**
+   * Resume state for multi-turn step types. When non-empty, the executor
+   * (`agent_call`, `orchestrator`, `reflect`) is being re-invoked after a
+   * crash and should restore its in-memory state from these entries rather
+   * than starting from turn 0. The engine populates this from the row's
+   * `currentStepTurns` column on the resume path and clears it after the
+   * first multi-turn step terminates — a one-shot field for the in-flight
+   * step only.
+   *
+   * Single-shot step types ignore this field; their crash safety comes from
+   * the dispatch cache, not turn replay.
+   */
+  resumeTurns?: TurnEntry[];
+  /**
+   * Mid-step checkpoint hook. Multi-turn executors call this after each
+   * completed turn to persist progress. The engine's implementation appends
+   * to an in-memory accumulator AND writes the full array to the row's
+   * `currentStepTurns` column (lease-guarded). The lease is refreshed in the
+   * same UPDATE so a long single step doesn't lose ownership while a
+   * heartbeat tick is queued.
+   *
+   * Optional on the type so single-shot executors and test fixtures can
+   * ignore it. The engine sets this field for every step; calling it from
+   * any executor is no-op safe.
+   */
+  recordTurn?: (turn: TurnEntry) => Promise<void>;
 }
 
 /**

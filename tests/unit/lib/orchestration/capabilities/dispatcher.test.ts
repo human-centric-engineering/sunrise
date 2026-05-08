@@ -103,6 +103,7 @@ interface CapabilityRowOverrides {
   requiresApproval?: boolean;
   rateLimit?: number | null;
   approvalTimeoutMs?: number | null;
+  isIdempotent?: boolean;
   isActive?: boolean;
 }
 
@@ -121,6 +122,7 @@ function makeCapabilityRow(overrides: CapabilityRowOverrides = {}) {
     requiresApproval: overrides.requiresApproval ?? false,
     rateLimit: overrides.rateLimit !== undefined ? overrides.rateLimit : null,
     approvalTimeoutMs: overrides.approvalTimeoutMs ?? null,
+    isIdempotent: overrides.isIdempotent ?? false,
     isActive: overrides.isActive ?? true,
   };
 }
@@ -692,6 +694,35 @@ describe('CapabilityDispatcher', () => {
       };
       expect(logCostArgs.traceId).toBe(dispatchSpan.traceId);
       expect(logCostArgs.spanId).toBe(dispatchSpan.spanId);
+    });
+  });
+
+  describe('isIdempotent plumbing', () => {
+    it('maps isIdempotent:true from DB row to CapabilityRegistryEntry', async () => {
+      // Arrange: register a handler and load a DB row with isIdempotent=true
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ isIdempotent: true })]);
+
+      // Act: trigger a dispatch so loadFromDatabase populates the registry
+      await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      // Assert: the registry entry reflects the DB row's isIdempotent value
+      const entry = capabilityDispatcher.getRegistryEntry('ok');
+      expect(entry?.isIdempotent).toBe(true);
+    });
+
+    it('maps isIdempotent:false (default) from DB row to CapabilityRegistryEntry', async () => {
+      // Arrange: register a handler and load a DB row with isIdempotent=false (default)
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ isIdempotent: false })]);
+
+      // Act: trigger a dispatch so loadFromDatabase populates the registry
+      await capabilityDispatcher.dispatch('ok', { n: 2 }, ctx);
+
+      // Assert: the registry entry reflects the DB row's isIdempotent=false,
+      // guarding against a future regression that hardcodes a default of true.
+      const entry = capabilityDispatcher.getRegistryEntry('ok');
+      expect(entry?.isIdempotent).toBe(false);
     });
   });
 

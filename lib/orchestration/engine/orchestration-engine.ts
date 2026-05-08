@@ -45,13 +45,18 @@
 import { Prisma } from '@prisma/client';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
-import { executionTraceEntrySchema, stepErrorConfigSchema } from '@/lib/validations/orchestration';
+import {
+  executionTraceEntrySchema,
+  stepErrorConfigSchema,
+  turnEntriesSchema,
+} from '@/lib/validations/orchestration';
 import {
   WorkflowStatus,
   type ExecutionEvent,
   type ExecutionTraceEntry,
   type LlmTelemetryEntry,
   type StepResult,
+  type TurnEntry,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@/types/orchestration';
@@ -687,7 +692,14 @@ export class OrchestrationEngine {
   private async *runStepWithStrategy(
     step: WorkflowStep,
     ctx: ExecutionContext,
-    telemetryOut: LlmTelemetryEntry[]
+    telemetryOut: LlmTelemetryEntry[],
+    /**
+     * Called BEFORE each retry attempt (i.e. after attempt 0 fails, before attempt 1 runs;
+     * never before attempt 0). Lets callers reset per-attempt state — multi-turn checkpoint
+     * accumulators in `executeSingleStep` use this to clear `currentStepTurns` so failed
+     * attempts' turns don't leak into the next attempt's history.
+     */
+    onAttemptStart?: (attempt: number) => Promise<void>
   ): AsyncGenerator<ExecutionEvent, StepResult, unknown> {
     const executor = getExecutor(step.type);
     const errorConfig = stepErrorConfigSchema.parse(step.config);
@@ -745,6 +757,12 @@ export class OrchestrationEngine {
       let accumulatedTokens = 0;
       let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
+        if (attempt > 0 && onAttemptStart) {
+          // Reset per-attempt accumulators (e.g. multi-turn `currentStepTurns`)
+          // so the next attempt starts fresh. Cost accumulators above persist
+          // across attempts intentionally — they reflect billing reality.
+          await onAttemptStart(attempt);
+        }
         try {
           const result = await invokeExecutor();
           result.tokensUsed += accumulatedTokens;
@@ -991,8 +1009,38 @@ export class OrchestrationEngine {
     let stepResult: StepResult | null = null;
     let stepError: ExecutorError | null = null;
 
+    // Multi-turn checkpoint plumbing. `stepTurns` is the in-memory accumulator
+    // for this step; it seeds from `ctx.resumeTurns` (set by initRun on the
+    // resume path) so a re-driven step picks up where it left off. The closure
+    // bound to `ctx.recordTurn` mirrors the array to the row's
+    // `currentStepTurns` column on each call. The accumulator is also captured
+    // by reference into the per-attempt reset callback below, so retry attempts
+    // start fresh — see `onAttemptStart`.
+    //
+    // `ctx.resumeTurns` STAYS on the live context across `runStepWithStrategy`
+    // so attempt 0's snapshot (taken lazily inside `invokeExecutor`) carries
+    // it through to the executor. We clear it after the call so subsequent
+    // steps don't see stale resume state, and `onAttemptStart` clears it
+    // between retry attempts so retries start fresh (no resume replay on
+    // attempt 1+).
+    const stepTurns: TurnEntry[] = [...(ctx.resumeTurns ?? [])];
+    ctx.recordTurn = async (turn: TurnEntry) => {
+      stepTurns.push(turn);
+      await this.recordStepTurn(lease, stepTurns, baseLogger);
+    };
+    // Reset between retry attempts: failed attempts shouldn't accumulate into
+    // the next attempt's turns. The dispatch cache prevents side-effect
+    // duplication, but the turn history needs to reflect the SUCCESSFUL run
+    // only; otherwise a crash AFTER retry would replay turns from the failed
+    // attempt and corrupt the executor's reconstructed state.
+    const onAttemptStart = async (): Promise<void> => {
+      stepTurns.length = 0;
+      ctx.resumeTurns = undefined; // resume replay is for attempt 0 only
+      await this.recordStepTurn(lease, [], baseLogger);
+    };
+
     try {
-      stepResult = yield* this.runStepWithStrategy(step, ctx, telemetryOut);
+      stepResult = yield* this.runStepWithStrategy(step, ctx, telemetryOut, onAttemptStart);
     } catch (err) {
       if (err instanceof PausedForApproval) {
         const durationMs = Date.now() - started;
@@ -1015,7 +1063,21 @@ export class OrchestrationEngine {
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
+          ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
         });
+        // The pause path's column DOES retain currentStepTurns on purpose:
+        // pauseForApproval doesn't touch it, and the column is what
+        // approval-resume's initRun reads to repopulate ctx.resumeTurns. The
+        // trace entry's `turns` field is for observability; the column is for
+        // resume.
+        //
+        // Clearing both context fields here prevents the next step's executor
+        // — or, more dangerously, sibling code paths like `runStepToCompletion`
+        // (parallel batches) — from inheriting a stale closure pointing at this
+        // step's `stepTurns` array and lease. The contract is: `ctx.recordTurn`
+        // is bound by `executeSingleStep` for the duration of one step only.
+        ctx.resumeTurns = undefined;
+        ctx.recordTurn = undefined;
         const approvalData =
           typeof err.payload === 'object' && err.payload !== null
             ? (err.payload as Record<string, unknown>)
@@ -1074,7 +1136,10 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
+        ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
       });
+      ctx.resumeTurns = undefined;
+      ctx.recordTurn = undefined;
       await this.checkpoint(lease, ctx, trace);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id);
@@ -1096,7 +1161,10 @@ export class OrchestrationEngine {
       durationMs,
       input: step.config,
       ...rollupTelemetry(telemetryOut),
+      ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
     });
+    ctx.resumeTurns = undefined;
+    ctx.recordTurn = undefined;
     await this.checkpoint(lease, ctx, trace);
 
     // Budget check — runs BEFORE step_completed so the event stream's
@@ -1635,6 +1703,38 @@ export class OrchestrationEngine {
           ctx.stepOutputs[entry.stepId] = entry.output;
         }
       }
+      // Multi-turn resume: if the in-flight step had recorded turns before the
+      // crash, hand them to the executor via `ctx.resumeTurns` so it can replay
+      // its in-memory state and continue from the next turn rather than
+      // restart at turn 0. The dispatch cache (`ai_workflow_step_dispatch`)
+      // makes the replay safe — already-completed tool calls return cached
+      // results without re-firing.
+      if (row.currentStep && row.currentStepTurns !== null) {
+        const parsedTurns = turnEntriesSchema.safeParse(row.currentStepTurns);
+        if (parsedTurns.success && parsedTurns.data.length > 0) {
+          ctx.resumeTurns = parsedTurns.data;
+          baseLogger.info('Resume: restoring multi-turn step state', {
+            executionId: row.id,
+            currentStep: row.currentStep,
+            turns: parsedTurns.data.length,
+          });
+        } else if (!parsedTurns.success) {
+          // Operators need to identify which field/shape regressed without
+          // re-parsing the row by hand. Log the first three issue paths and
+          // messages alongside the count so a schema drift is visible from
+          // the log alone. Drops the malformed payload and falls through to
+          // a fresh-start resume — the dispatch cache prevents side-effect
+          // re-fire, but the executor's in-memory state restarts at turn 0.
+          baseLogger.warn('Resume: dropped malformed currentStepTurns', {
+            executionId: row.id,
+            issues: parsedTurns.error.issues.length,
+            sampleIssues: parsedTurns.error.issues.slice(0, 3).map((issue) => ({
+              path: issue.path.join('.'),
+              message: issue.message,
+            })),
+          });
+        }
+      }
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: row.id, leaseToken },
         data: { status: WorkflowStatus.RUNNING, startedAt: row.startedAt ?? new Date() },
@@ -1701,10 +1801,15 @@ export class OrchestrationEngine {
     try {
       // Lease-guarded: a stale-token holder's update silently no-ops via count=0.
       // Refresh the lease in the same UPDATE so step transitions also extend ownership.
+      // currentStepTurns is reset to null because the column belongs to whichever step is
+      // named in currentStep — clearing it on transition keeps the invariant. Resume already
+      // copied the prior step's turns into `ctx.resumeTurns` before this UPDATE runs, so
+      // clearing here doesn't lose data.
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken: token },
         data: {
           currentStep: stepId,
+          currentStepTurns: Prisma.DbNull,
           leaseExpiresAt: leaseExpiry(),
           lastHeartbeatAt: new Date(),
         },
@@ -1717,6 +1822,65 @@ export class OrchestrationEngine {
         stepId,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /**
+   * Persist the latest turn snapshot for the current step. Lease-guarded — a stale-token
+   * holder's update silently no-ops via count=0. The lease is refreshed in the same UPDATE so
+   * a multi-turn LLM step that runs longer than `HEARTBEAT_INTERVAL_MS` keeps ownership
+   * without depending on the heartbeat timer.
+   *
+   * The full array is written each call (overwrite, not append). Postgres JSONB has no
+   * native append op, and a read-modify-write JSONB merge would race with concurrent writers
+   * — but at this scale there's only ever one host writing per execution (lease guarantees
+   * exclusivity), so the simpler overwrite is correct and avoids the round-trip a merge
+   * would require.
+   *
+   * Posture matches `markCurrentStep` and `checkpoint`: a DB hiccup mid-step is non-fatal —
+   * the in-memory turns array is the source of truth for THIS attempt; the worst case is a
+   * crashed re-drive starts from an earlier turn (and the dispatch cache prevents
+   * side-effect duplication on the replay).
+   *
+   * Log-level branch on the clear-write case (`turns.length === 0`): the empty-array write is
+   * fired by `executeSingleStep`'s `onAttemptStart` callback between retry attempts. If THAT
+   * write fails AND the host then crashes before attempt N+1's first successful turn record,
+   * a subsequent resume will replay attempt N's stale turns. The dispatch cache stops side-
+   * effect duplication, but the executor's reconstructed in-memory state (orchestrator round
+   * counter, agent_call message history, reflect draft) diverges from reality — token cost
+   * for the dropped attempt's partial work is lost. Surface this as `error` (not `warn`) so
+   * operators can monitor; behaviour is still non-fatal because a failed retry-clear is
+   * marginally better than a failed retry attempt itself.
+   */
+  private async recordStepTurn(
+    lease: LeaseHandle,
+    turns: TurnEntry[],
+    logger: Logger
+  ): Promise<void> {
+    const { executionId, token } = lease;
+    const isClearWrite = turns.length === 0;
+    try {
+      await prisma.aiWorkflowExecution.updateMany({
+        where: { id: executionId, leaseToken: token },
+        data: {
+          currentStepTurns: turns as unknown as object,
+          leaseExpiresAt: leaseExpiry(),
+          lastHeartbeatAt: new Date(),
+        },
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (isClearWrite) {
+        logger.error(
+          'recordStepTurn: retry-clear write failed — next retry attempt may inherit stale turns on a subsequent crash; investigate DB connectivity',
+          { executionId, error: errorMessage }
+        );
+      } else {
+        logger.warn(
+          'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
+          { executionId, error: errorMessage }
+        );
+      }
     }
   }
 

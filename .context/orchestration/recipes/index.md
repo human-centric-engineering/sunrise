@@ -49,6 +49,14 @@ Each recipe follows the same 12-section template so they're scannable side-by-si
 | Render a PDF / HTML document        | [document-render.md](./document-render.md)         | DocRaptor, PDFShift, Gotenberg             |
 | In-chat user approval before action | [in-chat-approval.md](./in-chat-approval.md)       | (none — uses `run_workflow` capability)    |
 
+## Workflow assembly recipes
+
+Differently shaped from the integration recipes above — instead of "wire `call_external_api` to vendor X", these compose existing step types to deliver a runtime guarantee. No new capability or HTTP target involved.
+
+| Topic                                        | File                                                   | Covers                                                                                               |
+| -------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Long-running workflow that survives a deploy | [long-running-workflow.md](./long-running-workflow.md) | Per-step crash-safety: dispatch cache, multi-turn checkpoint state, recovery semantics per step type |
+
 ## When to write a new recipe
 
 Write a recipe when:

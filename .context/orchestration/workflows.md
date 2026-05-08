@@ -168,6 +168,97 @@ The validator only covers authoring. Runtime execution lives in `lib/orchestrati
 
 The three execute/read/approve admin routes are live; see [`admin-api.md`](./admin-api.md#executions) for the HTTP contract.
 
+## Idempotency and crash safety
+
+A long-running workflow can be killed mid-step by a deploy, an OOM, a Vercel function timeout, or a process restart. The recovery model in [`engine.md`](./engine.md#recovery-model) handles re-driving the execution; this section documents what each side-effecting step type does to stay safe across the re-drive.
+
+The mechanism is a **dispatch cache** keyed on a deterministic idempotency key. Before firing a side effect the executor calls `lookupDispatch(key)` — a cache hit returns the prior result and skips the side effect entirely. After a successful side effect the executor calls `recordDispatch({...})`, which inserts a row keyed on `idempotencyKey UNIQUE`. The schema and helpers live in `lib/orchestration/engine/dispatch-cache.ts`; the underlying table is `AiWorkflowStepDispatch` (FK CASCADE to `AiWorkflowExecution`, so dropping a failed execution drops its cache rows).
+
+**Key shape (deterministic per attempt):**
+
+```text
+${executionId}:${stepId}                  # single-shot steps
+${executionId}:${stepId}:turn=${N}        # multi-turn steps (per-turn keying for the inner state work)
+```
+
+Per-attempt-index is intentionally absent — the engine's `recoveryAttempts` cap means a step that throws is not retried in-place; the run is re-driven from the last completed step, and a step with no successful prior dispatch has no cache row to hit. The miss IS the right behaviour.
+
+### Per-step-type behaviour
+
+| Step type           | What's cached                                    | How a re-drive behaves                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `external_call`     | The full `StepResult` (status + body)            | Cache hit → return cached response, no HTTP request fires. Cache miss → fire the HTTP call. The `Idempotency-Key` header is auto-derived from the cache key when the author hasn't supplied `config.idempotencyKey`, so cooperative remotes also dedup on retry. Author overrides are preserved: a literal string is sent verbatim, and `'auto'` still mints a fresh UUID per call (preserved from the prior contract). |
+| `send_notification` | The full `StepResult` (sent flag + channel info) | Cache hit → return cached result, no email/webhook fires. Cache miss → fire the send. The generic webhook path has no provider-side dedup, so the dispatch row is the load-bearing dedup gate; the email path benefits from the row plus whatever idempotency the email provider already does.                                                                                                                          |
+| `tool_call`         | The full `StepResult` (capability data)          | Reads the capability's `isIdempotent` flag (default `false`). When `false`: cache lookup-then-dispatch; on success record the result. When `true`: cache is bypassed entirely — the destination handles dedup naturally, no need to grow the cache. Failed dispatches throw before the cache write, so transient errors aren't cached and a re-run can succeed.                                                         |
+| `agent_call`        | Per-turn (each tool iteration)                   | Single-turn mode resumes at the next iteration with a rebuilt `currentMessages` array. Multi-turn mode falls back to a fresh start — the dispatch cache still dedups inner tool calls. See [`engine.md` recovery model](./engine.md#recovery-model) for the turn replay contract.                                                                                                                                       |
+| `orchestrator`      | Per-round                                        | Resumes at the next round; prior rounds' planner LLM calls and delegations are never re-fired. See [`engine.md`](./engine.md#recovery-model).                                                                                                                                                                                                                                                                           |
+| `reflect`           | Per-iteration                                    | Resumes at the next iteration with the prior draft restored. See [`engine.md`](./engine.md#recovery-model).                                                                                                                                                                                                                                                                                                             |
+
+`llm_call`, `chain`, `parallel`, `route`, `guard`, `evaluate`, `plan`, `rag_retrieve`, `human_approval` are not in the table because they do not have external side effects — `llm_call` re-runs (paying the token cost), the rest are pure dispatch logic over already-completed steps.
+
+### Capability `isIdempotent` opt-out
+
+When a capability is naturally safe to re-run (a pure read, an upsert keyed on stable input, a stateless calculation), set `isIdempotent: true` on the `AiCapability` row to skip the dispatch cache:
+
+```typescript
+// Example: a "search-knowledge" capability that returns the same result
+// for the same query — no harm in re-running, no need to record dispatch.
+await prisma.aiCapability.update({
+  where: { slug: 'search-knowledge' },
+  data: { isIdempotent: true },
+});
+```
+
+The default is `false` — the conservative assumption is that capabilities have side effects, so a re-drive must consult the cache. Only flip the flag for capabilities whose destination handles re-runs by construction.
+
+### The lookup → fire → record contract
+
+```typescript
+import {
+  buildIdempotencyKey,
+  lookupDispatch,
+  recordDispatch,
+} from '@/lib/orchestration/engine/dispatch-cache';
+
+const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
+let cached: StepResult | null = null;
+try {
+  cached = await lookupDispatch<StepResult>(cacheKey);
+} catch (err) {
+  // Treat lookup failures as a cache miss (warn-and-continue) — symmetric with
+  // the post-fire recordDispatch error posture below.
+  ctx.logger.warn('dispatch cache lookup failed; treating as miss', { ... });
+}
+if (cached !== null) {
+  return cached; // skip the side effect entirely
+}
+
+// Fire the side effect (HTTP call, send email, dispatch capability, ...)
+const stepResult = await fireSideEffect();
+
+try {
+  // recordDispatch derives the idempotency key from the parts internally —
+  // callers pass executionId/stepId/turnIndex (DispatchKeyParts), never the
+  // pre-built key string. This eliminates the parallel-parameter drift class
+  // where lookup and record could disagree.
+  await recordDispatch({
+    executionId: ctx.executionId,
+    stepId: step.id,
+    result: stepResult,
+  });
+} catch (err) {
+  // P2002 is handled inside recordDispatch (returns false). Other DB errors are non-fatal —
+  // log and continue; the re-drive's cache miss will re-fire (the cooperative remote's
+  // Idempotency-Key honour is the second layer of dedup for HTTP).
+  ctx.logger.warn('failed to record dispatch; re-drive may re-fire side effect', { ... });
+}
+return stepResult;
+```
+
+`recordDispatch` returns `boolean`: `true` on insert, `false` on the P2002 unique-constraint violation. A `false` return means another host won the race (the brief window between the orphan sweep claiming a row and the original host's heartbeat noticing it lost the lease — see [`engine.md`](./engine.md#recovery-model)). All three side-effecting executors deliberately discard the boolean: the loser of the dispatch-row race is by definition the loser of the lease race, and PR 1's lease-loss model cancels the loser's terminal events on the next checkpoint write. The loser's in-flight result is computed but never observed downstream, so re-reading the winner's cached result would be wasted work.
+
+Catching P2002 explicitly avoids the read-then-write race a `findUnique` + `create` pattern would introduce.
+
 ## Extending the validator
 
 If a new step type (`WorkflowStep.type`) carries required config, add the check at the per-type-config pass in `validator.ts`. Rules:

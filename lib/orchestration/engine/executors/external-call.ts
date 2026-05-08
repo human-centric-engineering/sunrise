@@ -35,6 +35,11 @@
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { externalCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import {
+  buildIdempotencyKey,
+  lookupDispatch,
+  recordDispatch,
+} from '@/lib/orchestration/engine/dispatch-cache';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
@@ -70,6 +75,34 @@ export async function executeExternalCall(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
+  // Crash-safe re-run: if a prior attempt of this step already fired the HTTP
+  // call and recorded its result, return the cached StepResult without
+  // re-firing. The cache key is `${executionId}:${stepId}` (deterministic per
+  // step within a single execution) — independent of the `Idempotency-Key`
+  // header sent to the remote, which the author may override or set to 'auto'
+  // for a fresh UUID per call. See `lib/orchestration/engine/dispatch-cache.ts`.
+  //
+  // Posture symmetry with `recordDispatch`: a transient DB hiccup at lookup
+  // time treats as cache miss (warn-and-continue), matching the post-write
+  // recordDispatch failure handling. Keeps cache-availability errors from
+  // killing a step before its side effect would have fired.
+  const cacheKey = buildIdempotencyKey({ executionId: ctx.executionId, stepId: step.id });
+  let cached: StepResult | null = null;
+  try {
+    cached = await lookupDispatch<StepResult>(cacheKey);
+  } catch (err) {
+    ctx.logger.warn('external_call: dispatch cache lookup failed; treating as miss', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  if (cached !== null) {
+    ctx.logger.info('external_call: dispatch cache hit, skipping HTTP request', {
+      stepId: step.id,
+    });
+    return cached;
+  }
+
   const config = externalCallConfigSchema.parse(step.config);
 
   if (typeof config.url !== 'string' || config.url.trim().length === 0) {
@@ -166,10 +199,16 @@ export async function executeExternalCall(
       }
     : undefined;
 
+  // Idempotency-Key header: when the author hasn't supplied one, default to
+  // our deterministic cache key so a cooperative remote dedups across
+  // re-drives. Author overrides take precedence — a literal string is used
+  // verbatim, and `'auto'` mints a fresh UUID per call (preserved from the
+  // prior contract for authors who want no remote dedup).
   const idempotency = config.idempotencyKey
     ? { key: config.idempotencyKey, headerName: config.idempotencyKeyHeader }
-    : undefined;
+    : { key: cacheKey, headerName: config.idempotencyKeyHeader };
 
+  let stepResult: StepResult;
   try {
     const response = await executeHttpRequest({
       url,
@@ -186,7 +225,7 @@ export async function executeExternalCall(
     });
 
     if (response.transformError) {
-      return {
+      stepResult = {
         output: {
           status: response.status,
           body: response.body,
@@ -195,13 +234,13 @@ export async function executeExternalCall(
         tokensUsed: 0,
         costUsd: 0,
       };
+    } else {
+      stepResult = {
+        output: { status: response.status, body: response.body },
+        tokensUsed: 0,
+        costUsd: 0,
+      };
     }
-
-    return {
-      output: { status: response.status, body: response.body },
-      tokensUsed: 0,
-      costUsd: 0,
-    };
   } catch (err) {
     if (err instanceof HttpError) {
       const code = HTTP_TO_EXECUTOR_CODE[err.code] ?? 'http_error';
@@ -209,6 +248,35 @@ export async function executeExternalCall(
     }
     throw err;
   }
+
+  // Record the dispatch so a re-drive after a crash returns the cached result
+  // instead of re-firing the HTTP call. P2002 means another host won the race
+  // — `recordDispatch` returns `false`. We deliberately discard that boolean:
+  // the loser of the dispatch-row race is by definition the loser of the lease
+  // race, and PR 1's lease-loss model cancels the loser's terminal events on
+  // the next checkpoint write (`finalize` returns `false` on `count: 0` and
+  // suppresses the `workflow_completed` yield + hooks + webhook). The loser's
+  // `stepResult` is computed but never observed downstream, so re-reading the
+  // winner's cached result here would be wasted work.
+  //
+  // Other DB errors are non-fatal — the step already succeeded, so we log and
+  // continue. Worst-case on a re-drive that misses the cache: the call fires
+  // again, and the cooperative remote's `Idempotency-Key` honour is the second
+  // layer of dedup.
+  try {
+    await recordDispatch({
+      executionId: ctx.executionId,
+      stepId: step.id,
+      result: stepResult,
+    });
+  } catch (err) {
+    ctx.logger.warn('external_call: failed to record dispatch; re-drive may re-fire', {
+      stepId: step.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return stepResult;
 }
 
 registerStepType('external_call', executeExternalCall);
