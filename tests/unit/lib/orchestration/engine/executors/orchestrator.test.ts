@@ -5,8 +5,9 @@
  *   - Happy path: single round with final answer
  *   - Multi-round: planner delegates then synthesizes
  *   - Selection mode 'all': fan-out to every agent
- *   - Missing plannerPrompt: throws ExecutorError('missing_planner_prompt')
- *   - Empty availableAgentSlugs: throws ExecutorError('no_agents_available')
+ *   - Missing plannerPrompt: ZodError (schema rejects empty plannerPrompt before executor guard reaches it)
+ *   - Empty availableAgentSlugs: ZodError (schema rejects empty availableAgentSlugs before executor guard reaches it);
+ *     configured agents all inactive → ExecutorError('no_agents_available')
  *   - Agent not found by planner: skipped, planner informed
  *   - Agent call failure: included in results
  *   - Max rounds exhausted: partial results with stopReason
@@ -56,7 +57,7 @@ import { executeOrchestrator } from '@/lib/orchestration/engine/executors/orches
 import { prisma } from '@/lib/db/client';
 import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
-import type { WorkflowStep } from '@/types/orchestration';
+import type { WorkflowStep, OrchestratorTurn, TurnEntry } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -438,13 +439,19 @@ describe('executeOrchestrator', () => {
     const step = makeStep({ timeoutMs: 5000 });
 
     // Mock Date.now: first two calls return startTime (capture + first check),
-    // all subsequent calls return past the timeout
+    // all subsequent calls return past the timeout.
+    // Note: vi.useFakeTimers() is NOT used here because the orchestrator's Promise
+    // scheduling relies on real timers resolving (await runLlmCall requires the
+    // microtask queue to flush). Fake timers with the default scheduler would
+    // deadlock waiting for the await to settle.
+    // The magic `2` is stable because:
+    //   callCount===1: Date.now() captured as `startTime` at the top of executeOrchestrator.
+    //   callCount===2: elapsed check at the top of the round-0 loop iteration → within timeout.
+    //   callCount===3+: elapsed check at the top of round-1 iteration → past timeout, loop exits.
     let callCount = 0;
     const startTime = 1000000;
     const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
       callCount++;
-      // Call 1: startTime capture, Call 2: round 0 timeout check → both within timeout
-      // Call 3+: round 1 timeout check → past timeout
       return callCount <= 2 ? startTime : startTime + 6000;
     });
 
@@ -539,5 +546,411 @@ describe('executeOrchestrator', () => {
     // Cost from both the invalid-JSON response and the retry are accumulated
     expect(result.costUsd).toBeCloseTo(0.002 + 0.005);
     expect(result.tokensUsed).toBe(100 + 200);
+  });
+});
+
+// ─── Multi-turn checkpoint resume ────────────────────────────────────────────
+
+describe('multi-turn checkpoint resume', () => {
+  // Nested beforeEach ensures mocks are reset to known defaults before each
+  // resume test, preventing cross-describe contamination (gotcha #22).
+  beforeEach(() => {
+    vi.mocked(runLlmCall).mockReset();
+    vi.mocked(executeAgentCall).mockReset();
+    vi.mocked(interpolatePrompt).mockReset();
+    vi.mocked(prisma.aiAgent.findMany).mockReset();
+
+    // Re-apply defaults after reset
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(MOCK_AGENTS as never);
+    vi.mocked(interpolatePrompt).mockImplementation((s: string) => s);
+  });
+
+  it('fresh start: no resumeTurns, loop begins at round 0, recordTurn fires once for final-answer round', async () => {
+    // Arrange — no prior turns, 1-round scenario
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'Fresh start answer.', reasoning: 'Enough context.' })
+    );
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — loop began at round 0, one recordTurn call for the completed round
+    expect(result.output).toMatchObject({
+      finalAnswer: 'Fresh start answer.',
+      stopReason: 'final_answer',
+    });
+    // recordTurn fires exactly once, for round 1
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'orchestrator',
+        round: 1,
+        finalAnswer: 'Fresh start answer.',
+      })
+    );
+    // Planner was called exactly once (no prior rounds to skip)
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume from 2 prior rounds: starts at round 2, accumulates prior tokens, round 3 planner called once', async () => {
+    // Arrange — 2 prior turns, round 3 planner returns final answer
+    const prior1: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 1,
+      plannerReasoning: 'r1',
+      delegations: [{ agentSlug: 'a', message: 'm', output: 'o', tokensUsed: 100, costUsd: 0.01 }],
+      plannerTokensUsed: 50,
+      plannerCostUsd: 0.005,
+    };
+    const prior2: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 2,
+      plannerReasoning: 'r2',
+      delegations: [
+        { agentSlug: 'b', message: 'm2', output: 'o2', tokensUsed: 80, costUsd: 0.008 },
+      ],
+      plannerTokensUsed: 60,
+      plannerCostUsd: 0.006,
+    };
+
+    // Explicit planner values controlled by this test so token/cost assertions can
+    // be derived rather than hard-coded (Finding 15 — literal-sum brittleness).
+    const plannerTokens = 200;
+    const plannerCostUsd = 0.005;
+    vi.mocked(runLlmCall).mockResolvedValueOnce({
+      content: JSON.stringify({
+        delegations: [],
+        finalAnswer: 'Resume final answer.',
+        reasoning: 'Round 3 done.',
+      }),
+      tokensUsed: plannerTokens,
+      costUsd: plannerCostUsd,
+      model: 'gpt-4o',
+    });
+
+    // Act
+    const result = await executeOrchestrator(
+      makeStep(),
+      makeCtx({ resumeTurns: [prior1, prior2] })
+    );
+
+    // Assert — loop resumed at round 2 (0-indexed), 3 rounds total in output
+    const output = result.output as Record<string, unknown>;
+    expect((output.rounds as unknown[]).length).toBe(3);
+    expect(output.finalAnswer).toBe('Resume final answer.');
+
+    // Token total derived from fixtures + controlled planner mock value
+    const priorTokens =
+      prior1.plannerTokensUsed +
+      prior1.delegations.reduce((s, d) => s + d.tokensUsed, 0) +
+      prior2.plannerTokensUsed +
+      prior2.delegations.reduce((s, d) => s + d.tokensUsed, 0);
+    expect(result.tokensUsed).toBe(priorTokens + plannerTokens);
+    // Cost total derived from fixtures + controlled planner mock value
+    const priorCost =
+      prior1.plannerCostUsd +
+      prior1.delegations.reduce((s, d) => s + d.costUsd, 0) +
+      prior2.plannerCostUsd +
+      prior2.delegations.reduce((s, d) => s + d.costUsd, 0);
+    expect(result.costUsd).toBeCloseTo(priorCost + plannerCostUsd);
+
+    // Planner was called exactly once (for round 3 only — priors were restored)
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume short-circuit: last prior turn has finalAnswer, runLlmCall NOT called', async () => {
+    // Arrange — last prior turn has finalAnswer set
+    const prior1: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 1,
+      plannerReasoning: 'r1',
+      delegations: [{ agentSlug: 'a', message: 'm', output: 'o', tokensUsed: 100, costUsd: 0.01 }],
+      plannerTokensUsed: 50,
+      plannerCostUsd: 0.005,
+    };
+    const prior2: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 2,
+      plannerReasoning: 'r2',
+      delegations: [],
+      plannerTokensUsed: 60,
+      plannerCostUsd: 0.006,
+      finalAnswer: 'cached answer',
+    };
+
+    // Act
+    const result = await executeOrchestrator(
+      makeStep(),
+      makeCtx({ resumeTurns: [prior1, prior2] })
+    );
+
+    // Assert — planner NOT called; cached answer returned immediately
+    // Per gotcha #23: prefer not.toHaveBeenCalled() over mockImplementation(throw)
+    expect(runLlmCall).not.toHaveBeenCalled();
+
+    const output = result.output as Record<string, unknown>;
+    expect(output.finalAnswer).toBe('cached answer');
+    expect(output.stopReason).toBe('final_answer');
+
+    // Rounds shape matches the 2 priors exactly
+    expect((output.rounds as unknown[]).length).toBe(2);
+
+    // Token/cost totals are sum of priors only — no new planner cost added
+    expect(result.tokensUsed).toBe(50 + 100 + 60 + 0); // planner1 + delegation1 + planner2 + delegations2(empty)
+    expect(result.costUsd).toBeCloseTo(0.005 + 0.01 + 0.006 + 0);
+  });
+
+  it('filter: mixed kinds in resumeTurns — only orchestrator entries influence state', async () => {
+    // Arrange — resumeTurns contains reflect and agent_call entries mixed with one orchestrator entry
+    const reflectEntry: TurnEntry = {
+      kind: 'reflect',
+      iteration: 0,
+      draft: 'initial draft',
+      converged: false,
+      tokensUsed: 999,
+      costUsd: 0.999,
+    };
+    const agentCallEntry: TurnEntry = {
+      kind: 'agent_call',
+      index: 0,
+      assistantContent: 'assistant text',
+      tokensUsed: 888,
+      costUsd: 0.888,
+    };
+    const orchEntry: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 1,
+      plannerReasoning: 'orch r1',
+      delegations: [
+        {
+          agentSlug: 'researcher',
+          message: 'msg',
+          output: 'result',
+          tokensUsed: 120,
+          costUsd: 0.012,
+        },
+      ],
+      plannerTokensUsed: 55,
+      plannerCostUsd: 0.0055,
+    };
+
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'Mixed kinds answer.' })
+    );
+
+    // Act
+    const result = await executeOrchestrator(
+      makeStep(),
+      makeCtx({ resumeTurns: [reflectEntry, orchEntry, agentCallEntry] })
+    );
+
+    // Assert — only the orchestrator entry affected the accumulated cost
+    // Reflect and agent_call token costs should NOT be included
+    expect(result.tokensUsed).toBe(
+      55 +
+        120 + // orchEntry planner + delegation
+        200 // new planner round
+    );
+    expect(result.costUsd).toBeCloseTo(0.0055 + 0.012 + 0.005);
+
+    // Loop started at round 1 (1 prior orch turn), new round is round 2
+    const output = result.output as Record<string, unknown>;
+    expect((output.rounds as unknown[]).length).toBe(2);
+
+    // Planner called exactly once (for the new round only)
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('recordTurn called for final-answer round with finalAnswer field populated', async () => {
+    // Arrange — 1-round scenario where planner returns final answer
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'Final answer done.', reasoning: 'All good.' })
+    );
+
+    // Act
+    await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — recordTurn called once with finalAnswer field
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ finalAnswer: 'Final answer done.' })
+    );
+  });
+
+  it('recordTurn called for no-delegations round with NO finalAnswer field', async () => {
+    // Arrange — planner returns no delegations and no finalAnswer
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ delegations: [], reasoning: 'nothing to do' })
+      // no finalAnswer property in makePlannerResponse when not passed
+    );
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — stopReason is no_delegations, not final_answer
+    const output = result.output as Record<string, unknown>;
+    expect(output.stopReason).toBe('no_delegations');
+
+    // recordTurn called once, WITHOUT a finalAnswer field
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ finalAnswer: expect.anything() })
+    );
+  });
+
+  it('recordTurn called for normal-completion round with delegations and NO finalAnswer; then final-answer round has finalAnswer', async () => {
+    // Arrange — round 1 delegates, round 2 has final answer
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+
+    // Round 1: planner delegates
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'Research this' }],
+        reasoning: 'need more info',
+      })
+    );
+    vi.mocked(executeAgentCall).mockResolvedValueOnce({
+      output: 'research result',
+      tokensUsed: 150,
+      costUsd: 0.015,
+    });
+
+    // Round 2: planner returns final answer
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'done', reasoning: 'complete' })
+    );
+
+    // Act
+    await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — two recordTurn calls total
+    expect(recordTurn).toHaveBeenCalledTimes(2);
+
+    // First call (round 1): has delegations, NO finalAnswer
+    const firstCall = recordTurn.mock.calls[0][0] as Record<string, unknown>;
+    const firstDelegations = firstCall.delegations as unknown[];
+    expect(firstDelegations.length).toBeGreaterThan(0);
+    expect(firstCall).not.toHaveProperty('finalAnswer');
+
+    // Second call (round 2): has finalAnswer
+    expect(recordTurn).toHaveBeenNthCalledWith(2, expect.objectContaining({ finalAnswer: 'done' }));
+  });
+
+  it('recordTurn absent: executor completes without throwing', async () => {
+    // Arrange — ctx has no recordTurn property
+    const ctxWithoutRecordTurn = makeCtx();
+    // Confirm recordTurn is absent from the context
+    expect(ctxWithoutRecordTurn.recordTurn).toBeUndefined();
+
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'No recorder needed.', reasoning: 'Done.' })
+    );
+
+    // Act — should not throw even though ctx.recordTurn is undefined
+    const result = await executeOrchestrator(makeStep(), ctxWithoutRecordTurn);
+
+    // Assert — normal completion
+    const output = result.output as Record<string, unknown>;
+    expect(output.finalAnswer).toBe('No recorder needed.');
+    expect(output.stopReason).toBe('final_answer');
+  });
+
+  it('recordTurn fires BEFORE the break on final-answer path: exactly one planner call and one recordTurn call', async () => {
+    // Arrange — 1-round final-answer scenario
+    // If the break were BEFORE recordTurn, the turn would not be recorded.
+    // We verify recordTurn is called once (it was called), and runLlmCall is
+    // called only once (the loop did NOT continue past the break).
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'Answer before break.', reasoning: 'Done.' })
+    );
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — planner called exactly once (break was reached)
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+
+    // recordTurn was called exactly once (BEFORE the break, not skipped)
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ finalAnswer: 'Answer before break.' })
+    );
+
+    // The result confirms finalAnswer was set (loop didn't continue past break)
+    expect((result.output as Record<string, unknown>).finalAnswer).toBe('Answer before break.');
+  });
+
+  it('recordTurn fires BEFORE the break on no-delegations path: exactly one planner call and one recordTurn call', async () => {
+    // Arrange — planner returns empty delegations (triggers no_delegations break)
+    // If recordTurn were AFTER the break, it would not be called.
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ delegations: [], reasoning: 'No work to delegate.' })
+    );
+
+    // Act
+    const result = await executeOrchestrator(makeStep(), makeCtx({ recordTurn }));
+
+    // Assert — planner called exactly once (no second round)
+    expect(runLlmCall).toHaveBeenCalledTimes(1);
+    // No agent calls (empty delegations)
+    expect(executeAgentCall).not.toHaveBeenCalled();
+
+    // recordTurn was called exactly once (BEFORE the break, not skipped)
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'orchestrator', round: 1, delegations: [] })
+    );
+
+    // Confirms the no-delegations path was taken
+    expect((result.output as Record<string, unknown>).stopReason).toBe('no_delegations');
+  });
+
+  it('resume + normal round: recordTurn fires only for the new round, not restored prior rounds', async () => {
+    // Arrange — 1 prior turn restored from resumeTurns; round 2 runs new planner
+    const prior1: OrchestratorTurn = {
+      kind: 'orchestrator',
+      round: 1,
+      plannerReasoning: 'prior reasoning',
+      delegations: [
+        {
+          agentSlug: 'researcher',
+          message: 'prior msg',
+          output: 'prior out',
+          tokensUsed: 50,
+          costUsd: 0.005,
+        },
+      ],
+      plannerTokensUsed: 40,
+      plannerCostUsd: 0.004,
+    };
+
+    const recordTurn = vi.fn().mockResolvedValue(undefined);
+
+    // Round 2: planner returns final answer
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'New round answer.', reasoning: 'Resuming.' })
+    );
+
+    // Act
+    const result = await executeOrchestrator(
+      makeStep(),
+      makeCtx({ resumeTurns: [prior1], recordTurn })
+    );
+
+    // Assert — recordTurn called exactly ONCE (for the new round 2 only, NOT for restored round 1)
+    expect(recordTurn).toHaveBeenCalledTimes(1);
+    expect(recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'orchestrator', round: 2, finalAnswer: 'New round answer.' })
+    );
+
+    // 2 rounds total in output (1 restored + 1 new)
+    const output = result.output as Record<string, unknown>;
+    expect((output.rounds as unknown[]).length).toBe(2);
+    expect(output.finalAnswer).toBe('New round answer.');
   });
 });

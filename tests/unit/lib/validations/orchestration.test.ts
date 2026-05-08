@@ -75,6 +75,8 @@ import {
   executionStatusSchema,
   executionTraceEntrySchema,
   executionTraceSchema,
+  turnEntrySchema,
+  turnEntriesSchema,
   chatAttachmentSchema,
   searchConfigSchema,
 } from '@/lib/validations/orchestration';
@@ -2297,5 +2299,263 @@ describe('resolveWidgetConfig', () => {
     const out = resolveWidgetConfig({ primaryColor: '#16a34a', legacy: 'ignored' });
     expect(out.primaryColor).toBe('#16a34a');
     expect((out as Record<string, unknown>).legacy).toBeUndefined();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// turnEntrySchema / turnEntriesSchema (PR 2 additions)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('turnEntrySchema', () => {
+  it('accepts agent_call shape with minimum required fields', () => {
+    // Arrange
+    const input = {
+      kind: 'agent_call',
+      index: 0,
+      assistantContent: 'hi',
+      tokensUsed: 100,
+      costUsd: 0.01,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe('agent_call');
+      if (result.data.kind === 'agent_call') {
+        expect(result.data.index).toBe(0);
+        expect(result.data.tokensUsed).toBe(100);
+      }
+    }
+  });
+
+  it('accepts agent_call shape with all optional fields populated', () => {
+    // Arrange
+    const input = {
+      kind: 'agent_call',
+      index: 1,
+      outerTurn: 1,
+      assistantContent: 'with tool call',
+      toolCall: { id: 'call_1', name: 'search', arguments: { q: 'x' } },
+      toolResult: { status: 200 },
+      tokensUsed: 200,
+      costUsd: 0.02,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe('agent_call');
+      // Narrow the type to agent_call to access kind-specific fields
+      if (result.data.kind === 'agent_call') {
+        expect(result.data.outerTurn).toBe(1);
+        expect(result.data.toolCall).toEqual({
+          id: 'call_1',
+          name: 'search',
+          arguments: { q: 'x' },
+        });
+        expect(result.data.toolResult).toEqual({ status: 200 });
+      }
+    }
+  });
+
+  it('accepts orchestrator shape with minimum required fields', () => {
+    // Arrange
+    const input = {
+      kind: 'orchestrator',
+      round: 1,
+      delegations: [],
+      plannerTokensUsed: 50,
+      plannerCostUsd: 0.005,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe('orchestrator');
+      if (result.data.kind === 'orchestrator') {
+        expect(result.data.round).toBe(1);
+        expect(result.data.delegations).toEqual([]);
+      }
+    }
+  });
+
+  it('accepts orchestrator shape with finalAnswer and a populated delegations array', () => {
+    // Arrange
+    const input = {
+      kind: 'orchestrator',
+      round: 2,
+      finalAnswer: 'done',
+      delegations: [
+        {
+          agentSlug: 'summariser',
+          message: 'Summarise this',
+          output: { text: 'Summary' },
+          tokensUsed: 120,
+          costUsd: 0.012,
+        },
+      ],
+      plannerTokensUsed: 75,
+      plannerCostUsd: 0.007,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success && result.data.kind === 'orchestrator') {
+      expect(result.data.finalAnswer).toBe('done');
+      expect(result.data.delegations).toHaveLength(1);
+      expect(result.data.delegations[0].agentSlug).toBe('summariser');
+    }
+  });
+
+  it('accepts reflect shape', () => {
+    // Arrange
+    const input = {
+      kind: 'reflect',
+      iteration: 0,
+      draft: 'first',
+      converged: false,
+      tokensUsed: 25,
+      costUsd: 0.001,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe('reflect');
+      if (result.data.kind === 'reflect') {
+        expect(result.data.iteration).toBe(0);
+        expect(result.data.converged).toBe(false);
+        expect(result.data.draft).toBe('first');
+      }
+    }
+  });
+
+  it('rejects an unknown kind value — discriminated union produces a clear error', () => {
+    // Arrange
+    const input = {
+      kind: 'unknown',
+      index: 0,
+      assistantContent: 'x',
+      tokensUsed: 1,
+      costUsd: 0.001,
+    };
+
+    // Act
+    const result = turnEntrySchema.safeParse(input);
+
+    // Assert: discriminated union failure
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The discriminator field should surface an issue
+      const hasKindIssue = result.error.issues.some(
+        (issue) => issue.path.includes('kind') || issue.path.length === 0
+      );
+      expect(hasKindIssue).toBe(true);
+    }
+  });
+
+  it('accepts an empty array via turnEntriesSchema', () => {
+    // Arrange + Act
+    const result = turnEntriesSchema.safeParse([]);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual([]);
+    }
+  });
+
+  it('accepts a mixed-kind array via turnEntriesSchema', () => {
+    // Arrange: array mixing reflect and agent_call
+    const input = [
+      {
+        kind: 'reflect',
+        iteration: 0,
+        draft: 'v1',
+        converged: false,
+        tokensUsed: 10,
+        costUsd: 0.001,
+      },
+      { kind: 'agent_call', index: 0, assistantContent: 'ok', tokensUsed: 50, costUsd: 0.005 },
+    ];
+
+    // Act
+    const result = turnEntriesSchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].kind).toBe('reflect');
+      expect(result.data[1].kind).toBe('agent_call');
+    }
+  });
+
+  it('executionTraceEntrySchema accepts an entry with an optional turns field', () => {
+    // Arrange: a valid trace entry that includes turns
+    const input = {
+      stepId: 'step-1',
+      stepType: 'agent_call',
+      label: 'Call Agent',
+      status: 'completed',
+      output: { answer: 'hello' },
+      tokensUsed: 150,
+      costUsd: 0.015,
+      startedAt: '2024-01-01T00:00:00Z',
+      durationMs: 1200,
+      turns: [
+        { kind: 'agent_call', index: 0, assistantContent: 'hi', tokensUsed: 50, costUsd: 0.005 },
+      ],
+    };
+
+    // Act
+    const result = executionTraceEntrySchema.safeParse(input);
+
+    // Assert
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as Record<string, unknown>;
+      expect(Array.isArray(data.turns)).toBe(true);
+      const turns = data.turns as Array<Record<string, unknown>>;
+      expect(turns).toHaveLength(1);
+      expect(turns[0].kind).toBe('agent_call');
+    }
+  });
+
+  it('executionTraceEntrySchema rejects an entry where turns contains a malformed entry', () => {
+    // Arrange: turns contains a turn with an invalid kind
+    const input = {
+      stepId: 'step-2',
+      stepType: 'agent_call',
+      label: 'Call Agent',
+      status: 'completed',
+      output: null,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2024-01-01T00:00:00Z',
+      durationMs: 0,
+      turns: [{ kind: 'unknown' }],
+    };
+
+    // Act
+    const result = executionTraceEntrySchema.safeParse(input);
+
+    // Assert: turns validation fails because 'unknown' is not a valid discriminant
+    expect(result.success).toBe(false);
   });
 });

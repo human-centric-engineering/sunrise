@@ -697,6 +697,35 @@ describe('CapabilityDispatcher', () => {
     });
   });
 
+  describe('isIdempotent plumbing', () => {
+    it('maps isIdempotent:true from DB row to CapabilityRegistryEntry', async () => {
+      // Arrange: register a handler and load a DB row with isIdempotent=true
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ isIdempotent: true })]);
+
+      // Act: trigger a dispatch so loadFromDatabase populates the registry
+      await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      // Assert: the registry entry reflects the DB row's isIdempotent value
+      const entry = capabilityDispatcher.getRegistryEntry('ok');
+      expect(entry?.isIdempotent).toBe(true);
+    });
+
+    it('maps isIdempotent:false (default) from DB row to CapabilityRegistryEntry', async () => {
+      // Arrange: register a handler and load a DB row with isIdempotent=false (default)
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ isIdempotent: false })]);
+
+      // Act: trigger a dispatch so loadFromDatabase populates the registry
+      await capabilityDispatcher.dispatch('ok', { n: 2 }, ctx);
+
+      // Assert: the registry entry reflects the DB row's isIdempotent=false,
+      // guarding against a future regression that hardcodes a default of true.
+      const entry = capabilityDispatcher.getRegistryEntry('ok');
+      expect(entry?.isIdempotent).toBe(false);
+    });
+  });
+
   describe('execution throws non-Error value', () => {
     it('returns execution_error with generic message for non-Error throw', async () => {
       // Create a capability that throws a string

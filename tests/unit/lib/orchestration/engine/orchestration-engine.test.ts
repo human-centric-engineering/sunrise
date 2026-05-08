@@ -9,7 +9,27 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// ─── Hoisted mock factories (must precede all vi.mock() calls) ───────────────
+
+// Mock logger — shared across the file so the multi-turn describe block can
+// spy on info/warn calls from the engine's baseLogger (createLogger()).
+// Existing tests don't assert on logger so this mock is safe to add.
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  withContext: vi.fn(),
+}));
+// withContext returns the same mock so chaining works: baseLogger.withContext({...})
+mockLogger.withContext.mockReturnValue(mockLogger);
+
 // ─── Mocks (declared before the engine import) ──────────────────────────────
+
+vi.mock('@/lib/logging', () => ({
+  createLogger: vi.fn(() => mockLogger),
+  logger: mockLogger,
+}));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -67,7 +87,8 @@ import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
-import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
+import type { ExecutionEvent, TurnEntry, WorkflowDefinition } from '@/types/orchestration';
+import { Prisma } from '@prisma/client';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -695,13 +716,14 @@ describe('OrchestrationEngine', () => {
       costUsd: 0,
     }));
 
-    // Make checkpoint (update) fail on all but the first call (create needs to work)
-    let updateCalls = 0;
-    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
-      updateCalls++;
-      if (updateCalls <= 2) throw new Error('DB down');
-      return {};
-    }) as never);
+    // Make checkpoint (update) fail on the first two calls then succeed for the rest.
+    // Using mockRejectedValueOnce avoids the mockImplementation leak pattern (gotcha #23):
+    // clearAllMocks() resets call history but NOT mockImplementation, which would bleed
+    // into subsequent tests. The Once queue is consumed and does not persist.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany)
+      .mockRejectedValueOnce(new Error('DB down'))
+      .mockRejectedValueOnce(new Error('DB down'))
+      .mockResolvedValue({ count: 1 } as never);
 
     const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
     const types = events.map((e) => e.type);
@@ -4300,6 +4322,871 @@ describe('OrchestrationEngine', () => {
       const resumeWhere = (resumeFlip![0] as { where: Record<string, unknown> }).where;
       // Must be guarded by the token returned by claimLease — not just the row id.
       expect(resumeWhere.leaseToken).toBe('lease-token-test');
+    });
+  });
+
+  // ─── Multi-turn checkpoint plumbing ────────────────────────────────────────
+  //
+  // These tests cover the multi-turn step resume paths added in PR 2:
+  //   - `recordStepTurn` DB persistence + non-fatal error handling
+  //   - `markCurrentStep` now writes `currentStepTurns: Prisma.DbNull`
+  //   - `initRun` resume path parses + populates `ctx.resumeTurns`
+  //   - `executeSingleStep` seeds stepTurns from resumeTurns, wires ctx.recordTurn
+  //   - `runStepWithStrategy` `onAttemptStart` clears stepTurns on retry
+  //
+  // All tests add to the existing engine fixture (lease module, prisma mocks,
+  // hooks/webhooks silenced, __resetRegistryForTests). A nested beforeEach
+  // resets only the mocks that this block uses fresh, so sibling describe blocks
+  // aren't affected (gotcha #22).
+
+  describe('multi-turn checkpoint plumbing', () => {
+    // Helpers shared across this describe block
+    const EXEC_ID = 'exec_multiturn';
+    const LEASE_TOKEN = 'lease-token-test'; // matches the module-level mock default
+
+    // Sample valid TurnEntry fixtures (discriminated by `kind`)
+    const makeTurn = (iteration: number): TurnEntry => ({
+      kind: 'reflect',
+      iteration,
+      draft: `draft-${iteration}`,
+      converged: false,
+      tokensUsed: 10 + iteration,
+      costUsd: 0.01 + iteration * 0.001,
+    });
+
+    // A minimal completed-step trace entry for step 'a' (so step 'b' passes isReady).
+    // Resume rows with currentStep='a' need this in executionTrace so the DAG walker
+    // seeds visited={'a'} and step 'b' can be scheduled (isReady check: all preds visited).
+    const stepACompletedTrace = [
+      {
+        stepId: 'a',
+        stepType: 'llm_call',
+        label: 'Step A',
+        status: 'completed',
+        output: 'prior-out',
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 1,
+      },
+    ];
+
+    // Base resume row shape — tests override specific fields.
+    // Defaults: currentStep='a' with step 'a' already completed in the trace,
+    // so that on resume the queue starts from ['b'] and isReady('b') passes.
+    function makeResumeRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: EXEC_ID,
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval',
+        inputData: {},
+        executionTrace: stepACompletedTrace,
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        budgetLimitUsd: null,
+        currentStep: 'a',
+        currentStepTurns: null,
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...overrides,
+      };
+    }
+
+    // Nested beforeEach — resets only what this describe block uses, without
+    // touching the outer beforeEach defaults the 567 existing tests rely on.
+    beforeEach(() => {
+      mockLogger.info.mockReset();
+      mockLogger.warn.mockReset();
+      mockLogger.error.mockReset();
+      mockLogger.withContext.mockReset();
+      // withContext must return the same mock so the engine's chained calls work
+      mockLogger.withContext.mockReturnValue(mockLogger);
+    });
+
+    /**
+     * Finds a prisma.aiWorkflowExecution.updateMany call whose `data` object
+     * satisfies `predicate`. Throws with a descriptive error if no call matches,
+     * providing a clear failure message rather than a downstream TypeError from a
+     * non-null assertion on `undefined` (Findings 5 & 6 — anti-pattern #6).
+     */
+    function findUpdateMany(predicate: (data: Record<string, unknown>) => boolean, label: string) {
+      const call = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find((c) => predicate((c[0] as { data: Record<string, unknown> }).data));
+      if (!call) {
+        throw new Error(`No prisma.aiWorkflowExecution.updateMany call matched: ${label}`);
+      }
+      return call;
+    }
+
+    // ── recordStepTurn (3 tests) ────────────────────────────────────────────
+
+    it('recordStepTurn: writes the full turns array with lease guard and refreshed timestamps', async () => {
+      // Drive recordStepTurn via the executor's ctx.recordTurn closure.
+      // Arrange — a single-step workflow where the executor records one turn.
+      const turn0 = makeTurn(0);
+      let capturedRecordTurn: ((t: TurnEntry) => Promise<void>) | undefined;
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedRecordTurn = ctx.recordTurn;
+        if (ctx.recordTurn) await ctx.recordTurn(turn0);
+        return { output: 'ok', tokensUsed: 10, costUsd: 0.01 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — the recordStepTurn call writes the full turns array with the
+      // lease guard (where.leaseToken) and refreshed timestamps.
+      const recordTurnCallArgs = findUpdateMany(
+        (data) =>
+          'currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data),
+        'recordStepTurn write (currentStepTurns present, no executionTrace, no currentStep)'
+      )[0] as { where: Record<string, unknown>; data: Record<string, unknown> };
+      // Lease guard — stale host's write silently no-ops
+      expect(recordTurnCallArgs.where.id).toBe('exec_test');
+      expect(recordTurnCallArgs.where.leaseToken).toBe(LEASE_TOKEN);
+      // Turns array persisted (full overwrite, not append)
+      expect(recordTurnCallArgs.data.currentStepTurns).toEqual([turn0]);
+      // Lease refreshed in the same UPDATE
+      expect(recordTurnCallArgs.data.leaseExpiresAt).toBeInstanceOf(Date);
+      expect(recordTurnCallArgs.data.lastHeartbeatAt).toBeInstanceOf(Date);
+      // confirm the closure was bound
+      expect(capturedRecordTurn).toBeDefined();
+    });
+
+    it('recordStepTurn: DB throw is non-fatal — executor continues and workflow_completed is yielded', async () => {
+      // Arrange — updateMany rejects ONLY for currentStepTurns writes; other calls succeed.
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        if ('currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)) {
+          throw new Error('connection lost');
+        }
+        return { count: 1 };
+      }) as never);
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        if (ctx.recordTurn) await ctx.recordTurn(makeTurn(0));
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act — engine must not throw; the non-fatal error is swallowed
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — workflow completes despite the DB error
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+      expect(events.map((e) => e.type)).not.toContain('workflow_failed');
+      // The warn IS logged for connection errors (not for count=0 stale-lease)
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
+        expect.objectContaining({
+          executionId: 'exec_test',
+          error: 'connection lost',
+        })
+      );
+    });
+
+    it('recordStepTurn: count=0 (stale lease) — method resolves silently without logger.warn', async () => {
+      // Arrange — updateMany resolves count=0 only for currentStepTurns writes.
+      // This is the stale-lease case (another host claimed the row).
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        if ('currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)) {
+          return { count: 0 };
+        }
+        return { count: 1 };
+      }) as never);
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        if (ctx.recordTurn) await ctx.recordTurn(makeTurn(0));
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — workflow completes normally; no warn for count=0 (contrast with
+      // checkpoint which DOES warn on count=0 for a lease-loss situation)
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+      // No logger.warn call for the recordStepTurn count=0 path
+      const recordTurnWarnCalls = mockLogger.warn.mock.calls.filter(([msg]) =>
+        String(msg).includes('recordStepTurn')
+      );
+      expect(recordTurnWarnCalls).toHaveLength(0);
+    });
+
+    // ── markCurrentStep (1 test) ────────────────────────────────────────────
+
+    it('markCurrentStep: data payload includes currentStepTurns: Prisma.DbNull (not null, not undefined)', async () => {
+      // Arrange — single-step workflow so markCurrentStep fires for step 'a'.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'a', name: 'Step A', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert — find the markCurrentStep call (data has currentStep, no executionTrace)
+      const markCall = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls.find(([arg]) => {
+        const data = (arg as { data: Record<string, unknown> }).data;
+        return 'currentStep' in data && !('executionTrace' in data) && !('status' in data);
+      });
+
+      expect(markCall).toBeDefined();
+      const markData = (markCall![0] as { data: Record<string, unknown> }).data;
+      // Must be Prisma.DbNull — NOT JS null and NOT undefined
+      expect(markData.currentStepTurns).toBe(Prisma.DbNull);
+      expect(markData.currentStepTurns).not.toBeNull();
+      expect(markData.currentStepTurns).not.toBeUndefined();
+    });
+
+    // ── initRun resume path (5 tests) ──────────────────────────────────────
+
+    it('initRun resume: currentStepTurns=null → ctx.resumeTurns stays undefined (logger.info NOT called)', async () => {
+      // Arrange — resume row with currentStepTurns=null (common case: step transition
+      // cleared the column and then we crashed before recording new turns).
+      // Step 'a' is in the trace as completed so step 'b' can run (isReady check passes).
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStepTurns: null }) as never
+      );
+
+      // Step 'b' is what actually runs on resume (queue = nextIdsAfter(byId, 'a') = ['b'])
+      let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedResumeTurns = ctx.resumeTurns;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — no resume state; logger.info not called with the restore message
+      expect(capturedResumeTurns).toBeUndefined();
+      const restoreInfoCalls = mockLogger.info.mock.calls.filter(([msg]) =>
+        String(msg).includes('restoring multi-turn step state')
+      );
+      expect(restoreInfoCalls).toHaveLength(0);
+    });
+
+    it('initRun resume: valid non-empty currentStepTurns → ctx.resumeTurns populated + logger.info fired', async () => {
+      // Arrange — resume row with three valid reflect turns.
+      // Step 'a' is in the trace as completed so step 'b' runs (isReady passes).
+      const storedTurns = [makeTurn(0), makeTurn(1), makeTurn(2)];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStepTurns: storedTurns }) as never
+      );
+
+      // Step 'b' runs on resume; capture its ctx.resumeTurns at invocation time
+      // (before executeSingleStep clears it on completion).
+      let capturedResumeTurns: TurnEntry[] | undefined;
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedResumeTurns = ctx.resumeTurns;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — resumeTurns populated with the parsed turns AND executor saw them
+      expect(capturedResumeTurns).toEqual(storedTurns);
+      // logger.info called with the restore message and metadata
+      expect(mockLogger.info).toHaveBeenCalledWith('Resume: restoring multi-turn step state', {
+        executionId: EXEC_ID,
+        currentStep: 'a',
+        turns: 3,
+      });
+    });
+
+    it('initRun resume: currentStepTurns valid but empty [] → ctx.resumeTurns stays undefined', async () => {
+      // Arrange — row has currentStepTurns=[] (valid JSON, just empty).
+      // The length>0 guard prevents populating resumeTurns for an empty array.
+      // Step 'a' in trace so step 'b' is runnable on resume.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStepTurns: [] }) as never
+      );
+
+      let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedResumeTurns = ctx.resumeTurns;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — empty array = no turns to resume from; step 'b' sees undefined
+      expect(capturedResumeTurns).toBeUndefined();
+      const restoreInfoCalls = mockLogger.info.mock.calls.filter(([msg]) =>
+        String(msg).includes('restoring multi-turn step state')
+      );
+      expect(restoreInfoCalls).toHaveLength(0);
+    });
+
+    it('initRun resume: malformed currentStepTurns → logger.warn with issue count, ctx.resumeTurns undefined', async () => {
+      // Arrange — row has currentStepTurns that fails the turnEntriesSchema parse.
+      // The kind='unknown' discriminant does not match any schema variant.
+      // Step 'a' in trace so step 'b' is runnable on resume (no deadlock).
+      const malformed = [{ kind: 'unknown', iteration: 0 }];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStepTurns: malformed }) as never
+      );
+
+      let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedResumeTurns = ctx.resumeTurns;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — parse failure → warn logged, resumeTurns not set; step 'b' sees undefined
+      expect(capturedResumeTurns).toBeUndefined();
+      // issues: 1 is correct for a discriminatedUnion with an invalid discriminant.
+      // z.discriminatedUnion emits exactly ONE issue ("Invalid discriminator value.
+      // Expected 'agent_call' | 'orchestrator' | 'reflect'") rather than per-arm issues
+      // as a plain z.union would. If the schema ever changes to z.union, re-check the count.
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Resume: dropped malformed currentStepTurns',
+        expect.objectContaining({
+          executionId: EXEC_ID,
+          issues: 1,
+        })
+      );
+    });
+
+    it('initRun resume: currentStep=null with non-null currentStepTurns → guard blocks population, ctx.resumeTurns undefined', async () => {
+      // Arrange — edge case: column has stale data from a prior step transition that
+      // didn't clear properly, but currentStep is null.
+      // Guard: `row.currentStep && row.currentStepTurns !== null` → false when currentStep null.
+      // currentStep=null + no trace: resume starts from entryStepId ('a') via the fresh path.
+      const staleTurns = [makeTurn(0)];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({
+          currentStep: null,
+          currentStepTurns: staleTurns,
+          executionTrace: [], // fresh start — visited seeding skipped when resumeAfterStepId=null
+        }) as never
+      );
+
+      // Step 'a' runs (fresh start from entryStepId)
+      let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
+      registerStepType('llm_call', async (_step, ctx) => {
+        capturedResumeTurns = ctx.resumeTurns;
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — guard prevents population when currentStep is null; step 'a' sees undefined
+      expect(capturedResumeTurns).toBeUndefined();
+      const restoreInfoCalls = mockLogger.info.mock.calls.filter(([msg]) =>
+        String(msg).includes('restoring multi-turn step state')
+      );
+      expect(restoreInfoCalls).toHaveLength(0);
+    });
+
+    // ── executeSingleStep: stepTurns accumulator + ctx.recordTurn (5 tests) ─
+
+    it('ctx.recordTurn: stepTurns seeds from ctx.resumeTurns and accumulates cumulatively', async () => {
+      // Arrange — populate resumeTurns on the row so initRun sets ctx.resumeTurns.
+      const resumeTurn = makeTurn(0);
+      const newTurn = makeTurn(1);
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({ currentStepTurns: [resumeTurn] }) as never
+      );
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        // Executor records a new turn on top of the resumed turn
+        if (ctx.recordTurn) await ctx.recordTurn(newTurn);
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — the recordStepTurn call writes the CUMULATIVE array [resumeTurn, newTurn]
+      // not just [newTurn]. If the source fails to seed from resumeTurns, the array would
+      // only contain [newTurn] and this assertion fails.
+      const recordTurnCallArgs = findUpdateMany(
+        (data) =>
+          'currentStepTurns' in data &&
+          Array.isArray(data.currentStepTurns) &&
+          (data.currentStepTurns as TurnEntry[]).length === 2 &&
+          !('executionTrace' in data) &&
+          !('currentStep' in data),
+        'recordTurn write with 2-element currentStepTurns (cumulative resume write)'
+      );
+      const turnsWritten = (
+        recordTurnCallArgs[0] as unknown as { data: { currentStepTurns: TurnEntry[] } }
+      ).data.currentStepTurns;
+      expect(turnsWritten).toEqual([resumeTurn, newTurn]);
+    });
+
+    it('ctx.recordTurn: two calls in the same step produce two DB writes; final trace entry has both turns', async () => {
+      // Arrange — fresh run (no resume); executor calls recordTurn twice.
+      // NOTE: recordStepTurn passes the live array reference to the mock, so both
+      // captured mock args point to the same array (mutated after the second push).
+      // Asserting on intermediate write values is unreliable in test environments —
+      // instead we verify (a) two writes fired and (b) the final trace entry has
+      // both turns (the `[...stepTurns]` spread in the trace push creates a snapshot copy).
+      const turn0 = makeTurn(0);
+      const turn1 = makeTurn(1);
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        if (ctx.recordTurn) {
+          await ctx.recordTurn(turn0);
+          await ctx.recordTurn(turn1);
+        }
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'a', name: 'Step A', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert A — exactly 2 recordStepTurn writes fired (one per ctx.recordTurn call)
+      const turnWrites = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.filter(([arg]) => {
+          const data = (arg as { data: Record<string, unknown> }).data;
+          return (
+            'currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)
+          );
+        });
+      expect(turnWrites).toHaveLength(2);
+
+      // Assert B — the checkpoint's trace entry has turns: [turn0, turn1].
+      // The trace push uses `[...stepTurns]` (spread copy), so both turns are
+      // captured correctly even though the live array was mutated between writes.
+      const checkpointCallArgs = findUpdateMany(
+        (data) => 'executionTrace' in data,
+        'checkpoint write for step a (executionTrace present)'
+      );
+      const traceEntry = (
+        checkpointCallArgs[0] as unknown as {
+          data: { executionTrace: Array<{ stepId: string; turns?: TurnEntry[] }> };
+        }
+      ).data.executionTrace.find((e) => e.stepId === 'a');
+      expect(traceEntry?.turns).toEqual([turn0, turn1]);
+    });
+
+    it('completed trace entry includes turns field when step records turns', async () => {
+      // Arrange — executor records one turn before completing.
+      const turn0 = makeTurn(0);
+
+      registerStepType('llm_call', async (_step, ctx) => {
+        if (ctx.recordTurn) await ctx.recordTurn(turn0);
+        return { output: 'ok', tokensUsed: 5, costUsd: 0.005 };
+      });
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'only', name: 'Only', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'only',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert — find the checkpoint call and verify its trace entry has turns
+      const checkpointCallArgs = findUpdateMany(
+        (data) => 'executionTrace' in data,
+        'checkpoint write for step only (executionTrace present, turns expected)'
+      );
+      const traceWritten = (
+        checkpointCallArgs[0] as unknown as {
+          data: { executionTrace: Array<{ stepId: string; turns?: TurnEntry[] }> };
+        }
+      ).data.executionTrace;
+      const entry = traceWritten.find((e) => e.stepId === 'only');
+      if (!entry) throw new Error('No trace entry for step only');
+      // Turns field must be present and equal the recorded turns
+      expect(entry.turns).toEqual([turn0]);
+    });
+
+    it('completed trace entry OMITS turns field entirely when no turns are recorded', async () => {
+      // Arrange — executor does NOT call ctx.recordTurn.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'only', name: 'Only', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'only',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert — trace entry must NOT have a `turns` key (not turns:[] or turns:undefined)
+      const checkpointCallArgs = findUpdateMany(
+        (data) => 'executionTrace' in data,
+        'checkpoint write for step only (executionTrace present, turns must be absent)'
+      );
+      const traceWritten = (
+        checkpointCallArgs[0] as unknown as { data: { executionTrace: Array<{ stepId: string }> } }
+      ).data.executionTrace;
+      const entry = traceWritten.find((e) => e.stepId === 'only');
+      if (!entry) throw new Error('No trace entry for step only');
+      // Key must be entirely absent — NOT `turns: []` or `turns: undefined`
+      expect(entry).not.toMatchObject({ turns: expect.anything() });
+    });
+
+    it('failed trace entry includes turns field when executor records turns before throwing', async () => {
+      // Arrange — executor records one turn then throws an ExecutorError.
+      const turn0 = makeTurn(0);
+
+      registerStepType('llm_call', async (step, ctx) => {
+        if (ctx.recordTurn) await ctx.recordTurn(turn0);
+        throw new ExecutorError(step.id, 'executor_threw', 'deliberate failure');
+      });
+
+      // Act — engine should not throw; it catches and records the failure
+      const events = await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'only', name: 'Only', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'only',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Workflow failed (not crashed)
+      expect(events.map((e) => e.type)).toContain('workflow_failed');
+
+      // Assert — the failed trace entry's checkpoint includes turns
+      const checkpointCallArgs = findUpdateMany(
+        (data) => 'executionTrace' in data,
+        'checkpoint write for failed step only (executionTrace with turns)'
+      );
+      const traceWritten = (
+        checkpointCallArgs[0] as unknown as {
+          data: { executionTrace: Array<{ stepId: string; status: string; turns?: TurnEntry[] }> };
+        }
+      ).data.executionTrace;
+      const failedEntry = traceWritten.find((e) => e.stepId === 'only');
+      if (!failedEntry) throw new Error('No trace entry for step only');
+      expect(failedEntry.status).toBe('failed');
+      expect(failedEntry.turns).toEqual([turn0]);
+    });
+
+    // ── executeSingleStep: ctx.resumeTurns clearing (1 test) ───────────────
+
+    it('ctx.resumeTurns is cleared after first step so subsequent steps see undefined', async () => {
+      // Arrange — 3-step linear DAG (a→b→c). Step 'a' is in the trace as completed.
+      // currentStep='a' means the resume picks up from step 'b' (firstExecStep).
+      // ctx.resumeTurns should be visible to step 'b' (first step to run) but
+      // NOT to step 'c' (second step — cleared after 'b' completes).
+      const resumeTurn = makeTurn(0);
+      const threeStepTrace = [
+        {
+          stepId: 'a',
+          stepType: 'llm_call',
+          label: 'Step A',
+          status: 'completed',
+          output: 'prior-a',
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs: 1,
+        },
+      ];
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
+        makeResumeRow({
+          currentStepTurns: [resumeTurn],
+          executionTrace: threeStepTrace,
+          currentStep: 'a',
+        }) as never
+      );
+
+      const observedResumeTurns: Record<string, TurnEntry[] | undefined> = {};
+
+      registerStepType('llm_call', async (step, ctx) => {
+        // Capture the resumeTurns value at invocation time for each step
+        observedResumeTurns[step.id] = ctx.resumeTurns;
+        return { output: `out:${step.id}`, tokensUsed: 0, costUsd: 0 };
+      });
+
+      const threeStepDef: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'Step A',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'b' }],
+          },
+          {
+            id: 'b',
+            name: 'Step B',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'c' }],
+          },
+          { id: 'c', name: 'Step C', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+
+      // Act — resume after step 'a'. Steps 'b' and 'c' run.
+      await collect(new OrchestrationEngine(), makeWorkflow(threeStepDef), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // Assert — step 'b' sees ctx.resumeTurns = [resumeTurn]; step 'c' sees undefined
+      // (resumeTurns cleared after 'b' terminates at line 1158 in the source).
+      expect(observedResumeTurns['b']).toEqual([resumeTurn]);
+      expect(observedResumeTurns['c']).toBeUndefined();
+      // Step 'a' never ran on resume (it was already in the trace)
+      expect(observedResumeTurns['a']).toBeUndefined();
+    });
+
+    // ── runStepWithStrategy: onAttemptStart callback (3 tests) ─────────────
+
+    it('onAttemptStart: NOT called before attempt 0 — no empty-array recordStepTurn fired on first attempt', async () => {
+      // Arrange — single-attempt successful run (errorStrategy: 'fail', retryCount=0).
+      // The onAttemptStart should never fire for attempt 0.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'Step A',
+              type: 'llm_call',
+              config: { errorStrategy: 'fail', retryCount: 0 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert — no recordStepTurn call with an empty array should have fired.
+      // onAttemptStart fires only BEFORE attempt 1+ (after attempt 0 fails).
+      // A write of currentStepTurns=[] would indicate the reset callback fired
+      // — it must NOT be present for a single-attempt success.
+      const emptyTurnsWrite = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(([arg]) => {
+          const data = (arg as { data: Record<string, unknown> }).data;
+          return (
+            'currentStepTurns' in data &&
+            Array.isArray(data.currentStepTurns) &&
+            (data.currentStepTurns as unknown[]).length === 0 &&
+            !('executionTrace' in data) &&
+            !('currentStep' in data)
+          );
+        });
+
+      expect(emptyTurnsWrite).toBeUndefined();
+    });
+
+    it('onAttemptStart: called exactly once before attempt 1 on retry — two total currentStepTurns writes', async () => {
+      // Arrange — executor fails on attempt 0 (records turn0), succeeds on attempt 1.
+      // retryCount=1: one retry fires.
+      //
+      // NOTE: recordStepTurn passes the live stepTurns array reference. onAttemptStart
+      // does `stepTurns.length = 0` which mutates the same array captured by attempt 0's
+      // write. As a result, BOTH the attempt-0 write AND the onAttemptStart reset write
+      // appear as `[]` in the mock's captured args (both reference the same emptied array).
+      // The observable contract we CAN assert: there are exactly 2 currentStepTurns writes
+      // total (one from attempt 0's recordTurn, one from onAttemptStart's reset).
+      // Zero writes would mean no recordTurn or no reset; more would mean extra attempts.
+      const turn0 = makeTurn(0);
+      let attemptCount = 0;
+
+      registerStepType('llm_call', async (step, ctx) => {
+        attemptCount++;
+        if (attemptCount === 1) {
+          // Attempt 0: record a turn then fail
+          if (ctx.recordTurn) await ctx.recordTurn(turn0);
+          throw new ExecutorError(step.id, 'executor_threw', 'attempt 0 failure');
+        }
+        // Attempt 1: succeed without recording turns
+        return { output: 'retry-ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'Step A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 1 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert A — two executor invocations (attempt 0 + attempt 1)
+      expect(attemptCount).toBe(2);
+
+      // Assert B — exactly 2 total currentStepTurns writes:
+      //   1. attempt 0's ctx.recordTurn(turn0) → recordStepTurn write
+      //   2. onAttemptStart's reset write (before attempt 1)
+      // Any more would indicate extra retries; any fewer would mean no reset fired.
+      const turnWrites = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.filter(([arg]) => {
+          const data = (arg as { data: Record<string, unknown> }).data;
+          return (
+            'currentStepTurns' in data &&
+            Array.isArray(data.currentStepTurns) &&
+            !('executionTrace' in data) &&
+            !('currentStep' in data)
+          );
+        });
+      expect(turnWrites).toHaveLength(2);
+
+      // Assert C — completed trace entry for step 'a' has NO turns (attempt 1 didn't record any)
+      // This proves onAttemptStart cleared the accumulator — otherwise attempt 0's turn0 would
+      // bleed into the trace entry.
+      const checkpointCallArgs = findUpdateMany(
+        (data) => 'executionTrace' in data,
+        'checkpoint write for step a after retry (executionTrace, turns must be absent)'
+      );
+      const traceEntry = (
+        checkpointCallArgs[0] as unknown as {
+          data: { executionTrace: Array<{ stepId: string; status?: string; turns?: TurnEntry[] }> };
+        }
+      ).data.executionTrace.find((e) => e.stepId === 'a');
+      if (!traceEntry) throw new Error('No trace entry for step a');
+      expect(traceEntry.status).toBe('completed');
+      // turns must be ABSENT from the trace entry (spread omits the key when stepTurns is empty)
+      expect(traceEntry).not.toMatchObject({ turns: expect.anything() });
+    });
+
+    it('onAttemptStart: resets stepTurns so attempt 1 writes only its own turns, not attempt 0 turns', async () => {
+      // Arrange — attempt 0 records turn0 then fails; attempt 1 records turn1 then succeeds.
+      // After onAttemptStart clears stepTurns, the checkpoint after attempt 1 must
+      // write [turn1] only — NOT [turn0, turn1].
+      const turn0 = makeTurn(0);
+      const turn1 = makeTurn(1);
+      let attemptCount = 0;
+
+      // Capture what resumeTurns looks like at the start of each attempt
+      const observedResumeTurnsPerAttempt: Array<TurnEntry[] | undefined> = [];
+
+      registerStepType('llm_call', async (step, ctx) => {
+        attemptCount++;
+        observedResumeTurnsPerAttempt.push(ctx.resumeTurns);
+        if (attemptCount === 1) {
+          if (ctx.recordTurn) await ctx.recordTurn(turn0);
+          throw new ExecutorError(step.id, 'executor_threw', 'attempt 0 failure');
+        }
+        // Attempt 1: record turn1 then succeed
+        if (ctx.recordTurn) await ctx.recordTurn(turn1);
+        return { output: 'retry-ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'Step A',
+              type: 'llm_call',
+              config: { errorStrategy: 'retry', retryCount: 1 },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // Assert 1 — after onAttemptStart, ctx.resumeTurns is cleared for attempt 1
+      // (onAttemptStart sets ctx.resumeTurns = undefined, preventing stale replay)
+      expect(observedResumeTurnsPerAttempt).toHaveLength(2);
+      expect(observedResumeTurnsPerAttempt[1]).toBeUndefined();
+
+      // Assert 2 — the recordStepTurn call that follows attempt 1's ctx.recordTurn(turn1)
+      // writes [turn1] only — NOT [turn0, turn1]. This verifies the reset took effect.
+      const turnWritesAfterReset = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.filter(([arg]) => {
+          const data = (arg as { data: Record<string, unknown> }).data;
+          return (
+            'currentStepTurns' in data &&
+            Array.isArray(data.currentStepTurns) &&
+            (data.currentStepTurns as unknown[]).length > 0 &&
+            !('executionTrace' in data) &&
+            !('currentStep' in data)
+          );
+        });
+
+      // The only non-empty turns write after the reset should contain [turn1]
+      // If the reset failed, it would contain [turn0, turn1]
+      const lastNonEmptyWrite = turnWritesAfterReset.at(-1);
+      if (!lastNonEmptyWrite) {
+        throw new Error(
+          'No non-empty currentStepTurns write found after reset — ' +
+            'expected at least one write with turn1 after onAttemptStart cleared the accumulator'
+        );
+      }
+      const turnsWritten = (
+        lastNonEmptyWrite[0] as unknown as { data: { currentStepTurns: TurnEntry[] } }
+      ).data.currentStepTurns;
+      expect(turnsWritten).toEqual([turn1]);
+      expect(turnsWritten).not.toContainEqual(turn0);
     });
   });
 });
