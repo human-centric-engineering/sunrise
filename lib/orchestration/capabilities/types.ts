@@ -68,6 +68,13 @@ export interface CapabilityRegistryEntry {
   approvalTimeoutMs: number | null;
   /** Calls per minute; null = unlimited. */
   rateLimit: number | null;
+  /**
+   * True when the capability is naturally safe to re-run — destination handles
+   * duplicates (pure read, upsert keyed on stable input). The engine's
+   * `tool_call` executor skips the dispatch cache for these, avoiding a DB
+   * write per call. Default false: assume side effects until the author opts in.
+   */
+  isIdempotent: boolean;
   isActive: boolean;
 }
 

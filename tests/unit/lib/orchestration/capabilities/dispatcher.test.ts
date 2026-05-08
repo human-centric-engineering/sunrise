@@ -103,6 +103,7 @@ interface CapabilityRowOverrides {
   requiresApproval?: boolean;
   rateLimit?: number | null;
   approvalTimeoutMs?: number | null;
+  isIdempotent?: boolean;
   isActive?: boolean;
 }
 
@@ -121,6 +122,7 @@ function makeCapabilityRow(overrides: CapabilityRowOverrides = {}) {
     requiresApproval: overrides.requiresApproval ?? false,
     rateLimit: overrides.rateLimit !== undefined ? overrides.rateLimit : null,
     approvalTimeoutMs: overrides.approvalTimeoutMs ?? null,
+    isIdempotent: overrides.isIdempotent ?? false,
     isActive: overrides.isActive ?? true,
   };
 }

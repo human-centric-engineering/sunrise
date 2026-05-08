@@ -439,6 +439,7 @@ interface AiCapabilityRow {
   requiresApproval: boolean;
   approvalTimeoutMs: number | null;
   rateLimit: number | null;
+  isIdempotent: boolean;
   isActive: boolean;
 }
 
@@ -454,6 +455,7 @@ function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
     requiresApproval: row.requiresApproval,
     approvalTimeoutMs: row.approvalTimeoutMs ?? null,
     rateLimit: row.rateLimit,
+    isIdempotent: row.isIdempotent,
     isActive: row.isActive,
   };
 }
