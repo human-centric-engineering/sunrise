@@ -329,6 +329,44 @@ describe('DiscoverModelsDialog', () => {
       });
     });
 
+    it('renders inactive conflicts under a "reactivate from the matrix list" heading', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' })],
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        created: 0,
+        skipped: 1,
+        conflicts: [{ modelId: 'gpt-4o-mini', reason: 'already_in_matrix_inactive' }],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add 1 model/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      // The result panel splits active vs inactive conflicts so the
+      // operator knows the row exists but is deactivated and they
+      // need to reactivate from the matrix list.
+      await waitFor(() => {
+        expect(
+          screen.getByText(/deactivated.*reactivate from the matrix list/i)
+        ).toBeInTheDocument();
+      });
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+
     it('renders skipped + conflicts in the result step', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValueOnce({

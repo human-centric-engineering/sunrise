@@ -170,8 +170,15 @@ export const GET = withAdminAuth(async (request) => {
   // already in to avoid duplicate adds (which would silently
   // skip-duplicate at insert time anyway, but the UI should reflect
   // it up front).
+  //
+  // Filter to active rows only — matches `/providers/:id/models`
+  // (Phase A). Inactive (soft-deleted) rows shouldn't block
+  // re-add via discovery; they fall through and the bulk endpoint
+  // surfaces them as `already_in_matrix_inactive` if the operator
+  // tries to add one back, prompting reactivation instead of a
+  // silent skip.
   const matrixRows = await prisma.aiProviderModel.findMany({
-    where: { providerSlug },
+    where: { providerSlug, isActive: true },
     select: { id: true, modelId: true },
   });
   const matrixByModelId = new Map(matrixRows.map((r) => [r.modelId, r.id]));

@@ -272,6 +272,22 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       expect(byId.get('gpt-4o-mini')).toMatchObject({ inMatrix: true, matrixId: 'matrix-1' });
       expect(byId.get('gpt-4o')).toMatchObject({ inMatrix: false, matrixId: null });
     });
+
+    it('filters the matrix LEFT JOIN to active rows so deactivated entries appear as Discovered', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'gpt-4o-mini' })]);
+
+      await GET(makeRequest('openai'));
+
+      // The where clause must include `isActive: true` so soft-deleted
+      // rows fall through and the operator can see them as Discovered
+      // candidates (the bulk endpoint then surfaces them as
+      // `already_in_matrix_inactive` when the operator tries to add).
+      const findManyCall = vi.mocked(prisma.aiProviderModel.findMany).mock.calls[0]?.[0];
+      expect(findManyCall?.where).toMatchObject({ providerSlug: 'openai', isActive: true });
+    });
   });
 
   describe('Heuristic suggestions', () => {

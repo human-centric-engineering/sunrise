@@ -168,10 +168,11 @@ describe('POST /api/v1/admin/orchestration/provider-models/bulk', () => {
 
     it('reports partial success when some rows already exist', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      // 2 of the 3 already in matrix
+      // 2 of the 3 already in matrix (both active — so the conflict
+      // reason should be `already_in_matrix`, not `..._inactive`).
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
-        { modelId: 'gpt-4o' },
-        { modelId: 'gpt-5' },
+        { modelId: 'gpt-4o', isActive: true },
+        { modelId: 'gpt-5', isActive: true },
       ] as never);
       vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 1 } as never);
 
@@ -209,8 +210,8 @@ describe('POST /api/v1/admin/orchestration/provider-models/bulk', () => {
     it('reports all-conflict batch as 0 created / N skipped', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
-        { modelId: 'gpt-4o-mini' },
-        { modelId: 'gpt-4o' },
+        { modelId: 'gpt-4o-mini', isActive: true },
+        { modelId: 'gpt-4o', isActive: true },
       ] as never);
       vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 0 } as never);
 
@@ -256,6 +257,45 @@ describe('POST /api/v1/admin/orchestration/provider-models/bulk', () => {
       const inserted = (call?.data as Array<{ isDefault: boolean; isActive: boolean }>)[0];
       expect(inserted.isDefault).toBe(false);
       expect(inserted.isActive).toBe(true);
+    });
+
+    it('flags inactive conflicts with the already_in_matrix_inactive reason', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      // Inactive (soft-deleted) row blocks re-add. Discovery filters
+      // these out so the operator sees them as "Discovered", but the
+      // unique constraint still applies; the bulk endpoint surfaces
+      // the deactivation explicitly so the dialog can prompt for
+      // reactivation instead of letting the row silently skip.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        { modelId: 'gpt-4o-mini', isActive: false },
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 0 } as never);
+
+      const response = await POST(
+        makeRequest({
+          providerSlug: 'openai',
+          models: [makeRow({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' })],
+        })
+      );
+
+      expect(response.status).toBe(201);
+      const data = await parseJson<{
+        data: {
+          created: number;
+          skipped: number;
+          conflicts: Array<{ modelId: string; reason: string }>;
+        };
+      }>(response);
+      expect(data.data.created).toBe(0);
+      expect(data.data.skipped).toBe(1);
+      expect(data.data.conflicts).toEqual([
+        { modelId: 'gpt-4o-mini', reason: 'already_in_matrix_inactive' },
+      ]);
+      // Pre-detected — must NOT be passed to createMany. Otherwise the
+      // unique constraint would silently drop and the count math
+      // would still work but for the wrong reason.
+      const createCall = vi.mocked(prisma.aiProviderModel.createMany).mock.calls[0]?.[0];
+      expect((createCall?.data as Array<unknown>) ?? []).toHaveLength(0);
     });
   });
 });

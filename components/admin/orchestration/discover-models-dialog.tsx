@@ -243,6 +243,20 @@ export function DiscoverModelsDialog({
     setDiscoveryError(null);
   }, [open, initialProviderSlug, prefilledModelIds]);
 
+  // When the operator goes back to step 1 and picks a different
+  // provider, drop any selections from the previous provider —
+  // they refer to candidates that won't appear in the new list.
+  // Without this they linger silently in the Set, and if the
+  // operator ever swaps back to the original provider those rows
+  // would be re-checked unexpectedly.
+  const handleProviderChange = useCallback((slug: string) => {
+    setProviderSlug(slug);
+    setSelected(new Set());
+    setCandidates(null);
+    setSearch('');
+    setActiveBuckets(new Set());
+  }, []);
+
   // Fetch providers when the provider step mounts.
   useEffect(() => {
     if (!open || step !== 'provider') return;
@@ -274,10 +288,16 @@ export function DiscoverModelsDialog({
   }, [open, step]);
 
   // Run discovery when the discovery step is entered.
+  //
+  // Clears stale candidates upfront — without that, going back to
+  // step 1, picking a different provider, and continuing leaves the
+  // previous provider's candidate table on screen during the loading
+  // window (the loading branch only renders when `candidates === null`).
   const runDiscovery = useCallback(async () => {
     if (!providerSlug) return;
     setDiscoveryLoading(true);
     setDiscoveryError(null);
+    setCandidates(null);
     try {
       const response = await apiClient.get<DiscoveryResponse>(
         `${API.ADMIN.ORCHESTRATION.DISCOVERY_MODELS}?providerSlug=${encodeURIComponent(providerSlug)}`
@@ -418,7 +438,7 @@ export function DiscoverModelsDialog({
               providers={providers}
               error={providersError}
               providerSlug={providerSlug}
-              onChange={setProviderSlug}
+              onChange={handleProviderChange}
             />
           )}
 
@@ -996,17 +1016,27 @@ function SelectField({
 // ─── Step 4: Result ───────────────────────────────────────────────────────────
 
 function ResultStep({ result }: { result: BulkResult }): React.ReactElement {
+  // Split conflicts so the inactive ones get a more actionable
+  // message — those rows already exist but are deactivated, and the
+  // discovery dialog can't reactivate them. The operator needs to go
+  // to the matrix list to flip them back on.
+  const inactiveConflicts = result.conflicts.filter(
+    (c) => c.reason === 'already_in_matrix_inactive'
+  );
+  const activeConflicts = result.conflicts.filter((c) => c.reason === 'already_in_matrix');
+
   return (
     <div className="space-y-3 py-4">
       <p className="text-sm font-medium">
         {result.created} model{result.created === 1 ? '' : 's'} added
         {result.skipped > 0 && `, ${result.skipped} skipped`}.
       </p>
-      {result.conflicts.length > 0 && (
+
+      {activeConflicts.length > 0 && (
         <div className="space-y-1 text-sm">
           <p className="font-medium">Skipped (already in matrix):</p>
           <ul className="text-muted-foreground list-inside list-disc">
-            {result.conflicts.map((c) => (
+            {activeConflicts.map((c) => (
               <li key={c.modelId}>
                 <code className="font-mono text-xs">{c.modelId}</code>
               </li>
@@ -1014,6 +1044,20 @@ function ResultStep({ result }: { result: BulkResult }): React.ReactElement {
           </ul>
         </div>
       )}
+
+      {inactiveConflicts.length > 0 && (
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">Skipped (deactivated — reactivate from the matrix list):</p>
+          <ul className="text-muted-foreground list-inside list-disc">
+            {inactiveConflicts.map((c) => (
+              <li key={c.modelId}>
+                <code className="font-mono text-xs">{c.modelId}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <p className="text-muted-foreground text-xs">
         New rows are visible in the matrix table once you close this dialog.
       </p>

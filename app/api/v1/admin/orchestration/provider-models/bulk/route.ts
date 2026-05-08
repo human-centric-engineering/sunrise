@@ -31,9 +31,18 @@ import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector'
 import { deriveMatrixSlug } from '@/lib/orchestration/llm/model-heuristics';
 import { bulkCreateProviderModelsSchema } from '@/lib/validations/orchestration';
 
+/**
+ * Reason a row was skipped from the batch. `already_in_matrix` is
+ * the common case — an active row already exists. `already_in_matrix_inactive`
+ * means the row exists but was soft-deleted; the operator should
+ * reactivate it from the matrix list rather than try to re-add via
+ * discovery (the discovery LEFT JOIN intentionally hides inactive
+ * rows so the operator can find them, but the unique constraint
+ * still blocks insert).
+ */
 interface ConflictRow {
   modelId: string;
-  reason: 'already_in_matrix';
+  reason: 'already_in_matrix' | 'already_in_matrix_inactive';
 }
 
 export const POST = withAdminAuth(async (request, session) => {
@@ -49,11 +58,18 @@ export const POST = withAdminAuth(async (request, session) => {
   // skipDuplicates would silently drop them, but the dialog needs
   // to surface "you tried to add X, but it's already in the matrix"
   // with the modelId — not just a count.
+  //
+  // Fetch active + inactive separately so the response can
+  // distinguish "deactivated and needs reactivating" from
+  // "actively curated already". The discovery dialog uses the
+  // distinction to point operators at the matrix list for
+  // reactivation instead of asking them to retry the same add.
   const requestedModelIds = body.models.map((m) => m.modelId);
   const existing = await prisma.aiProviderModel.findMany({
     where: { providerSlug: body.providerSlug, modelId: { in: requestedModelIds } },
-    select: { modelId: true },
+    select: { modelId: true, isActive: true },
   });
+  const existingInactive = new Set(existing.filter((r) => !r.isActive).map((r) => r.modelId));
   const existingSet = new Set(existing.map((r) => r.modelId));
 
   const rowsToInsert = body.models
@@ -97,8 +113,17 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const conflicts: ConflictRow[] = body.models
     .filter((m) => existingSet.has(m.modelId))
-    .map((m) => ({ modelId: m.modelId, reason: 'already_in_matrix' as const }));
+    .map((m) => ({
+      modelId: m.modelId,
+      reason: existingInactive.has(m.modelId)
+        ? ('already_in_matrix_inactive' as const)
+        : ('already_in_matrix' as const),
+    }));
 
+  // Use createResult.count as the source of truth — it covers the
+  // race-condition path where another operator concurrently added
+  // a row we hadn't pre-detected. The skipped count then captures
+  // both pre-detected conflicts and any silent skip-duplicates.
   const skippedCount = body.models.length - createResult.count;
 
   log.info('Provider models bulk-created', {

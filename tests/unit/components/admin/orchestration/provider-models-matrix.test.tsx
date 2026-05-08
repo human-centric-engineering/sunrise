@@ -12,7 +12,7 @@
  * - Filter by capability shows only matching models
  * - Model count text ("N model(s)") updates after filtering
  * - Clicking a sortable column header changes sort (column becomes "active")
- * - "Add model" link points to /admin/orchestration/provider-models/new
+ * - "Discover models" button opens the discovery dialog (replaced the old /new link in Phase F)
  * - Model name is a link to /admin/orchestration/provider-models/{id}
  * - Decision heuristic table is rendered
  * - Green dot for configured+active, yellow for configured+inactive, gray for unconfigured
@@ -298,11 +298,17 @@ describe('ProviderModelsMatrix', () => {
 
   // ── Links ──────────────────────────────────────────────────────────────────
 
-  it('"Add model" link points to /admin/orchestration/provider-models/new', () => {
+  it('renders a "Discover models" button (replaces the legacy /new link)', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
 
-    const link = screen.getByRole('link', { name: /add model/i });
-    expect(link).toHaveAttribute('href', '/admin/orchestration/provider-models/new');
+    // Phase F replaced the free-text "Add model" link with a button
+    // that opens the DiscoverModelsDialog. The button is rendered
+    // unconditionally; clicking it is covered separately in the
+    // dialog's own tests.
+    expect(screen.getByRole('button', { name: /discover models/i })).toBeInTheDocument();
+    // Old behaviour gone — no link to /provider-models/new in the
+    // matrix toolbar anymore.
+    expect(screen.queryByRole('link', { name: /^add model$/i })).not.toBeInTheDocument();
   });
 
   it('model name is a link to /admin/orchestration/provider-models/{id}', () => {
