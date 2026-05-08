@@ -23,10 +23,21 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
     aiCostLog: { create: vi.fn().mockResolvedValue({ id: 'cost_1' }) },
   },
+}));
+
+// Mock the lease module so the real claimLease/startHeartbeat don't issue prisma calls
+// or leak setInterval timers. The OTEL resilience tests assert tracer-throw behaviour;
+// the lease surface is orthogonal and should stay out of the assertions.
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 vi.mock('@/lib/env', () => ({
@@ -62,6 +73,7 @@ import {
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { prisma } from '@/lib/db/client';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
 import { registerTracer } from '@/lib/orchestration/tracing';
@@ -105,6 +117,11 @@ function seedExecutionMocks(): void {
     const { where, data } = args as { where: { id: string }; data: Record<string, unknown> };
     return { id: where.id, ...data };
   }) as never);
+  // Engine writes use updateMany (lease-guarded). Default count=1 keeps lease-loss inactive.
+  vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+  // Lease helpers — claim returns a valid token, heartbeat returns a no-op stop fn.
+  vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+  vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
 }
 
 async function collectEvents(

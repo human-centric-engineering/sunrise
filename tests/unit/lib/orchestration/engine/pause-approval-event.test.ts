@@ -16,7 +16,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
       create: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUnique: vi.fn(),
     },
   },
@@ -37,6 +37,13 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
+}));
+
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
@@ -45,6 +52,7 @@ import {
   registerStepType,
 } from '@/lib/orchestration/engine/executor-registry';
 import { PausedForApproval } from '@/lib/orchestration/engine/errors';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
@@ -117,13 +125,13 @@ describe('pauseForApproval event emission', () => {
       updatedAt: new Date(),
     } as never);
 
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-      const { where, data } = args as {
-        where: { id: string };
-        data: Record<string, unknown>;
-      };
-      return { id: where.id, ...data };
-    }) as never);
+    // Engine helpers use updateMany. Default count=1 — lease-loss path stays inactive.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    // Lease module — fresh stop function per test so heartbeat timer leaks don't
+    // accumulate across tests. claimLease is only used on resume; not exercised here.
+    vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+    vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
   });
 
   afterEach(() => {
@@ -207,12 +215,12 @@ describe('pauseForApproval event emission', () => {
   });
 
   it('does not emit events when DB update fails', async () => {
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (args: unknown) => {
       const { data } = args as { data: Record<string, unknown> };
       if (data.status === 'paused_for_approval') {
         throw new Error('DB connection lost');
       }
-      return { id: 'exec_test', ...data };
+      return { count: 1 };
     }) as never);
 
     registerStepType('human_approval', async (step) => {

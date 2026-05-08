@@ -47,6 +47,10 @@ export async function reapZombieExecutions(
   const pendingCutoff = new Date(Date.now() - pendingThresholdMs);
   const approvalCutoff = new Date(Date.now() - approvalThresholdMs);
 
+  // Clear lease columns alongside the FAILED flip so the row's terminal state stays
+  // coherent with `claimLease`'s expectations. Without this, a reaper-killed RUNNING row
+  // could keep its (now-expired) lease columns set and feed the orphan-sweep race that
+  // `claimLease`'s status guard exists to defend against. Belt-and-braces with the guard.
   const [runningResult, pendingResult, approvalResult] = await Promise.all([
     prisma.aiWorkflowExecution.updateMany({
       where: {
@@ -61,6 +65,8 @@ export async function reapZombieExecutions(
         status: WorkflowStatus.FAILED,
         completedAt: new Date(),
         errorMessage: 'Execution reaped: exceeded zombie threshold without completing',
+        leaseToken: null,
+        leaseExpiresAt: null,
       },
     }),
     // Use createdAt (not updatedAt) so incidental DB writes don't reset
@@ -76,6 +82,8 @@ export async function reapZombieExecutions(
         completedAt: new Date(),
         errorMessage:
           'Execution reaped: client did not reconnect within 1 hour after approve/retry',
+        leaseToken: null,
+        leaseExpiresAt: null,
       },
     }),
     prisma.aiWorkflowExecution.updateMany({
@@ -87,6 +95,8 @@ export async function reapZombieExecutions(
         status: WorkflowStatus.FAILED,
         completedAt: new Date(),
         errorMessage: 'Execution reaped: approval not received within 7 days',
+        leaseToken: null,
+        leaseExpiresAt: null,
       },
     }),
   ]);

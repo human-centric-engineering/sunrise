@@ -15,7 +15,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: {
       create: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
   },
@@ -40,6 +40,17 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock the lease module so tests remain free of real setInterval timers and
+// prisma.aiWorkflowExecution.updateMany calls from within the lease helpers.
+// `startHeartbeat` returning a vi.fn() per test lets us assert the stop-fn
+// call count on a fresh function each time.
+vi.mock('@/lib/orchestration/engine/lease', () => ({
+  claimLease: vi.fn(),
+  generateLeaseToken: vi.fn().mockReturnValue('lease-token-test'),
+  leaseExpiry: vi.fn().mockReturnValue(new Date()),
+  startHeartbeat: vi.fn().mockReturnValue(vi.fn()),
+}));
+
 // ─── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
@@ -52,8 +63,10 @@ import {
   ExecutorError,
   PausedForApproval,
 } from '@/lib/orchestration/engine/errors';
+import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -132,13 +145,17 @@ describe('OrchestrationEngine', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     } as never);
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
-      const { where, data } = args as {
-        where: { id: string };
-        data: Record<string, unknown>;
-      };
-      return { id: where.id, ...data };
-    }) as never);
+    // Engine helpers (markCurrentStep, checkpoint, pauseForApproval, finalize) use
+    // updateMany with a leaseToken guard. Default mock returns count=1 so the
+    // lease-loss path doesn't fire in tests that don't explicitly exercise it.
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    // Lease module defaults — happy path.
+    // claimLease returns the same token that generateLeaseToken produces so
+    // where-clause guards in updateMany calls succeed against count=1 above.
+    vi.mocked(claimLease).mockResolvedValue('lease-token-test');
+    // Fresh vi.fn() per test so heartbeat stop-fn call counts are isolated.
+    vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
   });
 
   afterEach(() => {
@@ -165,9 +182,9 @@ describe('OrchestrationEngine', () => {
 
     // Checkpoint after each completed step: verify the trace and cost totals
     // are written on the step-checkpoint call (nac=1 / mp=1 fix).
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith(
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'exec_test' },
+        where: expect.objectContaining({ id: 'exec_test' }),
         data: expect.objectContaining({
           executionTrace: expect.any(Array),
           totalTokensUsed: expect.any(Number),
@@ -273,11 +290,19 @@ describe('OrchestrationEngine', () => {
 
     // Row should have been flipped to paused_for_approval.
     const pauseCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(
         ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
       );
     expect(pauseCall).toBeDefined();
+    expect(pauseCall![0]).toMatchObject({
+      where: expect.objectContaining({ id: 'exec_test' }),
+      data: expect.objectContaining({
+        status: 'paused_for_approval',
+        leaseToken: null,
+        leaseExpiresAt: null,
+      }),
+    });
   });
 
   it('budget exceeded emits workflow_failed with "Budget exceeded"', async () => {
@@ -545,7 +570,7 @@ describe('OrchestrationEngine', () => {
     expect(firstStarted.type === 'step_started' && firstStarted.stepId).toBe('b');
 
     // Row should have been flipped to RUNNING during resume
-    expect(prisma.aiWorkflowExecution.update).toHaveBeenCalledWith(
+    expect(prisma.aiWorkflowExecution.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'running' }) })
     );
   });
@@ -672,7 +697,7 @@ describe('OrchestrationEngine', () => {
 
     // Make checkpoint (update) fail on all but the first call (create needs to work)
     let updateCalls = 0;
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
       updateCalls++;
       if (updateCalls <= 2) throw new Error('DB down');
       return {};
@@ -692,7 +717,7 @@ describe('OrchestrationEngine', () => {
     // SSE consumer sees an error rather than a clean workflow_completed.
     registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
 
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async (args: unknown) => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (args: unknown) => {
       const { data } = args as { data: Record<string, unknown> };
       if ('completedAt' in data) throw new Error('finalize DB down');
       return {};
@@ -706,10 +731,12 @@ describe('OrchestrationEngine', () => {
 
   // ─── pauseForApproval() DB failure ────────────────────────────────
 
-  it('pauseForApproval DB failure is logged but approval_required is still emitted', async () => {
+  it('pauseForApproval DB failure is logged AND approval_required is suppressed (single-owner contract)', async () => {
     // Arrange — the human_approval step triggers PausedForApproval; the DB
-    // update inside pauseForApproval() throws. This exercises the catch/log
-    // path in pauseForApproval() (source line ~1112).
+    // update inside pauseForApproval() throws. The function returns false so
+    // the caller skips the approvalRequired SSE yield. Same contract as the
+    // count=0 lease-loss path: if we can't confirm the row tipped to
+    // PAUSED_FOR_APPROVAL, we don't surface an approval card to the user.
     const def: WorkflowDefinition = {
       steps: [
         {
@@ -737,7 +764,7 @@ describe('OrchestrationEngine', () => {
 
     // Make all update calls fail so the pauseForApproval write (which sets
     // status: 'paused_for_approval') also fails.
-    vi.mocked(prisma.aiWorkflowExecution.update).mockRejectedValue(
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockRejectedValue(
       new Error('pauseForApproval DB down')
     );
 
@@ -745,8 +772,8 @@ describe('OrchestrationEngine', () => {
     const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
     const types = events.map((e) => e.type);
 
-    // Assert — approval_required is still emitted even though the DB write failed.
-    expect(types).toContain('approval_required');
+    // Assert — approval_required is suppressed because we can't confirm the row tipped.
+    expect(types).not.toContain('approval_required');
     expect(types).not.toContain('workflow_completed');
     expect(types).not.toContain('workflow_failed');
   });
@@ -1369,7 +1396,7 @@ describe('OrchestrationEngine', () => {
 
     await collect(new OrchestrationEngine(), makeWorkflow(def));
 
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     const lastTrace = calls
       .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
       .filter(Array.isArray)
@@ -1408,7 +1435,7 @@ describe('OrchestrationEngine', () => {
 
     // The persisted trace entry for the failed step should reflect both
     // attempts' partial cost (sum: 100 tokens / $0.010).
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     const lastTrace = calls
       .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
       .filter(Array.isArray)
@@ -1615,11 +1642,19 @@ describe('OrchestrationEngine', () => {
 
     // DB row must have been flipped to paused_for_approval.
     const pauseCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(
         ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
       );
     expect(pauseCall).toBeDefined();
+    expect(pauseCall![0]).toMatchObject({
+      where: expect.objectContaining({ id: 'exec_test' }),
+      data: expect.objectContaining({
+        status: 'paused_for_approval',
+        leaseToken: null,
+        leaseExpiresAt: null,
+      }),
+    });
   });
 
   // ─── Parallel batch: budget exceeded after batch ──────────────────
@@ -2205,7 +2240,7 @@ describe('OrchestrationEngine', () => {
 
     // DB update during resume must have been called with a non-null startedAt.
     const resumeUpdateCall = vi
-      .mocked(prisma.aiWorkflowExecution.update)
+      .mocked(prisma.aiWorkflowExecution.updateMany)
       .mock.calls.find(([arg]) => {
         const { data } = arg as { data: { status?: string; startedAt?: Date } };
         return data.status === 'running' && data.startedAt instanceof Date;
@@ -2381,7 +2416,7 @@ describe('OrchestrationEngine', () => {
     }));
 
     let updateCalls = 0;
-    vi.mocked(prisma.aiWorkflowExecution.update).mockImplementation((async () => {
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
       updateCalls++;
       if (updateCalls === 2) {
         // eslint-disable-next-line @typescript-eslint/only-throw-error
@@ -2927,7 +2962,7 @@ describe('OrchestrationEngine', () => {
 
   /** Pull the persisted trace out of the most recent prisma.update call. */
   function lastWrittenTrace(): unknown[] {
-    const calls = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls;
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
     for (let i = calls.length - 1; i >= 0; i--) {
       const args = calls[i][0] as { data?: { executionTrace?: unknown } };
       if (Array.isArray(args.data?.executionTrace)) {
@@ -3607,6 +3642,664 @@ describe('OrchestrationEngine', () => {
       // promise loop. Both are valid step outputs.
       expect(completed).toBeDefined();
       expect(['branch:a', 'branch:b']).toContain(completed.output);
+    });
+  });
+
+  // ─── Lease integration ──────────────────────────────────────────────────────
+  //
+  // These tests cover the lease-integration paths added in the
+  // feat/workflow-recovery-lease commit: initRun lease claim, execute()
+  // heartbeat lifecycle, the four checkpoint helpers gaining `leaseToken`
+  // parameter + lease-guarded `updateMany`, and lease-clear-atomic-with-
+  // status-flip in pauseForApproval/finalize.
+  //
+  // All tests rely on the vi.mock('@/lib/orchestration/engine/lease') added at
+  // the top of the file and the per-test defaults set in beforeEach.
+
+  describe('lease integration', () => {
+    // ── Fresh-run lease persistence (initRun create path) ─────────────────
+
+    it('fresh run: prisma.create receives leaseToken, leaseExpiresAt, and lastHeartbeatAt', async () => {
+      // Arrange — a working executor so the run completes and we can inspect the create call.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — the row-creation call must stamp all three lease fields.
+      // These fields are what make the row "owned" from the start; if any
+      // is absent the orphan sweep could incorrectly re-claim the row.
+      const createCall = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0]?.[0];
+      expect(createCall?.data).toMatchObject({
+        leaseToken: expect.any(String),
+        leaseExpiresAt: expect.any(Date),
+        lastHeartbeatAt: expect.any(Date),
+      });
+    });
+
+    // ── Lease conflict on resume ───────────────────────────────────────────
+
+    it('resume: lease conflict (claimLease returns null) throws before yielding any event', async () => {
+      // Arrange — a paused row exists; another host already holds a fresh lease.
+      vi.mocked(claimLease).mockResolvedValue(null);
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: 'exec_lease_conflict',
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval',
+        inputData: {},
+        executionTrace: [],
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        defaultErrorStrategy: 'fail',
+        budgetLimitUsd: null,
+        currentStep: null,
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+
+      // Act & Assert — the generator must throw with the ownership message.
+      // No events must have been yielded (including workflow_started) because
+      // the conflict is detected inside initRun before the yield.
+      const engine = new OrchestrationEngine();
+      const yielded: ExecutionEvent[] = [];
+      await expect(async () => {
+        for await (const e of engine.execute(
+          makeWorkflow(linearDefinition()),
+          {},
+          {
+            userId: USER_ID,
+            resumeFromExecutionId: 'exec_lease_conflict',
+          }
+        )) {
+          yielded.push(e);
+        }
+      }).rejects.toThrow(/owned by another host/);
+
+      // No events were emitted before the throw.
+      expect(yielded.map((e) => e.type)).not.toContain('workflow_started');
+
+      // No status-flip updateMany was issued (the engine gave up before resume logic).
+      const statusFlipCall = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([arg]) => (arg as { data: { status?: string } }).data.status === 'running'
+        );
+      expect(statusFlipCall).toBeUndefined();
+    });
+
+    // ── Orphan-resume increments recoveryAttempts ─────────────────────────
+
+    it("orphan-resume (status=running): claimLease called with reason='orphan-resume'", async () => {
+      // Arrange — row is in RUNNING state → orphan path.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: 'exec_orphan',
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'running', // ← orphan-resume trigger
+        inputData: {},
+        executionTrace: [],
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        defaultErrorStrategy: 'fail',
+        budgetLimitUsd: null,
+        currentStep: null,
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_orphan',
+      });
+
+      // Assert — the RUNNING status maps to 'orphan-resume' which is the increment branch.
+      expect(vi.mocked(claimLease)).toHaveBeenCalledWith('exec_orphan', 'orphan-resume');
+    });
+
+    // ── Approval-resume does NOT increment recoveryAttempts ──────────────
+
+    it("approval-resume (status=paused_for_approval): claimLease called with reason='fresh-resume'", async () => {
+      // Arrange — row is in PAUSED_FOR_APPROVAL state → clean-resume path.
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: 'exec_approval_resume',
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval', // ← approval-resume trigger
+        inputData: {},
+        executionTrace: [],
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        defaultErrorStrategy: 'fail',
+        budgetLimitUsd: null,
+        currentStep: null,
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_approval_resume',
+      });
+
+      // Assert — approval-resume is a clean boundary; must NOT charge the recovery cap.
+      // Paired with the orphan test above to lock the conditional asymmetry.
+      expect(vi.mocked(claimLease)).toHaveBeenCalledWith('exec_approval_resume', 'fresh-resume');
+    });
+
+    // ── Heartbeat lifecycle — happy path ──────────────────────────────────
+
+    it('heartbeat: startHeartbeat called once with (executionId, leaseToken) before first step event', async () => {
+      // Arrange — track call order to assert startHeartbeat fires before step_started.
+      const callOrder: string[] = [];
+      vi.mocked(startHeartbeat).mockImplementation((execId, token) => {
+        callOrder.push(`startHeartbeat:${execId}:${token}`);
+        return vi.fn();
+      });
+
+      registerStepType('llm_call', async (step) => {
+        callOrder.push(`step:${step.id}`);
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — startHeartbeat was called exactly once with the correct pair.
+      expect(vi.mocked(startHeartbeat)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(startHeartbeat)).toHaveBeenCalledWith('exec_test', 'lease-token-test');
+
+      // Heartbeat must be established BEFORE the first step runs.
+      const heartbeatIdx = callOrder.findIndex((e) => e.startsWith('startHeartbeat'));
+      const firstStepIdx = callOrder.findIndex((e) => e.startsWith('step:'));
+      expect(heartbeatIdx).toBeGreaterThanOrEqual(0);
+      expect(firstStepIdx).toBeGreaterThanOrEqual(0);
+      expect(heartbeatIdx).toBeLessThan(firstStepIdx);
+
+      // Sanity: run completed normally.
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+    });
+
+    // ── Heartbeat lifecycle — finally cleanup on successful completion ─────
+
+    it('heartbeat stop-fn is called after workflow_completed on a normal run', async () => {
+      // Arrange — capture the stop fn reference from the mock's return value.
+      const stopFn = vi.fn();
+      vi.mocked(startHeartbeat).mockReturnValue(stopFn);
+
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act — run to completion.
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — stop fn must have been called exactly once in the finally block.
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+      expect(stopFn).toHaveBeenCalledTimes(1);
+    });
+
+    // ── Heartbeat lifecycle — finally cleanup on generator throw ──────────
+
+    it('heartbeat stop-fn is called even when finalize DB write throws', async () => {
+      // Arrange — reuse the "finalize DB failure re-throws" pattern from the
+      // existing suite (line ~694). The generator re-throws; the finally block
+      // must still clear the heartbeat timer.
+      const stopFn = vi.fn();
+      vi.mocked(startHeartbeat).mockReturnValue(stopFn);
+
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0.001 }));
+
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const { data } = args as { data: Record<string, unknown> };
+        if ('completedAt' in data) throw new Error('finalize DB down');
+        return { count: 1 };
+      }) as never);
+
+      // Act — generator throws because finalize re-throws.
+      await expect(
+        collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()))
+      ).rejects.toThrow('finalize DB down');
+
+      // Assert — stop fn was still called (finally runs even on throw).
+      expect(stopFn).toHaveBeenCalledTimes(1);
+    });
+
+    // ── Heartbeat lifecycle — finally cleanup on early consumer abandonment ──
+
+    it('heartbeat stop-fn is called when consumer abandons the iterator after step_started', async () => {
+      // Arrange — consumer breaks after the first step_started event.
+      // startHeartbeat is called AFTER the workflow_started yield (line ~188 of the engine
+      // source). If the consumer abandons at workflow_started, the heartbeat never started
+      // and there is no stop-fn to call. To reliably exercise the finally-block cleanup,
+      // the consumer must abandon AFTER startHeartbeat has been called — i.e., after
+      // the first step_started event (which is inside the try block wrapping startHeartbeat).
+      const stopFn = vi.fn();
+      vi.mocked(startHeartbeat).mockReturnValue(stopFn);
+
+      // Hang the executor so the generator is suspended inside the step, giving us a
+      // clean abandonment point after startHeartbeat is established.
+      let resolveStep: (() => void) | undefined;
+      registerStepType('llm_call', async () => {
+        await new Promise<void>((r) => {
+          resolveStep = r;
+        });
+        return { output: 'ok', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act — iterate until step_started, then break.
+      const engine = new OrchestrationEngine();
+      const gen = engine.execute(makeWorkflow(linearDefinition()), {}, { userId: USER_ID });
+      for await (const e of gen) {
+        if (e.type === 'step_started') {
+          // The executor is now hanging inside the step. startHeartbeat has been called
+          // because we are past the try block entry. Break to abandon.
+          break;
+        }
+      }
+      // Allow any in-flight microtasks to settle so the finally block can run.
+      await new Promise<void>((r) => setTimeout(r, 0));
+
+      // Assert — the generator's finally block fires on iterator.return(), which `break`
+      // triggers implicitly. The stop fn must have been called exactly once.
+      expect(stopFn).toHaveBeenCalledTimes(1);
+
+      // Clean up the hanging executor to avoid test-pollution.
+      resolveStep?.();
+    });
+
+    // ── checkpoint lease-loss path ────────────────────────────────────────
+
+    it('checkpoint lease-loss (count=0): logs warn and still yields workflow_completed', async () => {
+      // Arrange — make checkpoint writes (identified by executionTrace in data)
+      // return count=0, simulating the lease having been taken by another host.
+      // All other writes (markCurrentStep, finalize) succeed normally.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        // Checkpoint calls include executionTrace in the data payload.
+        if ('executionTrace' in data && !('status' in data)) {
+          return { count: 0 }; // simulate lease-loss on checkpoint
+        }
+        return { count: 1 };
+      }) as never);
+
+      // Act
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — engine must not abort on lease-loss in checkpoint; run completes normally.
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+      expect(events.map((e) => e.type)).not.toContain('workflow_failed');
+
+      // The warn log must have fired for the lease-loss path.
+      // ctx.logger is a child logger; we check the warn mock captured the message.
+      // The engine uses ctx.logger.warn inside checkpoint — we verify at least one
+      // warn call contains the ownership message fragment.
+      // (The logger mock is a no-op vi.fn() so we just assert events are correct —
+      //  the functional contract is "no abort, workflow_completed".)
+      // workflow_completed is yielded exactly once (no double-terminal regression).
+      const completedEvents = events.filter((e) => e.type === 'workflow_completed');
+      expect(completedEvents).toHaveLength(1);
+    });
+
+    // ── finalize lease-loss path ──────────────────────────────────────────
+
+    it('finalize lease-loss (count=0): logs warn AND suppresses workflow_completed event + completion hook (single-owner contract)', async () => {
+      // Contract: when finalize finds count=0 (orphan sweep handed the row to a new owner),
+      // this engine instance MUST suppress the terminal event yield and the
+      // `workflow.completed` hook. Otherwise BOTH the new owner and this stale instance
+      // emit terminal events for the same execution — duplicate hooks/webhooks for clients.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        // finalize writes contain completedAt.
+        if ('completedAt' in data) {
+          return { count: 0 }; // simulate lease-loss at finalize
+        }
+        return { count: 1 };
+      }) as never);
+
+      // Act — must NOT throw (finalize catches count=0 and logs, not re-throws).
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — NO terminal event yielded, NO completion hook emitted.
+      expect(events.map((e) => e.type)).not.toContain('workflow_completed');
+      expect(events.map((e) => e.type)).not.toContain('workflow_failed');
+      expect(emitHookEvent).not.toHaveBeenCalledWith('workflow.completed', expect.anything());
+    });
+
+    // ── pauseForApproval clears lease atomically ──────────────────────────
+
+    it('pauseForApproval: status flip and lease-clear happen in the SAME updateMany data object', async () => {
+      // Arrange — trigger a pause via human_approval.
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'llm_call',
+            config: { prompt: 'A' },
+            nextSteps: [{ targetStepId: 'gate' }],
+          },
+          {
+            id: 'gate',
+            name: 'Approval',
+            type: 'human_approval',
+            config: { prompt: 'ok?' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'a',
+        errorStrategy: 'fail',
+      };
+      registerStepType('llm_call', async () => ({ output: 'pre', tokensUsed: 0, costUsd: 0 }));
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'ok?' });
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // Assert — find the updateMany call that flips status to paused_for_approval.
+      const pauseCall = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([arg]) => (arg as { data: { status?: string } }).data.status === 'paused_for_approval'
+        );
+      expect(pauseCall).toBeDefined();
+
+      const pauseData = (pauseCall![0] as { data: Record<string, unknown> }).data;
+
+      // The status flip and lease-clear MUST be in the same data object — atomicity
+      // closes the race window where the orphan sweep sees a paused row still holding
+      // a lease and mistakes it for a stuck-running row.
+      expect(pauseData.leaseToken).toBeNull();
+      expect(pauseData.leaseExpiresAt).toBeNull();
+    });
+
+    // ── pauseForApproval lease-loss (count=0) suppresses notification + hook + webhook ──
+
+    it('pauseForApproval lease-loss (count=0): suppresses approval notification + hook + webhook (single-owner contract)', async () => {
+      // Contract: when pauseForApproval finds count=0 (orphan sweep handed the row to a new
+      // owner), this engine instance MUST NOT dispatch the approval notification, emit the
+      // workflow.paused_for_approval hook, or fire the approval_required webhook. Otherwise
+      // the user receives an approval Slack/email for a row another host is now driving —
+      // clicking the link surfaces a confusing "approval no longer pending" error.
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'gate',
+            name: 'Approval',
+            type: 'human_approval',
+            config: { prompt: 'ok?' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'gate',
+        errorStrategy: 'fail',
+      };
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'ok?' });
+      });
+
+      // pauseForApproval write (identified by status: 'paused_for_approval' in data) returns count=0.
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        if (data.status === 'paused_for_approval') {
+          return { count: 0 }; // simulate lease-loss at pause
+        }
+        return { count: 1 };
+      }) as never);
+
+      // Act — must NOT throw.
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // Assert — no approval_required SSE event fired, no hook, no webhook. The new owner
+      // is responsible for emitting all three. This caller MUST stay silent or the user
+      // sees a duplicate approval card pointing at a row another host is driving.
+      expect(events.map((e) => e.type)).not.toContain('approval_required');
+      expect(emitHookEvent).not.toHaveBeenCalledWith(
+        'workflow.paused_for_approval',
+        expect.anything()
+      );
+      expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('approval_required', expect.anything());
+    });
+
+    // ── finalize (completed) clears lease atomically ──────────────────────
+
+    it('finalize (completed): status=completed and lease-clear are in the SAME updateMany data object', async () => {
+      // Arrange — a normal successful run.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — find the updateMany call whose data.status is 'completed'.
+      const finalizeCall = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([arg]) =>
+            (arg as { data: { status?: string; completedAt?: unknown } }).data.status ===
+              'completed' &&
+            (arg as { data: { completedAt?: unknown } }).data.completedAt !== undefined
+        );
+      expect(finalizeCall).toBeDefined();
+
+      const finalizeData = (finalizeCall![0] as { data: Record<string, unknown> }).data;
+
+      // Both lease fields must be null in the same object as the status flip.
+      expect(finalizeData.leaseToken).toBeNull();
+      expect(finalizeData.leaseExpiresAt).toBeNull();
+    });
+
+    // ── finalize (failed) clears lease atomically ─────────────────────────
+
+    it('finalize (failed): status=failed and lease-clear are in the SAME updateMany data object', async () => {
+      // Arrange — a step that throws ExecutorError so the run terminates with 'failed'.
+      registerStepType('llm_call', async (step) => {
+        if (step.id === 'a') throw new ExecutorError('a', 'oops', 'forced failure');
+        return { output: 'unreached', tokensUsed: 0, costUsd: 0 };
+      });
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — find the finalize updateMany whose status is 'failed'.
+      const finalizeFailCall = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([arg]) =>
+            (arg as { data: { status?: string; completedAt?: unknown } }).data.status ===
+              'failed' &&
+            (arg as { data: { completedAt?: unknown } }).data.completedAt !== undefined
+        );
+      expect(finalizeFailCall).toBeDefined();
+
+      const failData = (finalizeFailCall![0] as { data: Record<string, unknown> }).data;
+
+      // Lease must be cleared in the same write as the 'failed' status flip.
+      expect(failData.leaseToken).toBeNull();
+      expect(failData.leaseExpiresAt).toBeNull();
+    });
+
+    // ── markCurrentStep silent no-op on stale lease ───────────────────────
+
+    it('markCurrentStep lease-loss (count=0): run continues and workflow_completed is still yielded', async () => {
+      // Arrange — currentStep writes (identified by data.currentStep) return count=0.
+      // The engine's markCurrentStep swallows the count=0 silently — it must not abort.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        // markCurrentStep writes contain currentStep.
+        if ('currentStep' in data && !('status' in data) && !('executionTrace' in data)) {
+          return { count: 0 }; // simulate stale-lease no-op
+        }
+        return { count: 1 };
+      }) as never);
+
+      // Act
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — engine continues despite the silent no-op; no throw; terminal event fires.
+      expect(events.map((e) => e.type)).toContain('workflow_completed');
+      expect(events.map((e) => e.type)).not.toContain('workflow_failed');
+    });
+
+    // ── leaseToken consistency across all writes ──────────────────────────
+
+    it('all updateMany where.leaseToken values equal the token from generateLeaseToken/claimLease', async () => {
+      // Arrange — fresh run (no resume); generateLeaseToken returns 'lease-token-test'.
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act — multi-step DAG so multiple markCurrentStep + checkpoint calls fire.
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+
+      // Assert — every updateMany call that has a where.leaseToken must use the
+      // same token. A regression where a fresh/stale token slips in for one call
+      // would let an orphan-sweep race claim the row mid-run.
+      const allUpdateManyCalls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+      const leaseTokenValues = allUpdateManyCalls
+        .map(([arg]) => (arg as { where?: { leaseToken?: unknown } }).where?.leaseToken)
+        .filter((t) => t !== undefined && t !== null);
+
+      // There must be at least one lease-guarded write.
+      expect(leaseTokenValues.length).toBeGreaterThan(0);
+      // All non-null token values must equal the mocked generateLeaseToken output.
+      for (const token of leaseTokenValues) {
+        expect(token).toBe('lease-token-test');
+      }
+    });
+
+    // ── parallel batch shares the same leaseToken ─────────────────────────
+
+    it('parallel batch: all markCurrentStep calls use where.leaseToken === lease-token-test', async () => {
+      // Arrange — parallel fan-out DAG so executeParallelBatch fires markCurrentStep
+      // for multiple steps concurrently.
+      registerStepType('parallel', async () => ({
+        output: { parallel: true },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async (step) => ({
+        output: `${step.id}-out`,
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'Parallel',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // Assert — collect all updateMany calls whose data contains currentStep
+      // (these are the markCurrentStep calls from the parallel batch).
+      const markStepCalls = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.filter(
+          ([arg]) => 'currentStep' in (arg as { data: Record<string, unknown> }).data
+        );
+
+      // There must be at least 2 parallel-batch markCurrentStep calls.
+      expect(markStepCalls.length).toBeGreaterThanOrEqual(2);
+
+      // All must reference the same lease token.
+      for (const [arg] of markStepCalls) {
+        expect((arg as { where: { leaseToken?: unknown } }).where.leaseToken).toBe(
+          'lease-token-test'
+        );
+      }
+    });
+
+    // ── resume updateMany is lease-guarded ────────────────────────────────
+
+    it('resume status-flip updateMany uses where.leaseToken from claimLease', async () => {
+      // Arrange — resume path (any non-running status to avoid orphan-resume path).
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+        id: 'exec_resume_guard',
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval',
+        inputData: {},
+        executionTrace: [],
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        defaultErrorStrategy: 'fail',
+        budgetLimitUsd: null,
+        currentStep: null,
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      // Act
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_resume_guard',
+      });
+
+      // Assert — find the updateMany call that flips status to 'running' (the resume
+      // status-flip inside initRun). It switched from prisma.update to prisma.updateMany
+      // specifically to support the where.leaseToken guard.
+      const resumeFlip = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([arg]) => (arg as { data: { status?: string } }).data.status === 'running'
+        );
+      expect(resumeFlip).toBeDefined();
+
+      const resumeWhere = (resumeFlip![0] as { where: Record<string, unknown> }).where;
+      // Must be guarded by the token returned by claimLease — not just the row id.
+      expect(resumeWhere.leaseToken).toBe('lease-token-test');
     });
   });
 });

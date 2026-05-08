@@ -123,6 +123,9 @@ export async function drainEngine(
 
     // finalize() never ran — repair the row so /status and the hook payload
     // agree. The zombie reaper remains the safety net if this also fails.
+    // Lease columns are cleared alongside the FAILED flip so an orphan-resume
+    // run that crashed pre-finalize doesn't leave a stale lease pinned to the
+    // terminal row (which would block any future re-claim until natural expiry).
     try {
       await prisma.aiWorkflowExecution.update({
         where: { id: executionId },
@@ -130,6 +133,8 @@ export async function drainEngine(
           status: WorkflowStatus.FAILED,
           errorMessage,
           completedAt: new Date(),
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
     } catch (updateErr) {
@@ -534,6 +539,203 @@ export async function processPendingExecutions(
 
   if (result.recovered > 0 || result.failed > 0) {
     logger.info('Scheduler: pending execution recovery complete', { ...result });
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Orphaned Execution Recovery (lease-aware)
+// ============================================================================
+
+/**
+ * Cap on automatic recovery attempts per execution. After this many re-drives the
+ * orphan sweep marks the row FAILED rather than entering an indefinite retry loop.
+ * The cap protects against deterministic-failure runs that would otherwise eat the
+ * tick budget forever — a workflow that crashes the same way each restart should
+ * surface to operators, not loop silently.
+ */
+export const MAX_RECOVERY_ATTEMPTS = 3;
+
+export interface OrphanSweepResult {
+  recovered: number;
+  exhausted: number;
+  errors: Array<{ executionId: string; error: string }>;
+}
+
+/**
+ * Recovery sweep: picks up `running` rows whose lease has expired (the host driving
+ * them died or stalled) and re-drives them through the standard resume path. Rows
+ * that have already been re-driven `MAX_RECOVERY_ATTEMPTS` times are marked FAILED
+ * with a `recovery_exhausted` reason instead.
+ *
+ * Detection cadence: orphans are picked up within `LEASE_DURATION_MS` (3 min) of
+ * the host stopping its heartbeat — far quicker than the 30-min zombie reaper, so
+ * users see resumed runs near-real-time after a deploy or crash.
+ *
+ * Race-safe with concurrent ticks: the resume path inside the engine claims the
+ * lease atomically (`claimLease`). If two sweeps query the same orphan, only one
+ * `drainEngine` call wins the claim — the other throws a "lease conflict on resume"
+ * caught by `drainEngine` and logged.
+ *
+ * Why this lives in the scheduler (not the reaper): semantically it's "rows we want
+ * to ATTEMPT to drive" — same shape as `processPendingExecutions`. The reaper holds
+ * "rows we want to MARK FAILED" (zombies past 30 min, abandoned approvals past 7
+ * days). Splitting along that line keeps each module's responsibility clean.
+ */
+export async function processOrphanedExecutions(): Promise<OrphanSweepResult> {
+  const now = new Date();
+  const result: OrphanSweepResult = { recovered: 0, exhausted: 0, errors: [] };
+
+  const orphans = await prisma.aiWorkflowExecution.findMany({
+    where: {
+      status: WorkflowStatus.RUNNING,
+      leaseExpiresAt: { lt: now },
+    },
+    include: {
+      workflow: {
+        select: {
+          id: true,
+          slug: true,
+          isActive: true,
+          publishedVersion: { select: { id: true, snapshot: true } },
+        },
+      },
+      version: { select: { id: true, snapshot: true } },
+    },
+    take: 20,
+  });
+
+  for (const execution of orphans) {
+    try {
+      // Recovery exhaustion — past the cap. Mark FAILED and emit the failure hook
+      // so operator alerts fire. The terminal write is unconditional (no lease
+      // guard) because by definition the lease is gone.
+      if (execution.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+        const errorMessage = `Recovery exhausted after ${execution.recoveryAttempts} attempts`;
+        await prisma.aiWorkflowExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage,
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        const sanitisedError = sanitiseHookErrorMessage(errorMessage);
+        const crashPayload = {
+          executionId: execution.id,
+          workflowId: execution.workflow.id,
+          workflowSlug: execution.workflow.slug,
+          userId: execution.userId,
+          error: sanitisedError,
+        };
+        emitHookEvent('workflow.execution.failed', crashPayload);
+        // Fire-and-forget: dispatchWebhookEvent records the delivery attempt to its retry
+        // queue BEFORE the network call, so a rejection here means the delivery is already
+        // queued for retry. Awaiting would couple sweep latency to webhook-receiver health,
+        // which is wrong — the receiver retry loop is decoupled by design.
+        void dispatchWebhookEvent('execution_crashed', crashPayload).catch((err: unknown) => {
+          logger.warn('Webhook dispatch failed for execution_crashed (recovery exhausted)', {
+            executionId: execution.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        result.exhausted++;
+        continue;
+      }
+
+      // Same defensive checks as processPendingExecutions: skip+fail if the workflow
+      // was deactivated, has no version snapshot, or has an invalid definition.
+      if (!execution.workflow.isActive) {
+        await prisma.aiWorkflowExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage: 'Workflow deactivated',
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        result.errors.push({ executionId: execution.id, error: 'Workflow deactivated' });
+        continue;
+      }
+
+      const pinnedSnapshot =
+        execution.version?.snapshot ?? execution.workflow.publishedVersion?.snapshot;
+      const pinnedVersionId =
+        execution.versionId ?? execution.workflow.publishedVersion?.id ?? null;
+      if (!pinnedSnapshot) {
+        await prisma.aiWorkflowExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage: 'No published version to resume',
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        result.errors.push({
+          executionId: execution.id,
+          error: 'No published version to resume',
+        });
+        continue;
+      }
+
+      const defParsed = workflowDefinitionSchema.safeParse(pinnedSnapshot);
+      if (!defParsed.success) {
+        await prisma.aiWorkflowExecution.update({
+          where: { id: execution.id },
+          data: {
+            status: WorkflowStatus.FAILED,
+            errorMessage: 'Invalid workflow definition',
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+        result.errors.push({ executionId: execution.id, error: 'Invalid workflow definition' });
+        continue;
+      }
+
+      logger.info('Scheduler: re-driving orphaned execution', {
+        executionId: execution.id,
+        workflowSlug: execution.workflow.slug,
+        priorRecoveryAttempts: execution.recoveryAttempts,
+      });
+
+      // Fire-and-forget drain. `initRun`'s resume branch claims the lease and
+      // increments `recoveryAttempts` atomically; if another sweep beat us to the
+      // claim, drainEngine's catch logs and the row stays running under the new owner.
+      void drainEngine(
+        execution.id,
+        execution.workflow,
+        defParsed.data as WorkflowDefinition,
+        (execution.inputData ?? {}) as Record<string, unknown>,
+        execution.userId,
+        pinnedVersionId
+      );
+
+      result.recovered++;
+    } catch (err) {
+      // Per-row throw is intentionally not terminal — the next maintenance tick re-queries
+      // the same orphans (status=running AND leaseExpiresAt < now) and retries. This handles
+      // transient DB blips without a separate "permanently unrecoverable" state, bounded by
+      // recoveryAttempts vs. MAX_RECOVERY_ATTEMPTS.
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      result.errors.push({ executionId: execution.id, error: errorMessage });
+    }
+  }
+
+  if (result.recovered > 0 || result.exhausted > 0 || result.errors.length > 0) {
+    logger.info('Scheduler: orphan sweep complete', {
+      recovered: result.recovered,
+      exhausted: result.exhausted,
+      errors: result.errors.length,
+    });
   }
 
   return result;

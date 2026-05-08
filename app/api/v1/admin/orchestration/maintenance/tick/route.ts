@@ -11,10 +11,11 @@
  *   1. processDueSchedules()         — workflow cron schedules            (awaited)
  *   2. processPendingRetries()       — webhook delivery retry queue       (background)
  *   3. processPendingHookRetries()   — event-hook delivery retry queue    (background)
- *   4. reapZombieExecutions()        — mark stale running execs as failed (background)
- *   5. backfillMissingEmbeddings()   — re-embed messages that failed      (background)
- *   6. enforceRetentionPolicies()    — delete past retention window       (background)
- *   7. processPendingExecutions()    — recover orphaned pending workflows (background)
+ *   4. processOrphanedExecutions()   — re-drive crashed running execs     (background)
+ *   5. reapZombieExecutions()        — mark stale running execs as failed (background)
+ *   6. backfillMissingEmbeddings()   — re-embed messages that failed      (background)
+ *   7. enforceRetentionPolicies()    — delete past retention window       (background)
+ *   8. processPendingExecutions()    — recover orphaned pending workflows (background)
  *
  * Designed to be called every ~60s by an external cron job. The 202
  * response decouples HTTP duration from retention/reaper runtime so a
@@ -30,7 +31,11 @@ import { successResponse } from '@/lib/api/responses';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { logger } from '@/lib/logging';
-import { processDueSchedules, processPendingExecutions } from '@/lib/orchestration/scheduling';
+import {
+  processDueSchedules,
+  processOrphanedExecutions,
+  processPendingExecutions,
+} from '@/lib/orchestration/scheduling';
 import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
@@ -57,6 +62,7 @@ export function __test_setTickRunning(value: boolean): void {
 const BACKGROUND_TASK_NAMES = [
   'webhookRetries',
   'hookRetries',
+  'orphanSweep',
   'zombieReaper',
   'embeddingBackfill',
   'retention',
@@ -110,6 +116,7 @@ export const POST = withAdminAuth(async (request) => {
   void Promise.allSettled([
     processPendingRetries(),
     processPendingHookRetries(),
+    processOrphanedExecutions(),
     reapZombieExecutions(),
     backfillMissingEmbeddings(),
     enforceRetentionPolicies(),
