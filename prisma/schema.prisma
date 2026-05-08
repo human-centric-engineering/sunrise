@@ -469,6 +469,14 @@ model AiWorkflowExecution {
   leaseExpiresAt    DateTime?
   lastHeartbeatAt   DateTime?
   recoveryAttempts  Int       @default(0)
+  // Mid-step checkpoint state for multi-turn step types (`agent_call`,
+  // `orchestrator`, `reflect`). The engine writes after each completed turn so
+  // a crashed run resumes at the next turn instead of restarting the whole
+  // step. Cleared on step transition (markCurrentStep) and workflow finalize.
+  // Single-shot step types ignore this column — their crash safety comes from
+  // the dispatch cache (`ai_workflow_step_dispatch`). See
+  // `lib/orchestration/engine/orchestration-engine.ts` (recordStepTurn).
+  currentStepTurns  Json?
   userId            String
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
