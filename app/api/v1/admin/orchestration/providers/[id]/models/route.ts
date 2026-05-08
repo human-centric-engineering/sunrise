@@ -21,6 +21,7 @@ import { errorResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -50,13 +51,46 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 
   try {
     const provider = await getProvider(row.slug);
-    const models = await provider.listModels();
+    const [liveModels, matrixRows] = await Promise.all([
+      provider.listModels(),
+      // LEFT JOIN — annotate live SDK output with our curated matrix.
+      // Matrix rows are the source of truth for capabilities + tier
+      // when present; for everything else we fall back to inference.
+      prisma.aiProviderModel.findMany({
+        where: { providerSlug: row.slug, isActive: true },
+        select: {
+          id: true,
+          modelId: true,
+          capabilities: true,
+          tierRole: true,
+        },
+      }),
+    ]);
+
+    const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
+
+    const enriched = liveModels.map((m) => {
+      const matrix = matrixByModelId.get(m.id);
+      // Matrix capabilities take precedence; fall back to inference
+      // so unmatched models still get a meaningful badge + a routed
+      // Test button rather than a generic chat call that 404s.
+      const capabilities = matrix?.capabilities ?? [inferCapability(row.slug, m.id)];
+      return {
+        ...m,
+        inMatrix: Boolean(matrix),
+        matrixId: matrix?.id ?? null,
+        capabilities,
+        tierRole: matrix?.tierRole ?? null,
+      };
+    });
+
     log.info('Provider models listed', {
       providerId: id,
       slug: row.slug,
-      modelCount: models.length,
+      modelCount: enriched.length,
+      matrixMatched: enriched.filter((m) => m.inMatrix).length,
     });
-    return successResponse({ providerId: id, slug: row.slug, models });
+    return successResponse({ providerId: id, slug: row.slug, models: enriched });
   } catch (err) {
     // Raw SDK error is deliberately withheld from the client — in a
     // blind-SSRF context it would act as an exfiltration oracle about

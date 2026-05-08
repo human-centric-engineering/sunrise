@@ -40,6 +40,14 @@ export interface ProviderModelInfo {
   maxContext: number;
   supportsTools: boolean;
   available?: boolean;
+  // Phase A enrichment — matrix LEFT JOIN + capability inference. The
+  // panel uses these to show "In matrix" badges, capability filters,
+  // and to route the per-row Test button by capability instead of
+  // blindly calling chat.completions.
+  inMatrix?: boolean;
+  matrixId?: string | null;
+  capabilities?: string[];
+  tierRole?: string | null;
 }
 
 interface ProviderModelsResponse {
