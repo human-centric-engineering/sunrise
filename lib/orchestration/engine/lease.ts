@@ -93,24 +93,12 @@ export async function refreshLease(executionId: string, leaseToken: string): Pro
 }
 
 /**
- * Clear the lease. Called on `finalize()` and `pauseForApproval()` — the row is no longer
- * being driven. Token-scoped so a stale clear from a crashed process can't strip a new
- * owner's lease. Failure to clear is logged but not fatal — the row will tip into terminal
- * state regardless and the lease will expire naturally.
+ * Cap on consecutive heartbeat refresh THROWS (not lease-lost — that's a separate signal).
+ * After this many DB-throw refreshes in a row, the heartbeat self-cancels with an error log
+ * rather than spinning forever. Set to 3 — roughly one lease window of failed refreshes,
+ * after which the lease will expire naturally and the orphan sweep will recover.
  */
-export async function releaseLease(executionId: string, leaseToken: string): Promise<void> {
-  try {
-    await prisma.aiWorkflowExecution.updateMany({
-      where: { id: executionId, leaseToken },
-      data: { leaseToken: null, leaseExpiresAt: null },
-    });
-  } catch (err) {
-    logger.warn('Lease release failed', {
-      executionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
+export const HEARTBEAT_FAILURE_CAP = 3;
 
 /**
  * Start a periodic lease-refresh timer. Returns a function to clear the timer; call it
@@ -118,16 +106,26 @@ export async function releaseLease(executionId: string, leaseToken: string): Pro
  *
  * The timer is `unref`'d so it never blocks process exit on its own.
  *
- * Loss-of-ownership handling: if `refreshLease` returns false, the heartbeat self-cancels.
- * The engine still detects the loss on its next checkpoint via the same `where: { leaseToken }`
- * guard and aborts cleanly.
+ * Self-cancel triggers:
+ *  - `refreshLease` returns `false` (token mismatch — another host owns the row).
+ *  - `refreshLease` throws `HEARTBEAT_FAILURE_CAP` consecutive times — bails on persistent
+ *    DB failure rather than logging unboundedly. Any successful refresh resets the counter.
+ *
+ * Self-cancel atomicity: in Node's single-threaded event loop, `setInterval` callbacks
+ * cannot interleave with synchronous code — so the `stopped = true; clearInterval(timer)`
+ * pair runs as one unit. A queued tick that fires after `stopped = true` was set sees the
+ * guard at the top of the callback and returns without touching the DB. The only race is
+ * between an in-flight `refreshLease` Promise and a subsequent tick scheduling its own
+ * `refreshLease` call — at most one extra DB call, which no-ops on the WHERE token.
  */
 export function startHeartbeat(executionId: string, leaseToken: string): () => void {
   let stopped = false;
+  let consecutiveFailures = 0;
   const timer = setInterval(() => {
     if (stopped) return;
     refreshLease(executionId, leaseToken)
       .then((stillOwn) => {
+        consecutiveFailures = 0;
         if (!stillOwn) {
           stopped = true;
           clearInterval(timer);
@@ -137,10 +135,21 @@ export function startHeartbeat(executionId: string, leaseToken: string): () => v
         }
       })
       .catch((err) => {
+        consecutiveFailures += 1;
+        const errorMessage = err instanceof Error ? err.message : String(err);
         logger.warn('Lease heartbeat refresh failed', {
           executionId,
-          error: err instanceof Error ? err.message : String(err),
+          consecutiveFailures,
+          error: errorMessage,
         });
+        if (consecutiveFailures >= HEARTBEAT_FAILURE_CAP) {
+          stopped = true;
+          clearInterval(timer);
+          logger.error(
+            `Lease heartbeat: giving up after ${HEARTBEAT_FAILURE_CAP} consecutive failures`,
+            { executionId, error: errorMessage }
+          );
+        }
       });
   }, HEARTBEAT_INTERVAL_MS);
   if (typeof timer.unref === 'function') {

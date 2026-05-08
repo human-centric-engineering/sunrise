@@ -2,12 +2,12 @@
  * Unit tests for the execution lease helpers.
  *
  * Contract under test:
- *   generateLeaseToken  — returns unique UUID-shaped tokens
- *   leaseExpiry         — arithmetic: result is exactly LEASE_DURATION_MS after the base
- *   claimLease          — conditional UPDATE; wins when unclaimed or expired, loses when fresh lease present
- *   refreshLease        — token-scoped UPDATE; only the current owner can extend
- *   releaseLease        — token-scoped clear; stale callers are silently ignored
- *   startHeartbeat      — periodic refresh; self-cancels on ownership loss; no timer leak
+ *   generateLeaseToken    — returns unique UUID-shaped tokens
+ *   leaseExpiry           — arithmetic: result is exactly LEASE_DURATION_MS after the base
+ *   claimLease            — conditional UPDATE; wins when unclaimed or expired, loses when fresh lease present
+ *   refreshLease          — token-scoped UPDATE; only the current owner can extend
+ *   startHeartbeat        — periodic refresh; self-cancels on ownership loss or CAP consecutive throws; no timer leak
+ *   HEARTBEAT_FAILURE_CAP — consecutive-failure threshold beyond which the heartbeat self-cancels
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,19 +37,20 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 
 import {
+  HEARTBEAT_FAILURE_CAP,
   HEARTBEAT_INTERVAL_MS,
   LEASE_DURATION_MS,
   claimLease,
   generateLeaseToken,
   leaseExpiry,
   refreshLease,
-  releaseLease,
   startHeartbeat,
 } from '@/lib/orchestration/engine/lease';
 
 // ─── typed mock references ───────────────────────────────────────────────────
 const mockUpdateMany = vi.mocked(prisma.aiWorkflowExecution.updateMany);
 const mockLoggerWarn = vi.mocked(logger.warn);
+const mockLoggerError = vi.mocked(logger.error);
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -296,101 +297,6 @@ describe('refreshLease', () => {
   });
 });
 
-// ─── releaseLease ─────────────────────────────────────────────────────────────
-describe('releaseLease', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockUpdateMany.mockResolvedValue({ count: 1 });
-  });
-
-  it('WHERE clause is token-scoped — matches id and leaseToken', async () => {
-    await releaseLease('exec-1', 'token-abc');
-
-    const call = mockUpdateMany.mock.calls[0]?.[0];
-    const where = (call as { where: Record<string, unknown> }).where;
-
-    expect(where['id']).toBe('exec-1');
-    expect(where['leaseToken']).toBe('token-abc');
-  });
-
-  it('data payload sets leaseToken to null and leaseExpiresAt to null', async () => {
-    await releaseLease('exec-2', 'token-abc');
-
-    const call = mockUpdateMany.mock.calls[0]?.[0];
-    const data = (call as { data: Record<string, unknown> }).data;
-
-    expect(data['leaseToken']).toBeNull();
-    expect(data['leaseExpiresAt']).toBeNull();
-  });
-
-  it('stale-token path: count 0 resolves cleanly without side effects (idempotent stale-token)', async () => {
-    mockUpdateMany.mockResolvedValue({ count: 0 });
-    await expect(releaseLease('exec-3', 'stale-token')).resolves.toBeUndefined();
-    // logger.warn must NOT fire — count:0 is not an error; it is the normal stale-caller path
-    expect(mockLoggerWarn).not.toHaveBeenCalled();
-  });
-
-  it('DB throws Error → logger.warn receives executionId + err.message; function resolves without re-throwing', async () => {
-    const boom = new Error('connection reset');
-    mockUpdateMany.mockRejectedValue(boom);
-
-    await expect(releaseLease('exec-4', 'token-abc')).resolves.toBeUndefined();
-
-    expect(mockLoggerWarn).toHaveBeenCalledTimes(1);
-    expect(mockLoggerWarn).toHaveBeenCalledWith(
-      expect.stringContaining('Lease release failed'),
-      expect.objectContaining({
-        executionId: 'exec-4',
-        error: 'connection reset',
-      })
-    );
-  });
-
-  it('DB throws non-Error value → logger.warn receives String(err) in the error field', async () => {
-    mockUpdateMany.mockRejectedValue('plain string error');
-
-    await expect(releaseLease('exec-5', 'token-abc')).resolves.toBeUndefined();
-
-    expect(mockLoggerWarn).toHaveBeenCalledWith(
-      expect.stringContaining('Lease release failed'),
-      expect.objectContaining({
-        error: 'plain string error',
-      })
-    );
-  });
-
-  it('calling twice with the same token is safe — second call is a no-op at the DB level', async () => {
-    // First call: DB reports count: 1 (lease cleared successfully)
-    mockUpdateMany.mockResolvedValueOnce({ count: 1 });
-    // Second call: count: 0 (row already cleared, no rows match the now-null token)
-    mockUpdateMany.mockResolvedValueOnce({ count: 0 });
-
-    await releaseLease('exec-6', 'token-abc');
-    await releaseLease('exec-6', 'token-abc');
-
-    // Both calls fired (idempotent: second is safe), no warnings for the count-0 path
-    expect(mockUpdateMany).toHaveBeenCalledTimes(2);
-    expect(mockLoggerWarn).not.toHaveBeenCalled();
-  });
-
-  // Cross-host isolation (behavioural)
-  it('stale releaseLease with tokenA cannot strip a fresh owner with tokenB', async () => {
-    const freshOwnerToken = 'token-fresh';
-    const staleToken = 'token-stale';
-
-    // Conditional mock: only the fresh owner's token matches (count: 1); stale returns count: 0
-    mockUpdateMany.mockImplementation(
-      (args: any) =>
-        Promise.resolve({ count: args.where?.leaseToken === freshOwnerToken ? 1 : 0 }) as never
-    );
-
-    // Stale caller attempts to release — must resolve cleanly without erroring
-    await expect(releaseLease('exec-shared', staleToken)).resolves.toBeUndefined();
-    // Fresh owner's lease is unaffected (stale call matched 0 rows)
-    expect(mockLoggerWarn).not.toHaveBeenCalled();
-  });
-});
-
 // ─── startHeartbeat ──────────────────────────────────────────────────────────
 describe('startHeartbeat', () => {
   beforeEach(() => {
@@ -586,7 +492,7 @@ describe('startHeartbeat', () => {
   });
 
   // Transient failure path
-  it('refreshLease rejects with Error → logger.warn with executionId + err.message, clearInterval NOT called', async () => {
+  it('refreshLease rejects with Error → logger.warn with executionId + err.message + consecutiveFailures, clearInterval NOT called below cap', async () => {
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
     const boom = new Error('network timeout');
     mockUpdateMany.mockRejectedValue(boom);
@@ -598,6 +504,7 @@ describe('startHeartbeat', () => {
       expect.stringContaining('heartbeat refresh failed'),
       expect.objectContaining({
         executionId: 'exec-transient',
+        consecutiveFailures: 1,
         error: 'network timeout',
       })
     );
@@ -631,6 +538,59 @@ describe('startHeartbeat', () => {
 
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
     expect(mockUpdateMany).toHaveBeenCalledTimes(2);
+
+    stop();
+  });
+
+  // Consecutive-failure cap — self-cancel after HEARTBEAT_FAILURE_CAP throws
+  it(`self-cancels after ${HEARTBEAT_FAILURE_CAP} consecutive refresh throws — emits logger.error and stops further ticks`, async () => {
+    mockUpdateMany.mockRejectedValue(new Error('persistent connection failure'));
+
+    const stop = startHeartbeat('exec-cap', 'token-abc');
+
+    // Advance through CAP consecutive failed ticks.
+    for (let i = 0; i < HEARTBEAT_FAILURE_CAP; i++) {
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+    }
+
+    expect(mockUpdateMany).toHaveBeenCalledTimes(HEARTBEAT_FAILURE_CAP);
+    // The final consecutive-failure tick logs the error + stops the timer.
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.stringContaining('giving up after'),
+      expect.objectContaining({ executionId: 'exec-cap', error: 'persistent connection failure' })
+    );
+
+    // After self-cancel, advancing past several more intervals must NOT produce more refreshLease calls.
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 5);
+    expect(mockUpdateMany).toHaveBeenCalledTimes(HEARTBEAT_FAILURE_CAP);
+
+    stop();
+  });
+
+  it('consecutive-failure counter resets on a successful refresh — recovery prevents premature cap hit', async () => {
+    // CAP-1 failures, then a success, then CAP-1 failures — total 2*(CAP-1) failures should NOT trip the cap
+    // because the success in between resets the counter.
+    const failuresBefore = HEARTBEAT_FAILURE_CAP - 1;
+    const failuresAfter = HEARTBEAT_FAILURE_CAP - 1;
+
+    for (let i = 0; i < failuresBefore; i++) {
+      mockUpdateMany.mockRejectedValueOnce(new Error('blip-before'));
+    }
+    mockUpdateMany.mockResolvedValueOnce({ count: 1 });
+    for (let i = 0; i < failuresAfter; i++) {
+      mockUpdateMany.mockRejectedValueOnce(new Error('blip-after'));
+    }
+
+    const stop = startHeartbeat('exec-reset', 'token-abc');
+
+    const totalTicks = failuresBefore + 1 + failuresAfter;
+    for (let i = 0; i < totalTicks; i++) {
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+    }
+
+    expect(mockUpdateMany).toHaveBeenCalledTimes(totalTicks);
+    // logger.error must NOT fire — the success between failure runs reset the counter
+    expect(mockLoggerError).not.toHaveBeenCalled();
 
     stop();
   });

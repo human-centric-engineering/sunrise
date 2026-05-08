@@ -589,19 +589,34 @@ export class OrchestrationEngine {
 
       // --------------------------------------------------------------
       // 3. Terminal event
+      //
+      // `finalize` returns `false` when the lease is gone — the orphan sweep handed this
+      // row to a new owner before we got here. In that case we MUST suppress the terminal
+      // event yield + completion/failure hook; the new owner emits them. Letting both hosts
+      // emit produces duplicate terminal events for the same execution, which is exactly
+      // the orphan-handoff race the lease design exists to close.
       // --------------------------------------------------------------
       if (!failed) {
-        await this.finalize(executionId, leaseToken, ctx, trace, WorkflowStatus.COMPLETED, null);
-        yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
-        emitHookEvent('workflow.completed', {
+        const wrote = await this.finalize(
           executionId,
-          workflowId: workflow.id,
-          userId: options.userId,
-          tokensUsed: ctx.totalTokensUsed,
-          costUsd: ctx.totalCostUsd,
-        });
+          leaseToken,
+          ctx,
+          trace,
+          WorkflowStatus.COMPLETED,
+          null
+        );
+        if (wrote) {
+          yield workflowCompleted(finalOutput, ctx.totalTokensUsed, ctx.totalCostUsd);
+          emitHookEvent('workflow.completed', {
+            executionId,
+            workflowId: workflow.id,
+            userId: options.userId,
+            tokensUsed: ctx.totalTokensUsed,
+            costUsd: ctx.totalCostUsd,
+          });
+        }
       } else {
-        await this.finalize(
+        const wrote = await this.finalize(
           executionId,
           leaseToken,
           ctx,
@@ -609,12 +624,14 @@ export class OrchestrationEngine {
           WorkflowStatus.FAILED,
           failureReason ?? 'Execution did not complete'
         );
-        emitHookEvent('workflow.failed', {
-          executionId,
-          workflowId: workflow.id,
-          userId: options.userId,
-          reason: failureReason ?? 'Execution did not complete',
-        });
+        if (wrote) {
+          emitHookEvent('workflow.failed', {
+            executionId,
+            workflowId: workflow.id,
+            userId: options.userId,
+            reason: failureReason ?? 'Execution did not complete',
+          });
+        }
       }
     } catch (err) {
       workflowSpanError = err;
@@ -988,7 +1005,7 @@ export class OrchestrationEngine {
     unknown
   > {
     yield stepStarted(step.id, step.type, step.name);
-    await this.markCurrentStep(executionId, leaseToken, step.id);
+    await this.markCurrentStep(executionId, leaseToken, step.id, baseLogger);
 
     const started = Date.now();
     const telemetryOut: LlmTelemetryEntry[] = [];
@@ -1191,7 +1208,7 @@ export class OrchestrationEngine {
 
     // Mark all steps as current (best-effort).
     for (const step of steps) {
-      void this.markCurrentStep(executionId, leaseToken, step.id);
+      void this.markCurrentStep(executionId, leaseToken, step.id, baseLogger);
     }
 
     // Run all steps concurrently. Each step runs its full strategy
@@ -1701,7 +1718,8 @@ export class OrchestrationEngine {
   private async markCurrentStep(
     executionId: string,
     leaseToken: string,
-    stepId: string
+    stepId: string,
+    logger: Logger
   ): Promise<void> {
     try {
       // Lease-guarded: a stale-token holder's update silently no-ops via count=0.
@@ -1715,8 +1733,13 @@ export class OrchestrationEngine {
         },
       });
     } catch (err) {
-      // Non-fatal.
-      void err;
+      // Non-fatal — but emit a warn so a connection-pool exhaustion or driver error doesn't
+      // hide for minutes until the next checkpoint surfaces it.
+      logger.warn('markCurrentStep: DB update failed (non-fatal)', {
+        executionId,
+        stepId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -1763,9 +1786,9 @@ export class OrchestrationEngine {
   ): Promise<void> {
     try {
       // Atomic terminal-state-and-lease-clear: the row stops being driven the moment its
-      // status flips, so a separate releaseLease() call would leave a brief window where
-      // the orphan sweep could mistake a paused row for a stuck-running one.
-      await prisma.aiWorkflowExecution.updateMany({
+      // status flips, so a separate clear UPDATE would leave a brief window where the
+      // orphan sweep could mistake a paused row for a stuck-running one.
+      const result = await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken },
         data: {
           status: WorkflowStatus.PAUSED_FOR_APPROVAL,
@@ -1777,6 +1800,17 @@ export class OrchestrationEngine {
           leaseExpiresAt: null,
         },
       });
+      if (result.count === 0) {
+        // Lease lost — the orphan sweep handed this row to a new owner who is now the
+        // source of truth. Suppress notification + hook + webhook so we don't dispatch an
+        // approval card for a row another host is driving (which would surface a confusing
+        // "approval no longer pending" error when the user clicks the link).
+        ctx.logger.warn('pauseForApproval: lease lost — suppressing notification + hook', {
+          executionId,
+          stepId,
+        });
+        return;
+      }
     } catch (err) {
       ctx.logger.error('pauseForApproval: DB update failed', err, { executionId });
       return; // Don't emit events if DB update failed
@@ -1821,6 +1855,14 @@ export class OrchestrationEngine {
     void dispatchWebhookEvent('approval_required', eventData);
   }
 
+  /**
+   * Apply the terminal-state write atomically with the lease clear. Returns `true` when the
+   * UPDATE landed (we owned the lease and the row tipped to its terminal state) and `false`
+   * when `updateMany` returned `count: 0` — i.e. the orphan sweep handed this row to a new
+   * owner before we got here. Callers MUST honour the return value: yielding the terminal
+   * event or emitting the completion hook on a `false` return would produce duplicate
+   * terminal events for the same execution (one from us, one from the new owner).
+   */
   private async finalize(
     executionId: string,
     leaseToken: string,
@@ -1828,11 +1870,8 @@ export class OrchestrationEngine {
     trace: ExecutionTraceEntry[],
     status: WorkflowStatus,
     errorMessage: string | null
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      // Atomic terminal-state-and-lease-clear (same rationale as pauseForApproval).
-      // updateMany returns count=0 if the lease is gone — log + return so we don't
-      // throw on a benign race where the orphan sweep beat us by a hair.
       const result = await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken },
         data: {
@@ -1853,7 +1892,9 @@ export class OrchestrationEngine {
           executionId,
           status,
         });
+        return false;
       }
+      return true;
     } catch (err) {
       ctx.logger.error('finalize: DB update failed — execution row is stale', err, {
         executionId,

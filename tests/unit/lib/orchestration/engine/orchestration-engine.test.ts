@@ -66,6 +66,7 @@ import {
 import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -3970,9 +3971,11 @@ describe('OrchestrationEngine', () => {
 
     // ── finalize lease-loss path ──────────────────────────────────────────
 
-    it('finalize lease-loss (count=0): logs warn and yields workflow_completed exactly once', async () => {
-      // Arrange — finalize writes (identified by completedAt in data) return count=0.
-      // The engine must log the warn, not throw, and yield the terminal event once.
+    it('finalize lease-loss (count=0): logs warn AND suppresses workflow_completed event + completion hook (single-owner contract)', async () => {
+      // Contract: when finalize finds count=0 (orphan sweep handed the row to a new owner),
+      // this engine instance MUST suppress the terminal event yield and the
+      // `workflow.completed` hook. Otherwise BOTH the new owner and this stale instance
+      // emit terminal events for the same execution — duplicate hooks/webhooks for clients.
       registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
 
       vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
@@ -3989,10 +3992,10 @@ describe('OrchestrationEngine', () => {
       // Act — must NOT throw (finalize catches count=0 and logs, not re-throws).
       const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
 
-      // Assert — exactly one workflow_completed; no workflow_failed; no exception.
-      const completedEvents = events.filter((e) => e.type === 'workflow_completed');
-      expect(completedEvents).toHaveLength(1);
+      // Assert — NO terminal event yielded, NO completion hook emitted.
+      expect(events.map((e) => e.type)).not.toContain('workflow_completed');
       expect(events.map((e) => e.type)).not.toContain('workflow_failed');
+      expect(emitHookEvent).not.toHaveBeenCalledWith('workflow.completed', expect.anything());
     });
 
     // ── pauseForApproval clears lease atomically ──────────────────────────
@@ -4042,6 +4045,53 @@ describe('OrchestrationEngine', () => {
       // a lease and mistakes it for a stuck-running row.
       expect(pauseData.leaseToken).toBeNull();
       expect(pauseData.leaseExpiresAt).toBeNull();
+    });
+
+    // ── pauseForApproval lease-loss (count=0) suppresses notification + hook + webhook ──
+
+    it('pauseForApproval lease-loss (count=0): suppresses approval notification + hook + webhook (single-owner contract)', async () => {
+      // Contract: when pauseForApproval finds count=0 (orphan sweep handed the row to a new
+      // owner), this engine instance MUST NOT dispatch the approval notification, emit the
+      // workflow.paused_for_approval hook, or fire the approval_required webhook. Otherwise
+      // the user receives an approval Slack/email for a row another host is now driving —
+      // clicking the link surfaces a confusing "approval no longer pending" error.
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'gate',
+            name: 'Approval',
+            type: 'human_approval',
+            config: { prompt: 'ok?' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'gate',
+        errorStrategy: 'fail',
+      };
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'ok?' });
+      });
+
+      // pauseForApproval write (identified by status: 'paused_for_approval' in data) returns count=0.
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        const data = (args as { data: Record<string, unknown> }).data;
+        if (data.status === 'paused_for_approval') {
+          return { count: 0 }; // simulate lease-loss at pause
+        }
+        return { count: 1 };
+      }) as never);
+
+      // Act — must NOT throw.
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // Assert — neither hook nor webhook fired for the approval.
+      expect(emitHookEvent).not.toHaveBeenCalledWith(
+        'workflow.paused_for_approval',
+        expect.anything()
+      );
+      expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('approval_required', expect.anything());
     });
 
     // ── finalize (completed) clears lease atomically ──────────────────────

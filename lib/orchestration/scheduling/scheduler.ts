@@ -123,6 +123,9 @@ export async function drainEngine(
 
     // finalize() never ran — repair the row so /status and the hook payload
     // agree. The zombie reaper remains the safety net if this also fails.
+    // Lease columns are cleared alongside the FAILED flip so an orphan-resume
+    // run that crashed pre-finalize doesn't leave a stale lease pinned to the
+    // terminal row (which would block any future re-claim until natural expiry).
     try {
       await prisma.aiWorkflowExecution.update({
         where: { id: executionId },
@@ -130,6 +133,8 @@ export async function drainEngine(
           status: WorkflowStatus.FAILED,
           errorMessage,
           completedAt: new Date(),
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
     } catch (updateErr) {
@@ -627,6 +632,10 @@ export async function processOrphanedExecutions(): Promise<OrphanSweepResult> {
           error: sanitisedError,
         };
         emitHookEvent('workflow.execution.failed', crashPayload);
+        // Fire-and-forget: dispatchWebhookEvent records the delivery attempt to its retry
+        // queue BEFORE the network call, so a rejection here means the delivery is already
+        // queued for retry. Awaiting would couple sweep latency to webhook-receiver health,
+        // which is wrong — the receiver retry loop is decoupled by design.
         void dispatchWebhookEvent('execution_crashed', crashPayload).catch((err: unknown) => {
           logger.warn('Webhook dispatch failed for execution_crashed (recovery exhausted)', {
             executionId: execution.id,
@@ -712,6 +721,10 @@ export async function processOrphanedExecutions(): Promise<OrphanSweepResult> {
 
       result.recovered++;
     } catch (err) {
+      // Per-row throw is intentionally not terminal — the next maintenance tick re-queries
+      // the same orphans (status=running AND leaseExpiresAt < now) and retries. This handles
+      // transient DB blips without a separate "permanently unrecoverable" state, bounded by
+      // recoveryAttempts vs. MAX_RECOVERY_ATTEMPTS.
       const errorMessage = err instanceof Error ? err.message : String(err);
       result.errors.push({ executionId: execution.id, error: errorMessage });
     }

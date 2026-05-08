@@ -660,6 +660,10 @@ describe('drainEngine: engine crash path', () => {
           status: 'failed',
           errorMessage: 'engine boom',
           completedAt: expect.any(Date),
+          // Lease columns must be cleared on the FAILED-write so an orphan-resume run that
+          // crashed pre-finalize doesn't pin a stale lease to the terminal row.
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
       expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
@@ -789,6 +793,8 @@ describe('drainEngine: engine crash path', () => {
           status: 'failed',
           errorMessage: 'recovery boom',
           completedAt: expect.any(Date),
+          leaseToken: null,
+          leaseExpiresAt: null,
         },
       });
       expect(emitHookEvent).toHaveBeenCalledWith('workflow.execution.failed', {
