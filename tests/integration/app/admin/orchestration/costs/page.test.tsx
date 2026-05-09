@@ -45,6 +45,15 @@ vi.mock('next/navigation', () => ({
   })),
 }));
 
+// CostsPage's server component awaits refreshFromOpenRouter() before
+// rendering. Without this mock every test fires a real 10-second HTTP
+// request to openrouter.ai — flake risk and CI dependency on a third
+// party. The route under test exercises cost summary fetching, not
+// the model registry refresh, so a no-op resolution is the right stub.
+vi.mock('@/lib/orchestration/llm/model-registry', () => ({
+  refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const MOCK_SUMMARY = {

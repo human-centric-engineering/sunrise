@@ -283,6 +283,23 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       );
     });
 
+    it('passes isActive filter to prisma where clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(0 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+
+      await GET(makeGetRequest({ isActive: 'false' }));
+
+      expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            isActive: false,
+          }),
+        })
+      );
+    });
+
     it('applies text search across name, slug, providerSlug, modelId, description', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
@@ -370,6 +387,9 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
 
     const response = await POST(makePostRequest(validBody));
     expect(response.status).toBe(409);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('CONFLICT');
   });
 
   it('returns 429 when rate-limited', async () => {

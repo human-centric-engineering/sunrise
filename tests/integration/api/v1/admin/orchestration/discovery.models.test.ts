@@ -55,11 +55,19 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModelsByProvider: vi.fn(() => []),
 }));
 
+vi.mock('@/lib/security/rate-limit', () => ({
+  adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
 import { GET } from '@/app/api/v1/admin/orchestration/discovery/models/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { getModelsByProvider, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -114,6 +122,7 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
     vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
     vi.mocked(refreshFromOpenRouter).mockResolvedValue();
     vi.mocked(getModelsByProvider).mockReturnValue([]);
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
   });
 
   describe('Authentication', () => {
@@ -127,6 +136,15 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
       const response = await GET(makeRequest());
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate-limited', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+      const response = await GET(makeRequest());
+      expect(response.status).toBe(429);
     });
   });
 
@@ -232,7 +250,8 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
 
       const response = await GET(makeRequest('openai'));
       expect(response.status).toBe(503);
-      const data = await parseJson<{ error: { code: string } }>(response);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data.success).toBe(false);
       expect(data.error.code).toBe('PROVIDER_UNAVAILABLE');
     });
 

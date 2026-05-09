@@ -552,9 +552,10 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
     expect(response.status).toBe(409);
     const data = await parseJson<{
       success: boolean;
-      error: { message: string; details?: unknown };
+      error: { code: string; message: string; details?: unknown };
     }>(response);
     expect(data.success).toBe(false);
+    expect(data.error.code).toBe('CONFLICT');
     expect(data.error.message).toMatch(/3 agents/i);
 
     // Refused — no actual delete or update happened.
@@ -574,6 +575,12 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
     );
 
     expect(response.status).toBe(409);
+    const data = await parseJson<{
+      success: boolean;
+      error: { code: string; message: string };
+    }>(response);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('CONFLICT');
     expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });
 
@@ -587,7 +594,12 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
     );
 
     expect(response.status).toBe(409);
-    const data = await parseJson<{ error: { message: string } }>(response);
+    const data = await parseJson<{
+      success: boolean;
+      error: { code: string; message: string };
+    }>(response);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('CONFLICT');
     expect(data.error.message).toMatch(/42 cost log/i);
     expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });

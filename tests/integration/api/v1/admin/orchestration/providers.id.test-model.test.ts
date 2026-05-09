@@ -234,13 +234,14 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(response.status).toBe(200);
       const data = await parseJson<{
         success: boolean;
-        data: { ok: boolean; latencyMs: null; model: string };
+        data: { ok: boolean; latencyMs: null; model: string; error: string };
       }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.ok).toBe(false);
       expect(data.data.latencyMs).toBeNull();
       expect(data.data.model).toBe(MODEL);
+      expect(data.data.error).toBe('model_test_failed');
     });
 
     it('returns 200 with ok=false when getProvider itself throws', async () => {
@@ -251,8 +252,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       const response = await POST(makeRequest(), makeParams());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ data: { ok: boolean } }>(response);
+      const data = await parseJson<{ data: { ok: boolean; error: string } }>(response);
       expect(data.data.ok).toBe(false);
+      expect(data.data.error).toBe('model_test_failed');
     });
   });
 

@@ -22,6 +22,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
+import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -50,6 +51,17 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   }
 
   try {
+    // Pull the OpenRouter catalogue so that the per-model enrichment
+    // inside provider.listModels() returns live context + pricing
+    // instead of the static fallback's zeros for any model not in the
+    // small built-in map. Idempotent and 24h-cached, fails silently —
+    // OpenRouter being unreachable just preserves the prior cache.
+    // Skipped for local providers: their models aren't in OpenRouter
+    // and we'd rather not make a network call on a fully-local setup.
+    if (!row.isLocal) {
+      await refreshFromOpenRouter();
+    }
+
     const provider = await getProvider(row.slug);
     const [liveModels, matrixRows, agentRows] = await Promise.all([
       provider.listModels(),

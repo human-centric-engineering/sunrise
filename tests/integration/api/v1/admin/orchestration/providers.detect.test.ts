@@ -65,6 +65,8 @@ interface DetectionRow {
   alreadyConfigured: boolean;
   isLocal: boolean;
   suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
   suggestedEmbeddingModel: string | null;
 }
 
@@ -197,6 +199,22 @@ describe('GET /api/v1/admin/orchestration/providers/detect', () => {
 
       const body = await response.text();
       expect(body).not.toContain(SECRET);
+    });
+
+    it('returns suggestedRoutingModel and suggestedReasoningModel for providers that define them', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<DetectResponseBody>(response);
+      const anthropic = data.data.detected.find((r) => r.slug === 'anthropic');
+      expect(anthropic).toBeDefined();
+      // Anthropic registers both routing and reasoning suggestions; the
+      // setup wizard reads these to pre-populate per-task defaults. A
+      // regression that drops either field from the response (rename,
+      // omit, return undefined) would otherwise be invisible.
+      expect(anthropic?.suggestedRoutingModel).toEqual(expect.any(String));
+      expect(anthropic?.suggestedReasoningModel).toEqual(expect.any(String));
     });
   });
 });
