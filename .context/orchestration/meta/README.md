@@ -15,6 +15,7 @@ If you need to know "does Sunrise have X?" or "how many step types are there?" o
 | [`hosting-requirements.md`](./hosting-requirements.md)                       | Engineers, ops, anyone choosing a deployment host | **What it takes to run in production.** Terms-of-art glossary, runtime requirements, platform comparison (Vercel / Render / Railway / Docker / VPS), gotchas that bite first.                                          |
 | [`business-applications.md`](./business-applications.md)                     | Product, founders, venture-studio teams           | **Real-world commercial opportunities.** Paradigm shifts, subcategories, and worked examples for where the agentic platform can be deployed to create value.                                                           |
 | [`commercial-proposition.md`](./commercial-proposition.md)                   | Sales, partners, executive readers                | **What Sunrise offers, in prose.** Plain-English description of the platform's value without architectural detail — a starting point for non-technical conversations.                                                  |
+| [`positioning.md`](./positioning.md)                                         | Sales, partners, anyone needing a one-liner       | **Marketing-register positioning.** One-liner, three-liner, friend-at-the-pub pitch, is/is-not table, personas. Companion to `commercial-proposition.md` — same truths, punchier register.                             |
 | [`functional-robustness-test-plan.md`](./functional-robustness-test-plan.md) | QA, engineers running acceptance tests            | **Inventory of scenarios for end-to-end manual + automated validation.** Use / Abuse / Edge sub-sections per capability area, with four verification methods (Claude code-trace, Claude live-exec, manual, automated). |
 
 ## How these relate to the rest of the docs
@@ -22,6 +23,7 @@ If you need to know "does Sunrise have X?" or "how many step types are there?" o
 | Question                                                       | Where to look                                                             |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | "What does the system do?"                                     | [`functional-specification.md`](./functional-specification.md)            |
+| "I need to explain it in one sentence."                        | [`positioning.md`](./positioning.md)                                      |
 | "Why was X chosen?"                                            | [`architectural-decisions.md`](./architectural-decisions.md)              |
 | "How do I implement / use feature Y?"                          | `.context/orchestration/<topic>.md` (engineering docs, one per module)    |
 | "How do I drive the admin UI?"                                 | `.context/admin/orchestration.md` and `.context/admin/orchestration-*.md` |
