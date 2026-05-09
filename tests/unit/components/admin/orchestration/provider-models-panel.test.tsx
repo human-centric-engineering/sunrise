@@ -104,9 +104,9 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
-        expect(screen.getByText('Claude Haiku 3')).toBeInTheDocument();
-        expect(screen.getByText('Claude Sonnet 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+        expect(screen.getByText('claude-haiku-3')).toBeInTheDocument();
+        expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
       });
     });
 
@@ -156,7 +156,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-3" providerName="Ollama" isLocal={true} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
       expect(screen.queryByText('Input $/1M')).not.toBeInTheDocument();
@@ -184,7 +184,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
       const initialCallCount = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
@@ -278,7 +278,7 @@ describe('ProviderModelsPanel', () => {
 
       await waitFor(() => {
         expect(apiClient.get).toHaveBeenCalled();
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
     });
 
@@ -342,13 +342,13 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      // Target the Test button by its tooltip title — the row order in
-      // the table now depends on the sort state, so picking element [0]
-      // would couple the assertion to the default sort.
-      await user.click(screen.getByTitle(/test claude opus 4\.6/i));
+      // Target the Test button by its accessible name — the row order
+      // in the table now depends on the sort state, so picking element
+      // [0] would couple the assertion to the default sort.
+      await user.click(screen.getByRole('button', { name: /^test claude opus 4\.6$/i }));
 
       await waitFor(() => {
         expect(apiClient.post).toHaveBeenCalledWith(
@@ -373,10 +373,10 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByTitle(/test claude opus 4\.6/i));
+      await user.click(screen.getByRole('button', { name: /^test claude opus 4\.6$/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
@@ -459,7 +459,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // The phrase "In matrix" appears twice in the DOM: once as the
@@ -476,18 +476,18 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // Every row is visible immediately — no "In your matrix" /
       // "Discovered" expand toggles, no rows hidden behind a closed
       // section. The four enriched fixture rows all render in one go.
-      // text-embedding-3-small has identical id and name so it appears
-      // twice (name cell + id sub-row); getAllByText handles that.
-      expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
-      expect(screen.getAllByText('text-embedding-3-small').length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText('o3-pro')).toBeInTheDocument();
-      expect(screen.getByText('DALL-E 3')).toBeInTheDocument();
+      // The cell shows the canonical model id (the source of truth);
+      // the friendly `name` field is no longer rendered.
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+      expect(screen.getByText('o3-pro-2025-06-10')).toBeInTheDocument();
+      expect(screen.getByText('dall-e-3')).toBeInTheDocument();
     });
 
     it('shows a capability badge per row', async () => {
@@ -497,7 +497,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // The embedding row shows a capability badge with text "embedding".
@@ -516,37 +516,37 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // Click 1 — group matrix rows at top.
       const inMatrixHeader = screen.getByRole('button', { name: /^in matrix/i });
       await user.click(inMatrixHeader);
       let rows = document.querySelectorAll('tbody tr');
-      expect(rows[0]?.textContent).toContain('GPT-4o mini');
+      expect(rows[0]?.textContent).toContain('gpt-4o-mini');
 
-      // Click 2 — revert to name-asc, NOT flip to matrix-rows-at-bottom.
+      // Click 2 — revert to id-asc, NOT flip to matrix-rows-at-bottom.
       await user.click(inMatrixHeader);
       rows = document.querySelectorAll('tbody tr');
-      expect(rows[0]?.textContent).toContain('DALL-E 3');
+      expect(rows[0]?.textContent).toContain('dall-e-3');
     });
 
-    it('default sort is alphabetical by model name (matrix rows interleaved)', async () => {
+    it('default sort is alphabetical by canonical model id (matrix rows interleaved)', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      // Default sort is `name asc` — DALL-E 3 sorts before GPT-4o mini
+      // Default sort is `id asc` — `dall-e-3` sorts before `gpt-4o-mini`
       // (the lone matrix-matched row), proving the matrix grouping is
       // NOT applied by default. Operators opt into grouping by clicking
       // the "In matrix" column header.
       const rows = document.querySelectorAll('tbody tr');
-      expect(rows[0]?.textContent).toContain('DALL-E 3');
+      expect(rows[0]?.textContent).toContain('dall-e-3');
     });
   });
 
@@ -561,14 +561,14 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
       await user.type(screen.getByPlaceholderText(/search models/i), 'haiku');
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Haiku 3')).toBeInTheDocument();
-        expect(screen.queryByText('Claude Opus 4.6')).not.toBeInTheDocument();
+        expect(screen.getByText('claude-haiku-3')).toBeInTheDocument();
+        expect(screen.queryByText('claude-opus-4-6')).not.toBeInTheDocument();
       });
     });
 
@@ -641,7 +641,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // Bound row shows the count as a popover trigger; unbound row shows a flat 0.
@@ -659,7 +659,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       await user.click(screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i }));
@@ -680,20 +680,20 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
       // Both rows visible by default.
-      expect(screen.getByText('GPT-4o')).toBeInTheDocument();
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
 
       await user.click(
         screen.getByRole('button', { name: /show only models with at least one bound agent/i })
       );
 
       await waitFor(() => {
-        expect(screen.queryByText('GPT-4o')).not.toBeInTheDocument();
+        expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
       });
       // Bound row stays visible.
-      expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
     });
   });
 
@@ -753,13 +753,17 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       // Both the model name and id are "text-embedding-3-small", so
-      // the string appears twice in the DOM. Wait on the title-cased
-      // header instead, then look up the test button by its title.
+      // the string appears twice in the DOM. Find the test button via
+      // its accessible name (aria-label).
       await waitFor(() => {
-        expect(screen.getByTitle(/test text-embedding-3-small/i)).toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: /^test text-embedding-3-small$/i })
+        ).toBeInTheDocument();
       });
 
-      const embeddingTestButton = screen.getByTitle(/test text-embedding-3-small/i);
+      const embeddingTestButton = screen.getByRole('button', {
+        name: /^test text-embedding-3-small$/i,
+      });
       await user.click(embeddingTestButton);
 
       await waitFor(() => {
@@ -786,12 +790,12 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('o3-pro')).toBeInTheDocument();
+        expect(screen.getByText('o3-pro-2025-06-10')).toBeInTheDocument();
       });
 
       // The reasoning row's Test button is disabled — there is no
-      // matching enabled "Test o3-pro" handler.
-      expect(screen.queryByTitle(/test o3-pro/i)).not.toBeInTheDocument();
+      // enabled button whose accessible name is "Test o3-pro".
+      expect(screen.queryByRole('button', { name: /^test o3-pro$/i })).not.toBeInTheDocument();
       // ...but the disabled button is rendered with an aria-label
       // pointing at the disabled state.
       expect(screen.getByLabelText(/test not supported for o3-pro/i)).toBeDisabled();
@@ -839,7 +843,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       // Non-matrix row → Add button rendered.

@@ -744,8 +744,7 @@ function DiscoveryStep({
                       />
                     </TableCell>
                     <TableCell>
-                      <div className="font-medium">{c.name}</div>
-                      <div className="text-muted-foreground font-mono text-xs">{c.modelId}</div>
+                      <div className="font-mono text-sm">{c.modelId}</div>
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
@@ -865,8 +864,7 @@ function ReviewCard({
           ) : (
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           )}
-          <span className="font-medium">{row.name}</span>
-          <span className="text-muted-foreground font-mono text-xs">{row.modelId}</span>
+          <span className="font-mono text-sm">{row.modelId}</span>
         </span>
       </button>
       {isOpen && (

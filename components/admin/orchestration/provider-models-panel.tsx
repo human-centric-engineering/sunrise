@@ -17,8 +17,8 @@
  *     Other) — multi-select; "Other" buckets reasoning, moderation,
  *     and unknown
  *   - Sortable columns — click a column header to sort. Default sort is
- *     alphabetical by model name; click the "In matrix" header to group
- *     curated `AiProviderModel` rows above the vendor-discovered tail.
+ *     alphabetical by canonical model id; click the "In matrix" header to
+ *     group curated `AiProviderModel` rows above the vendor-discovered tail.
  *
  * Per-row Test button is capability-aware (Phase B/C): chat and
  * embedding rows trigger the live SDK roundtrip via
@@ -106,8 +106,9 @@ export interface ProviderModelsPanelProps {
 type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
 
 // Columns the operator can sort on. `name` covers the Model column
-// (sorts on display name); `inMatrix` is the default — clicking it
-// flips matrix-first → discovered-first.
+// (sorts on canonical model id, which is what the cell displays);
+// `inMatrix` is the default — clicking it flips matrix-first →
+// discovered-first.
 type SortKey = 'name' | 'inMatrix' | 'inUse' | 'tier' | 'context' | 'input' | 'output';
 type SortDir = 'asc' | 'desc';
 
@@ -132,6 +133,21 @@ const UNTESTABLE_REASON: Partial<Record<Capability, string>> = {
   moderation: "Moderation models can't be tested through this panel.",
   unknown: "Unknown model type — we don't have a test surface for this capability.",
 };
+
+// Per-capability description of what the Test button actually does.
+// Mirrors the request shape in /providers/:id/test-model so operators
+// know what's being sent on their behalf before they click.
+const TESTABLE_ACTION: Partial<Record<Capability, string>> = {
+  chat: "Sends a small 'Say hello.' prompt (max 10 tokens) and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
+  embedding:
+    "Embeds the string 'hello' and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
+};
+
+// Reason text shown on the per-cell tooltip when context / pricing is
+// missing. Same string for all three columns since the cause is always
+// the same — the model isn't in OpenRouter's catalogue.
+const UNKNOWN_FIELD_REASON =
+  "Not listed in OpenRouter's catalogue — common for niche fine-tunes and embedding-only models.";
 
 function primaryCapability(model: ProviderModelInfo): Capability {
   // Default to 'chat' when the route didn't enrich. Keeps backwards
@@ -254,7 +270,7 @@ export function ProviderModelsPanel({
       let primary = 0;
       switch (sortKey) {
         case 'name':
-          primary = a.name.localeCompare(b.name);
+          primary = a.id.localeCompare(b.id);
           break;
         case 'inMatrix':
           // false → 0, true → 1; ascending puts non-matrix first, so the
@@ -446,6 +462,7 @@ export function ProviderModelsPanel({
                       activeKey={sortKey}
                       dir={sortDir}
                       onSort={handleSort}
+                      tooltip="Maximum context window in tokens. Pulled from OpenRouter's public catalogue (refreshed every 24h). Shown as — when the model isn't listed there."
                     />
                     <SortableHead
                       label="Tier"
@@ -463,6 +480,7 @@ export function ProviderModelsPanel({
                           dir={sortDir}
                           onSort={handleSort}
                           align="right"
+                          tooltip="Cost per million input tokens. From OpenRouter's catalogue (refreshed every 24h). Shown as — when the model isn't listed there."
                         />
                         <SortableHead
                           label="Output $/1M"
@@ -471,6 +489,7 @@ export function ProviderModelsPanel({
                           dir={sortDir}
                           onSort={handleSort}
                           align="right"
+                          tooltip="Cost per million output tokens. From OpenRouter's catalogue (refreshed every 24h). Shown as — when the model isn't listed there."
                         />
                       </>
                     )}
@@ -488,8 +507,7 @@ export function ProviderModelsPanel({
                     return (
                       <TableRow key={m.id}>
                         <TableCell>
-                          <div className="font-medium">{m.name}</div>
-                          <div className="text-muted-foreground font-mono text-xs">{m.id}</div>
+                          <div className="font-mono text-sm">{m.id}</div>
                         </TableCell>
                         <TableCell>
                           {m.inMatrix ? (
@@ -553,7 +571,13 @@ export function ProviderModelsPanel({
                           </div>
                         </TableCell>
                         <TableCell className="text-xs">
-                          {m.maxContext.toLocaleString()} tok
+                          {m.maxContext > 0 ? (
+                            `${m.maxContext.toLocaleString()} tok`
+                          ) : (
+                            <Tip label={UNKNOWN_FIELD_REASON}>
+                              <span className="text-muted-foreground cursor-help">—</span>
+                            </Tip>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className="text-xs capitalize">{m.tier}</span>
@@ -561,10 +585,22 @@ export function ProviderModelsPanel({
                         {!isLocal && (
                           <>
                             <TableCell className="text-right text-xs tabular-nums">
-                              ${m.inputCostPerMillion.toFixed(2)}
+                              {m.inputCostPerMillion > 0 ? (
+                                `$${m.inputCostPerMillion.toFixed(2)}`
+                              ) : (
+                                <Tip label={UNKNOWN_FIELD_REASON}>
+                                  <span className="text-muted-foreground cursor-help">—</span>
+                                </Tip>
+                              )}
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
-                              ${m.outputCostPerMillion.toFixed(2)}
+                              {m.outputCostPerMillion > 0 ? (
+                                `$${m.outputCostPerMillion.toFixed(2)}`
+                              ) : (
+                                <Tip label={UNKNOWN_FIELD_REASON}>
+                                  <span className="text-muted-foreground cursor-help">—</span>
+                                </Tip>
+                              )}
                             </TableCell>
                           </>
                         )}
@@ -587,18 +623,20 @@ export function ProviderModelsPanel({
                                 : (result.message ?? "Didn't respond — check server logs")}
                             </span>
                           ) : testable ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0"
-                              onClick={() => {
-                                void handleTestModel(m);
-                              }}
-                              title={`Test ${m.name}`}
-                            >
-                              <Play className="h-3 w-3" />
-                            </Button>
+                            <Tip label={TESTABLE_ACTION[cap] ?? TESTABLE_ACTION.chat ?? ''}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                                onClick={() => {
+                                  void handleTestModel(m);
+                                }}
+                                aria-label={`Test ${m.name}`}
+                              >
+                                <Play className="h-3 w-3" />
+                              </Button>
+                            </Tip>
                           ) : (
                             <Tip label={UNTESTABLE_REASON[cap] ?? UNTESTABLE_REASON.unknown ?? ''}>
                               <span className="inline-flex">
@@ -681,6 +719,7 @@ interface SortableHeadProps {
   dir: SortDir;
   onSort: (key: SortKey) => void;
   align?: 'left' | 'right';
+  tooltip?: string;
 }
 
 function SortableHead({
@@ -690,9 +729,22 @@ function SortableHead({
   dir,
   onSort,
   align = 'left',
+  tooltip,
 }: SortableHeadProps): React.ReactElement {
   const isActive = sortKey === activeKey;
   const Icon = !isActive ? ArrowUpDown : dir === 'asc' ? ArrowUp : ArrowDown;
+  const button = (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`hover:text-foreground inline-flex items-center gap-1 ${
+        align === 'right' ? 'ml-auto' : ''
+      } ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}
+    >
+      {label}
+      <Icon className="h-3 w-3" aria-hidden="true" />
+    </button>
+  );
   return (
     <TableHead
       className={align === 'right' ? 'text-right' : undefined}
@@ -700,16 +752,7 @@ function SortableHead({
       // it tells assistive tech the current sort state of the column.
       aria-sort={isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
     >
-      <button
-        type="button"
-        onClick={() => onSort(sortKey)}
-        className={`hover:text-foreground inline-flex items-center gap-1 ${
-          align === 'right' ? 'ml-auto' : ''
-        } ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}
-      >
-        {label}
-        <Icon className="h-3 w-3" aria-hidden="true" />
-      </button>
+      {tooltip ? <Tip label={tooltip}>{button}</Tip> : button}
     </TableHead>
   );
 }

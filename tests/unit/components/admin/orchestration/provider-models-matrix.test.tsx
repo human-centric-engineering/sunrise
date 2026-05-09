@@ -336,20 +336,6 @@ describe('ProviderModelsMatrix', () => {
     expect(link).toHaveAttribute('href', '/admin/orchestration/provider-models/model-xyz');
   });
 
-  // ── Custom badge ───────────────────────────────────────────────────────────
-
-  it('shows "Custom" badge when model isDefault is false', () => {
-    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: false })]} />);
-
-    expect(screen.getByText('Custom')).toBeInTheDocument();
-  });
-
-  it('hides "Custom" badge when model isDefault is true', () => {
-    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: true })]} />);
-
-    expect(screen.queryByText('Custom')).not.toBeInTheDocument();
-  });
-
   // ── Tier filter ───────────────────────────────────────────────────────────
 
   it('filtering by tier shows only matching models', async () => {

@@ -148,13 +148,21 @@ export const GET = withAdminAuth(async (request) => {
   // canonical `id` give the same result after `getModelsByProvider`.
   // Tracking source flags lets the dialog show vendor / openrouter
   // dots so operators can spot OpenRouter-only suggestions.
+  //
+  // The `name` field is intentionally set to the canonical model id —
+  // OpenRouter's prefixed display names ("OpenAI: GPT-4o") only fire
+  // for chat-tier models and create a presentation split with
+  // vendor-only entries (image / audio / embedding) that fall back to
+  // the bare id. Using the id as the label everywhere keeps the
+  // dialog consistent; OpenRouter still contributes pricing, context
+  // window, and capability flags via `live` / `or`.
   const merged = new Map<
     string,
     { name: string; vendor: boolean; openrouter: boolean; live?: ModelInfo; or?: ModelInfo }
   >();
 
   for (const m of vendorModels ?? []) {
-    merged.set(m.id, { name: m.name, vendor: true, openrouter: false, live: m });
+    merged.set(m.id, { name: m.id, vendor: true, openrouter: false, live: m });
   }
   for (const m of openrouterModels ?? []) {
     const existing = merged.get(m.id);
@@ -162,7 +170,7 @@ export const GET = withAdminAuth(async (request) => {
       existing.openrouter = true;
       existing.or = m;
     } else {
-      merged.set(m.id, { name: m.name, vendor: false, openrouter: true, or: m });
+      merged.set(m.id, { name: m.id, vendor: false, openrouter: true, or: m });
     }
   }
 

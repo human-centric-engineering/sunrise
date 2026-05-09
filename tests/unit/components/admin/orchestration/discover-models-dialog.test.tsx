@@ -48,9 +48,12 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
 }
 
 function makeCandidate(overrides: Record<string, unknown> = {}) {
-  return {
+  // The discovery API sets `name` to the canonical model id so the
+  // dialog shows a single, consistent label across vendor + openrouter
+  // sources. Mirror that in the fixture so tests don't drift from the
+  // real shape.
+  const base = {
     modelId: 'gpt-4o-mini',
-    name: 'GPT-4o mini',
     sources: { vendor: true, openrouter: true },
     inMatrix: false,
     matrixId: null,
@@ -71,6 +74,7 @@ function makeCandidate(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
+  return { ...base, name: (base as { modelId: string }).modelId };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -128,7 +132,7 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
       // Provider step's heading should not appear when preselected.
       expect(screen.queryByText(/pick a configured provider/i)).not.toBeInTheDocument();
@@ -141,10 +145,9 @@ describe('DiscoverModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
         candidates: [
-          makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+          makeCandidate({ modelId: 'gpt-4o-mini' }),
           makeCandidate({
             modelId: 'gpt-4o',
-            name: 'GPT-4o',
             sources: { vendor: true, openrouter: false },
           }),
         ],
@@ -153,9 +156,9 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
-      expect(screen.getByText('GPT-4o')).toBeInTheDocument();
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
     });
 
     it('disables checkbox and shows "In matrix" badge for already-matrix rows', async () => {
@@ -168,7 +171,7 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       const checkbox = screen.getByRole('checkbox', {
@@ -183,8 +186,8 @@ describe('DiscoverModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
         candidates: [
-          makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' }),
-          makeCandidate({ modelId: 'gpt-5', name: 'GPT-5' }),
+          makeCandidate({ modelId: 'gpt-4o-mini' }),
+          makeCandidate({ modelId: 'gpt-5' }),
         ],
       });
 
@@ -192,14 +195,14 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       await user.type(screen.getByPlaceholderText(/search by id or name/i), 'gpt-5');
       await waitFor(() => {
-        expect(screen.queryByText('GPT-4o mini')).not.toBeInTheDocument();
+        expect(screen.queryByText('gpt-4o-mini')).not.toBeInTheDocument();
       });
-      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByText('gpt-5')).toBeInTheDocument();
     });
 
     it('disables Continue until at least one non-matrix row is selected', async () => {
@@ -213,13 +216,13 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
       const continueButton = screen.getByRole('button', { name: /continue/i });
       expect(continueButton).toBeDisabled();
 
-      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
       expect(continueButton).toBeEnabled();
     });
   });
@@ -230,8 +233,8 @@ describe('DiscoverModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
         candidates: [
-          makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' }),
-          makeCandidate({ modelId: 'gpt-4o', name: 'GPT-4o' }),
+          makeCandidate({ modelId: 'gpt-4o-mini' }),
+          makeCandidate({ modelId: 'gpt-4o' }),
         ],
       });
 
@@ -245,7 +248,7 @@ describe('DiscoverModelsDialog', () => {
       );
 
       await waitFor(() => {
-        const miniCheckbox = screen.getByRole('checkbox', { name: /select gpt-4o mini/i });
+        const miniCheckbox = screen.getByRole('checkbox', { name: /select gpt-4o-mini/i });
         expect(miniCheckbox).toBeChecked();
       });
       expect(screen.getByRole('checkbox', { name: /^select gpt-4o$/i })).not.toBeChecked();
@@ -271,10 +274,10 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
       await user.click(screen.getByRole('button', { name: /continue/i }));
 
       await waitFor(() => {
@@ -301,10 +304,10 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
       await user.click(screen.getByRole('button', { name: /continue/i }));
 
       // Review step renders. Click Add 1 model.
@@ -333,7 +336,7 @@ describe('DiscoverModelsDialog', () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
-        candidates: [makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' })],
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
       });
       vi.mocked(apiClient.post).mockResolvedValue({
         created: 0,
@@ -345,10 +348,10 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
       await user.click(screen.getByRole('button', { name: /continue/i }));
 
       await waitFor(() => {
@@ -372,8 +375,8 @@ describe('DiscoverModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValueOnce({
         providerSlug: 'openai',
         candidates: [
-          makeCandidate({ modelId: 'gpt-4o-mini', name: 'GPT-4o mini' }),
-          makeCandidate({ modelId: 'gpt-4o', name: 'GPT-4o' }),
+          makeCandidate({ modelId: 'gpt-4o-mini' }),
+          makeCandidate({ modelId: 'gpt-4o' }),
         ],
       });
       vi.mocked(apiClient.post).mockResolvedValue({
@@ -386,10 +389,10 @@ describe('DiscoverModelsDialog', () => {
       render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
 
       await waitFor(() => {
-        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o mini/i }));
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
       await user.click(screen.getByRole('checkbox', { name: /^select gpt-4o$/i }));
       await user.click(screen.getByRole('button', { name: /continue/i }));
 

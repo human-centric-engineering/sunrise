@@ -480,11 +480,6 @@ export function ProviderModelsMatrix({
                     >
                       {model.name}
                     </Link>
-                    {!model.isDefault && (
-                      <Badge variant="outline" className="ml-2 text-[10px]">
-                        Custom
-                      </Badge>
-                    )}
                   </TableCell>
                   <TableCell>{capabilityBadge(model.capabilities)}</TableCell>
                   <TableCell>
