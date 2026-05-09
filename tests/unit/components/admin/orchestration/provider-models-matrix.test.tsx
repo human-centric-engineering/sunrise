@@ -36,6 +36,24 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+const mockRouterRefresh = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: mockRouterRefresh }),
+}));
+
+vi.mock('@/lib/api/client', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+  return {
+    ...actual,
+    apiClient: {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    },
+  };
+});
+
 vi.mock('@/types/orchestration', () => ({
   TIER_ROLE_META: {
     thinking: { label: 'Thinking', description: 'High-reasoning' },
@@ -443,5 +461,126 @@ describe('ProviderModelsMatrix', () => {
     const dot = document.querySelector('span.bg-gray-300');
     expect(dot).not.toBeNull();
     expect(dot?.getAttribute('title')).toMatch(/not configured/i);
+  });
+
+  // ── In-use column ──────────────────────────────────────────────────────────
+
+  describe('in-use column', () => {
+    it('shows 0 for rows with no bound agents', () => {
+      render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [] })]} />);
+
+      // Both the bare "0" cell and the "0 models" filter caption are
+      // possible matches — the cell sits inside the table body.
+      const tbodyCells = document.querySelectorAll('tbody td');
+      const inUseCell = Array.from(tbodyCells).find((td) => td.textContent?.trim() === '0');
+      expect(inUseCell).toBeDefined();
+    });
+
+    it('renders the agent count as a popover trigger when agents are bound', async () => {
+      const user = userEvent.setup();
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [
+                { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' },
+                { id: 'agent-2', name: 'Researcher', slug: 'researcher' },
+              ],
+            }),
+          ]}
+        />
+      );
+
+      const trigger = screen.getByRole('button', { name: /show 2 agents using GPT-5/i });
+      expect(trigger).toBeInTheDocument();
+
+      await user.click(trigger);
+
+      // Popover renders a deep-link to each agent's admin page.
+      expect(await screen.findByRole('link', { name: /Triage Bot/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-1'
+      );
+      expect(screen.getByRole('link', { name: /Researcher/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-2'
+      );
+    });
+  });
+
+  // ── Row delete action + in-use guard ──────────────────────────────────────
+
+  describe('row delete action', () => {
+    it('row delete is disabled when at least one agent is bound', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [{ id: 'agent-1', name: 'Triage', slug: 'triage' }],
+            }),
+          ]}
+        />
+      );
+
+      const btn = screen.getByRole('button', { name: /delete GPT-5 disabled — model is in use/i });
+      expect(btn).toBeDisabled();
+    });
+
+    it('row delete is enabled and calls DELETE on confirmation when no agents bound', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockResolvedValue({ id: 'model-1', deleted: true } as never);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+
+      // Dialog appears with the model name in the description.
+      expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+      expect(screen.getByText(/soft-deletes/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(apiClient.delete).toHaveBeenCalledWith(
+        '/api/v1/admin/orchestration/provider-models/model-1'
+      );
+    });
+
+    it('renders the bound-agent list and disables Delete on a 409 response', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          'Cannot delete model "GPT-5" — 1 active agent still uses it.',
+          'MODEL_IN_USE',
+          409,
+          {
+            agents: [{ id: 'agent-3', name: 'Late Bound', slug: 'late-bound' }],
+          }
+        )
+      );
+
+      const user = userEvent.setup();
+      // Simulate the optimistic state: matrix data shows 0 agents (the
+      // page just loaded), but a concurrent admin bound an agent. The
+      // delete request races and the 409 surfaces them.
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Bound-agent list appears with a deep link to the agent.
+      expect(await screen.findByText('Late Bound')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /late bound/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-3'
+      );
+
+      // Delete button is disabled — the operator has to re-point the
+      // agent before the action can complete.
+      const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
+      expect(deleteBtn).toBeDisabled();
+    });
   });
 });
