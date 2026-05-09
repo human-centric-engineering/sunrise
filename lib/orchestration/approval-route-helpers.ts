@@ -264,20 +264,34 @@ export function singleOriginCorsHeaders(
   };
 }
 
-/** Build CORS headers for an allowlist, rejecting `null` and non-listed origins. */
+/**
+ * Build CORS headers for an allowlist.
+ *
+ * - If `'*'` is in `allowedOrigins`, returns a literal `Access-Control-Allow-Origin: *`
+ *   for any requesting origin (including `null`/missing). The CORS spec forbids
+ *   `credentials: 'include'` with literal `*`, which is correct for these
+ *   token-authenticated public endpoints — there are no cookies to leak.
+ * - Otherwise, returns headers only when `requestOrigin` is a non-null exact
+ *   match of an allowlisted origin; rejects `null` (sandboxed iframes, file://)
+ *   and any non-listed origin.
+ */
 export function allowlistCorsHeaders(
   requestOrigin: string | null,
   allowedOrigins: string[],
   methods: string
 ): Record<string, string> | undefined {
-  if (!requestOrigin || requestOrigin === 'null' || !allowedOrigins.includes(requestOrigin)) {
-    return undefined;
-  }
-  return {
-    'Access-Control-Allow-Origin': requestOrigin,
+  const baseHeaders = {
     'Access-Control-Allow-Methods': `${methods}, OPTIONS`,
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
-  };
+  } as const;
+
+  if (allowedOrigins.includes('*')) {
+    return { 'Access-Control-Allow-Origin': '*', ...baseHeaders };
+  }
+  if (!requestOrigin || requestOrigin === 'null' || !allowedOrigins.includes(requestOrigin)) {
+    return undefined;
+  }
+  return { 'Access-Control-Allow-Origin': requestOrigin, ...baseHeaders };
 }
