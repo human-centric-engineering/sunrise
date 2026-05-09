@@ -34,7 +34,7 @@ import { createMockHeaders, createMockSession, delayed } from '@/tests/types/moc
 
 **When to use**: Unit tests requiring database operations WITHOUT real database.
 
-**For integration tests**: Use real PostgreSQL via Testcontainers instead of mocking.
+**For integration tests**: Same pattern — mock Prisma. There is no testcontainer setup in this repo today. Integration tests under `tests/integration/` invoke the route handler directly with a `NextRequest` and mock Prisma, auth, rate limit, IP, and logger — they exercise the full request → validation → auth wrapper → handler → response chain without going over HTTP or hitting a real database. Canonical example: `tests/integration/api/v1/admin/orchestration/executions.list.test.ts`. See `.context/testing/overview.md` § Integration Tests for the standard mock set, and § Testcontainers (Future) for the intended-but-not-yet-built real-DB path.
 
 ### Basic Setup
 

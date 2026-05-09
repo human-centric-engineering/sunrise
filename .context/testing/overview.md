@@ -76,35 +76,54 @@ describe('passwordSchema', () => {
 
 ### Integration Tests (`tests/integration/`)
 
-Tests that verify multiple components working together. Use real implementations where practical, mock external boundaries (database, APIs).
+Tests that exercise an API route handler end-to-end — validation → auth wrapper → handler → response — by invoking it directly with a `NextRequest`. No HTTP server, no real database. All external boundaries are mocked.
 
-**When to write integration tests**:
+**When to write an integration test** (vs a unit test of the same handler):
 
-- API endpoints (request → validation → business logic → response)
-- Database operations (queries, transactions, migrations)
-- Authentication flows (login → session → protected route)
-- Multi-component interactions
+- Route-handler contract across the auth wrapper boundary: status code + full error envelope + body shape
+- Auth coverage: 401 unauthenticated, 403 wrong-role, 404 ownership-filtered (the `withAuth`/`withAdminAuth` chain only fires when the handler is invoked through it)
+- Cross-collaborator ordering: rate-limit short-circuit before DB call, validation before auth, etc.
+- Full envelope verification (`{ success: false, error: { code, message } }`) — unit tests of handler internals don't reach the wrapper
 
-**Example**:
+**Standard mock set** (matches every admin orchestration integration test):
 
 ```typescript
-describe('GET /api/health', () => {
-  it('should return healthy status with database connection', async () => {
-    // Mock database health check
-    vi.mocked(getDatabaseHealth).mockResolvedValue({
-      connected: true,
-      latency: 5,
-    });
-
-    const response = await GET();
-    const body = await parseResponse<HealthResponse>(response);
-
-    expect(response.status).toBe(200);
-    expect(body.status).toBe('ok');
-    expect(body.database.connected).toBe(true);
-  });
-});
+vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
+vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    /* model stubs */
+  },
+}));
+vi.mock('@/lib/security/rate-limit', () => ({
+  adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(/* …returns 429 envelope */),
+}));
+vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+// If the route uses getRouteLogger from @/lib/api/context, mock that instead of @/lib/logging.
+// If the route's error path reads env.NODE_ENV (e.g. handleAPIError), also mock @/lib/env.
 ```
+
+Auth helpers in `tests/helpers/auth.ts` provide the standard session shapes — use these instead of hand-rolling sessions:
+
+```typescript
+import {
+  mockAdminUser,
+  mockAuthenticatedUser,
+  mockUnauthenticatedUser,
+} from '@/tests/helpers/auth';
+
+mockAdminUser(); // signs in as admin (in beforeEach)
+mockAuthenticatedUser('USER'); // signs in as USER role
+mockUnauthenticatedUser(); // no session
+```
+
+**Canonical example**: `tests/integration/api/v1/admin/orchestration/executions.list.test.ts` — read this first when adding a new admin-route integration test.
+
+**Note on testcontainers**: the _Testcontainers (Future)_ tech-stack section above is aspirational. There is no testcontainer setup in the repo today, and `tests/integration/` does not contain a `setup.ts` or DB bootstrap. Tests that genuinely need real Postgres semantics belong as smoke scripts under `scripts/smoke/` (next section).
 
 ### Smoke Scripts (`scripts/smoke/`)
 
