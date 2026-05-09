@@ -5,8 +5,8 @@
  * - Does not render dialog content when target is null
  * - Renders dialog open with provider name and slug when target is set
  * - Renders inline error message when error prop is provided
- * - Confirm button calls onConfirm and is labeled "Delete"
- * - Confirm button is disabled and labeled "Deleting…" when isDeleting=true
+ * - Confirm button calls onConfirm and is labeled "Deactivate"
+ * - Confirm button is disabled and labeled "Deactivating…" when isDeleting=true
  * - Cancel button calls onCancel
  * - onOpenChange(false) calls onCancel (keyboard/overlay dismiss)
  *
@@ -55,7 +55,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.queryByText('Delete provider')).not.toBeInTheDocument();
+      expect(screen.queryByText('Deactivate provider')).not.toBeInTheDocument();
     });
   });
 
@@ -73,7 +73,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.getByText('Delete provider')).toBeInTheDocument();
+      expect(screen.getByText('Deactivate provider')).toBeInTheDocument();
     });
 
     it('renders the provider name in the description', () => {
@@ -104,7 +104,7 @@ describe('DeleteProviderDialog', () => {
       expect(screen.getByText('anthropic')).toBeInTheDocument();
     });
 
-    it('renders Cancel and Delete buttons', () => {
+    it('renders Cancel and Deactivate buttons', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
@@ -116,7 +116,7 @@ describe('DeleteProviderDialog', () => {
       );
 
       expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^deactivate$/i })).toBeInTheDocument();
     });
   });
 
@@ -157,7 +157,7 @@ describe('DeleteProviderDialog', () => {
   // ── isDeleting state ──────────────────────────────────────────────────────
 
   describe('isDeleting state', () => {
-    it('confirm button shows "Deleting…" label when isDeleting is true', () => {
+    it('confirm button shows "Deactivating…" label when isDeleting is true', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
@@ -168,7 +168,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.getByRole('button', { name: /deleting/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /deactivating/i })).toBeInTheDocument();
     });
 
     it('confirm button is disabled when isDeleting is true', () => {
@@ -182,10 +182,10 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.getByRole('button', { name: /deleting/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /deactivating/i })).toBeDisabled();
     });
 
-    it('confirm button shows "Delete" label when isDeleting is false', () => {
+    it('confirm button shows "Deactivate" label when isDeleting is false', () => {
       render(
         <DeleteProviderDialog
           target={PROVIDER_TARGET}
@@ -196,7 +196,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^deactivate$/i })).toBeInTheDocument();
     });
 
     it('confirm button is enabled when isDeleting is false', () => {
@@ -210,7 +210,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      expect(screen.getByRole('button', { name: /^delete$/i })).not.toBeDisabled();
+      expect(screen.getByRole('button', { name: /^deactivate$/i })).not.toBeDisabled();
     });
   });
 
@@ -231,7 +231,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+      await user.click(screen.getByRole('button', { name: /^deactivate$/i }));
 
       expect(onConfirm).toHaveBeenCalledOnce();
     });
@@ -256,9 +256,11 @@ describe('DeleteProviderDialog', () => {
     });
 
     it('clicking confirm does not prevent onConfirm from being called', async () => {
-      // Note: AlertDialogAction (Radix) closes the dialog after action, which
-      // triggers onOpenChange(false) → onCancel. That is expected Radix behavior.
-      // This test verifies onConfirm is always called when the confirm button fires.
+      // Note: the dialog now `preventDefault`s on the AlertDialogAction
+      // click so Radix doesn't auto-close while the parent's async
+      // confirm runs. The parent flips `target` to null on success or
+      // sets `error` on failure; this test just verifies onConfirm
+      // always fires when the button is clicked.
       const onConfirm = vi.fn();
       const user = userEvent.setup();
 
@@ -272,7 +274,7 @@ describe('DeleteProviderDialog', () => {
         />
       );
 
-      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+      await user.click(screen.getByRole('button', { name: /^deactivate$/i }));
 
       expect(onConfirm).toHaveBeenCalledOnce();
     });

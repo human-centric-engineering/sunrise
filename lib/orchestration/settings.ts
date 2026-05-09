@@ -96,9 +96,15 @@ export function hydrateSettings(row: {
   const computed = computeDefaultModelMap();
   const stored = parseStoredDefaults(row.defaultModels);
   const merged: Record<TaskType, string> = { ...computed };
+  // Operator-saved subset, preserved separately so UIs can show
+  // "you saved this" vs "this is the system suggestion".
+  const storedOnly: Partial<Record<TaskType, string>> = {};
   for (const key of TASK_TYPES) {
     const val = stored[key];
-    if (typeof val === 'string' && val.length > 0) merged[key] = val;
+    if (typeof val === 'string' && val.length > 0) {
+      merged[key] = val;
+      storedOnly[key] = val;
+    }
   }
 
   function isApprovalAction(v: string): v is ApprovalDefaultAction {
@@ -115,6 +121,7 @@ export function hydrateSettings(row: {
     id: row.id,
     slug: 'global',
     defaultModels: merged,
+    defaultModelsStored: storedOnly,
     globalMonthlyBudgetUsd: row.globalMonthlyBudgetUsd,
     searchConfig: parseSearchConfig(row.searchConfig),
     lastSeededAt: row.lastSeededAt,

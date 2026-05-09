@@ -1,33 +1,43 @@
 'use client';
 
 /**
- * Setup Wizard (Phase 4 Session 4.1)
+ * Setup Wizard
  *
- * Five-step guided flow that walks a new admin from "fresh install" to
- * "I have a working agent I can chat with". Wraps a Dialog and lazy-
- * loads its own state from localStorage so progress survives a refresh.
+ * Four-step config-oriented flow for developers setting up a fresh
+ * Sunrise instance:
  *
- * Steps:
- *   1. What are you building? — Phase 6 pattern advisor placeholder
- *   2. Configure a provider    — probes `/providers`, inline form if empty
- *   3. Create your first agent — inline form posting to `/agents`
- *   4. Test your agent         — SSE chat consumer reading ReadableStream
- *   5. What's next             — static links, marks wizard complete
+ *   1. Configure a provider   — env-var detection cards (one-click) plus
+ *                                a "Configure manually →" link out to
+ *                                /providers/new for custom or self-hosted
+ *                                endpoints.
+ *   2. Confirm default models — chat + embedding model selectors written
+ *                                to `AiOrchestrationSettings.defaultModels`.
+ *   3. Smoke test              — `/providers/:id/test` followed by
+ *                                `/providers/:id/test-model` against the
+ *                                configured default chat model. Proves
+ *                                the provider → API key → LLM chain
+ *                                round-trips without touching agents or
+ *                                the knowledge base.
+ *   4. Done                    — links out to /agents/new, /knowledge,
+ *                                and /workflows/new.
+ *
+ * Provider-agnostic: never assumes Anthropic. The 5 system-seeded agents
+ * (pattern-advisor, quiz-master, mcp-system, model-auditor) ship with
+ * empty `provider`/`model` and resolve dynamically through the operator's
+ * choice — the wizard's only job is to wire the provider, set defaults,
+ * and prove the chain works.
  *
  * Errors never throw out of the dialog. Fetch failures become friendly
  * inline messages — the raw `err.message` from a fetch is not forwarded
  * to the UI (could leak provider SDK internals). Detailed errors are
- * logged to the server via `logger.error` in the underlying API routes,
- * not from this client component.
+ * logged to the server via `logger.error` in the underlying API routes.
  */
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
+import { z } from 'zod';
 
-import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
-import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -40,58 +50,98 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
-import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
+import { cn } from '@/lib/utils';
 
-const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v1';
-const TOTAL_STEPS = 5;
+// Bumped v2 → v3 because the layout changed shape: 6 steps → 4 steps,
+// agentDraft and createdAgentSlug removed from persisted state.
+const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v3';
+const TOTAL_STEPS = 4;
+
+// Sunrise envelope shape for every wizard fetch. Every step validates
+// the response through Zod before reading any field — the wizard runs
+// against a freshly-installed instance whose admin endpoints could be
+// proxied or version-skewed, and unvalidated `as` casts let bad shapes
+// propagate silently into setState calls.
+function envelopeSchema<T extends z.ZodTypeAny>(dataSchema: T) {
+  return z.object({
+    success: z.boolean().optional(),
+    data: dataSchema.optional(),
+  });
+}
+
+const defaultModelsStoredSchema = z.object({
+  defaultModelsStored: z.record(z.string(), z.string()).optional(),
+});
+
+const defaultModelsSchema = z.object({
+  defaultModels: z.record(z.string(), z.string()).optional(),
+});
+
+const providerTestResultSchema = z.object({
+  ok: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+const modelTestResultSchema = z.object({
+  ok: z.boolean().optional(),
+  latencyMs: z.number().optional(),
+});
 
 interface ProviderDraft {
   name: string;
   slug: string;
   apiKeyEnvVar: string;
-}
-
-interface AgentDraft {
-  name: string;
-  slug: string;
-  description: string;
-  systemInstructions: string;
-  model: string;
-  provider: string;
+  /** `providerType` value from KNOWN_PROVIDERS — anthropic, openai-compatible, voyage. */
+  providerType: 'anthropic' | 'openai-compatible' | 'voyage' | '';
+  /** Optional baseUrl (required for openai-compatible). */
+  baseUrl: string;
+  /** Suggested chat model id from the detection registry, written to settings on success. */
+  suggestedDefaultChatModel: string;
+  /** Suggested embedding model id, written to settings on success. */
+  suggestedEmbeddingModel: string;
 }
 
 interface WizardState {
   stepIndex: number;
   providerDraft: ProviderDraft;
-  agentDraft: AgentDraft;
-  /** Slug of the agent created by the wizard — used by the chat test step. */
-  createdAgentSlug: string | null;
 }
 
 const DEFAULT_STATE: WizardState = {
   stepIndex: 0,
-  providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-  agentDraft: {
+  providerDraft: {
     name: '',
     slug: '',
-    description: '',
-    systemInstructions: '',
-    model: 'claude-opus-4-6',
-    provider: 'anthropic',
+    apiKeyEnvVar: '',
+    providerType: '',
+    baseUrl: '',
+    suggestedDefaultChatModel: '',
+    suggestedEmbeddingModel: '',
   },
-  createdAgentSlug: null,
 };
 
 export interface SetupWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Triggered from the dashboard's fresh-install banner when no
+   * provider has been configured yet. Currently informational —
+   * Phase 4 will use it to skip the persisted "completed" marker so
+   * the wizard re-opens until setup is genuinely done.
+   */
+  forceOpen?: boolean;
 }
 
-export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
+export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: SetupWizardProps) {
   const [state, setState, clearState] = useLocalStorage<WizardState>(STORAGE_KEY, DEFAULT_STATE);
   const wiz = useWizard({ totalSteps: TOTAL_STEPS, initialIndex: state.stepIndex });
 
@@ -111,24 +161,25 @@ export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
 
     void (async () => {
       try {
-        const [providerRes, agentRes] = await Promise.all([
-          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`, {
-            credentials: 'include',
-          }),
-          fetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=1`, { credentials: 'include' }),
-        ]);
+        const providerRes = await fetch(
+          `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`,
+          { credentials: 'include' }
+        );
 
         if (cancelled) return;
 
         const hasProvider = await paginatedTotalGt0(providerRes);
-        const hasAgent = await paginatedTotalGt0(agentRes);
 
-        // Jump to the first incomplete step. Step 1 (intro) is always
-        // shown the first time; if we already have an agent, skip to
-        // step 4 (test).
-        if (state.stepIndex === 0 && (hasProvider || hasAgent)) {
-          if (hasAgent) wiz.goTo(3);
-          else if (hasProvider) wiz.goTo(2);
+        // 4-step layout:
+        //   0 provider · 1 defaults · 2 smoke test · 3 done
+        //
+        // Without a provider configured, the only valid step is 0
+        // (Provider). Snap back if persisted state points further —
+        // typically because the dialog was closed mid-flow or the
+        // operator deleted the provider after wizard progress was
+        // saved.
+        if (!hasProvider && state.stepIndex > 0) {
+          wiz.goTo(0);
         }
       } catch {
         if (!cancelled)
@@ -171,32 +222,19 @@ export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
           </div>
         )}
 
+        <WizardStepIndicator currentIndex={wiz.stepIndex} onJump={(idx) => wiz.goTo(idx)} />
+
         <div className="min-h-[300px] py-4">
-          {wiz.stepIndex === 0 && <StepIntro onSkip={() => wiz.next()} />}
-          {wiz.stepIndex === 1 && (
+          {wiz.stepIndex === 0 && (
             <StepProvider
               draft={state.providerDraft}
               setDraft={(draft) => setState((prev) => ({ ...prev, providerDraft: draft }))}
               onComplete={() => wiz.next()}
             />
           )}
-          {wiz.stepIndex === 2 && (
-            <StepAgent
-              draft={state.agentDraft}
-              setDraft={(draft) => setState((prev) => ({ ...prev, agentDraft: draft }))}
-              onCreated={(slug) => {
-                setState((prev) => ({ ...prev, createdAgentSlug: slug }));
-                wiz.next();
-              }}
-            />
-          )}
-          {wiz.stepIndex === 3 && (
-            <StepTestAgent
-              agentSlug={state.createdAgentSlug ?? state.agentDraft.slug}
-              onNext={() => wiz.next()}
-            />
-          )}
-          {wiz.stepIndex === 4 && <StepDone />}
+          {wiz.stepIndex === 1 && <StepDefaultModels onComplete={() => wiz.next()} />}
+          {wiz.stepIndex === 2 && <StepSmokeTest onNext={() => wiz.next()} />}
+          {wiz.stepIndex === 3 && <StepDone />}
         </div>
 
         <DialogFooter className="sm:justify-between">
@@ -225,12 +263,100 @@ export function SetupWizard({ open, onOpenChange }: SetupWizardProps) {
 }
 
 const STEP_LABELS: Record<number, string> = {
-  0: 'What are you building?',
-  1: 'Configure a provider',
-  2: 'Create your first agent',
-  3: 'Test your agent',
-  4: "What's next",
+  0: 'Configure a provider',
+  1: 'Confirm default models',
+  2: 'Smoke test the wiring',
+  3: "What's next",
 };
+
+/**
+ * Short labels for the inline progress indicator. The full labels live
+ * in `STEP_LABELS` (used by the dialog description); the pill row needs
+ * compact text so all 4 fit comfortably in the 2xl dialog.
+ */
+const STEP_PILL_LABELS: Record<number, string> = {
+  0: 'Provider',
+  1: 'Defaults',
+  2: 'Smoke test',
+  3: 'Done',
+};
+
+interface WizardStepIndicatorProps {
+  currentIndex: number;
+  /** Called when the user clicks a completed step (current/upcoming are not clickable). */
+  onJump: (index: number) => void;
+}
+
+/**
+ * Horizontal stepper above the wizard content. Each pill shows
+ *   - ✓ + label for steps already completed (clickable to revisit)
+ *   - ● + label for the current step
+ *   - ○ + label for upcoming steps (disabled)
+ *
+ * "Completed" is defined as `index < currentIndex` — the wizard's
+ * step machine only advances past a step on success, so this is a
+ * safe proxy for "this step has been satisfied".
+ */
+function WizardStepIndicator({
+  currentIndex,
+  onJump,
+}: WizardStepIndicatorProps): React.ReactElement {
+  return (
+    <ol
+      aria-label="Setup progress"
+      className="flex flex-wrap items-center gap-1 text-xs sm:gap-1.5"
+    >
+      {Array.from({ length: TOTAL_STEPS }, (_, i) => {
+        const status: 'completed' | 'current' | 'upcoming' =
+          i < currentIndex ? 'completed' : i === currentIndex ? 'current' : 'upcoming';
+        const label = STEP_PILL_LABELS[i] ?? `Step ${i + 1}`;
+        const fullLabel = STEP_LABELS[i] ?? '';
+        const clickable = status === 'completed';
+
+        return (
+          <li key={i} className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              aria-current={status === 'current' ? 'step' : undefined}
+              aria-label={`Step ${i + 1}: ${fullLabel}${
+                status === 'completed' ? ' (completed)' : status === 'current' ? ' (current)' : ''
+              }`}
+              disabled={!clickable}
+              onClick={clickable ? () => onJump(i) : undefined}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 transition-colors',
+                status === 'completed' &&
+                  'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 cursor-pointer',
+                status === 'current' &&
+                  'border-primary bg-primary text-primary-foreground font-medium',
+                status === 'upcoming' &&
+                  'border-muted-foreground/20 text-muted-foreground cursor-not-allowed'
+              )}
+            >
+              {status === 'completed' ? (
+                <Check className="h-3 w-3" aria-hidden="true" />
+              ) : status === 'current' ? (
+                <span className="bg-primary-foreground inline-block h-1.5 w-1.5 rounded-full" />
+              ) : (
+                <span className="border-muted-foreground/40 inline-block h-1.5 w-1.5 rounded-full border" />
+              )}
+              <span>{label}</span>
+            </button>
+            {i < TOTAL_STEPS - 1 && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'h-px w-2 sm:w-3',
+                  i < currentIndex ? 'bg-primary/40' : 'bg-muted-foreground/20'
+                )}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 async function paginatedTotalGt0(res: Response): Promise<boolean> {
   if (!res.ok) return false;
@@ -243,66 +369,7 @@ async function paginatedTotalGt0(res: Response): Promise<boolean> {
 }
 
 // ----------------------------------------------------------------------------
-// Step 1 — Intro / Pattern advisor placeholder
-// ----------------------------------------------------------------------------
-
-const WIZARD_STARTER_PROMPTS = [
-  'I want to build a customer support bot',
-  'Help me design a content moderation pipeline',
-  'I need a research assistant that searches documents',
-  'I want an agent that generates and reviews code',
-];
-
-function StepIntro({ onSkip }: { onSkip: () => void }) {
-  const router = useRouter();
-  const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
-
-  const handleStreamComplete = useCallback((fullText: string) => {
-    const definition = extractWorkflowDefinition(fullText);
-    if (definition) {
-      setWorkflowRecommendation(definition);
-    }
-  }, []);
-
-  const handleCreateWorkflow = useCallback(() => {
-    if (!workflowRecommendation) return;
-    router.push(
-      `/admin/orchestration/workflows/new?definition=${encodeURIComponent(workflowRecommendation)}`
-    );
-  }, [router, workflowRecommendation]);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm">
-        Tell us what you&apos;re trying to build and we&apos;ll suggest a pattern — a reflection
-        agent, a multi-step workflow, a retrieval-augmented chat, or something else.
-      </p>
-      <ChatInterface
-        agentSlug="pattern-advisor"
-        embedded
-        starterPrompts={WIZARD_STARTER_PROMPTS}
-        onStreamComplete={handleStreamComplete}
-        className="h-[350px]"
-      />
-      {workflowRecommendation && (
-        <div className="bg-muted/30 flex items-center justify-between rounded-md border p-3">
-          <span className="text-sm">The advisor recommended a workflow definition.</span>
-          <Button size="sm" onClick={handleCreateWorkflow}>
-            Create this workflow
-          </Button>
-        </div>
-      )}
-      <div className="flex justify-end">
-        <Button variant="ghost" size="sm" onClick={onSkip}>
-          Skip, I&apos;ll configure manually →
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Step 2 — Provider configuration
+// Step 1 — Provider configuration
 // ----------------------------------------------------------------------------
 
 interface StepProviderProps {
@@ -311,25 +378,76 @@ interface StepProviderProps {
   onComplete: () => void;
 }
 
-function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
+interface DetectionRow {
+  slug: string;
+  name: string;
+  providerType: 'anthropic' | 'openai-compatible' | 'voyage';
+  defaultBaseUrl: string | null;
+  apiKeyEnvVar: string | null;
+  apiKeyPresent: boolean;
+  alreadyConfigured: boolean;
+  isLocal: boolean;
+  suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
+  suggestedEmbeddingModel: string | null;
+}
+
+const detectionRowSchema: z.ZodType<DetectionRow> = z.object({
+  slug: z.string(),
+  name: z.string(),
+  providerType: z.enum(['anthropic', 'openai-compatible', 'voyage']),
+  defaultBaseUrl: z.string().nullable(),
+  apiKeyEnvVar: z.string().nullable(),
+  apiKeyPresent: z.boolean(),
+  alreadyConfigured: z.boolean(),
+  isLocal: z.boolean(),
+  suggestedDefaultChatModel: z.string().nullable(),
+  suggestedRoutingModel: z.string().nullable(),
+  suggestedReasoningModel: z.string().nullable(),
+  suggestedEmbeddingModel: z.string().nullable(),
+});
+
+const detectionResultSchema = z.object({
+  detected: z.array(detectionRowSchema).optional(),
+});
+
+function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detection, setDetection] = useState<DetectionRow[] | null>(null);
   const [hasExisting, setHasExisting] = useState<boolean | null>(null);
+  const [manualMode, setManualMode] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
-          `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`,
-          {
+        const [providerRes, detectRes] = await Promise.all([
+          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=1&isActive=true`, {
             credentials: 'include',
-          }
-        );
+          }),
+          fetch(API.ADMIN.ORCHESTRATION.PROVIDERS_DETECT, { credentials: 'include' }),
+        ]);
         if (cancelled) return;
-        setHasExisting(await paginatedTotalGt0(res));
+
+        setHasExisting(await paginatedTotalGt0(providerRes));
+
+        if (detectRes.ok) {
+          const parsed = envelopeSchema(detectionResultSchema).safeParse(await detectRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data?.detected) {
+            setDetection(parsed.data.data.detected);
+          } else {
+            setDetection([]);
+          }
+        } else {
+          setDetection([]);
+        }
       } catch {
-        if (!cancelled) setHasExisting(false);
+        if (!cancelled) {
+          setHasExisting(false);
+          setDetection([]);
+        }
       }
     })();
     return () => {
@@ -337,24 +455,124 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
     };
   }, []);
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  const detectedAvailable = useMemo(
+    () => (detection ?? []).filter((d) => d.apiKeyPresent && !d.alreadyConfigured),
+    [detection]
+  );
+
+  async function persistSuggestedDefaults(row: DetectionRow): Promise<void> {
+    // Write suggested chat / routing / reasoning / embedding models into
+    // the settings singleton, but only for slots the operator hasn't
+    // already saved. Strict-mode runtime now throws when a slot is
+    // unset, so writing all four keeps the system functional after a
+    // single Configure click.
+    //
+    // Reads `defaultModelsStored` (raw saved subset), NOT `defaultModels`
+    // — the latter is always populated by hydration so its keys would
+    // make the empty-slot check falsy.
+    try {
+      const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' });
+      if (!res.ok) return;
+      const parsed = envelopeSchema(defaultModelsStoredSchema).safeParse(await res.json());
+      const stored =
+        parsed.success && parsed.data.success ? (parsed.data.data?.defaultModelsStored ?? {}) : {};
+      const patch: Record<string, string> = {};
+      if (row.suggestedDefaultChatModel && !stored.chat) {
+        patch.chat = row.suggestedDefaultChatModel;
+      }
+      if (row.suggestedRoutingModel && !stored.routing) {
+        patch.routing = row.suggestedRoutingModel;
+      }
+      if (row.suggestedReasoningModel && !stored.reasoning) {
+        patch.reasoning = row.suggestedReasoningModel;
+      }
+      if (row.suggestedEmbeddingModel && !stored.embeddings) {
+        patch.embeddings = row.suggestedEmbeddingModel;
+      }
+      if (Object.keys(patch).length === 0) return;
+      await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultModels: patch }),
+      });
+    } catch {
+      // Setting failures are non-blocking — operator can edit manually
+      // on the next step.
+    }
+  }
+
+  async function createProviderFromRow(row: DetectionRow): Promise<void> {
     setError(null);
     setSubmitting(true);
     try {
+      const payload: Record<string, unknown> = {
+        name: row.name,
+        slug: row.slug,
+        providerType: row.providerType,
+        isLocal: row.isLocal,
+      };
+      if (row.defaultBaseUrl) payload.baseUrl = row.defaultBaseUrl;
+      if (row.apiKeyEnvVar) payload.apiKeyEnvVar = row.apiKeyEnvVar;
+
       const res = await fetch(API.ADMIN.ORCHESTRATION.PROVIDERS, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: draft.name,
-          slug: draft.slug,
-          providerType: 'anthropic',
-          apiKeyEnvVar: draft.apiKeyEnvVar || undefined,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        setError('Could not create the provider. Check the name, slug, and env var and try again.');
+        setError(
+          `Could not create the ${row.name} provider. Open the Providers page and add it manually.`
+        );
+        return;
+      }
+      await persistSuggestedDefaults(row);
+      // Cache draft for the agent step (so its provider dropdown defaults to this slug).
+      setDraft({
+        ...draft,
+        name: row.name,
+        slug: row.slug,
+        apiKeyEnvVar: row.apiKeyEnvVar ?? '',
+        providerType: row.providerType,
+        baseUrl: row.defaultBaseUrl ?? '',
+        suggestedDefaultChatModel: row.suggestedDefaultChatModel ?? '',
+        suggestedEmbeddingModel: row.suggestedEmbeddingModel ?? '',
+      });
+      onComplete();
+    } catch {
+      setError('Could not reach the server. Check your network and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleManualSubmit(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setError(null);
+    if (!draft.providerType) {
+      setError('Pick a provider type before submitting.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload: Record<string, unknown> = {
+        name: draft.name,
+        slug: draft.slug,
+        providerType: draft.providerType,
+        isLocal: draft.providerType === 'openai-compatible' && draft.baseUrl.includes('localhost'),
+      };
+      if (draft.baseUrl) payload.baseUrl = draft.baseUrl;
+      if (draft.apiKeyEnvVar) payload.apiKeyEnvVar = draft.apiKeyEnvVar;
+
+      const res = await fetch(API.ADMIN.ORCHESTRATION.PROVIDERS, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        setError('Could not create the provider. Check the fields and try again.');
         return;
       }
       onComplete();
@@ -365,7 +583,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
     }
   }
 
-  if (hasExisting === null) {
+  if (hasExisting === null || detection === null) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
         <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -382,7 +600,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
           <div>
             <div className="font-medium">You already have a provider configured.</div>
             <p className="text-muted-foreground mt-1 text-xs">
-              Nothing to do here. Continue to create your first agent.
+              Nothing to do here. Continue to confirm your default chat model.
             </p>
           </div>
         </div>
@@ -395,24 +613,103 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
     );
   }
 
+  // Detection cards path: env vars set → one-click configure
+  if (detectedAvailable.length > 0 && !manualMode) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm">
+          We detected {detectedAvailable.length === 1 ? 'an API key' : 'API keys'} in your
+          environment. Pick a provider to configure it now — Sunrise will fill in the base URL and
+          recommend a chat model.
+        </p>
+        <ul className="space-y-2">
+          {detectedAvailable.map((row) => (
+            <li key={row.slug}>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  void createProviderFromRow(row);
+                }}
+                className="hover:bg-muted/40 flex w-full items-start gap-3 rounded-md border p-3 text-left transition-colors disabled:opacity-50"
+              >
+                <CheckCircle2
+                  className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
+                  aria-hidden="true"
+                />
+                <div className="flex-1 space-y-1.5">
+                  <div className="text-sm font-medium">{row.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    Detected <code>{row.apiKeyEnvVar}</code>
+                  </div>
+                  <DetectionCardPreview row={row} />
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {error && <div className="text-destructive text-sm">{error}</div>}
+        <div className="flex justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setManualMode(true)}
+            disabled={submitting}
+          >
+            Configure manually instead →
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Manual path: env-var detection found nothing OR operator chose manual.
   return (
     <form
       onSubmit={(e) => {
-        void handleSubmit(e);
+        void handleManualSubmit(e);
       }}
       className="space-y-4"
     >
-      <p className="text-sm">
-        Providers are how Sunrise talks to LLMs (Anthropic, OpenAI, etc.). The API key itself is
-        read from an environment variable — never stored in the database.
-      </p>
+      {detectedAvailable.length === 0 && (
+        <p className="text-sm">
+          No LLM API keys were detected in your environment. Pick a provider type and we&apos;ll
+          create it — set the matching env var in your <code>.env</code> file before chatting.
+        </p>
+      )}
+
+      <div className="space-y-2">
+        <Label htmlFor="provider-flavour">
+          Provider type{' '}
+          <FieldHelp title="Provider type">
+            Pick the kind of LLM backend. Anthropic uses Claude. OpenAI-compatible covers OpenAI,
+            Mistral, Groq, Ollama, and any custom endpoint that speaks the OpenAI chat-completions
+            API. Voyage is embeddings-only.
+          </FieldHelp>
+        </Label>
+        <Select
+          value={draft.providerType || undefined}
+          onValueChange={(value) =>
+            setDraft({ ...draft, providerType: value as ProviderDraft['providerType'] })
+          }
+          disabled={submitting}
+        >
+          <SelectTrigger id="provider-flavour">
+            <SelectValue placeholder="Pick a type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
+            <SelectItem value="openai-compatible">OpenAI-compatible</SelectItem>
+            <SelectItem value="voyage">Voyage AI (embeddings)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="provider-name">
           Name{' '}
           <FieldHelp title="Provider name">
-            A short human name like &quot;Anthropic prod&quot; or &quot;OpenAI staging&quot;. Shown
-            in the admin UI so you can tell providers apart. Default: none.
+            A short human name like &quot;Anthropic prod&quot; or &quot;OpenAI staging&quot;.
           </FieldHelp>
         </Label>
         <Input
@@ -429,7 +726,6 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
           Slug{' '}
           <FieldHelp title="Provider slug">
             URL-safe identifier — lowercase, hyphens only. Used when wiring an agent to a provider.
-            Default: none. Example: <code>anthropic-prod</code>.
           </FieldHelp>
         </Label>
         <Input
@@ -442,13 +738,31 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
         />
       </div>
 
+      {draft.providerType === 'openai-compatible' && (
+        <div className="space-y-2">
+          <Label htmlFor="provider-base-url">
+            Base URL{' '}
+            <FieldHelp title="Provider base URL">
+              The HTTP endpoint Sunrise calls. <code>https://api.openai.com/v1</code> for OpenAI,{' '}
+              <code>http://localhost:11434/v1</code> for Ollama, etc.
+            </FieldHelp>
+          </Label>
+          <Input
+            id="provider-base-url"
+            required
+            value={draft.baseUrl}
+            onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
+            disabled={submitting}
+          />
+        </div>
+      )}
+
       <div className="space-y-2">
         <Label htmlFor="provider-env">
           API key env var{' '}
           <FieldHelp title="API key environment variable">
-            Name of the environment variable holding the real API key — e.g.{' '}
-            <code>ANTHROPIC_API_KEY</code>. Must be SCREAMING_SNAKE_CASE. The key itself is never
-            written to the database or logged.
+            Name of the environment variable holding the real API key. Must be SCREAMING_SNAKE_CASE.
+            The key itself is never written to the database or logged.
           </FieldHelp>
         </Label>
         <Input
@@ -462,17 +776,20 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
 
       {error && <div className="text-destructive text-sm">{error}</div>}
 
-      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-900/10 dark:text-blue-200">
-        <p className="font-medium">Embedding providers</p>
-        <p className="mt-1">
-          This creates a <strong>chat</strong> provider. For knowledge base vector search you also
-          need an <strong>embedding</strong> provider. We recommend <strong>Voyage AI</strong> (free
-          tier, top retrieval quality) — add it later on the Providers page. Anthropic (Claude) does
-          not offer an embeddings API.
-        </p>
-      </div>
-
-      <div className="flex justify-end">
+      <div className="flex justify-between">
+        {detectedAvailable.length > 0 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setManualMode(false)}
+            disabled={submitting}
+            type="button"
+          >
+            ← Back to detected providers
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? (
             <>
@@ -488,56 +805,156 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps) {
   );
 }
 
-// ----------------------------------------------------------------------------
-// Step 3 — Agent creation
-// ----------------------------------------------------------------------------
+/**
+ * Pre-click preview of what clicking this detection card will write
+ * into `AiOrchestrationSettings.defaultModels`. Mirrors the same
+ * helper in `provider-detections-banner.tsx` so the wizard and the
+ * providers-list banner share a contract:
+ *
+ *   - Show the suggested chat + embedding models from
+ *     `lib/orchestration/llm/known-providers.ts`.
+ *   - If the chosen provider has no embedding model (Anthropic, Groq,
+ *     Together, Fireworks), warn that knowledge-base search needs a
+ *     separate provider.
+ *   - If the chosen provider has no chat model (Voyage), warn that
+ *     agent conversations need a separate provider.
+ *
+ * Defaults are only written into empty slots, so the preview also
+ * notes that existing operator-set defaults are never overwritten.
+ */
+function DetectionCardPreview({ row }: { row: DetectionRow }): React.ReactElement {
+  const noEmbedding = !row.suggestedEmbeddingModel && !row.isLocal;
+  const noChat = !row.suggestedDefaultChatModel;
 
-interface StepAgentProps {
-  draft: AgentDraft;
-  setDraft: (draft: AgentDraft) => void;
-  onCreated: (slug: string) => void;
+  return (
+    <div className="space-y-1 text-xs">
+      {row.suggestedDefaultChatModel && (
+        <div className="text-muted-foreground">
+          Default chat model:{' '}
+          <code className="bg-muted/60 rounded px-1 py-0.5">{row.suggestedDefaultChatModel}</code>
+        </div>
+      )}
+
+      {row.suggestedEmbeddingModel && (
+        <div className="text-muted-foreground">
+          Default embedding model:{' '}
+          <code className="bg-muted/60 rounded px-1 py-0.5">{row.suggestedEmbeddingModel}</code>
+        </div>
+      )}
+
+      {noEmbedding && (
+        <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>
+            {row.name} doesn&apos;t offer embeddings — knowledge-base search needs a separate
+            embedding provider (Voyage AI, OpenAI, or Ollama).
+          </span>
+        </div>
+      )}
+
+      {noChat && (
+        <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>
+            {row.name} is embeddings-only — agent conversations need a separate chat provider.
+          </span>
+        </div>
+      )}
+
+      <div className="text-muted-foreground/70 italic">
+        These are platform suggestions. Existing defaults are never overwritten.
+      </div>
+    </div>
+  );
 }
 
-function StepAgent({ draft, setDraft, onCreated }: StepAgentProps) {
+// ----------------------------------------------------------------------------
+// Step 2 — Confirm default chat / embedding models
+// ----------------------------------------------------------------------------
+
+interface StepDefaultModelsProps {
+  onComplete: () => void;
+}
+
+interface ModelOption {
+  /** Canonical id passed to the LLM provider (e.g. "claude-sonnet-4-6"). */
+  id: string;
+  provider: string;
+  /** True if the provider config row backing this model exists and is active. */
+  available?: boolean;
+}
+
+const modelOptionSchema: z.ZodType<ModelOption> = z.object({
+  id: z.string(),
+  provider: z.string(),
+  available: z.boolean().optional(),
+});
+
+function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactElement {
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatModel, setChatModel] = useState<string>('');
+  const [embeddingModel, setEmbeddingModel] = useState<string>('');
+  const [models, setModels] = useState<ModelOption[]>([]);
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [settingsRes, modelsRes] = await Promise.all([
+          fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' }),
+          fetch(API.ADMIN.ORCHESTRATION.MODELS, { credentials: 'include' }),
+        ]);
+        if (cancelled) return;
+
+        if (settingsRes.ok) {
+          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data?.defaultModels) {
+            setChatModel(parsed.data.data.defaultModels.chat ?? '');
+            setEmbeddingModel(parsed.data.data.defaultModels.embeddings ?? '');
+          }
+        }
+
+        if (modelsRes.ok) {
+          const parsed = envelopeSchema(z.array(modelOptionSchema)).safeParse(
+            await modelsRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setModels(parsed.data.data);
+          }
+        }
+      } catch {
+        // Silent — empty model list is rendered as a fallback message.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleContinue(): Promise<void> {
     setError(null);
-
-    // Minimal client-side guard — the server re-validates with Zod.
-    if (
-      !draft.name.trim() ||
-      !draft.slug.trim() ||
-      !draft.description.trim() ||
-      !draft.systemInstructions.trim() ||
-      !draft.model.trim()
-    ) {
-      setError('All fields are required.');
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.AGENTS, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: draft.name.trim(),
-          slug: draft.slug.trim(),
-          description: draft.description.trim(),
-          systemInstructions: draft.systemInstructions,
-          model: draft.model.trim(),
-          provider: draft.provider.trim() || 'anthropic',
-        }),
-      });
-      if (!res.ok) {
-        setError('Could not create the agent. Check the fields and try again.');
-        return;
+      const patch: Record<string, string> = {};
+      if (chatModel) patch.chat = chatModel;
+      if (embeddingModel) patch.embeddings = embeddingModel;
+      if (Object.keys(patch).length > 0) {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultModels: patch }),
+        });
+        if (!res.ok) {
+          setError('Could not save the default models. You can edit them later from Settings.');
+          return;
+        }
       }
-      onCreated(draft.slug.trim());
+      onComplete();
     } catch {
       setError('Could not reach the server. Check your network and try again.');
     } finally {
@@ -545,166 +962,366 @@ function StepAgent({ draft, setDraft, onCreated }: StepAgentProps) {
     }
   }
 
+  if (loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Loading default models…
+      </div>
+    );
+  }
+
   return (
-    <form
-      onSubmit={(e) => {
-        void handleSubmit(e);
-      }}
-      className="space-y-4"
-    >
+    <div className="space-y-4">
       <p className="text-sm">
-        An agent is a named persona with a system prompt, a provider, and a model. You can edit any
-        of this later from the Agents page.
+        These are the default models the system-seeded agents (pattern advisor, quiz master, the MCP
+        server) use when they don&apos;t pin a specific model. You can change them later from
+        Settings.
       </p>
 
       <div className="space-y-2">
-        <Label htmlFor="agent-name">
-          Name{' '}
-          <FieldHelp title="Agent name">
-            A friendly display name like &quot;Support triage&quot; or &quot;Code reviewer&quot;.
-            Shown to end-users when the agent replies. Default: none.
+        <Label htmlFor="default-chat-model">
+          Default chat model{' '}
+          <FieldHelp title="Default chat model">
+            Used by every system-seeded agent that doesn&apos;t pin its own model. Pick a balanced
+            tier — &quot;worker&quot; or &quot;thinking&quot; in the model matrix.
+          </FieldHelp>
+        </Label>
+        <Select value={chatModel || undefined} onValueChange={setChatModel} disabled={submitting}>
+          <SelectTrigger id="default-chat-model">
+            <SelectValue placeholder="Pick a model" />
+          </SelectTrigger>
+          <SelectContent>
+            {models.length === 0 ? (
+              <SelectItem value="__none" disabled>
+                No models discovered — check provider configuration.
+              </SelectItem>
+            ) : (
+              models.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.id} <span className="text-muted-foreground ml-2 text-xs">{m.provider}</span>
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="default-embedding-model">
+          Default embedding model{' '}
+          <FieldHelp title="Default embedding model">
+            Used by the knowledge base for vector search. If you don&apos;t plan to use the
+            knowledge base, leave this as the suggested default.
           </FieldHelp>
         </Label>
         <Input
-          id="agent-name"
-          required
-          value={draft.name}
-          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          id="default-embedding-model"
+          placeholder="e.g. text-embedding-3-small"
+          value={embeddingModel}
+          onChange={(e) => setEmbeddingModel(e.target.value)}
           disabled={submitting}
         />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-slug">
-          Slug{' '}
-          <FieldHelp title="Agent slug">
-            URL-safe identifier. Used in the chat stream URL and referenced by workflows. Example:{' '}
-            <code>support-triage</code>. Change this rarely — existing links break.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="agent-slug"
-          required
-          pattern="[a-z0-9-]+"
-          value={draft.slug}
-          onChange={(e) => setDraft({ ...draft, slug: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-description">
-          Description{' '}
-          <FieldHelp title="Agent description">
-            One or two sentences explaining what this agent is for. Helps future admins (and the
-            pattern explorer) understand its purpose at a glance.
-          </FieldHelp>
-        </Label>
-        <Textarea
-          id="agent-description"
-          required
-          rows={2}
-          value={draft.description}
-          onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="agent-system">
-          System instructions{' '}
-          <FieldHelp title="System instructions">
-            The prompt the agent sees before every conversation. Defines its tone, capabilities, and
-            constraints. Changing this changes how every new conversation behaves — in-flight
-            conversations keep their original prompt.
-          </FieldHelp>
-        </Label>
-        <Textarea
-          id="agent-system"
-          required
-          rows={5}
-          value={draft.systemInstructions}
-          onChange={(e) => setDraft({ ...draft, systemInstructions: e.target.value })}
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="agent-provider">
-            Provider{' '}
-            <FieldHelp title="LLM provider">
-              The AI service that powers this agent (e.g. Anthropic, OpenAI, Ollama). Pick from the
-              providers you&apos;ve already configured. If you only have one, it&apos;s
-              pre-selected. Default: <code>anthropic</code>.
-            </FieldHelp>
-          </Label>
-          <Input
-            id="agent-provider"
-            required
-            value={draft.provider}
-            onChange={(e) => setDraft({ ...draft, provider: e.target.value })}
-            disabled={submitting}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="agent-model">
-            Model{' '}
-            <FieldHelp title="LLM model">
-              The exact model identifier the provider exposes. Changing this switches which model
-              answers prompts. Default: <code>claude-opus-4-6</code>.{' '}
-              <Link href="/admin/orchestration/learning" className="underline">
-                Learn more
-              </Link>
-              .
-            </FieldHelp>
-          </Label>
-          <Input
-            id="agent-model"
-            required
-            value={draft.model}
-            onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-            disabled={submitting}
-          />
-        </div>
       </div>
 
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="flex justify-end">
-        <Button type="submit" size="sm" disabled={submitting}>
+        <Button
+          size="sm"
+          onClick={() => {
+            void handleContinue();
+          }}
+          disabled={submitting}
+        >
           {submitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-              Creating…
+              Saving…
             </>
           ) : (
-            'Create agent'
+            'Continue'
           )}
         </Button>
       </div>
-    </form>
+    </div>
   );
 }
 
 // ----------------------------------------------------------------------------
-// Step 4 — Test agent via SSE chat
+// Step 3 — Smoke test the wiring
 // ----------------------------------------------------------------------------
 
-interface StepTestAgentProps {
-  agentSlug: string;
+interface StepSmokeTestProps {
   onNext: () => void;
 }
 
-function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
+interface ProviderTestRow {
+  id: string;
+  slug: string;
+  name: string;
+  isLocal: boolean;
+  apiKeyPresent: boolean;
+}
+
+const providerTestRowSchema: z.ZodType<ProviderTestRow> = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  isLocal: z.boolean(),
+  apiKeyPresent: z.boolean(),
+});
+
+type TestStatus = 'idle' | 'running' | 'ok' | 'failed';
+
+interface ProviderTestResult {
+  status: TestStatus;
+  message?: string;
+  /** Round-trip latency from /test-model when status === 'ok'. */
+  latencyMs?: number;
+}
+
+/**
+ * Step 3 — exercises the configured provider+model end-to-end without
+ * touching agents or the knowledge base. For each active provider:
+ *
+ *   1. POST /providers/:id/test         → checks API key + connectivity.
+ *   2. POST /providers/:id/test-model   → sends "Say hello." via the
+ *                                          configured default chat model
+ *                                          and reports latency.
+ *
+ * If both succeed, the operator has proof the chain (provider → key →
+ * model) round-trips. System agents (pattern-advisor, etc.) reuse the
+ * same chain at runtime, so a green smoke test means they'll work too.
+ */
+function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
+  const [loading, setLoading] = useState(true);
+  const [providers, setProviders] = useState<ProviderTestRow[]>([]);
+  const [chatModel, setChatModel] = useState<string>('');
+  const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
+  const [running, setRunning] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [providersRes, settingsRes] = await Promise.all([
+          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50&isActive=true`, {
+            credentials: 'include',
+          }),
+          fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' }),
+        ]);
+        if (cancelled) return;
+
+        if (providersRes.ok) {
+          const parsed = envelopeSchema(z.array(providerTestRowSchema)).safeParse(
+            await providersRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setProviders(parsed.data.data);
+          }
+        }
+
+        if (settingsRes.ok) {
+          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success) {
+            setChatModel(parsed.data.data?.defaultModels?.chat ?? '');
+          }
+        }
+      } catch {
+        // Intentionally silent — empty providers list renders the
+        // "no providers" message below.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function runTest(row: ProviderTestRow): Promise<void> {
+    setRunning(row.id);
+    setResults((prev) => ({ ...prev, [row.id]: { status: 'running' } }));
+
+    try {
+      // 1. Provider connectivity check — POST /providers/:id/test
+      const testRes = await fetch(API.ADMIN.ORCHESTRATION.providerTest(row.id), {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!testRes.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'Connectivity check failed. Verify the API key and base URL.',
+          },
+        }));
+        return;
+      }
+      const testParsed = envelopeSchema(providerTestResultSchema).safeParse(await testRes.json());
+      if (!testParsed.success || !testParsed.data.success || !testParsed.data.data?.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'The provider rejected the connection. Check logs for details.',
+          },
+        }));
+        return;
+      }
+
+      // 2. Round-trip a single message — POST /providers/:id/test-model
+      if (!chatModel) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'No default chat model is set. Go back to step 2 and pick one.',
+          },
+        }));
+        return;
+      }
+      const modelRes = await fetch(API.ADMIN.ORCHESTRATION.providerTestModel(row.id), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: chatModel }),
+      });
+      if (!modelRes.ok) {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message:
+              'The model call failed. Check that the configured model id is valid for this provider.',
+          },
+        }));
+        return;
+      }
+      const modelParsed = envelopeSchema(modelTestResultSchema).safeParse(await modelRes.json());
+      if (modelParsed.success && modelParsed.data.success && modelParsed.data.data?.ok) {
+        const latencyMs = modelParsed.data.data.latencyMs;
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'ok',
+            ...(typeof latencyMs === 'number' ? { latencyMs } : {}),
+          },
+        }));
+      } else {
+        setResults((prev) => ({
+          ...prev,
+          [row.id]: {
+            status: 'failed',
+            message: 'The model returned an error. Check logs for details.',
+          },
+        }));
+      }
+    } catch {
+      setResults((prev) => ({
+        ...prev,
+        [row.id]: {
+          status: 'failed',
+          message: 'Could not reach the server. Check your network and try again.',
+        },
+      }));
+    } finally {
+      setRunning(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Loading configured providers…
+      </div>
+    );
+  }
+
+  if (providers.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
+          <p className="font-medium">No active providers found.</p>
+          <p className="mt-1 text-xs">
+            Go back and configure a provider before running the smoke test.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <p className="text-sm">
-        Send a quick test message. If you see a reply, your agent, provider, and LLM wiring are all
-        working.
+        Each provider is exercised end-to-end: connectivity check, then a single &quot;Say
+        hello.&quot; round-trip through the configured default chat model. A green result means the
+        provider → API key → LLM chain works — system agents and any agents you create later will
+        use the same chain.
       </p>
 
-      <AgentTestChat agentSlug={agentSlug} />
+      {!chatModel && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
+          No default chat model is set. Go back to step 2 and pick one before running the test.
+        </div>
+      )}
+
+      <ul className="space-y-2">
+        {providers.map((row) => {
+          const result = results[row.id] ?? { status: 'idle' as const };
+          const isRunning = running === row.id;
+          return (
+            <li
+              key={row.id}
+              className="bg-background flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex items-start gap-3">
+                <SmokeTestStatusIcon status={result.status} />
+                <div>
+                  <div className="text-sm font-medium">{row.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    <code>{row.slug}</code>
+                    {result.status === 'ok' && typeof result.latencyMs === 'number' && (
+                      <>
+                        {' · '}
+                        <span className="text-green-700 dark:text-green-400">
+                          {result.latencyMs}ms round-trip
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {result.status === 'failed' && result.message && (
+                    <div className="text-destructive mt-1 text-xs">{result.message}</div>
+                  )}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant={result.status === 'ok' ? 'outline' : 'default'}
+                onClick={() => {
+                  void runTest(row);
+                }}
+                disabled={isRunning || !chatModel}
+                className="shrink-0"
+              >
+                {isRunning ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                    Testing…
+                  </>
+                ) : result.status === 'ok' ? (
+                  'Run again'
+                ) : (
+                  'Run test'
+                )}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
 
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={onNext}>
@@ -715,8 +1332,41 @@ function StepTestAgent({ agentSlug, onNext }: StepTestAgentProps) {
   );
 }
 
+function SmokeTestStatusIcon({ status }: { status: TestStatus }): React.ReactElement {
+  if (status === 'ok') {
+    return (
+      <CheckCircle2
+        className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
+        aria-label="Test passed"
+      />
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <AlertTriangle
+        className="text-destructive mt-0.5 h-4 w-4 shrink-0"
+        aria-label="Test failed"
+      />
+    );
+  }
+  if (status === 'running') {
+    return (
+      <Loader2
+        className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 animate-spin"
+        aria-label="Test running"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className="border-muted-foreground/40 mt-0.5 inline-block h-4 w-4 shrink-0 rounded-full border"
+    />
+  );
+}
+
 // ----------------------------------------------------------------------------
-// Step 5 — Done / next steps
+// Step 4 — Done / next steps
 // ----------------------------------------------------------------------------
 
 function StepDone() {

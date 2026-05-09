@@ -52,8 +52,11 @@ const unit: SeedUnit = {
           'System agent — do not edit. Used internally by the MCP server as the execution identity when external AI clients (Claude Desktop, Cursor, etc.) call tools. To expose capabilities to MCP clients, use the MCP Server → Tools page instead of assigning capabilities here.',
         systemInstructions:
           'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients. This agent never participates in LLM conversations — it exists solely as the execution identity for capability pipeline dispatch.',
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
+        // Empty strings — resolved at runtime via agent-resolver.ts.
+        // The MCP system agent never opens a chat turn directly, but
+        // capability dispatch still requires the binding to resolve.
+        model: '',
+        provider: '',
         temperature: 0,
         maxTokens: 4096,
         isActive: true,

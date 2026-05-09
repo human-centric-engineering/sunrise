@@ -6,6 +6,10 @@
  * Client wrapper that renders Evaluations and Experiments as tabs
  * on the unified Testing page. Each tab has a FieldHelp icon beside
  * it that compares/contrasts evaluations vs experiments.
+ *
+ * Tab state is URL-synced via `useUrlTabs` so deep links work
+ * (`?tab=experiments`), clicking the sidebar nav resets to the default,
+ * and browser back/forward navigates between tabs.
  */
 
 import * as React from 'react';
@@ -13,20 +17,24 @@ import { ClipboardCheck, FlaskConical } from 'lucide-react';
 
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 
 interface TestingTabsProps {
   evaluationsContent: React.ReactNode;
   experimentsContent: React.ReactNode;
-  defaultTab?: 'evaluations' | 'experiments';
 }
 
-export function TestingTabs({
-  evaluationsContent,
-  experimentsContent,
-  defaultTab = 'evaluations',
-}: TestingTabsProps) {
+const ALLOWED_TABS = ['evaluations', 'experiments'] as const;
+type TestingTab = (typeof ALLOWED_TABS)[number];
+
+export function TestingTabs({ evaluationsContent, experimentsContent }: TestingTabsProps) {
+  const { activeTab, setActiveTab } = useUrlTabs<TestingTab>({
+    defaultTab: 'evaluations',
+    allowedTabs: ALLOWED_TABS,
+  });
+
   return (
-    <Tabs defaultValue={defaultTab}>
+    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TestingTab)}>
       <div className="flex items-center gap-2">
         <TabsList>
           <TabsTrigger value="evaluations" className="gap-1.5">

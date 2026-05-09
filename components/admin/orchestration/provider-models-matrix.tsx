@@ -8,10 +8,12 @@
  */
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import React, { useCallback, useMemo, useState } from 'react';
-import { ArrowUpDown, ClipboardCheck, Plus } from 'lucide-react';
+import { ArrowUpDown, ClipboardCheck, Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Table,
   TableBody,
@@ -27,10 +29,36 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Tip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { FieldHelp } from '@/components/ui/field-help';
 import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
+import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
+import { apiClient, APIClientError } from '@/lib/api/client';
+import { API } from '@/lib/api/endpoints';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
+
+export interface ModelRowAgentRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface ModelRowWorkflowRef {
+  id: string;
+  name: string;
+  slug: string;
+}
 
 export interface ModelRow {
   id: string;
@@ -54,6 +82,10 @@ export interface ModelRow {
   dimensions?: number | null;
   schemaCompatible?: boolean | null;
   costPerMillionTokens?: number | null;
+  // Active agents bound to (providerSlug, modelId). Empty when no agent
+  // currently references the row. Source: GET /provider-models LEFT
+  // JOIN against AiAgent on the (provider, model) string pair.
+  agents?: ModelRowAgentRef[];
   metadata?: {
     lastAudit?: {
       timestamp: string;
@@ -191,12 +223,64 @@ function SortableHead({
 export function ProviderModelsMatrix({
   initialModels,
 }: ProviderModelsMatrixProps): React.ReactElement {
+  const router = useRouter();
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [capabilityFilter, setCapabilityFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('providerSlug');
   const [auditOpen, setAuditOpen] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
+
+  // Row deletion state. `target` doubles as the open flag for the
+  // confirmation dialog. `error` surfaces 409 in-use responses or
+  // network failures.
+  const [deleteTarget, setDeleteTarget] = useState<ModelRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBlockedAgents, setDeleteBlockedAgents] = useState<ModelRowAgentRef[]>([]);
+  const [deleteBlockedWorkflows, setDeleteBlockedWorkflows] = useState<ModelRowWorkflowRef[]>([]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await apiClient.delete(API.ADMIN.ORCHESTRATION.providerModelById(deleteTarget.id));
+      setDeleteTarget(null);
+      setDeleteBlockedAgents([]);
+      setDeleteBlockedWorkflows([]);
+      router.refresh();
+    } catch (err) {
+      // 409 → in-use guard tripped. Pull the blocking-ref lists out of
+      // the structured details so the dialog can render names + slugs
+      // instead of just an opaque error message.
+      if (err instanceof APIClientError) {
+        if (err.status === 409) {
+          if (Array.isArray(err.details?.agents)) {
+            setDeleteBlockedAgents(err.details.agents as ModelRowAgentRef[]);
+          }
+          if (Array.isArray(err.details?.workflows)) {
+            setDeleteBlockedWorkflows(err.details.workflows as ModelRowWorkflowRef[]);
+          }
+        }
+        setDeleteError(err.message);
+      } else {
+        setDeleteError(err instanceof Error ? err.message : "Couldn't delete the model.");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, router]);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+    setDeleteError(null);
+    setDeleteBlockedAgents([]);
+    setDeleteBlockedWorkflows([]);
+  }, []);
+
+  const deleteBlocked = deleteBlockedAgents.length + deleteBlockedWorkflows.length > 0;
 
   const providers = useMemo(
     () => [...new Set(initialModels.map((m) => m.providerSlug))].sort(),
@@ -297,11 +381,9 @@ export function ProviderModelsMatrix({
             serves as a framework reference implementation, exercising 10 of 15 step types
             end-to-end.
           </FieldHelp>
-          <Button asChild>
-            <Link href="/admin/orchestration/provider-models/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Add model
-            </Link>
+          <Button onClick={() => setDiscoverOpen(true)}>
+            <Sparkles className="mr-2 h-4 w-4" />
+            Discover models
           </Button>
         </div>
       </div>
@@ -369,12 +451,14 @@ export function ProviderModelsMatrix({
                 onToggle={toggleSort}
               />
               <TableHead>Best For</TableHead>
+              <TableHead className="text-right">In use</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-muted-foreground py-8 text-center">
+                <TableCell colSpan={12} className="text-muted-foreground py-8 text-center">
                   No models match the current filters
                 </TableCell>
               </TableRow>
@@ -412,11 +496,6 @@ export function ProviderModelsMatrix({
                     >
                       {model.name}
                     </Link>
-                    {!model.isDefault && (
-                      <Badge variant="outline" className="ml-2 text-[10px]">
-                        Custom
-                      </Badge>
-                    )}
                   </TableCell>
                   <TableCell>{capabilityBadge(model.capabilities)}</TableCell>
                   <TableCell>
@@ -437,6 +516,82 @@ export function ProviderModelsMatrix({
                       </span>
                     )}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {(model.agents?.length ?? 0) === 0 ? (
+                      <span className="text-muted-foreground text-xs">0</span>
+                    ) : (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            className="cursor-pointer text-xs tabular-nums hover:underline"
+                            aria-label={`Show ${model.agents?.length} agent${
+                              model.agents?.length === 1 ? '' : 's'
+                            } using ${model.name}`}
+                          >
+                            {model.agents?.length} →
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-0" align="end">
+                          <div className="border-b px-3 py-2">
+                            <p className="text-sm font-medium">
+                              {model.agents?.length} agent
+                              {model.agents?.length === 1 ? '' : 's'} using{' '}
+                              <span className="font-semibold">{model.name}</span>
+                            </p>
+                          </div>
+                          <ul className="max-h-48 overflow-y-auto py-1">
+                            {model.agents?.map((agent) => (
+                              <li key={agent.id}>
+                                <Link
+                                  href={`/admin/orchestration/agents/${agent.id}`}
+                                  className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                >
+                                  <span className="truncate">{agent.name}</span>
+                                  <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                    {agent.slug}
+                                  </span>
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {(model.agents?.length ?? 0) > 0 ? (
+                      <Tip
+                        label={`Cannot delete — ${model.agents?.length} agent${
+                          model.agents?.length === 1 ? '' : 's'
+                        } still ${model.agents?.length === 1 ? 'uses' : 'use'} this model.`}
+                      >
+                        <span className="inline-flex">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 opacity-50"
+                            disabled
+                            aria-label={`Delete ${model.name} disabled — model is in use`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </span>
+                      </Tip>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground hover:text-destructive h-7 w-7 p-0"
+                        onClick={() => setDeleteTarget(model)}
+                        aria-label={`Delete ${model.name}`}
+                        title={`Delete ${model.name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -446,6 +601,114 @@ export function ProviderModelsMatrix({
 
       {/* Audit dialog */}
       <AuditModelsDialog open={auditOpen} onOpenChange={setAuditOpen} models={initialModels} />
+
+      {/* Discover dialog — replaces the legacy free-text "New Provider Model" form
+          as the primary entry point. The legacy form stays mounted on
+          /provider-models/[id] for editing. */}
+      <DiscoverModelsDialog open={discoverOpen} onOpenChange={setDiscoverOpen} />
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) handleCancelDelete();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete model</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget ? (
+                <>
+                  Permanently removes <strong>{deleteTarget.name}</strong> from the matrix. Discover
+                  models will list it again if the provider still serves it.
+                </>
+              ) : (
+                'Permanently removes the model from the matrix.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {deleteBlockedAgents.length > 0 && (
+            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              <p className="font-medium">
+                {deleteBlockedAgents.length} agent
+                {deleteBlockedAgents.length === 1 ? '' : 's'} still{' '}
+                {deleteBlockedAgents.length === 1 ? 'uses' : 'use'} this model — re-point{' '}
+                {deleteBlockedAgents.length === 1 ? 'it' : 'them'} first:
+              </p>
+              <ul className="text-muted-foreground mt-1 list-inside list-disc">
+                {deleteBlockedAgents.slice(0, 8).map((a) => (
+                  <li key={a.id}>
+                    <Link href={`/admin/orchestration/agents/${a.id}`} className="hover:underline">
+                      {a.name}
+                    </Link>{' '}
+                    <span className="font-mono text-xs">({a.slug})</span>
+                  </li>
+                ))}
+                {deleteBlockedAgents.length > 8 && (
+                  <li>…and {deleteBlockedAgents.length - 8} more</li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {deleteBlockedWorkflows.length > 0 && (
+            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              <p className="font-medium">
+                {deleteBlockedWorkflows.length} workflow
+                {deleteBlockedWorkflows.length === 1 ? '' : 's'} pin
+                {deleteBlockedWorkflows.length === 1 ? 's' : ''} this model via{' '}
+                <code>modelOverride</code> — edit{' '}
+                {deleteBlockedWorkflows.length === 1 ? 'it' : 'them'} first:
+              </p>
+              <ul className="text-muted-foreground mt-1 list-inside list-disc">
+                {deleteBlockedWorkflows.slice(0, 8).map((w) => (
+                  <li key={w.id}>
+                    <Link
+                      href={`/admin/orchestration/workflows/${w.id}`}
+                      className="hover:underline"
+                    >
+                      {w.name}
+                    </Link>{' '}
+                    <span className="font-mono text-xs">({w.slug})</span>
+                  </li>
+                ))}
+                {deleteBlockedWorkflows.length > 8 && (
+                  <li>…and {deleteBlockedWorkflows.length - 8} more</li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {deleteError && !deleteBlocked && (
+            <p className="text-destructive text-sm">{deleteError}</p>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Default closes the dialog; we want to keep it open if the
+                // 409 response surfaces a list of bound refs the operator
+                // needs to act on first.
+                e.preventDefault();
+                void handleConfirmDelete();
+              }}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleting || deleteBlocked}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Decision heuristic */}
       <div className="rounded-md border">

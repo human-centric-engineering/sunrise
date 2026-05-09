@@ -12,6 +12,37 @@ Sunrise removes that assembly step. Orchestration is one layer within a complete
 
 ---
 
+## Sunrise is / Sunrise is not
+
+A frequent positioning conversation starts with "wait, is this like X?" — where X has ranged from LangChain to OpenAI AgentKit to Cursor to AWS Bedrock. The honest boundaries:
+
+**Sunrise is:**
+
+- A full-stack Next.js 16 application with agent orchestration baked in — the entire app is the artefact, not just the engine.
+- Self-hosted. You own the codebase and operate the deployment.
+- Single-tenant per deployment. One organisation, one Sunrise; multi-tenancy is achieved by running separate instances.
+- Provider-agnostic. Eight LLM provider families with circuit breakers and fallback chains; switching is a config change, not a code change.
+- Citation-grounded. Inline numbered citations flow through API, chat, and embed widget; an opt-in guard blocks ungrounded responses.
+- Budget-capped inside the execution loop — agents that exceed their monthly budget literally cannot spend more.
+- Brandable per-agent for partner-site deployment.
+- An MCP **server** as well as client — external MCP clients can call Sunrise's capabilities with audit logging and API-key auth.
+- A substrate for AI-assisted development that produces production-grade code (see "Built for AI-assisted development" below).
+
+**Sunrise is not:**
+
+- A managed SaaS you rent. There is no Sunrise cloud; you deploy it yourself.
+- A mobile or edge runtime. It runs on a server (Node.js + PostgreSQL); it does not run on a phone.
+- An on-device privacy product. Privacy-by-physics requires no server in the loop; Sunrise has a server.
+- A Python framework, notebook tool, or research toolkit. The codebase is TypeScript / Next.js end-to-end.
+- A library you embed in someone else's application — Sunrise _is_ the application.
+- Vendor-locked to OpenAI, AWS, Azure, or any cloud.
+- A multi-tenant SaaS out of the box. The schema and in-memory state assume one organisation per deployment.
+- A chatbot toolkit or no-code platform. The centre of gravity is a code-first, type-safe platform that engineers extend.
+
+These boundaries are deliberate — see `architectural-decisions.md` for the rationale behind each one.
+
+---
+
 ## What you get
 
 ### Your agents stay within bounds
@@ -31,6 +62,10 @@ For anything consequential — processing a refund, publishing content, submitti
 ### One codebase, one stack
 
 116 TypeScript source files across 19 modules. End-to-end type safety from database schema through API validation to admin interface. One deployment artifact. The orchestration engine itself contains zero framework-specific imports — it is pure TypeScript, testable without a server runtime, portable if your needs change. When you modify something, the types catch the ripple effects. When you deploy, it is one thing to ship.
+
+### Built for AI-assisted development
+
+Sunrise is not just a working app — it's a working app _plus the rules and scaffolding_ that make AI coding agents produce production-grade output rather than flaky prototypes. `CLAUDE.md` declares the stack versions, security rules, import conventions, and which utilities to reuse. `.context/` is a 100+ file documentation substrate covering API patterns, auth, security, testing, orchestration, and admin UI — written for AI agents to read alongside the code. The bundled skills (`/api-builder`, `/form-builder`, `/component-builder`, `/page-builder`, `/test-*`) and gates (`/pre-pr`, `/security-review`, `/ultrareview`) catch drift before it merges. The result: when you ask Claude Code or Cursor to build a feature, it follows established patterns instead of inventing new ones — and the codebase stays coherent across hundreds of AI-generated edits instead of degrading into a patchwork.
 
 ### It goes where your users are
 
@@ -106,6 +141,6 @@ Sunrise is a Next.js 16 application. Clone the repository, configure environment
 
 ---
 
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-09
 
-For the full technical specification, see `functional-specification.md`. For competitive positioning and known gaps, see `maturity-analysis.md`. For concrete use cases and go-to-market examples, see `business-applications.md`.
+For a punchier marketing-register version of this pitch, see `positioning.md`. For the full technical specification, see `functional-specification.md`. For competitive positioning and known gaps, see `maturity-analysis.md`. For concrete use cases and go-to-market examples, see `business-applications.md`.

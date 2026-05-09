@@ -171,12 +171,32 @@ describe('AgentsTable', () => {
       expect(screen.getByRole('link', { name: /create agent/i })).toBeInTheDocument();
     });
 
-    it('renders empty state when no agents', () => {
+    it('renders the friendly empty-state card with CTAs when no agents', () => {
       // Arrange & Act
       render(<AgentsTable initialAgents={[]} initialMeta={{ ...MOCK_META, total: 0 }} />);
 
       // Assert
-      expect(screen.getByText('No agents found.')).toBeInTheDocument();
+      expect(screen.getByText(/No agents yet/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /create your first agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /open setup wizard/i })).toBeInTheDocument();
+    });
+
+    it('renders a "System default" badge when an agent has empty provider/model', () => {
+      // Empty-string provider/model is the contract for system-seeded agents
+      // that resolve their LLM binding dynamically via agent-resolver.ts.
+      const systemAgent = makeAgent({
+        id: 'sys-1',
+        name: 'pattern-advisor',
+        slug: 'pattern-advisor',
+        provider: '',
+        model: '',
+      });
+
+      render(
+        <AgentsTable initialAgents={[systemAgent]} initialMeta={{ ...MOCK_META, total: 1 }} />
+      );
+
+      expect(screen.getByText(/System default/i)).toBeInTheDocument();
     });
 
     it('renders pagination info', () => {
@@ -703,6 +723,15 @@ describe('AgentsTable', () => {
   // ── Created column ──────────────────────────────────────────────────────
 
   describe('created column', () => {
+    // Same time-pinning as `formatRelativeTime` below — see the comment
+    // there. This describe block also computes Date.now() offsets and
+    // expects exact relative-time strings, so it benefits from the
+    // same frozen clock to avoid boundary flake.
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-09T12:00:00Z'));
+    });
+
     it('shows relative time for agent creation date', () => {
       const agents: AiAgentListItem[] = [
         makeAgent({
@@ -813,6 +842,16 @@ describe('AgentsTable', () => {
   // ── formatRelativeTime branches ─────────────────────────────────────────
 
   describe('formatRelativeTime', () => {
+    // Override the suite-level timers for this describe only. The relative-
+    // time tests don't use userEvent, so freezing the clock is safe — and
+    // it kills the boundary-flake risk that `shouldAdvanceTime: true`
+    // introduces (e.g. `Date.now() - 3600_000` and the component's later
+    // `new Date()` reading slightly different wall-clock values).
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-09T12:00:00Z'));
+    });
+
     it('renders "just now" for agents created less than 1 minute ago', () => {
       const agents: AiAgentListItem[] = [
         makeAgent({

@@ -2,6 +2,17 @@
 
 DB-managed registry of LLM provider **models** with tier classification, capability ratings, and a decision heuristic for assigning models to agent roles. Each row represents a single model (e.g. "Claude Opus 4", "GPT-4o-mini", "Voyage 3") rather than a provider.
 
+## Dynamic system-agent resolution
+
+The 5 system-seeded agents (`pattern-advisor`, `quiz-master`, `mcp-system`, `provider-model-auditor`, `audit-report-writer`) ship with empty `provider`/`model` strings. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills those bindings from:
+
+1. The first active `AiProviderConfig` row whose `apiKeyEnvVar` is set in `process.env` (or whose row is `isLocal`).
+2. `AiOrchestrationSettings.defaultModels.chat` for the model id, falling through to `getDefaultModelForTask('chat')` and ultimately the registry's static fallback (`computeDefaultModelMap()` in `model-registry.ts`).
+
+The setup wizard writes `defaultModels.chat` and `.embeddings` based on the operator's chosen provider, so a fresh install picks up sensible defaults automatically once a provider is configured. Explicit `agent.provider`/`.model` always wins; the empty-string fallback is reserved for system seeds.
+
+This is the seam that makes Sunrise provider-agnostic on a fresh install. The 47-row matrix in `009-provider-models.ts` remains the **catalogue** that powers the recommender below.
+
 ## Quick Start
 
 ```typescript
@@ -100,13 +111,15 @@ Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pt
 
 ### CRUD
 
-| Method | Path                                              | Purpose                                                                                 |
-| ------ | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/admin/orchestration/provider-models`     | Paginated list with filters (`tierRole`, `capability`, `providerSlug`, `isActive`, `q`) |
-| POST   | `/api/v1/admin/orchestration/provider-models`     | Create (sets `isDefault: false`)                                                        |
-| GET    | `/api/v1/admin/orchestration/provider-models/:id` | Single model with `configured` status                                                   |
-| PATCH  | `/api/v1/admin/orchestration/provider-models/:id` | Update (flips `isDefault` to `false` on edit)                                           |
-| DELETE | `/api/v1/admin/orchestration/provider-models/:id` | Soft delete (`isActive = false`)                                                        |
+| Method | Path                                                          | Purpose                                                                                                                                                                                                                            |
+| ------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/admin/orchestration/provider-models`                 | Paginated list with filters (`tierRole`, `capability`, `providerSlug`, `isActive`, `q`)                                                                                                                                            |
+| POST   | `/api/v1/admin/orchestration/provider-models`                 | Create one (sets `isDefault: false`)                                                                                                                                                                                               |
+| POST   | `/api/v1/admin/orchestration/provider-models/bulk`            | Create up to 50 in one request — `{ providerSlug, models: [...] }`. `skipDuplicates: true` for partial success. Distinguishes `already_in_matrix` from `already_in_matrix_inactive` in the response. Used by the discovery dialog. |
+| GET    | `/api/v1/admin/orchestration/provider-models/:id`             | Single model with `configured` status                                                                                                                                                                                              |
+| PATCH  | `/api/v1/admin/orchestration/provider-models/:id`             | Update (flips `isDefault` to `false` on edit)                                                                                                                                                                                      |
+| DELETE | `/api/v1/admin/orchestration/provider-models/:id`             | Soft delete (`isActive = false`)                                                                                                                                                                                                   |
+| GET    | `/api/v1/admin/orchestration/discovery/models?providerSlug=X` | Fan-out across `provider.listModels()` + cached OpenRouter; returns merged candidates with `inMatrix`, `inferredCapability`, and heuristic-derived `suggested.*` defaults. Powers the discovery dialog.                            |
 
 **PATCH no-op short-circuit:** When the request body contains no user-supplied fields (and the model is not seed-managed), PATCH returns the current model without writing to the database or invalidating the cache.
 
@@ -125,7 +138,7 @@ Response includes `recommendations[]` and a `heuristic` object with human-readab
 ## Admin UI
 
 - **Flat table** (`/admin/orchestration/provider-models`): Filterable by provider, tier, capability (Chat/Embedding/All). Sortable columns with capability badges and configured-status dots.
-- **Create** (`/admin/orchestration/provider-models/new`): Form with provider slug, model ID, capabilities checkboxes, tier selector, conditional embedding fields.
+- **Create** — discovery dialog mounted from the matrix tab's "Discover models" button. Fans out across `provider.listModels()` + the cached OpenRouter catalogue, auto-derives every matrix field via heuristics, presents a per-row review step, and POSTs the batch to `/provider-models/bulk` (1–50 rows per request, partial-success via `skipDuplicates`). The legacy `/provider-models/new` route now redirects to the matrix tab. See [orchestration-provider-models.md — Adding models](../admin/orchestration-provider-models.md#adding-models).
 - **Edit** (`/admin/orchestration/provider-models/:id`): Pre-filled form, warns about `isDefault` flip.
 
 ## Embedding Model Integration

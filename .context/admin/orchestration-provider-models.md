@@ -6,13 +6,13 @@ Admin surface for the `AiProviderModel` registry — the per-model intelligence 
 
 ```
 /admin/orchestration/provider-models           ──307──►  /admin/orchestration/providers?tab=models
-/admin/orchestration/provider-models/new       → standalone create page
+/admin/orchestration/provider-models/new       ──307──►  /admin/orchestration/providers?tab=models
 /admin/orchestration/provider-models/[id]      → standalone edit page
 ```
 
 The list surface lives as the **Models tab** on the Providers page (`app/admin/orchestration/providers/page.tsx`). The legacy `/provider-models` route redirects there to keep older links working. The matrix table, filters, and decision heuristic all render inside that tab via `<ProviderModelsMatrix />`.
 
-The **new** and **[id]** sub-routes are still standalone server shells — breadcrumb reads `AI Orchestration / Provider Models / New` (or `/ <model.name>`).
+Creation now goes through the discovery dialog (see "Adding models" below); the legacy `/provider-models/new` page just redirects to the matrix tab so stale bookmarks bounce to the new entry point. The **[id]** sub-route is still a standalone server shell that mounts `<ProviderModelForm />` for editing.
 
 ## Matrix view
 
@@ -54,13 +54,84 @@ Rendered inline beneath the matrix. Six rows mapping task intent → recommended
 
 Hardcoded in the component — maps each intent to a tier, task characteristics, and rationale. The `recommend` endpoint exists as a separate API but is not used by the rendered table.
 
-### "Add model" button
+### "Discover models" button
 
-Header action links to `/admin/orchestration/provider-models/new`.
+Header action opens the **discovery dialog** (`components/admin/orchestration/discover-models-dialog.tsx`) — see [Adding models](#adding-models). The legacy `/provider-models/new` standalone form is gone; operators no longer type `providerSlug`, `modelId`, or any of the six rating enums by hand.
 
-## Form (create & edit)
+## Adding models
 
-`components/admin/orchestration/provider-model-form.tsx` — `react-hook-form` + `zodResolver`. Top of the form is a sticky action bar with Cancel / Save.
+Three-step dialog mounted by the matrix list page's **Discover models** button. Reused from the View Models panel's "Add to matrix" affordance (see [orchestration-providers.md](./orchestration-providers.md)).
+
+### Step 1 — Provider
+
+Radix `<Select>` populated from active `AiProviderConfig` rows (`GET /providers?isActive=true`). No free-text — fixes the legacy form's central weakness where typo'd `providerSlug` values silently created orphan matrix rows.
+
+When the dialog is opened with a `providerSlug` prop (View Models panel reuse), step 1 is skipped entirely.
+
+### Step 2 — Discovery
+
+Fires `GET /api/v1/admin/orchestration/discovery/models?providerSlug=<slug>` on entry. The route fans out across two sources in parallel:
+
+- **Vendor SDK** — `provider.listModels()` for the configured provider. Returns whatever the vendor's `/v1/models` endpoint reports.
+- **OpenRouter** — the cached catalogue from `lib/orchestration/llm/model-registry.ts:refreshFromOpenRouter` (24-hour TTL). Filters to entries whose OpenRouter prefix matches the requested provider.
+
+Either tier can fail silently — the route only 503s when both are unavailable. Anthropic's SDK only ships 3 hardcoded models, so OpenRouter is the path to surface the rest of the family.
+
+Each candidate is annotated:
+
+| Field                | Meaning                                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sources`            | `{ vendor: boolean, openrouter: boolean }` — drives the source dots in the table so operators can spot OpenRouter-only suggestions                                                                             |
+| `inMatrix`           | `true` when an **active** matrix row exists for `(providerSlug, modelId)`. Filters by `isActive: true` to match the View Models panel — soft-deleted rows fall through and the operator can re-attempt the add |
+| `matrixId`           | The active matrix row's id when present, else `null`                                                                                                                                                           |
+| `inferredCapability` | From `lib/orchestration/llm/capability-inference.ts` — `chat` / `reasoning` / `embedding` / `image` / `audio` / `moderation` / `unknown`                                                                       |
+| `suggested`          | Heuristic-derived defaults for every matrix field (see "Heuristics" below)                                                                                                                                     |
+
+Filter chips and search match the View Models panel's pattern — `Chat / Embedding / Image / Audio / Other` with substring search on id + name.
+
+### Step 3 — Review
+
+Expandable card per selected candidate with the heuristic-derived metadata as editable form controls (name, description, capability checkboxes, tierRole select, the five rating selects, bestRole text). Each card has a **Reset to suggestion** link that rolls back operator edits to the discovery defaults.
+
+Embedding-specific fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) are **not** in the dialog UI — operators can edit them via the legacy `/provider-models/[id]` edit form after creation. Keeps the review step tractable.
+
+### Submit + result
+
+`POST /api/v1/admin/orchestration/provider-models/bulk` with the envelope `{ providerSlug, models: [...] }`. Server uses `prisma.aiProviderModel.createMany({ data, skipDuplicates: true })` and returns:
+
+```jsonc
+{
+  "created": number,
+  "skipped": number,
+  "conflicts": [
+    { "modelId": "gpt-4o", "reason": "already_in_matrix" },
+    { "modelId": "gpt-4o-mini", "reason": "already_in_matrix_inactive" }, // soft-deleted; operator should reactivate
+  ]
+}
+```
+
+The result panel renders active conflicts and inactive conflicts under separate headings — `already_in_matrix_inactive` rows can't be re-added through discovery (the unique constraint blocks it), so the operator is pointed at the matrix list to flip `isActive` back on.
+
+### Heuristics
+
+`lib/orchestration/llm/model-heuristics.ts` — pure functions (no I/O) that map raw signals to the matrix's enum fields:
+
+| Function               | Output                                                   | Driven by                                                                                                                                           |
+| ---------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deriveCostEfficiency` | `very_high` / `high` / `medium` / `none`                 | `inputCostPerMillion` thresholds (≤$0.5 / ≤$2 / ≤$10 / >$10)                                                                                        |
+| `deriveContextLength`  | `very_high` / `high` / `medium` / `n_a`                  | `maxContext` (≥1M / ≥128K / ≥32K / else)                                                                                                            |
+| `deriveLatency`        | `very_fast` / `fast` / `medium`                          | id contains `nano` / `flash-lite` → very_fast; `mini` / `flash` / `haiku` / `turbo` → fast                                                          |
+| `deriveReasoningDepth` | `very_high` / `high` / `medium` / `none`                 | `opus` / `o1` / `o3` / `o4` → very_high; `gpt-4` / `gpt-5` / `sonnet` / `gemini-pro` → high; cheap variants → medium                                |
+| `deriveTierRole`       | one of the 6 `TIER_ROLES`                                | embedding capability → `embedding`; local → `local_sovereign`; reasoning_depth=very_high → `thinking`; cheap+fast → `worker`; else `infrastructure` |
+| `deriveToolUse`        | `strong` / `moderate` / `none`                           | OpenRouter's `supported_parameters` array                                                                                                           |
+| `deriveBestRole`       | Short canned phrase per `(tier, capability)` combination | Lookup table                                                                                                                                        |
+| `deriveMatrixSlug`     | `${providerSlug}-${modelId}` lowercased + hyphenated     | Matches the legacy form's `toSlug()` rule                                                                                                           |
+
+Word-boundary regex on cheap-variant matchers — `gemini-pro` doesn't accidentally downgrade itself for containing the substring `mini`. Frontier-reasoning families take precedence over the cheap-variant downgrade so `o1-mini` stays `very_high`.
+
+## Form (edit only)
+
+`components/admin/orchestration/provider-model-form.tsx` — `react-hook-form` + `zodResolver`. Top of the form is a sticky action bar with Cancel / Save. Only mounted on the `[id]` edit page now — creation goes through the discovery dialog described above.
 
 ### Seed-managed warning
 

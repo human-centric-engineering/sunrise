@@ -156,8 +156,8 @@ export class NotFoundError extends APIError {
  * ```
  */
 export class ConflictError extends APIError {
-  constructor(message: string = 'Resource already exists') {
-    super(message, ErrorCodes.CONFLICT, 409);
+  constructor(message: string = 'Resource already exists', details?: Record<string, unknown>) {
+    super(message, ErrorCodes.CONFLICT, 409, details);
     this.name = 'ConflictError';
   }
 }

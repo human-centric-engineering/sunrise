@@ -55,8 +55,9 @@ const unit: SeedUnit = {
         description:
           'Interactive quiz on agentic design patterns with adaptive difficulty and knowledge-grounded explanations.',
         systemInstructions: QUIZ_MASTER_INSTRUCTIONS,
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
+        // Empty strings — resolved at runtime via agent-resolver.ts.
+        model: '',
+        provider: '',
         temperature: 0.5,
         maxTokens: 4096,
         isActive: true,

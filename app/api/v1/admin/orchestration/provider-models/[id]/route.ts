@@ -3,7 +3,9 @@
  *
  * GET    /api/v1/admin/orchestration/provider-models/:id — single model
  * PATCH  /api/v1/admin/orchestration/provider-models/:id — update, sets isDefault=false
- * DELETE /api/v1/admin/orchestration/provider-models/:id — soft delete (isActive=false)
+ * DELETE /api/v1/admin/orchestration/provider-models/:id — hard delete, refused
+ *        (409 MODEL_IN_USE) when any active agent or active workflow still
+ *        references the row's (providerSlug, modelId) pair.
  *
  * Authentication: Admin role required.
  */
@@ -11,7 +13,7 @@
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -137,19 +139,44 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   const current = await prisma.aiProviderModel.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Provider model ${id} not found`);
 
-  if (!current.isActive) {
-    log.info('Provider model already inactive, skipping soft-delete', { modelId: id });
-    return successResponse({ id, deleted: true });
+  // In-use guard: refuse to delete when any active agent or active
+  // workflow (published version or in-progress draft) still references
+  // the (providerSlug, modelId) pair. AiAgent stores both as plain
+  // strings; workflows pin via `step.config.modelOverride` (just the
+  // bare modelId — provider context is resolved from the model registry
+  // at runtime).
+  const [boundAgents, boundWorkflows] = await Promise.all([
+    prisma.aiAgent.findMany({
+      where: {
+        isActive: true,
+        provider: current.providerSlug,
+        model: current.modelId,
+      },
+      select: { id: true, name: true, slug: true },
+      orderBy: { name: 'asc' },
+    }),
+    findWorkflowsPinningModel(current.modelId),
+  ]);
+
+  if (boundAgents.length > 0 || boundWorkflows.length > 0) {
+    log.info('Provider model delete refused — model in use', {
+      modelId: id,
+      slug: current.slug,
+      agentCount: boundAgents.length,
+      workflowCount: boundWorkflows.length,
+    });
+    return errorResponse(buildInUseMessage(current.name, boundAgents, boundWorkflows), {
+      code: 'MODEL_IN_USE',
+      status: 409,
+      details: { agents: boundAgents, workflows: boundWorkflows },
+    });
   }
 
-  await prisma.aiProviderModel.update({
-    where: { id },
-    data: { isActive: false },
-  });
+  await prisma.aiProviderModel.delete({ where: { id } });
 
   invalidateModelCache();
 
-  log.info('Provider model soft-deleted', {
+  log.info('Provider model deleted', {
     modelId: id,
     slug: current.slug,
     adminId: session.user.id,
@@ -157,3 +184,76 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   return successResponse({ id, deleted: true });
 });
+
+interface BoundRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+// Step types whose `config.modelOverride` pins a specific model. Mirrors
+// the LLM_STEP_TYPES set in lib/orchestration/workflows/semantic-validator.ts;
+// kept in sync by hand because exporting from the validator would pull its
+// runtime deps (model registry) into this admin route for no benefit.
+const LLM_STEP_TYPES = new Set([
+  'llm_call',
+  'route',
+  'reflect',
+  'guard',
+  'evaluate',
+  'plan',
+  'orchestrator',
+]);
+
+function definitionPinsModel(definition: unknown, modelId: string): boolean {
+  if (!definition || typeof definition !== 'object') return false;
+  const steps = (definition as { steps?: unknown }).steps;
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const type = (step as { type?: unknown }).type;
+    if (typeof type !== 'string' || !LLM_STEP_TYPES.has(type)) continue;
+    const config = (step as { config?: unknown }).config;
+    if (!config || typeof config !== 'object') continue;
+    const override = (config as { modelOverride?: unknown }).modelOverride;
+    if (typeof override === 'string' && override === modelId) return true;
+  }
+  return false;
+}
+
+async function findWorkflowsPinningModel(modelId: string): Promise<BoundRef[]> {
+  const workflows = await prisma.aiWorkflow.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      draftDefinition: true,
+      publishedVersion: { select: { snapshot: true } },
+    },
+    orderBy: { name: 'asc' },
+  });
+
+  const matches: BoundRef[] = [];
+  for (const w of workflows) {
+    const draftPins = definitionPinsModel(w.draftDefinition, modelId);
+    const publishedPins = definitionPinsModel(w.publishedVersion?.snapshot, modelId);
+    if (draftPins || publishedPins) {
+      matches.push({ id: w.id, name: w.name, slug: w.slug });
+    }
+  }
+  return matches;
+}
+
+function buildInUseMessage(modelName: string, agents: BoundRef[], workflows: BoundRef[]): string {
+  const parts: string[] = [];
+  if (agents.length > 0) {
+    parts.push(`${agents.length} active agent${agents.length === 1 ? '' : 's'}`);
+  }
+  if (workflows.length > 0) {
+    parts.push(`${workflows.length} active workflow${workflows.length === 1 ? '' : 's'}`);
+  }
+  return `Cannot delete model "${modelName}" — ${parts.join(' and ')} still reference${
+    agents.length + workflows.length === 1 ? 's' : ''
+  } it. Re-point them to a different model first.`;
+}

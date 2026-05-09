@@ -28,19 +28,16 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/components/admin/orchestration/learn/learning-tabs', () => ({
   LearningTabs: ({
     patterns,
-    defaultTab,
     contextType,
     contextId,
   }: {
     patterns: { patternNumber: number }[];
-    defaultTab?: string;
     contextType?: string;
     contextId?: string;
   }) => (
     <div
       data-testid="learning-tabs"
       data-patterns-count={String(patterns.length)}
-      data-default-tab={defaultTab ?? ''}
       data-context-type={contextType ?? ''}
       data-context-id={contextId ?? ''}
     />
@@ -137,14 +134,16 @@ describe('LearnPage', () => {
   });
 
   describe('happy path', () => {
-    it('forwards loaded patterns and search params to LearningTabs', async () => {
+    it('forwards loaded patterns and context search params to LearningTabs', async () => {
+      // The `tab` query param is no longer a page-level concern — the
+      // LearningTabs client component reads it directly via useUrlTabs.
+      // The page only forwards context props (contextType / contextId).
       vi.mocked(serverFetch).mockResolvedValue(okResponse());
       vi.mocked(parseApiResponse).mockResolvedValue({
         success: true,
         data: PATTERNS,
       } as never);
       const searchParams = Promise.resolve({
-        tab: 'advisor',
         contextType: 'pattern',
         contextId: '1',
       });
@@ -153,7 +152,6 @@ describe('LearnPage', () => {
 
       const tabs = screen.getByTestId('learning-tabs');
       expect(tabs).toHaveAttribute('data-patterns-count', '2');
-      expect(tabs).toHaveAttribute('data-default-tab', 'advisor');
       expect(tabs).toHaveAttribute('data-context-type', 'pattern');
       expect(tabs).toHaveAttribute('data-context-id', '1');
     });

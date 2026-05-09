@@ -27,6 +27,16 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Stub the settings-resolver so the test fixture-defined embedding model
+// (text-embedding-3-small) wins over whatever the live registry would
+// compute. Real callers still get the operator-configured value via
+// AiOrchestrationSettings.defaultModels.embeddings.
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  getDefaultModelForTask: vi.fn(async (task: string) =>
+    task === 'embeddings' ? 'text-embedding-3-small' : 'fixture-chat-model'
+  ),
+}));
+
 // Mock global fetch before importing the SUT so the module picks it up
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -306,6 +316,18 @@ describe('resolveProvider (via embedText)', () => {
 
     const body = JSON.parse(calledOptions.body) as { model: string };
     expect(body.model).toBe('text-embedding-3-small');
+  });
+
+  it('throws "No embedding provider configured" when no providers exist and OPENAI_API_KEY is unset', async () => {
+    // Source resolveProvider() throws explicitly when both branches
+    // fail — no DB row AND no env fallback. Without this test the
+    // throw message could be silently changed (e.g. typed
+    // ProviderError with a different string) and the suite would
+    // stay green because the OpenAI-direct test always sets the env.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    delete process.env['OPENAI_API_KEY'];
+
+    await expect(embedText('hello')).rejects.toThrow(/No embedding provider configured/i);
   });
 });
 

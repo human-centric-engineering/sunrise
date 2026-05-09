@@ -4,10 +4,10 @@
  * CostsView — top-level client island for the costs page.
  *
  * Pure composition. The server shell at
- * `app/admin/orchestration/costs/page.tsx` runs the six parallel
- * null-safe fetches and hands the results down as props; this
- * component assembles the sections in the expected visual order and
- * owns nothing beyond layout.
+ * `app/admin/orchestration/costs/page.tsx` runs the parallel null-safe
+ * fetches and hands the results down as props; this component
+ * assembles the sections in the expected visual order and owns
+ * nothing beyond layout.
  *
  * Order (top-to-bottom):
  *   1. Summary cards       — Today / Week / Month / Projected
@@ -15,25 +15,31 @@
  *   3. Trend chart         — 30-day stacked by tier
  *   4. Per-agent table + per-model table (2-col on lg)
  *   5. Local vs cloud panel
- *   6. Configuration form
+ *
+ * The default-models form used to live here too; it now lives on the
+ * Settings page where developers actually look for it. A small footer
+ * link below points there.
  */
+
+import Link from 'next/link';
+import { Settings as SettingsIcon } from 'lucide-react';
 
 import { BudgetAlertsList } from '@/components/admin/orchestration/costs/budget-alerts-list';
 import { CostMethodology } from '@/components/admin/orchestration/costs/cost-methodology';
 import { CostSummaryCards } from '@/components/admin/orchestration/costs/cost-summary-cards';
 import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
 import { LocalVsCloudPanel } from '@/components/admin/orchestration/costs/local-vs-cloud-panel';
-import { OrchestrationSettingsForm } from '@/components/admin/orchestration/costs/orchestration-settings-form';
 import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-agent-cost-table';
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
 import { PricingReference } from '@/components/admin/orchestration/costs/pricing-reference';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import type {
   BudgetAlert,
   CostSummary,
   GlobalCapStatus,
 } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import type { OrchestrationSettings } from '@/types/orchestration';
 
 interface PerModelDaily {
   key: string;
@@ -46,7 +52,6 @@ export interface CostsViewProps {
   globalCap: GlobalCapStatus | null;
   perModel: PerModelDaily[] | null;
   models: ModelInfo[] | null;
-  settings: OrchestrationSettings | null;
   /** Epoch ms when OpenRouter pricing was last fetched. null/0 = static fallback. */
   registryFetchedAt?: number | null;
 }
@@ -57,7 +62,6 @@ export function CostsView({
   globalCap,
   perModel,
   models,
-  settings,
   registryFetchedAt,
 }: CostsViewProps) {
   return (
@@ -79,7 +83,26 @@ export function CostsView({
 
       <CostMethodology />
 
-      <OrchestrationSettingsForm settings={settings} models={models} />
+      <Card>
+        <CardContent className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <SettingsIcon
+              className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
+              aria-hidden="true"
+            />
+            <div className="text-sm">
+              <p className="font-medium">Default models &amp; budget caps</p>
+              <p className="text-muted-foreground">
+                Configure the per-task default models and the global monthly budget on the Settings
+                page.
+              </p>
+            </div>
+          </div>
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href="/admin/orchestration/settings">Open Settings</Link>
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

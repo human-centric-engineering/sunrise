@@ -9,9 +9,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
+
+// Mutable URL params so individual tests can simulate landing on a
+// specific tab. `LearningTabs` reads tabs from `useSearchParams` via
+// `useUrlTabs`, so we can't drive a tab change with a click in the
+// test environment (the mock doesn't re-render on `router.replace`).
+let urlParams = new URLSearchParams();
 
 vi.mock('@/lib/api/server-fetch', () => ({
   serverFetch: vi.fn(),
@@ -39,6 +44,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => urlParams),
+  usePathname: vi.fn(() => '/admin/orchestration/learn'),
 }));
 
 vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
@@ -71,6 +78,7 @@ const MOCK_PATTERNS = [
 describe('LearnPage (server component)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    urlParams = new URLSearchParams();
   });
 
   afterEach(() => {
@@ -137,8 +145,8 @@ describe('LearnPage (server component)', () => {
     expect(screen.getByRole('heading', { name: /^learning$/i })).toBeInTheDocument();
   });
 
-  it('advisor tab renders ChatInterface component', async () => {
-    const user = userEvent.setup();
+  it('renders ChatInterface on the advisor tab when URL has ?tab=advisor', async () => {
+    urlParams = new URLSearchParams('tab=advisor');
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
     vi.mocked(parseApiResponse).mockResolvedValue({
@@ -149,14 +157,12 @@ describe('LearnPage (server component)', () => {
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
     render(await LearnPage({ searchParams: Promise.resolve({}) }));
-
-    await user.click(screen.getByRole('tab', { name: /advisor/i }));
 
     expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
   });
 
-  it('quiz tab renders ChatInterface component', async () => {
-    const user = userEvent.setup();
+  it('renders ChatInterface on the quiz tab when URL has ?tab=quiz', async () => {
+    urlParams = new URLSearchParams('tab=quiz');
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
     vi.mocked(parseApiResponse).mockResolvedValue({
@@ -167,8 +173,6 @@ describe('LearnPage (server component)', () => {
     const { default: LearnPage } = await import('@/app/admin/orchestration/learn/page');
 
     render(await LearnPage({ searchParams: Promise.resolve({}) }));
-
-    await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
     expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
   });

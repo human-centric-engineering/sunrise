@@ -165,8 +165,11 @@ const unit: SeedUnit = {
         description:
           'Recommends agentic design patterns and generates workflow definitions based on your use case.',
         systemInstructions: PATTERN_ADVISOR_INSTRUCTIONS,
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
+        // Empty strings — resolved at runtime via agent-resolver.ts using
+        // the operator's first configured provider + the system default
+        // chat model. See lib/orchestration/llm/agent-resolver.ts.
+        model: '',
+        provider: '',
         temperature: 0.3,
         maxTokens: 4096,
         isActive: true,

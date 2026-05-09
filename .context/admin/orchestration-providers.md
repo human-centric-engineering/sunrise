@@ -2,6 +2,35 @@
 
 Admin list/create/edit flows for `AiProviderConfig`. Landed in Phase 4 Session 4.3. Providers are the **LLM backends** your agents can call — Anthropic, OpenAI, Voyage AI, Ollama, or any OpenAI-compatible service.
 
+## No pre-seeded providers
+
+A fresh install (post `db:reset`) starts with **zero `AiProviderConfig` rows**. Providers are not pre-seeded — operators choose what to configure via the [setup wizard](./setup-wizard.md), which detects API keys present in `process.env` and offers one-click configuration cards.
+
+The 47-row provider-model matrix (`prisma/seeds/009-provider-models.ts`) is still seeded as **reference catalogue data**, not as configured providers. It powers the Model Matrix tab and the recommender (`lib/orchestration/llm/provider-selector.ts`).
+
+## Detection API
+
+`GET /api/v1/admin/orchestration/providers/detect` (admin-only) scans `process.env` for known LLM API keys and returns:
+
+```ts
+{
+  detected: Array<{
+    slug: string; // e.g. "anthropic"
+    name: string;
+    providerType: 'anthropic' | 'openai-compatible' | 'voyage';
+    defaultBaseUrl: string | null;
+    apiKeyEnvVar: string | null; // e.g. "ANTHROPIC_API_KEY" — name only, never the value
+    apiKeyPresent: boolean;
+    alreadyConfigured: boolean; // true if a row with this slug already exists
+    isLocal: boolean;
+    suggestedDefaultChatModel: string | null;
+    suggestedEmbeddingModel: string | null;
+  }>;
+}
+```
+
+The known-provider catalogue lives in `lib/orchestration/llm/known-providers.ts`. Add a flavour there to make it detectable. Env-var values never leave the server.
+
 **Pages**
 
 | Route                                 | File                                              | Role                                 |
@@ -74,22 +103,43 @@ Per-card `<ProviderTestButton providerId={p.id}>` — see the extract below. The
 
 **File:** `components/admin/orchestration/provider-models-panel.tsx`
 
-Table columns:
+Table columns (sortable headers carry hover tooltips that name the upstream data source):
 
-| Column      | Source                       | Notes                                                     |
-| ----------- | ---------------------------- | --------------------------------------------------------- |
-| Model       | `model.name` / `model.id`    | Two-line cell, id in monospace below name                 |
-| Context     | `model.maxContext`           | `N tok` with thousands separator                          |
-| Tier        | `model.tier`                 | Capitalized                                               |
-| Input $/1M  | `model.inputCostPerMillion`  | Right-aligned tabular. **Hidden when `isLocal === true`** |
-| Output $/1M | `model.outputCostPerMillion` | Right-aligned tabular. **Hidden when `isLocal === true`** |
-| Available   | `model.available`            | Green ✓ / `—`                                             |
+| Column        | Source                                 | Notes                                                                                                                |
+| ------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Model         | `model.name` / `model.id`              | Two-line cell, id in monospace below name                                                                            |
+| In matrix     | `model.inMatrix`                       | Green badge when the model has a matching `AiProviderModel` row; em-dash otherwise                                   |
+| In use        | `model.agents`                         | Count badge linking to the agents bound to `(providerSlug, modelId)`; em-dash when empty                             |
+| Capabilities  | `model.capabilities`                   | One badge per capability (chat / embedding / reasoning / image / audio / moderation / unknown)                       |
+| Context       | `model.maxContext`                     | `N tok` with thousands separator. Renders `—` with a hover tooltip when the value is 0 (see "Unknown values" below). |
+| Tier          | `model.tier`                           | Capitalized                                                                                                          |
+| Input $/1M    | `model.inputCostPerMillion`            | Right-aligned tabular. Renders `—` with tooltip when 0. **Hidden when `isLocal === true`**                           |
+| Output $/1M   | `model.outputCostPerMillion`           | Right-aligned tabular. Renders `—` with tooltip when 0. **Hidden when `isLocal === true`**                           |
+| Available     | `model.available`                      | Green ✓ / `—`                                                                                                        |
+| Test          | per-row Test button (capability-aware) | See "Per-model test button" below                                                                                    |
+| Add to matrix | "Add" button when `inMatrix === false` | Opens the discovery dialog with this row pre-selected                                                                |
 
 The panel fetches `GET /providers/:id/models` on mount. **Refresh models** re-fetches. Loading renders a spinner; failures render a friendly red banner ("Couldn't load models. Check the server logs for details.") — the server route has already sanitized the upstream error.
 
+### Unknown / free values (Context / Input $/1M / Output $/1M)
+
+Context length and pricing come from OpenRouter's public catalogue, refreshed every 24h (`lib/orchestration/llm/model-registry.ts:refreshFromOpenRouter`). Each cost cell distinguishes three states:
+
+- **Known non-zero** — renders `$X.XX` with no tooltip; the column header tooltip names the source.
+- **Free (zero pricing in OpenRouter)** — renders **Free** in green with a `cursor-help` span. Hover: "Listed in OpenRouter with zero per-token pricing — typically promotional or community access (e.g. :free model variants)." Detected via `tier === 'local'` on a non-local provider's row, since the OpenRouter parser's `classifyTier(0)` returns `'local'` and the openai-compatible fallback for unknown models forces `'mid'`.
+- **Unknown (not in OpenRouter)** — renders `—` with `cursor-help`. Hover wording differs by provider type:
+  - **Remote** — "Not listed in OpenRouter's catalogue — common for niche fine-tunes and embedding-only models."
+  - **Local** — "Local providers don't expose context length via the /v1/models endpoint — the value isn't reported by the host." (Cost columns are hidden for local providers, so this only applies to Context.)
+
 ### Per-model test button
 
-Each model row includes a small "Test" button that POSTs to `/providers/:id/test-model` with `{ model: modelId }`. On success, displays latency in ms (e.g. "320 ms"). On failure, shows a friendly message ("Didn't respond — check server logs") in red. The API returns a generic error code (`model_test_failed`), never the raw SDK error, consistent with the SSRF defense pattern used by `/test` and `/models`.
+Each model row includes a small Test button. The button is **capability-aware**:
+
+- **`chat`** rows — enabled. Hover tooltip: "Sends a small 'Say hello.' prompt (max 10 tokens) and reports round-trip latency. Verifies the API key, base URL, and model are reachable."
+- **`embedding`** rows — enabled. Hover tooltip: "Embeds the string 'hello' and reports round-trip latency. Verifies the API key, base URL, and model are reachable."
+- **`reasoning` / `image` / `audio` / `moderation` / `unknown`** — disabled (50% opacity). Hover tooltip explains the specific reason (e.g. "Reasoning models use the /v1/responses API — testing through this panel is not supported yet").
+
+Click → POSTs `/providers/:id/test-model` with `{ model: modelId, capability }`. On success, displays latency in ms (e.g. "320 ms") in green. On failure, shows a friendly message in red — the API returns a generic `error: 'model_test_failed'` code, never the raw SDK error, consistent with the SSRF defense pattern used by `/test` and `/models`.
 
 ## `<ProviderTestButton>` — shared extract
 

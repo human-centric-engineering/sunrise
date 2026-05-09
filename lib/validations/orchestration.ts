@@ -270,6 +270,7 @@ export const updateAgentSchema = z.object({
 export const listAgentsQuerySchema = paginationQuerySchema.extend({
   isActive: queryBooleanSchema.optional(),
   provider: z.string().trim().max(50).optional(),
+  isSystem: queryBooleanSchema.optional(),
   q: z.string().trim().max(200).optional(),
 });
 
@@ -557,6 +558,15 @@ export const exportAgentsSchema = z.object({
 export const bulkAgentActionSchema = z.object({
   action: z.enum(['activate', 'deactivate', 'delete']),
   agentIds: z.array(cuidSchema).min(1, 'At least one agentId required').max(100),
+});
+
+/**
+ * Bulk provider connection-test — body for POST /providers/test-bulk.
+ * Capped at 50 to match the per-request rate-limit budget; in practice
+ * orchestrators rarely have more than ~10 providers configured.
+ */
+export const bulkProviderTestSchema = z.object({
+  providerIds: z.array(cuidSchema).min(1, 'At least one providerId required').max(50),
 });
 
 // ============================================================================
@@ -1384,6 +1394,66 @@ export const updateProviderModelSchema = z.object({
   isActive: z.boolean().optional(),
 
   metadata: metadataSchema,
+});
+
+/**
+ * POST body for the bulk-create endpoint. Each row mirrors
+ * `createProviderModelSchema` but `slug` and `providerSlug` come
+ * from the top-level envelope so the operator can't accidentally
+ * mix providers in one batch.
+ */
+const bulkProviderModelRowSchema = z.object({
+  modelId: z
+    .string()
+    .min(1, 'Model ID is required')
+    .max(100, 'Model ID must be less than 100 characters')
+    .trim(),
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
+  description: z
+    .string()
+    .max(2000, 'Description must be less than 2000 characters')
+    .trim()
+    .default(''),
+  capabilities: z.array(capabilitySchema).min(1).default(['chat']),
+  tierRole: tierRoleSchema,
+  reasoningDepth: ratingLevelSchema,
+  latency: latencyLevelSchema,
+  costEfficiency: ratingLevelSchema,
+  contextLength: contextLengthLevelSchema,
+  toolUse: toolUseLevelSchema,
+  bestRole: z
+    .string()
+    .min(1, 'Best role is required')
+    .max(200, 'Best role must be less than 200 characters')
+    .trim(),
+  dimensions: z.number().int().positive().optional(),
+  schemaCompatible: z.boolean().optional(),
+  costPerMillionTokens: z.number().nonnegative().optional(),
+  hasFreeTier: z.boolean().optional(),
+  local: z.boolean().default(false),
+  quality: embeddingQualitySchema.optional(),
+  strengths: z.string().max(500).trim().optional(),
+  setup: z.string().max(500).trim().optional(),
+});
+
+export const bulkCreateProviderModelsSchema = z.object({
+  providerSlug: z
+    .string()
+    .min(1, 'Provider slug is required')
+    .max(50, 'Provider slug must be less than 50 characters')
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      'Provider slug must be lowercase alphanumeric with hyphens'
+    )
+    .trim(),
+  models: z
+    .array(bulkProviderModelRowSchema)
+    .min(1, 'At least one model is required')
+    .max(50, 'Bulk add is capped at 50 models per request'),
 });
 
 /** List provider models query — GET /api/v1/admin/orchestration/provider-models */

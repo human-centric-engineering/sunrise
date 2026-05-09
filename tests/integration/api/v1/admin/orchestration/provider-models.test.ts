@@ -44,6 +44,9 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: {
       findMany: vi.fn(),
     },
+    aiAgent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
   },
 }));
 
@@ -170,6 +173,54 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       expect(data.data[0].configuredActive).toBe(true);
     });
 
+    it('annotates each row with the active agents bound to it', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }),
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(2 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+      ] as never);
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        {
+          id: 'agent-1',
+          name: 'Triage Bot',
+          slug: 'triage-bot',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+        },
+        {
+          id: 'agent-2',
+          name: 'Researcher',
+          slug: 'researcher',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+        },
+      ] as never);
+
+      const response = await GET(makeGetRequest());
+      expect(response.status).toBe(200);
+      const body = await parseJson<{
+        data: Array<{
+          modelId: string;
+          agents: Array<{ id: string; name: string; slug: string }>;
+        }>;
+      }>(response);
+
+      const byModelId = new Map(body.data.map((r) => [r.modelId, r.agents]));
+      expect(
+        byModelId
+          .get('gpt-4o-mini')
+          ?.map((a) => a.slug)
+          .sort()
+      ).toEqual(['researcher', 'triage-bot']);
+      // Models with no bound agent get an empty array, not undefined,
+      // so the matrix can render `0` without conditional checks.
+      expect(byModelId.get('gpt-4o')).toEqual([]);
+    });
+
     it('marks unconfigured providers correctly', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeModel()] as never);
@@ -227,6 +278,23 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             tierRole: 'thinking',
+          }),
+        })
+      );
+    });
+
+    it('passes isActive filter to prisma where clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(0 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+
+      await GET(makeGetRequest({ isActive: 'false' }));
+
+      expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            isActive: false,
           }),
         })
       );
@@ -319,6 +387,9 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
 
     const response = await POST(makePostRequest(validBody));
     expect(response.status).toBe(409);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('CONFLICT');
   });
 
   it('returns 429 when rate-limited', async () => {

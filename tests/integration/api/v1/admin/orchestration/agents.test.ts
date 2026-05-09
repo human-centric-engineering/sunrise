@@ -194,6 +194,61 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(0);
     });
+
+    it('annotates _budget with globalCapExceeded when month-to-date global spend exceeds the cap', async () => {
+      // Drives the globalCap branch around L86-103: settings has a
+      // global cap, spend groupBy returns enough total spend to
+      // exceed it, and each agent's _budget summary should carry
+      // globalCapExceeded: true. Previously uncovered because the
+      // happy-path test left global spend at 0.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgent();
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([agent] as never);
+      vi.mocked(prisma.aiAgent.count).mockResolvedValue(1);
+      vi.mocked(prisma.aiCostLog.groupBy).mockResolvedValue([
+        { agentId: agent.id, _sum: { totalCostUsd: 5 } },
+      ] as never);
+      // The route imports getMonthToDateGlobalSpend; that helper is
+      // already mocked at the top of this file. Mock its return so
+      // global spend exceeds the cap defined below.
+      const { getMonthToDateGlobalSpend } = await import('@/lib/orchestration/llm/cost-tracker');
+      vi.mocked(getMonthToDateGlobalSpend).mockResolvedValue(110);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+        slug: 'global',
+        globalMonthlyBudgetUsd: 100,
+      } as never);
+
+      const response = await GET(makeGetRequest());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        success: boolean;
+        data: Array<{ _budget: { globalCapExceeded?: boolean; withinBudget: boolean } | null }>;
+      }>(response);
+      expect(data.data[0]._budget).toMatchObject({
+        globalCapExceeded: true,
+        withinBudget: false,
+      });
+    });
+
+    it('returns null budgets when the cost-log aggregation fails (catch arm)', async () => {
+      // Drives the catch arm around L108-112 — if the budget batch
+      // throws, the route logs warn and returns null _budget rather
+      // than 500. Previously uncovered.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeAgent()] as never);
+      vi.mocked(prisma.aiAgent.count).mockResolvedValue(1);
+      vi.mocked(prisma.aiCostLog.groupBy).mockRejectedValue(new Error('DB connection lost'));
+
+      const response = await GET(makeGetRequest());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        success: boolean;
+        data: Array<{ _budget: unknown }>;
+      }>(response);
+      expect(data.data[0]._budget).toBeNull();
+    });
   });
 
   describe('Filtering', () => {

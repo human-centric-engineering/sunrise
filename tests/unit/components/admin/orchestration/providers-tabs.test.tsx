@@ -185,43 +185,67 @@ describe('ProvidersTabs', () => {
   });
 
   describe('Tab switching via click', () => {
-    it('clicking Model Matrix tab shows its panel and hides Configuration panel', async () => {
+    it('clicking Model Matrix tab calls router.replace with ?tab=models', async () => {
       // Arrange
       const user = userEvent.setup();
+      const { useRouter } = await import('next/navigation');
+      const replaceMock = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push: vi.fn(),
+        replace: replaceMock,
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
       vi.mocked(useSearchParams).mockReturnValue(
         new URLSearchParams() as ReturnType<typeof useSearchParams>
       );
       render(<ProvidersTabs initialProviders={PROVIDERS} initialModels={MODELS} />);
-
-      // Verify initial state: Configuration panel visible
-      expect(screen.getByTestId('providers-list')).toBeInTheDocument();
 
       // Act: click the Model Matrix tab
       await user.click(screen.getByRole('tab', { name: /model matrix/i }));
 
-      // Assert: Model Matrix panel is now active
-      expect(screen.getByTestId('provider-models-matrix')).toBeInTheDocument();
+      // Assert: URL was updated via replace (not push, so tab switches
+      // don't pollute browser history) with ?tab=models. The visual
+      // tab swap is driven by the next render reading useSearchParams,
+      // which we don't simulate here — that's the responsibility of
+      // useUrlTabs's own tests.
+      expect(replaceMock).toHaveBeenCalledWith(
+        expect.stringContaining('tab=models'),
+        expect.objectContaining({ scroll: false })
+      );
     });
 
-    it('clicking Model Matrix then Configuration tab returns to Configuration panel', async () => {
-      // Arrange
+    it('clicking Configuration tab strips ?tab from the URL (default tab → clean URL)', async () => {
+      // Arrange: start on the Model Matrix tab
       const user = userEvent.setup();
+      const { useRouter } = await import('next/navigation');
+      const replaceMock = vi.fn();
+      vi.mocked(useRouter).mockReturnValue({
+        push: vi.fn(),
+        replace: replaceMock,
+        refresh: vi.fn(),
+        back: vi.fn(),
+        forward: vi.fn(),
+        prefetch: vi.fn(),
+      } as ReturnType<typeof useRouter>);
       vi.mocked(useSearchParams).mockReturnValue(
-        new URLSearchParams() as ReturnType<typeof useSearchParams>
+        new URLSearchParams('tab=models') as ReturnType<typeof useSearchParams>
       );
       render(<ProvidersTabs initialProviders={PROVIDERS} initialModels={MODELS} />);
 
-      // Act: switch to Model Matrix, then back to Configuration
-      await user.click(screen.getByRole('tab', { name: /model matrix/i }));
+      // Act: click back to Configuration (the default tab)
       await user.click(screen.getByRole('tab', { name: /configuration/i }));
 
-      // Assert: Configuration panel is visible again and it is the active tab
-      expect(screen.getByTestId('providers-list')).toBeInTheDocument();
-      const configTab = screen.getByRole('tab', { name: /configuration/i });
-      expect(configTab).toHaveAttribute('aria-selected', 'true');
+      // Assert: useUrlTabs strips the param when set to the default,
+      // so the new URL has no `?tab=` query string at all.
+      expect(replaceMock).toHaveBeenCalled();
+      const [url] = replaceMock.mock.calls[0];
+      expect(url).not.toContain('tab=');
     });
 
-    it('tab switching does not trigger a page navigation (Radix handles locally)', async () => {
+    it('tab switching uses replace, not push, so it does not pollute history', async () => {
       // Arrange
       const user = userEvent.setup();
       const { useRouter } = await import('next/navigation');
@@ -243,7 +267,9 @@ describe('ProvidersTabs', () => {
       await user.click(screen.getByRole('tab', { name: /model matrix/i }));
       await user.click(screen.getByRole('tab', { name: /configuration/i }));
 
-      // Assert: router.push was never called — tabs are client-side only
+      // Assert: router.push was never called — replace is the right
+      // primitive for tab switching since each click should overwrite
+      // the prior URL rather than stack a new history entry.
       expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });

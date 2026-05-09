@@ -21,6 +21,8 @@ import { errorResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
+import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -49,14 +51,76 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   }
 
   try {
+    // Pull the OpenRouter catalogue so that the per-model enrichment
+    // inside provider.listModels() returns live context + pricing
+    // instead of the static fallback's zeros for any model not in the
+    // small built-in map. Idempotent and 24h-cached, fails silently —
+    // OpenRouter being unreachable just preserves the prior cache.
+    // Skipped for local providers: their models aren't in OpenRouter
+    // and we'd rather not make a network call on a fully-local setup.
+    if (!row.isLocal) {
+      await refreshFromOpenRouter();
+    }
+
     const provider = await getProvider(row.slug);
-    const models = await provider.listModels();
+    const [liveModels, matrixRows, agentRows] = await Promise.all([
+      provider.listModels(),
+      // LEFT JOIN — annotate live SDK output with our curated matrix.
+      // Matrix rows are the source of truth for capabilities + tier
+      // when present; for everything else we fall back to inference.
+      prisma.aiProviderModel.findMany({
+        where: { providerSlug: row.slug, isActive: true },
+        select: {
+          id: true,
+          modelId: true,
+          capabilities: true,
+          tierRole: true,
+        },
+      }),
+      // LEFT JOIN — list active agents bound to this provider so the
+      // panel can surface "which agents use this model". Match is by
+      // (provider, model) string pair since AiAgent stores both as
+      // free-text rather than FKs.
+      prisma.aiAgent.findMany({
+        where: { provider: row.slug, isActive: true },
+        select: { id: true, name: true, slug: true, model: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
+    const agentsByModelId = new Map<string, Array<{ id: string; name: string; slug: string }>>();
+    for (const a of agentRows) {
+      if (!a.model) continue;
+      const list = agentsByModelId.get(a.model) ?? [];
+      list.push({ id: a.id, name: a.name, slug: a.slug });
+      agentsByModelId.set(a.model, list);
+    }
+
+    const enriched = liveModels.map((m) => {
+      const matrix = matrixByModelId.get(m.id);
+      // Matrix capabilities take precedence; fall back to inference
+      // so unmatched models still get a meaningful badge + a routed
+      // Test button rather than a generic chat call that 404s.
+      const capabilities = matrix?.capabilities ?? [inferCapability(row.slug, m.id)];
+      return {
+        ...m,
+        inMatrix: Boolean(matrix),
+        matrixId: matrix?.id ?? null,
+        capabilities,
+        tierRole: matrix?.tierRole ?? null,
+        agents: agentsByModelId.get(m.id) ?? [],
+      };
+    });
+
     log.info('Provider models listed', {
       providerId: id,
       slug: row.slug,
-      modelCount: models.length,
+      modelCount: enriched.length,
+      matrixMatched: enriched.filter((m) => m.inMatrix).length,
+      modelsInUse: enriched.filter((m) => m.agents.length > 0).length,
     });
-    return successResponse({ providerId: id, slug: row.slug, models });
+    return successResponse({ providerId: id, slug: row.slug, models: enriched });
   } catch (err) {
     // Raw SDK error is deliberately withheld from the client — in a
     // blind-SSRF context it would act as an exfiltration oracle about

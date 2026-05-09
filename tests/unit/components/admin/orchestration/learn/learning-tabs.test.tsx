@@ -1,6 +1,12 @@
 /**
  * LearningTabs Component Tests
  *
+ * The component is now URL-driven via `useUrlTabs`: the active tab is
+ * derived from `?tab=` and tab clicks call `router.replace(`?tab=…`)`.
+ * Tests therefore set the mocked search params before rendering to
+ * land on a specific tab, and assert `router.replace` was called for
+ * tab-switching behaviour.
+ *
  * @see components/admin/orchestration/learn/learning-tabs.tsx
  */
 
@@ -13,12 +19,17 @@ import type { PatternSummary } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+const replaceMock = vi.fn();
+let urlParams = new URLSearchParams();
+
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
     push: vi.fn(),
-    replace: vi.fn(),
+    replace: replaceMock,
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => urlParams),
+  usePathname: vi.fn(() => '/admin/orchestration/learn'),
 }));
 
 vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
@@ -78,6 +89,7 @@ const MOCK_PATTERNS: PatternSummary[] = [
 describe('LearningTabs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    urlParams = new URLSearchParams();
     // Default: embedding status and quiz scores return empty/ok
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
@@ -113,42 +125,42 @@ describe('LearningTabs', () => {
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
-  it('switches to Advisor tab showing ChatInterface', async () => {
+  it('clicking Advisor tab calls router.replace with ?tab=advisor', async () => {
     const user = userEvent.setup();
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     await user.click(screen.getByRole('tab', { name: /advisor/i }));
 
-    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
+    expect(replaceMock).toHaveBeenCalledWith(
+      '/admin/orchestration/learn?tab=advisor',
+      expect.objectContaining({ scroll: false })
+    );
   });
 
-  it('switches to Quiz tab showing ChatInterface', async () => {
+  it('clicking Quiz tab calls router.replace with ?tab=quiz', async () => {
     const user = userEvent.setup();
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
-    expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
+    expect(replaceMock).toHaveBeenCalledWith(
+      '/admin/orchestration/learn?tab=quiz',
+      expect.objectContaining({ scroll: false })
+    );
   });
 
-  it('opens on the specified defaultTab', () => {
-    render(<LearningTabs patterns={MOCK_PATTERNS} defaultTab="advisor" />);
+  it('opens on the URL-specified tab (?tab=advisor)', () => {
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
     const advisorTab = screen.getByRole('tab', { name: /advisor/i });
     expect(advisorTab).toHaveAttribute('data-state', 'active');
   });
 
   it('forwards contextType and contextId to advisor ChatInterface', () => {
-    render(
-      <LearningTabs
-        patterns={MOCK_PATTERNS}
-        defaultTab="advisor"
-        contextType="pattern"
-        contextId="5"
-      />
-    );
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} contextType="pattern" contextId="5" />);
 
-    // The advisor ChatInterface should have context props set
     const chatInterfaces = screen.getAllByTestId('chat-interface');
     const advisorChat = chatInterfaces.find(
       (el) => el.getAttribute('data-agent') === 'pattern-advisor'
@@ -158,7 +170,7 @@ describe('LearningTabs', () => {
     expect(advisorChat!.getAttribute('data-context-id')).toBe('5');
   });
 
-  it('shows embedding status banner when pending chunks exist', async () => {
+  it('shows embedding status banner on the advisor tab when pending chunks exist', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (urlStr.includes('embedding-status')) {
@@ -177,21 +189,15 @@ describe('LearningTabs', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    const user = userEvent.setup();
-    render(<LearningTabs patterns={MOCK_PATTERNS} defaultTab="advisor" />);
+    urlParams = new URLSearchParams('tab=advisor');
+    render(<LearningTabs patterns={MOCK_PATTERNS} />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId('embedding-status-banner')).toBeInTheDocument();
-    });
-
-    // Also check quiz tab shows it
-    await user.click(screen.getByRole('tab', { name: /quiz/i }));
     await waitFor(() => {
       expect(screen.getByTestId('embedding-status-banner')).toBeInTheDocument();
     });
   });
 
-  it('loads persisted quiz score on mount', async () => {
+  it('loads persisted quiz score on mount and renders it on the quiz tab', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (urlStr.includes('embedding-status')) {
@@ -212,10 +218,8 @@ describe('LearningTabs', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    const user = userEvent.setup();
+    urlParams = new URLSearchParams('tab=quiz');
     render(<LearningTabs patterns={MOCK_PATTERNS} />);
-
-    await user.click(screen.getByRole('tab', { name: /quiz/i }));
 
     await waitFor(() => {
       const badge = screen.getByTestId('quiz-score');

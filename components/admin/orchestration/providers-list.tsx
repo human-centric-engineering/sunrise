@@ -7,15 +7,23 @@
  * ≤ 6 rows with distinctive state (status dot, local badge, model
  * count) that reads better as cards than a table row.
  *
+
  * State rules for the status dot:
  *
- *   - **Green** — `apiKeyPresent === true` AND a `ProviderTestButton`
- *     click in the current session returned `ok: true`.
- *   - **Red**  — test-connection returned `ok: false` this session OR
- *     `apiKeyPresent === false` on a non-local provider.
- *   - **Grey** — not tested yet this session.
+ *   - **Green** — `/test` returned `ok: true`, either from an automatic
+ *     probe on mount or a manual `ProviderTestButton` click.
+ *   - **Red**  — `/test` returned `ok: false` OR `apiKeyPresent === false`
+ *     on a non-local provider.
+ *   - **Blue (pulsing)** — automatic probe in flight.
+ *   - **Grey** — not tested (no API key check pending; rare in practice
+ *     because the auto-probe fires immediately on mount).
  *
- * Test results are held in local state only; we never persist them.
+ * On mount, every provider with an API key (or `isLocal`) is auto-probed
+ * via a single `POST /providers/test-bulk` — the server runs each
+ * `testConnection()` concurrently and returns one row per id. Replaces an
+ * earlier N+1 fan-out (one POST per provider id from the browser).
+ * Results are cached client-side for 10 minutes via `provider-test-cache`
+ * so repeat visits and form-edit round-trips don't cause a request storm.
  * The model count is lazy-fetched per card after first paint with a
  * 60-second client-side cache to avoid redundant N+1 fetches.
  *
@@ -30,6 +38,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
   Cpu,
@@ -37,6 +46,7 @@ import {
   Pencil,
   Plus,
   Power,
+  PowerOff,
   RotateCcw,
   Trash2,
 } from 'lucide-react';
@@ -52,16 +62,30 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { z } from 'zod';
 import type { AiProviderConfig } from '@/types/prisma';
 import {
   DeleteProviderDialog,
   type DeleteProviderTarget,
 } from '@/components/admin/orchestration/delete-provider-dialog';
 import {
+  PermanentDeleteProviderDialog,
+  type PermanentDeleteTarget,
+} from '@/components/admin/orchestration/permanent-delete-provider-dialog';
+import {
   ProviderModelsPanel,
   type ProviderModelInfo,
 } from '@/components/admin/orchestration/provider-models-panel';
-import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
+import { ProviderDetectionsBanner } from '@/components/admin/orchestration/provider-detections-banner';
+import {
+  ProviderTestButton,
+  type ProviderTestResult,
+} from '@/components/admin/orchestration/provider-test-button';
+import {
+  clearCachedTestResult,
+  getCachedTestResult,
+  setCachedTestResult,
+} from '@/lib/orchestration/provider-test-cache';
 
 export interface ProviderRow extends AiProviderConfig {
   apiKeyPresent: boolean;
@@ -72,11 +96,49 @@ export interface ProviderRow extends AiProviderConfig {
   };
 }
 
+// Sunrise envelope shape for the post-create refetch. The inner row
+// schema validates every field this component reads — id/slug/etc. for
+// state, providerType/baseUrl/apiKeyEnvVar for status logic, and the
+// optional circuitBreaker block for the dot colour. Unknown extras pass
+// through (`.passthrough()`) so the schema doesn't break if a future
+// admin endpoint adds fields the UI doesn't yet know about.
+const providerRowSchema = z
+  .object({
+    id: z.string(),
+    slug: z.string(),
+    name: z.string(),
+    providerType: z.string(),
+    baseUrl: z.string().nullable(),
+    apiKeyEnvVar: z.string().nullable(),
+    isLocal: z.boolean(),
+    isActive: z.boolean(),
+    metadata: z.unknown().nullable(),
+    timeoutMs: z.number().nullable(),
+    maxRetries: z.number().nullable(),
+    createdBy: z.string(),
+    createdAt: z.union([z.string(), z.date()]),
+    updatedAt: z.union([z.string(), z.date()]),
+    apiKeyPresent: z.boolean(),
+    circuitBreaker: z
+      .object({
+        state: z.enum(['closed', 'open', 'half-open']),
+        failureCount: z.number(),
+        openedAt: z.string().nullable(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const refreshResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(providerRowSchema),
+});
+
 export interface ProvidersListProps {
   initialProviders: ProviderRow[];
 }
 
-type StatusDot = 'green' | 'red' | 'grey';
+type StatusDot = 'green' | 'red' | 'grey' | 'testing';
 
 interface ModelCountCache {
   count: number | null;
@@ -103,24 +165,67 @@ interface ModelCountState {
 }
 
 export function ProvidersList({ initialProviders }: ProvidersListProps) {
+  const router = useRouter();
   const [providers, setProviders] = useState<ProviderRow[]>(initialProviders);
+
+  // The server component (`app/admin/orchestration/providers/page.tsx`)
+  // serves the initial list via `serverFetch`. If the parent route
+  // gets revalidated (router.refresh), Next 16's data cache hands us
+  // a fresh `initialProviders` prop. Mirror that into local state so
+  // the grid actually updates without a full page reload.
+  useEffect(() => {
+    setProviders(initialProviders);
+  }, [initialProviders]);
   const [modelCounts, setModelCounts] = useState<Record<string, ModelCountState>>({});
-  const [testedOk, setTestedOk] = useState<Record<string, boolean | null>>({});
+  // Hydrate from the localStorage test cache so the dot colour survives
+  // navigation. Server components can't read localStorage so we seed
+  // with `() => initialState` to read on first client render only.
+  const [testedOk, setTestedOk] = useState<Record<string, boolean | null>>(() => {
+    if (typeof window === 'undefined') return {};
+    const seed: Record<string, boolean | null> = {};
+    for (const p of initialProviders) {
+      const cached = getCachedTestResult(p.id);
+      if (cached) seed[p.id] = cached.ok;
+    }
+    return seed;
+  });
+  // Per-provider test result for the controlled `<ProviderTestButton>`.
+  // Carries the failure message so the footer can render it in a
+  // full-width row below the button row instead of cramming it into
+  // the right-hand column. Hydrated from cache (success only — we don't
+  // persist failure messages) so the green check survives navigation.
+  const [testResults, setTestResults] = useState<Record<string, ProviderTestResult | null>>(() => {
+    if (typeof window === 'undefined') return {};
+    const seed: Record<string, ProviderTestResult | null> = {};
+    for (const p of initialProviders) {
+      const cached = getCachedTestResult(p.id);
+      if (cached?.ok) seed[p.id] = { ok: true, modelCount: cached.modelCount };
+    }
+    return seed;
+  });
   const [deleteTarget, setDeleteTarget] = useState<DeleteProviderTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [permanentTarget, setPermanentTarget] = useState<PermanentDeleteTarget | null>(null);
+  const [permanentDeleting, setPermanentDeleting] = useState(false);
+  const [permanentError, setPermanentError] = useState<string | null>(null);
   const [modelsDialogFor, setModelsDialogFor] = useState<ProviderRow | null>(null);
   const [reactivateError, setReactivateError] = useState<string | null>(null);
   const [resettingBreaker, setResettingBreaker] = useState<Record<string, boolean>>({});
   const [breakerError, setBreakerError] = useState<string | null>(null);
+  const [testingInFlight, setTestingInFlight] = useState<Record<string, boolean>>({});
 
   // Lazy-fetch model counts for every visible provider after mount.
   // Uses module-level cache to avoid N+1 on every page navigation.
+  // Inactive providers are skipped — `getProvider` rejects them with
+  // `provider_disabled` server-side, which would otherwise spam the
+  // logs with 503s for rows the operator has intentionally turned off.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       for (const p of providers) {
         if (modelCounts[p.id]) continue;
+        if (!p.isActive) continue;
 
         // Check cache first
         const cached = getCachedModelCount(p.id);
@@ -154,16 +259,163 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providers]);
 
+  // Auto-test every provider on mount that doesn't already have a
+  // cached result. The manual `Test connection` button hits the exact
+  // same `/test` route, which delegates to `provider.testConnection()` —
+  // for OpenAI-compatible providers that's a real `listModels` round-trip,
+  // for Anthropic it's a `messages.create` ping with `max_tokens: 1`.
+  // Both are valid connectivity probes for their respective vendors,
+  // so firing this once on landing gives every card an honest dot
+  // without the operator having to click through.
+  //
+  // Skip rules:
+  //   - Inactive — `getProvider` rejects with `provider_disabled`, so a
+  //     probe would always come back red and would clutter server logs
+  //     with 503s for a row the operator has intentionally turned off.
+  //   - No API key on a non-local provider — already shown red, would
+  //     just produce a guaranteed `ok: false`.
+  //   - Cached result exists — the localStorage cache (`provider-test-
+  //     cache`, 10-min TTL) seeded `testedOk` at construction time.
+  //   - Already in flight — guard against the effect re-running before
+  //     the first round of requests resolves.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const targets = providers.filter(
+        (p) =>
+          p.isActive &&
+          (p.apiKeyPresent || p.isLocal) &&
+          testedOk[p.id] === undefined &&
+          !testingInFlight[p.id]
+      );
+      if (targets.length === 0) return;
+
+      setTestingInFlight((prev) => {
+        const next = { ...prev };
+        for (const p of targets) next[p.id] = true;
+        return next;
+      });
+      // Clear any stale message from a previous failed run before the
+      // new probe settles — a freshly-reactivated provider shouldn't
+      // briefly flash the old error while the auto-probe is in flight.
+      setTestResults((prev) => {
+        const next = { ...prev };
+        for (const p of targets) next[p.id] = null;
+        return next;
+      });
+
+      // Bulk endpoint runs every requested test concurrently
+      // server-side and returns one row per provider — replaces the
+      // previous N+1 client-side fan-out (one POST per provider id).
+      const FAILURE_MESSAGE = "Couldn't reach this provider. Check the server logs for details.";
+      try {
+        const response = await apiClient.post<{
+          results: Array<{ id: string; ok: boolean; models?: string[] }>;
+        }>(API.ADMIN.ORCHESTRATION.PROVIDERS_TEST_BULK, {
+          body: { providerIds: targets.map((t) => t.id) },
+        });
+        if (cancelled) return;
+
+        // Index by id so we can apply each row independently and
+        // detect any target the server didn't return (e.g. it was
+        // deleted between the list load and the bulk call).
+        const byId = new Map(response.results.map((r) => [r.id, r]));
+        for (const target of targets) {
+          const row = byId.get(target.id);
+          const ok = row?.ok ?? false;
+          const modelCount = row?.models?.length ?? 0;
+          setCachedTestResult(target.id, { ok, modelCount });
+          setTestedOk((prev) => ({ ...prev, [target.id]: ok }));
+          setTestResults((prev) => ({
+            ...prev,
+            [target.id]: ok ? { ok: true, modelCount } : { ok: false, message: FAILURE_MESSAGE },
+          }));
+        }
+      } catch {
+        if (cancelled) return;
+        // Whole-batch failure (network error, 4xx/5xx) — mark every
+        // target as failed so the UI doesn't leave them in the
+        // "testing…" pulse forever.
+        for (const target of targets) {
+          setCachedTestResult(target.id, { ok: false, modelCount: 0 });
+          setTestedOk((prev) => ({ ...prev, [target.id]: false }));
+          setTestResults((prev) => ({
+            ...prev,
+            [target.id]: { ok: false, message: FAILURE_MESSAGE },
+          }));
+        }
+      } finally {
+        if (!cancelled) {
+          setTestingInFlight((prev) => {
+            const next = { ...prev };
+            for (const target of targets) delete next[target.id];
+            return next;
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // `testedOk` and `testingInFlight` are intentionally read but not
+    // listed — re-running on every state update would cause a request
+    // storm. The `providers` dependency captures the only change that
+    // should trigger a fresh round.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers]);
+
   const statusFor = useCallback(
     (p: ProviderRow): StatusDot => {
       const tested = testedOk[p.id];
       if (!p.apiKeyPresent && !p.isLocal) return 'red';
       if (tested === true) return 'green';
       if (tested === false) return 'red';
+      if (testingInFlight[p.id]) return 'testing';
       return 'grey';
     },
-    [testedOk]
+    [testedOk, testingInFlight]
   );
+
+  // Re-fetch the provider list and replace local state. Called by the
+  // detection banner after a one-click "Configure" so the new provider
+  // shows up in the grid without a full page reload.
+  //
+  // We do TWO things in tandem:
+  //
+  //   1. `cache: 'no-store'` on the immediate refetch so the browser /
+  //      Next 16 fetch layer doesn't hand back a cached "no providers"
+  //      response that pre-dates the just-created row.
+  //
+  //   2. `router.refresh()` so Next's server-component data cache for
+  //      this route is invalidated and a future navigation reads fresh
+  //      `initialProviders`. Without this, navigating away and back
+  //      could still show the stale empty state.
+  const refreshProviders = useCallback(async () => {
+    try {
+      const res = await fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`, {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      // Validate the envelope shape — `apiClient.get()` would do this
+      // for us, but we need cache: 'no-store' on this specific path
+      // (post-create refetch) so we go through raw fetch and own the
+      // parse. The row contents are owned by the admin endpoint and
+      // already typed there; this check guards the network seam.
+      const json: unknown = await res.json();
+      const parsed = refreshResponseSchema.safeParse(json);
+      if (!parsed.success) return;
+      // Zod has now validated every field this component depends on; the
+      // cast just narrows from the schema's inferred type (with optional
+      // passthrough extras) to the local `ProviderRow` interface, which
+      // is the same shape with stricter `metadata: Json` typing.
+      setProviders(parsed.data.data as ProviderRow[]);
+    } catch {
+      // Silent — the banner already showed any error from the create call.
+    } finally {
+      router.refresh();
+    }
+  }, [router]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -171,6 +423,19 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     setDeleteError(null);
     try {
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerById(deleteTarget.id));
+      // Soft-delete flips isActive=false; clear the cached test result
+      // so the row's dot doesn't keep showing green after deactivation.
+      clearCachedTestResult(deleteTarget.id);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[deleteTarget.id];
+        return next;
+      });
       setProviders((prev) =>
         prev.map((p) => (p.id === deleteTarget.id ? { ...p, isActive: false } : p))
       );
@@ -186,11 +451,66 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     }
   }, [deleteTarget]);
 
+  const confirmPermanentDelete = useCallback(async () => {
+    if (!permanentTarget) return;
+    setPermanentDeleting(true);
+    setPermanentError(null);
+    try {
+      // Hits the same DELETE /providers/:id route with ?permanent=true.
+      // The server returns 409 with a clear message if any agent or
+      // cost-log row still references the slug; that message gets
+      // surfaced verbatim in the dialog so the operator knows what to
+      // re-point first.
+      await apiClient.delete(
+        `${API.ADMIN.ORCHESTRATION.providerById(permanentTarget.id)}?permanent=true`
+      );
+      clearCachedTestResult(permanentTarget.id);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[permanentTarget.id];
+        return next;
+      });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[permanentTarget.id];
+        return next;
+      });
+      // Drop the row from local state — the server actually deleted it.
+      setProviders((prev) => prev.filter((p) => p.id !== permanentTarget.id));
+      setPermanentTarget(null);
+    } catch (err) {
+      setPermanentError(
+        err instanceof APIClientError
+          ? err.message
+          : "Couldn't permanently delete this provider. Try again in a moment."
+      );
+    } finally {
+      setPermanentDeleting(false);
+    }
+  }, [permanentTarget]);
+
   const handleReactivate = useCallback(async (providerId: string) => {
     setReactivateError(null);
     try {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.providerById(providerId), {
         body: { isActive: true },
+      });
+      // Reactivation could mean the operator changed env vars / base
+      // URL since the last test ran — invalidate so the dot defaults to
+      // grey until they retest. Also clear the controlled `testResults`
+      // entry so any old failure message disappears immediately, and the
+      // auto-probe `useEffect` re-fires (filter checks `testedOk[id] ===
+      // undefined`).
+      clearCachedTestResult(providerId);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
       });
       setProviders((prev) => prev.map((p) => (p.id === providerId ? { ...p, isActive: true } : p)));
     } catch (err) {
@@ -207,6 +527,22 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
     setBreakerError(null);
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.providerHealth(providerId), {});
+      // Breaker reset means recent failures have been forgiven —
+      // invalidate the cached test result so the operator runs a fresh
+      // check rather than trusting an old "tested OK" from before the
+      // failures. Clear the controlled result so the old failure
+      // message vanishes when the auto-probe re-fires.
+      clearCachedTestResult(providerId);
+      setTestedOk((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+      setTestResults((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
       setProviders((prev) =>
         prev.map((p) =>
           p.id === providerId
@@ -239,6 +575,12 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         </Button>
       </div>
 
+      <ProviderDetectionsBanner
+        onProviderCreated={() => {
+          void refreshProviders();
+        }}
+      />
+
       {reactivateError && (
         <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-600 dark:text-red-400">
           {reactivateError}
@@ -270,7 +612,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                 ? 'bg-green-500'
                 : status === 'red'
                   ? 'bg-red-500'
-                  : 'bg-muted-foreground/40';
+                  : status === 'testing'
+                    ? 'bg-blue-500 animate-pulse'
+                    : 'bg-muted-foreground/40';
             const statusLabel =
               status === 'green'
                 ? 'Connected'
@@ -278,7 +622,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   ? !p.apiKeyPresent && !p.isLocal
                     ? 'Key missing'
                     : 'Test failed'
-                  : 'Not tested';
+                  : status === 'testing'
+                    ? 'Testing…'
+                    : 'Not tested';
             const mc = modelCounts[p.id];
             const breakerState = p.circuitBreaker?.state ?? 'closed';
 
@@ -299,7 +645,10 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                         </Badge>
                       )}
                       {!p.isActive && (
-                        <Badge variant="outline" className="text-[10px]">
+                        <Badge
+                          variant="outline"
+                          className="border-amber-300 bg-amber-50 text-[10px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        >
                           Inactive
                         </Badge>
                       )}
@@ -325,11 +674,20 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                       <DropdownMenuItem onSelect={() => setModelsDialogFor(p)}>
                         <Cpu className="mr-2 h-4 w-4" /> View models
                       </DropdownMenuItem>
+                      {p.isActive && (
+                        <DropdownMenuItem
+                          onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                        >
+                          <PowerOff className="mr-2 h-4 w-4" /> Deactivate
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         className="text-destructive"
-                        onSelect={() => setDeleteTarget({ id: p.id, name: p.name, slug: p.slug })}
+                        onSelect={() =>
+                          setPermanentTarget({ id: p.id, name: p.name, slug: p.slug })
+                        }
                       >
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -390,21 +748,49 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
                   </div>
                 )}
 
-                {/* ── Footer: status + test ── */}
+                {/* ── Footer: status + test (+ optional full-width message row) ── */}
                 <div
-                  className={`${p.apiKeyPresent || p.isLocal ? 'mt-auto' : ''} flex items-center justify-between border-t px-4 py-3`}
+                  className={`${p.apiKeyPresent || p.isLocal ? 'mt-auto' : ''} flex flex-col gap-2 border-t px-4 py-3`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
-                      aria-hidden="true"
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`}
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground text-xs">{statusLabel}</span>
+                    </div>
+                    <ProviderTestButton
+                      providerId={p.id}
+                      // Controlled mode — `testResults[p.id]` is the source of
+                      // truth for what icon/state the button displays. Lets the
+                      // mount-time auto-probe and the reactivate / breaker-reset
+                      // flows clear the stale red X without remounting.
+                      result={testResults[p.id] ?? null}
+                      onResult={(r) => {
+                        setTestedOk((prev) => ({ ...prev, [p.id]: r.ok }));
+                        setTestResults((prev) => ({ ...prev, [p.id]: r }));
+                      }}
+                      onTestStart={() => {
+                        // Clear the stale message before the new test settles
+                        // so a re-run from a previous failure doesn't briefly
+                        // show the old red row while in flight.
+                        setTestResults((prev) => {
+                          const next = { ...prev };
+                          next[p.id] = null;
+                          return next;
+                        });
+                      }}
+                      // Suppress the inline message — we render it full-width
+                      // below so long sentences ("Couldn't reach this provider…
+                      // Check the server logs for details.") have room.
+                      inlineMessage={false}
                     />
-                    <span className="text-muted-foreground text-xs">{statusLabel}</span>
                   </div>
-                  <ProviderTestButton
-                    providerId={p.id}
-                    onResult={(ok) => setTestedOk((prev) => ({ ...prev, [p.id]: ok }))}
-                  />
+                  {(() => {
+                    const r = testResults[p.id];
+                    return r && !r.ok ? <p className="text-xs text-red-600">{r.message}</p> : null;
+                  })()}
                 </div>
               </div>
             );
@@ -423,23 +809,42 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         onConfirm={() => void confirmDelete()}
       />
 
+      <PermanentDeleteProviderDialog
+        target={permanentTarget}
+        error={permanentError}
+        isDeleting={permanentDeleting}
+        onCancel={() => {
+          setPermanentTarget(null);
+          setPermanentError(null);
+        }}
+        onConfirm={() => void confirmPermanentDelete()}
+      />
+
       <Dialog
         open={!!modelsDialogFor}
         onOpenChange={(open) => {
           if (!open) setModelsDialogFor(null);
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Model catalogue</DialogTitle>
+            <DialogTitle>
+              {modelsDialogFor ? `Model catalogue — ${modelsDialogFor.name}` : 'Model catalogue'}
+            </DialogTitle>
           </DialogHeader>
           {modelsDialogFor && (
-            <ProviderModelsPanel
-              providerId={modelsDialogFor.id}
-              providerName={modelsDialogFor.name}
-              isLocal={modelsDialogFor.isLocal}
-              apiKeyPresent={modelsDialogFor.apiKeyPresent}
-            />
+            // One scroll region for the whole panel — the table's sticky
+            // header keeps column labels visible while the body scrolls,
+            // and the search/filter row scrolls with everything else
+            // rather than being pinned, per UI feedback.
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <ProviderModelsPanel
+                providerId={modelsDialogFor.id}
+                providerName={modelsDialogFor.name}
+                isLocal={modelsDialogFor.isLocal}
+                apiKeyPresent={modelsDialogFor.apiKeyPresent}
+              />
+            </div>
           )}
         </DialogContent>
       </Dialog>

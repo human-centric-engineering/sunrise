@@ -15,12 +15,17 @@ import type { PatternSummary } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+// `useSearchParams` returns `?tab=quiz` so the Quiz tab renders on
+// initial mount — these tests target the quiz content's behaviour
+// (score parsing, callback wiring) rather than tab-switching itself.
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
     push: vi.fn(),
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams('tab=quiz')),
+  usePathname: vi.fn(() => '/admin/orchestration/learn'),
 }));
 
 // Capture onStreamComplete so we can invoke it manually

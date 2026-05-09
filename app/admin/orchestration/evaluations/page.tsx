@@ -69,17 +69,8 @@ async function getAgents(): Promise<AgentOption[]> {
   }
 }
 
-export default async function TestingPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string }>;
-}) {
-  const [{ evaluations, meta }, agents, params] = await Promise.all([
-    getEvaluations(),
-    getAgents(),
-    searchParams,
-  ]);
-  const defaultTab = params.tab === 'experiments' ? 'experiments' : 'evaluations';
+export default async function TestingPage() {
+  const [{ evaluations, meta }, agents] = await Promise.all([getEvaluations(), getAgents()]);
 
   return (
     <div className="space-y-6">
@@ -114,7 +105,6 @@ export default async function TestingPage({
       </header>
 
       <TestingTabs
-        defaultTab={defaultTab}
         evaluationsContent={
           <EvaluationsTable initialEvaluations={evaluations} initialMeta={meta} agents={agents} />
         }

@@ -29,6 +29,7 @@ import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestra
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
@@ -209,9 +210,15 @@ export class StreamingChatHandler {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
+      // Resolve provider + model once. Empty agent.provider/agent.model fall
+      // back to the active provider with a key set + the system default-model
+      // map; explicit values pass through unchanged.
+      const resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
+      const resolvedModel = resolvedBinding.model;
+      const resolvedFallbackProviders = resolvedBinding.fallbacks;
       setSpanAttributes(chatSpan, {
         [SUNRISE_AGENT_ID]: agent.id,
-        [GEN_AI_REQUEST_MODEL]: agent.model,
+        [GEN_AI_REQUEST_MODEL]: resolvedModel,
         ...(agent.temperature !== null ? { [GEN_AI_REQUEST_TEMPERATURE]: agent.temperature } : {}),
       });
 
@@ -372,11 +379,10 @@ export class StreamingChatHandler {
           conversationSummary = conversation.summary;
         } else {
           yield { type: 'status', message: 'Summarizing conversation history...' };
-          const fallbackSlugs = agent.fallbackProviders ?? [];
           conversationSummary = await summarizeMessages(
             droppedMessages,
-            agent.provider,
-            fallbackSlugs
+            resolvedBinding.providerSlug,
+            resolvedFallbackProviders
           );
           // Persist for future turns
           await prisma.aiConversation.update({
@@ -401,7 +407,7 @@ export class StreamingChatHandler {
 
       // Resolve the context window for token-aware truncation.
       // Agent-level maxHistoryTokens overrides the model's context window.
-      const modelInfo = getModel(agent.model);
+      const modelInfo = getModel(resolvedModel);
       const contextWindowTokens = agent.maxHistoryTokens ?? modelInfo?.maxContext ?? undefined;
 
       let messages: LlmMessage[] = buildMessages({
@@ -415,7 +421,7 @@ export class StreamingChatHandler {
         brandVoiceInstructions: agent.brandVoiceInstructions,
         contextWindowTokens,
         reserveTokens: agent.maxTokens ?? undefined,
-        modelId: agent.model,
+        modelId: resolvedModel,
       });
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
@@ -426,8 +432,8 @@ export class StreamingChatHandler {
       }));
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
-        agent.provider,
-        agent.fallbackProviders ?? []
+        resolvedBinding.providerSlug,
+        resolvedFallbackProviders
       );
       resolvedProviderSlug = usedSlug;
 
@@ -441,7 +447,7 @@ export class StreamingChatHandler {
         | undefined;
 
       // Remaining fallback providers for mid-stream retry
-      const remainingFallbacks = [...(agent.fallbackProviders ?? [])];
+      const remainingFallbacks = [...resolvedFallbackProviders];
       let currentProvider = provider;
       let currentProviderSlug = usedSlug;
 
@@ -475,7 +481,7 @@ export class StreamingChatHandler {
         let usage: { inputTokens: number; outputTokens: number } | null = null;
 
         const llmOptions = {
-          model: agent.model,
+          model: resolvedModel,
           ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
           ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
@@ -505,7 +511,7 @@ export class StreamingChatHandler {
             SPAN_LLM_CALL,
             {
               [GEN_AI_OPERATION_NAME]: 'chat',
-              [GEN_AI_REQUEST_MODEL]: agent.model,
+              [GEN_AI_REQUEST_MODEL]: resolvedModel,
               [GEN_AI_SYSTEM]: currentProviderSlug,
               [SUNRISE_AGENT_ID]: agent.id,
               [SUNRISE_AGENT_SLUG]: agent.slug,
@@ -535,7 +541,7 @@ export class StreamingChatHandler {
                 streamSucceeded = true;
                 if (usage) {
                   setSpanAttributes(llmSpan, {
-                    [GEN_AI_RESPONSE_MODEL]: agent.model,
+                    [GEN_AI_RESPONSE_MODEL]: resolvedModel,
                     [GEN_AI_USAGE_INPUT_TOKENS]: usage.inputTokens,
                     [GEN_AI_USAGE_OUTPUT_TOKENS]: usage.outputTokens,
                     [GEN_AI_USAGE_TOTAL_TOKENS]: usage.inputTokens + usage.outputTokens,
@@ -804,8 +810,8 @@ export class StreamingChatHandler {
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
-              model: agent.model,
-              provider: agent.provider,
+              model: resolvedModel,
+              provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
               inputTokens: u.inputTokens,
               outputTokens: u.outputTokens,
               operation: CostOperation.CHAT,
@@ -818,7 +824,7 @@ export class StreamingChatHandler {
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
-          yield buildDoneEvent(agent.model, u, resolvedProviderSlug);
+          yield buildDoneEvent(resolvedModel, u, resolvedProviderSlug);
           return;
         }
 
@@ -830,8 +836,8 @@ export class StreamingChatHandler {
           void logCost({
             agentId: agent.id,
             conversationId: conversation.id,
-            model: agent.model,
-            provider: agent.provider,
+            model: resolvedModel,
+            provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             inputTokens: turnUsage.inputTokens,
             outputTokens: turnUsage.outputTokens,
             operation: CostOperation.CHAT,
@@ -1010,7 +1016,7 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
             return;
           }
 
@@ -1222,7 +1228,7 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(agent.model, usage, resolvedProviderSlug);
+            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
             return;
           }
 

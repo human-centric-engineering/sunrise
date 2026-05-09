@@ -9,8 +9,14 @@
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 
-/** Default embedding model and dimensions */
+/**
+ * Static fallback embedding model. Only used when the
+ * `AiOrchestrationSettings.defaultModels.embeddings` slot is empty
+ * AND the registry's computed defaults can't supply one — typically
+ * a fresh install before the wizard ran.
+ */
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const DEFAULT_DIMENSIONS = 1536;
 const DEFAULT_BATCH_SIZE = 100;
@@ -46,6 +52,11 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     where: { isActive: true },
     orderBy: { createdAt: 'asc' },
   });
+
+  // Resolve the operator-configured embedding model. Voyage and Ollama
+  // ignore this — they have their own canonical embedding models — but
+  // every other openai-compatible host honours it.
+  const settingsModel = await getDefaultModelForTask('embeddings').catch(() => DEFAULT_MODEL);
 
   // Prefer Voyage AI provider (best retrieval quality, free tier)
   const voyageProvider = providers.find((p) => p.providerType === 'voyage');
@@ -85,7 +96,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     return {
       baseUrl: openaiCompatible.baseUrl,
       apiKey,
-      model: DEFAULT_MODEL,
+      model: settingsModel || DEFAULT_MODEL,
       isLocal: false,
       providerType: 'openai-compatible',
     };
@@ -102,7 +113,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   return {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: openaiKey,
-    model: DEFAULT_MODEL,
+    model: settingsModel || DEFAULT_MODEL,
     isLocal: false,
     providerType: 'openai-compatible',
   };
@@ -149,10 +160,20 @@ async function callEmbeddingApi(
     const errorText = await response.text();
     let message = errorText;
     try {
-      const parsed = JSON.parse(errorText) as { error?: { message?: string } };
-      if (parsed.error?.message) message = parsed.error.message;
+      // The embedding provider's error envelope isn't part of our
+      // contract — different vendors shape it differently. Validate
+      // structurally with Zod so a malformed JSON or unexpected shape
+      // falls back to the raw text rather than throwing in the parse
+      // branch.
+      const errorResponseSchema = z.object({
+        error: z.object({ message: z.string().optional() }).partial().optional(),
+      });
+      const parsed = errorResponseSchema.safeParse(JSON.parse(errorText));
+      if (parsed.success && parsed.data.error?.message) {
+        message = parsed.data.error.message;
+      }
     } catch {
-      // use raw text as-is
+      // JSON.parse threw — vendor returned non-JSON. Use raw text as-is.
     }
     throw new Error(`Embedding API error (${response.status}): ${message}`);
   }

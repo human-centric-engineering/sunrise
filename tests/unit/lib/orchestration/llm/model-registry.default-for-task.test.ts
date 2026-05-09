@@ -65,30 +65,24 @@ describe('getDefaultModelForTask', () => {
       );
     });
 
-    it('falls back to computed defaults for tasks missing from stored map', async () => {
-      // Arrange: stored map only has 'chat', other tasks should fall back
+    it('throws NoDefaultModelConfiguredError for tasks missing from stored map', async () => {
+      // Strict mode: requesting a task with no operator-saved value
+      // throws instead of silently picking a registry-derived default.
       mockedFindUnique.mockResolvedValueOnce({
         defaultModels: { chat: 'claude-sonnet-4-6' },
       });
 
-      // Act: request a task that is NOT in the stored map
-      const model = await resolver.getDefaultModelForTask('routing');
-
-      // Assert: gets a non-empty string from computeDefaultModelMap
-      expect(typeof model).toBe('string');
-      expect(model.length).toBeGreaterThan(0);
+      await expect(resolver.getDefaultModelForTask('routing')).rejects.toBeInstanceOf(
+        resolver.NoDefaultModelConfiguredError
+      );
     });
 
-    it('returns computed defaults when settings row is null', async () => {
-      // Arrange
+    it('throws when the settings row is null', async () => {
       mockedFindUnique.mockResolvedValueOnce(null);
 
-      // Act
-      const model = await resolver.getDefaultModelForTask('chat');
-
-      // Assert: computed defaults still work
-      expect(typeof model).toBe('string');
-      expect(model.length).toBeGreaterThan(0);
+      await expect(resolver.getDefaultModelForTask('chat')).rejects.toBeInstanceOf(
+        resolver.NoDefaultModelConfiguredError
+      );
     });
   });
 
@@ -140,24 +134,16 @@ describe('getDefaultModelForTask', () => {
     });
   });
 
-  describe('DB failure — graceful fallback', () => {
-    it('returns computed defaults when DB lookup throws', async () => {
-      // Arrange
+  describe('DB failure — strict throw', () => {
+    it('throws NoDefaultModelConfiguredError when DB lookup throws', async () => {
+      // Strict mode: a DB read failure leaves the cache "empty stored"
+      // and the next call surfaces a typed error rather than silently
+      // serving a registry-derived fallback.
       mockedFindUnique.mockRejectedValueOnce(new Error('DB connection timeout'));
 
-      // Act
-      let thrown = false;
-      let model;
-      try {
-        model = await resolver.getDefaultModelForTask('reasoning');
-      } catch {
-        thrown = true;
-      }
-
-      // Assert: never throws, returns a computed default
-      expect(thrown).toBe(false);
-      expect(typeof model).toBe('string');
-      expect((model as string).length).toBeGreaterThan(0);
+      await expect(resolver.getDefaultModelForTask('reasoning')).rejects.toBeInstanceOf(
+        resolver.NoDefaultModelConfiguredError
+      );
     });
   });
 });

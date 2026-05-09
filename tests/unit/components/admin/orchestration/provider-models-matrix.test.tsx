@@ -12,7 +12,7 @@
  * - Filter by capability shows only matching models
  * - Model count text ("N model(s)") updates after filtering
  * - Clicking a sortable column header changes sort (column becomes "active")
- * - "Add model" link points to /admin/orchestration/provider-models/new
+ * - "Discover models" button opens the discovery dialog (replaced the old /new link in Phase F)
  * - Model name is a link to /admin/orchestration/provider-models/{id}
  * - Decision heuristic table is rendered
  * - Green dot for configured+active, yellow for configured+inactive, gray for unconfigured
@@ -22,7 +22,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ProviderModelsMatrix } from '@/components/admin/orchestration/provider-models-matrix';
@@ -35,6 +35,24 @@ vi.mock('next/link', () => ({
     <a href={href}>{children}</a>
   ),
 }));
+
+const mockRouterRefresh = vi.fn();
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: mockRouterRefresh }),
+}));
+
+vi.mock('@/lib/api/client', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/client')>('@/lib/api/client');
+  return {
+    ...actual,
+    apiClient: {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    },
+  };
+});
 
 vi.mock('@/types/orchestration', () => ({
   TIER_ROLE_META: {
@@ -126,17 +144,22 @@ describe('ProviderModelsMatrix', () => {
   it('shows "Embedding" badge for embedding-only models', () => {
     render(
       <ProviderModelsMatrix
-        initialModels={[makeModel({ id: 'embed-1', capabilities: ['embedding'] })]}
+        initialModels={[
+          makeModel({
+            id: 'embed-1',
+            name: 'Embed Test Model',
+            capabilities: ['embedding'],
+          }),
+        ]}
       />
     );
 
-    // "Embedding" also appears in the decision heuristic table as a tier label.
-    // The capability badge has amber-colored classes; verify at least one amber badge exists.
-    const allEmbeddingText = screen.getAllByText('Embedding');
-    const amberBadge = allEmbeddingText.find(
-      (el) => el.className.includes('amber') || el.closest('[class*="amber"]') !== null
-    );
-    expect(amberBadge).toBeDefined();
+    // "Embedding" also appears in the decision heuristic table at the
+    // bottom of the source. Scope the badge query to the data row by
+    // its visible name (model.name is what the row's accessible name
+    // is built from) instead of inspecting class names.
+    const dataRow = screen.getByRole('row', { name: /embed test model/i });
+    expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
   });
 
   it('shows "Both" badge for models with chat and embedding capabilities', () => {
@@ -298,11 +321,17 @@ describe('ProviderModelsMatrix', () => {
 
   // ── Links ──────────────────────────────────────────────────────────────────
 
-  it('"Add model" link points to /admin/orchestration/provider-models/new', () => {
+  it('renders a "Discover models" button (replaces the legacy /new link)', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
 
-    const link = screen.getByRole('link', { name: /add model/i });
-    expect(link).toHaveAttribute('href', '/admin/orchestration/provider-models/new');
+    // Phase F replaced the free-text "Add model" link with a button
+    // that opens the DiscoverModelsDialog. The button is rendered
+    // unconditionally; clicking it is covered separately in the
+    // dialog's own tests.
+    expect(screen.getByRole('button', { name: /discover models/i })).toBeInTheDocument();
+    // Old behaviour gone — no link to /provider-models/new in the
+    // matrix toolbar anymore.
+    expect(screen.queryByRole('link', { name: /^add model$/i })).not.toBeInTheDocument();
   });
 
   it('model name is a link to /admin/orchestration/provider-models/{id}', () => {
@@ -310,20 +339,6 @@ describe('ProviderModelsMatrix', () => {
 
     const link = screen.getByRole('link', { name: 'GPT-5' });
     expect(link).toHaveAttribute('href', '/admin/orchestration/provider-models/model-xyz');
-  });
-
-  // ── Custom badge ───────────────────────────────────────────────────────────
-
-  it('shows "Custom" badge when model isDefault is false', () => {
-    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: false })]} />);
-
-    expect(screen.getByText('Custom')).toBeInTheDocument();
-  });
-
-  it('hides "Custom" badge when model isDefault is true', () => {
-    render(<ProviderModelsMatrix initialModels={[makeModel({ isDefault: true })]} />);
-
-    expect(screen.queryByText('Custom')).not.toBeInTheDocument();
   });
 
   // ── Tier filter ───────────────────────────────────────────────────────────
@@ -437,5 +452,158 @@ describe('ProviderModelsMatrix', () => {
     const dot = document.querySelector('span.bg-gray-300');
     expect(dot).not.toBeNull();
     expect(dot?.getAttribute('title')).toMatch(/not configured/i);
+  });
+
+  // ── In-use column ──────────────────────────────────────────────────────────
+
+  describe('in-use column', () => {
+    it('shows 0 for rows with no bound agents', () => {
+      render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [] })]} />);
+
+      // Both the bare "0" cell and the "0 models" filter caption are
+      // possible matches — the cell sits inside the table body.
+      const tbodyCells = document.querySelectorAll('tbody td');
+      const inUseCell = Array.from(tbodyCells).find((td) => td.textContent?.trim() === '0');
+      expect(inUseCell).toBeDefined();
+    });
+
+    it('renders the agent count as a popover trigger when agents are bound', async () => {
+      const user = userEvent.setup();
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [
+                { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' },
+                { id: 'agent-2', name: 'Researcher', slug: 'researcher' },
+              ],
+            }),
+          ]}
+        />
+      );
+
+      const trigger = screen.getByRole('button', { name: /show 2 agents using GPT-5/i });
+      expect(trigger).toBeInTheDocument();
+
+      await user.click(trigger);
+
+      // Popover renders a deep-link to each agent's admin page.
+      expect(await screen.findByRole('link', { name: /Triage Bot/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-1'
+      );
+      expect(screen.getByRole('link', { name: /Researcher/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-2'
+      );
+    });
+  });
+
+  // ── Row delete action + in-use guard ──────────────────────────────────────
+
+  describe('row delete action', () => {
+    it('row delete is disabled when at least one agent is bound', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [{ id: 'agent-1', name: 'Triage', slug: 'triage' }],
+            }),
+          ]}
+        />
+      );
+
+      const btn = screen.getByRole('button', { name: /delete GPT-5 disabled — model is in use/i });
+      expect(btn).toBeDisabled();
+    });
+
+    it('row delete is enabled and calls DELETE on confirmation when no agents bound', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockResolvedValue({ id: 'model-1', deleted: true } as never);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+
+      // Dialog appears with the model name in the description.
+      expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+      expect(screen.getByText(/permanently removes/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(apiClient.delete).toHaveBeenCalledWith(
+        '/api/v1/admin/orchestration/provider-models/model-1'
+      );
+    });
+
+    it('renders the bound-agent list and disables Delete on a 409 response', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          'Cannot delete model "GPT-5" — 1 active agent still uses it.',
+          'MODEL_IN_USE',
+          409,
+          {
+            agents: [{ id: 'agent-3', name: 'Late Bound', slug: 'late-bound' }],
+          }
+        )
+      );
+
+      const user = userEvent.setup();
+      // Simulate the optimistic state: matrix data shows 0 agents (the
+      // page just loaded), but a concurrent admin bound an agent. The
+      // delete request races and the 409 surfaces them.
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Bound-agent list appears with a deep link to the agent.
+      expect(await screen.findByText('Late Bound')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /late bound/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-3'
+      );
+
+      // Delete button is disabled — the operator has to re-point the
+      // agent before the action can complete.
+      const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
+      expect(deleteBtn).toBeDisabled();
+    });
+
+    it('renders the bound-workflow list and disables Delete on a 409 response', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          'Cannot delete model "GPT-5" — 1 active workflow still references it.',
+          'MODEL_IN_USE',
+          409,
+          {
+            agents: [],
+            workflows: [{ id: 'wf-1', name: 'Support Router', slug: 'support-router' }],
+          }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Bound-workflow list appears with a deep link to the workflow.
+      expect(await screen.findByText('Support Router')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /support router/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/workflows/wf-1'
+      );
+
+      // Delete button is disabled until the workflow is re-pointed.
+      const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
+      expect(deleteBtn).toBeDisabled();
+    });
   });
 });

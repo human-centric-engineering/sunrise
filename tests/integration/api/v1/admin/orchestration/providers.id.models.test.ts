@@ -34,6 +34,12 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: {
       findUnique: vi.fn(),
     },
+    aiProviderModel: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
+    aiAgent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
   },
 }));
 
@@ -44,17 +50,44 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   isApiKeyEnvVarSet: vi.fn(() => true),
 }));
 
+vi.mock('@/lib/orchestration/llm/model-registry', () => ({
+  refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('@/lib/security/rate-limit', () => ({
+  adminLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const PROVIDER_ID = 'cmjbv4i3x00003wsloputgwul';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const INVALID_ID = 'not-a-cuid';
+
+function makeModelInfo(overrides: Partial<{ id: string; name: string }> = {}) {
+  return {
+    id: 'gpt-4o-mini',
+    name: 'GPT-4o mini',
+    provider: 'openai',
+    tier: 'worker' as const,
+    inputCostPerMillion: 0.15,
+    outputCostPerMillion: 0.6,
+    maxContext: 128000,
+    supportsTools: true,
+    ...overrides,
+  };
+}
 
 function makeProviderRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -97,6 +130,16 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
     vi.clearAllMocks();
     // Default: API key is present. Individual tests override when needed.
     vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+  });
+
+  describe('Rate limiting', () => {
+    it('returns 429 when rate-limited', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(429);
+    });
   });
 
   describe('Authentication & Authorization', () => {
@@ -169,17 +212,56 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
         }) as never
       );
       vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
-      mockListModels.mockResolvedValue(['llama3', 'mistral']);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'llama3', name: 'Llama 3' }),
+        makeModelInfo({ id: 'mistral', name: 'Mistral' }),
+      ]);
 
       const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
 
       expect(response.status).toBe(200);
       const body = await parseJson<{
         success: boolean;
-        data: { models: string[] };
+        data: { models: Array<{ id: string }> };
       }>(response);
       expect(body.success).toBe(true);
       expect(body.data.models).toHaveLength(2);
+    });
+  });
+
+  describe('OpenRouter catalogue refresh', () => {
+    it('calls refreshFromOpenRouter before listing models for non-local providers', async () => {
+      // The route enriches each live model via the registry's
+      // getModel(id) lookup; without a refresh, the registry holds
+      // only the small static fallback map and most rows show 0
+      // context / 0 cost. A regression that drops this call would
+      // surface in the UI as zeros across the catalogue — a real
+      // user-facing bug — so it deserves a dedicated assertion.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProviderRow() as never);
+      mockListModels.mockResolvedValue([makeModelInfo()]);
+
+      await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(refreshFromOpenRouter).toHaveBeenCalled();
+    });
+
+    it('skips refreshFromOpenRouter for local providers (their models are not in OpenRouter)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({
+          name: 'Ollama',
+          slug: 'ollama-local',
+          apiKeyEnvVar: null,
+          isLocal: true,
+        }) as never
+      );
+      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'llama3', name: 'Llama 3' })]);
+
+      await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(refreshFromOpenRouter).not.toHaveBeenCalled();
     });
   });
 
@@ -187,20 +269,23 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
     it('returns provider models list', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProviderRow() as never);
-      mockListModels.mockResolvedValue(['claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307']);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }),
+        makeModelInfo({ id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' }),
+      ]);
 
       const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
 
       expect(response.status).toBe(200);
       const data = await parseJson<{
         success: boolean;
-        data: { providerId: string; slug: string; models: string[] };
+        data: { providerId: string; slug: string; models: Array<{ id: string }> };
       }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.providerId).toBe(PROVIDER_ID);
       expect(data.data.slug).toBe('anthropic');
-      expect(data.data.models).toContain('claude-3-5-sonnet-20241022');
+      expect(data.data.models.map((m) => m.id)).toContain('claude-sonnet-4-6');
     });
 
     it('calls getProvider with the provider slug from the database row', async () => {
@@ -211,6 +296,145 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       await GET(makeGetRequest(), makeParams(PROVIDER_ID));
 
       expect(vi.mocked(getProvider)).toHaveBeenCalledWith('anthropic');
+    });
+  });
+
+  describe('Matrix annotation', () => {
+    it('marks live models that have a matching matrix row', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        {
+          id: 'matrix-row-1',
+          modelId: 'gpt-4o-mini',
+          capabilities: ['chat'],
+          tierRole: 'worker',
+        },
+      ] as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; inMatrix: boolean; matrixId: string | null }> };
+      }>(response);
+
+      const matched = data.data.models.find((m) => m.id === 'gpt-4o-mini');
+      const unmatched = data.data.models.find((m) => m.id === 'gpt-4o');
+
+      expect(matched?.inMatrix).toBe(true);
+      expect(matched?.matrixId).toBe('matrix-row-1');
+      expect(unmatched?.inMatrix).toBe(false);
+      expect(unmatched?.matrixId).toBe(null);
+    });
+
+    it('infers a capability for unmatched models so the panel can route the test button', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'text-embedding-3-small', name: 'text-embedding-3-small' }),
+        makeModelInfo({ id: 'o3-pro-2025-06-10', name: 'o3-pro' }),
+        makeModelInfo({ id: 'dall-e-3', name: 'DALL-E 3' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; capabilities: string[] }> };
+      }>(response);
+
+      const byId = new Map(data.data.models.map((m) => [m.id, m.capabilities]));
+      expect(byId.get('gpt-4o-mini')).toEqual(['chat']);
+      expect(byId.get('text-embedding-3-small')).toEqual(['embedding']);
+      expect(byId.get('o3-pro-2025-06-10')).toEqual(['reasoning']);
+      expect(byId.get('dall-e-3')).toEqual(['image']);
+    });
+
+    it('annotates each model with the active agents bound to it', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot', model: 'gpt-4o-mini' },
+        { id: 'agent-2', name: 'Researcher', slug: 'researcher', model: 'gpt-4o-mini' },
+        { id: 'agent-3', name: 'Summariser', slug: 'summariser', model: 'gpt-4o' },
+      ] as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' }),
+        makeModelInfo({ id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: {
+          models: Array<{
+            id: string;
+            agents: Array<{ id: string; name: string; slug: string }>;
+          }>;
+        };
+      }>(response);
+
+      const byId = new Map(data.data.models.map((m) => [m.id, m.agents]));
+      expect(byId.get('gpt-4o-mini')).toHaveLength(2);
+      expect(
+        byId
+          .get('gpt-4o-mini')
+          ?.map((a) => a.slug)
+          .sort()
+      ).toEqual(['researcher', 'triage-bot']);
+      expect(byId.get('gpt-4o')?.map((a) => a.slug)).toEqual(['summariser']);
+      // Models with no bound agent get an empty array, not undefined,
+      // so the panel can render `0` without conditional checks.
+      expect(byId.get('gpt-3.5-turbo')).toEqual([]);
+
+      // Query is filtered by provider slug + isActive — never a
+      // cross-provider scan.
+      expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { provider: 'openai', isActive: true },
+        })
+      );
+    });
+
+    it('matrix capabilities take precedence over inference', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        {
+          id: 'matrix-1',
+          modelId: 'text-embedding-3-small',
+          // Suppose the matrix has a custom capability list — it must
+          // win over the inference fallback.
+          capabilities: ['embedding', 'rerank'],
+          tierRole: 'embedding',
+        },
+      ] as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'text-embedding-3-small', name: 'text-embedding-3-small' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; capabilities: string[]; tierRole: string | null }> };
+      }>(response);
+
+      expect(data.data.models[0].capabilities).toEqual(['embedding', 'rerank']);
+      expect(data.data.models[0].tierRole).toBe('embedding');
     });
   });
 

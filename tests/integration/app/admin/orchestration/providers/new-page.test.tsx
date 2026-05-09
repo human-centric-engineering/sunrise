@@ -8,8 +8,11 @@
  * - Renders the create-mode form shell
  * - All 4 flavor radio options render
  * - "Create provider" submit button visible
+ * - Shows the getting-started hint card when no providers exist
+ * - Hides the hint once at least one provider is configured
  *
- * Note: NewProviderPage is a synchronous (non-async) server component.
+ * NewProviderPage is an async server component — it awaits `getSetupState`
+ * to decide whether to render the first-time hint.
  *
  * @see app/admin/orchestration/providers/new/page.tsx
  */
@@ -42,6 +45,21 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/setup-state', () => ({
+  getSetupState: vi.fn(),
+}));
+
+// Imported after the vi.mock above so the page picks up the stub.
+import { getSetupState } from '@/lib/orchestration/setup-state';
+
+function mockSetupState(hasProvider: boolean): void {
+  vi.mocked(getSetupState).mockResolvedValue({
+    hasProvider,
+    hasAgent: false,
+    hasDefaultChatModel: false,
+  });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('NewProviderPage (server component)', () => {
@@ -54,10 +72,11 @@ describe('NewProviderPage (server component)', () => {
   });
 
   it('renders all 4 flavor radio options', async () => {
+    mockSetupState(false);
     const { default: NewProviderPage } =
       await import('@/app/admin/orchestration/providers/new/page');
 
-    render(NewProviderPage());
+    render(await NewProviderPage());
 
     await waitFor(() => {
       // Flavor radios are custom <button role="radio"> containing both label and description text.
@@ -77,32 +96,63 @@ describe('NewProviderPage (server component)', () => {
   });
 
   it('renders "Create provider" submit button', async () => {
+    mockSetupState(false);
     const { default: NewProviderPage } =
       await import('@/app/admin/orchestration/providers/new/page');
 
-    render(NewProviderPage());
+    render(await NewProviderPage());
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
     });
   });
 
-  it('renders a form element', async () => {
+  it('mounts the create-provider button inside a <form> for native submit', async () => {
+    mockSetupState(false);
     const { default: NewProviderPage } =
       await import('@/app/admin/orchestration/providers/new/page');
 
-    render(NewProviderPage());
+    render(await NewProviderPage());
 
-    expect(document.querySelector('form')).toBeTruthy();
+    // querySelector('form').toBeTruthy() reports `expected null to be
+    // truthy` on failure, which doesn't tell you which form went
+    // missing. Anchor on the submit button (a contract this page
+    // owns) and walk up to the form ancestor — that proves both that
+    // the form mounts AND that pressing Enter / clicking submit will
+    // trigger native submission, which the original test did not.
+    const submit = screen.getByRole('button', { name: /create provider/i });
+    expect(submit.closest('form')).not.toBeNull();
   });
 
   it('renders breadcrumb navigation links', async () => {
+    mockSetupState(false);
     const { default: NewProviderPage } =
       await import('@/app/admin/orchestration/providers/new/page');
 
-    render(NewProviderPage());
+    render(await NewProviderPage());
 
     expect(screen.getByRole('link', { name: /ai orchestration/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /providers/i })).toBeInTheDocument();
+  });
+
+  it('shows the first-time hint when no providers exist', async () => {
+    mockSetupState(false);
+    const { default: NewProviderPage } =
+      await import('@/app/admin/orchestration/providers/new/page');
+
+    render(await NewProviderPage());
+
+    expect(screen.getByText(/First time configuring a provider/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /setup wizard/i })).toBeInTheDocument();
+  });
+
+  it('hides the hint once at least one provider is configured', async () => {
+    mockSetupState(true);
+    const { default: NewProviderPage } =
+      await import('@/app/admin/orchestration/providers/new/page');
+
+    render(await NewProviderPage());
+
+    expect(screen.queryByText(/First time configuring a provider/i)).not.toBeInTheDocument();
   });
 });

@@ -1,9 +1,19 @@
 /**
- * SetupWizard Component Tests
+ * SetupWizard Component Tests — top-level navigation and step indicator
  *
- * Covers initial rendering, step 1 skip, auto-complete of the provider step
- * when providers exist, and basic agent-step validation. Heavier paths
- * (full SSE consumer end-to-end) are left to manual QA and integration.
+ * Scope:
+ *   - Initial render at step 1 (fresh install)
+ *   - Detection-card content (env-var presence → suggested defaults)
+ *   - Snap-back when persisted state points beyond actual setup
+ *   - Resume from a stored stepIndex
+ *   - Step indicator renders the completed-trail
+ *
+ * Per-step API contracts (Continue advances, PATCH /settings on
+ * defaults, POST /test + /test-model on smoke step, Finish clears
+ * storage) live in `setup-wizard-steps.test.tsx`.
+ *
+ * The wizard's 4-step layout (config-oriented):
+ *   0 provider · 1 defaults · 2 smoke test · 3 done
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -11,27 +21,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SetupWizard } from '@/components/admin/orchestration/setup-wizard';
-
-const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v1';
-
-function mockFetchWithCounts(providerTotal: number, agentTotal: number) {
-  return vi.fn().mockImplementation((url: string) => {
-    const urlStr = typeof url === 'string' ? url : '';
-    if (urlStr.includes('/providers')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: [], meta: { total: providerTotal } }),
-      });
-    }
-    if (urlStr.includes('/agents')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: [], meta: { total: agentTotal } }),
-      });
-    }
-    return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
-  });
-}
+import {
+  STORAGE_KEY,
+  makeFetchMock,
+  makeStoredState,
+} from '@/tests/unit/components/admin/orchestration/setup-wizard.helpers';
 
 describe('SetupWizard', () => {
   beforeEach(() => {
@@ -43,235 +37,148 @@ describe('SetupWizard', () => {
     vi.restoreAllMocks();
   });
 
-  it('opens at step 1 of 5 by default', async () => {
-    vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
+  it('opens at step 1 of 4 (Provider) by default on a fresh install', async () => {
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
 
     render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument();
+      expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/What are you building\?/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /skip, i'll configure manually/i })
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Configure a provider/i)).toBeInTheDocument();
   });
 
-  it('Step 1 "Skip" advances to step 2 and persists progress', async () => {
-    vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
-    const user = userEvent.setup();
+  // The "already-have-a-provider" success card test moved to
+  // `setup-wizard-steps.test.tsx` ("already-exists card auto-shows
+  // when providers exist and Continue advances") — that version is
+  // strictly stronger because it also asserts the Continue advance.
 
-    render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-    await waitFor(() => expect(screen.getByText(/Step 1 of 5/i)).toBeInTheDocument());
-
-    await user.click(screen.getByRole('button', { name: /skip, i'll configure manually/i }));
-
-    await waitFor(() => expect(screen.getByText(/Step 2 of 5/i)).toBeInTheDocument());
-
-    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}');
-    expect(stored.stepIndex).toBe(1);
-  });
-
-  it('Step 2 auto-completes with a success card when providers already exist', async () => {
-    vi.stubGlobal('fetch', mockFetchWithCounts(1, 0));
-
-    // Start at step 2 so we don't need to click through step 1
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        stepIndex: 1,
-        providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-        agentDraft: {
-          name: '',
-          slug: '',
-          description: '',
-          systemInstructions: '',
-          model: 'claude-opus-4-6',
-          provider: 'anthropic',
-        },
-        createdAgentSlug: null,
+  it('Provider step surfaces detection cards when an env-var key is present', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        providerTotal: 0,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: false,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
       })
     );
+
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 0 }));
 
     render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/already have a provider configured/i)).toBeInTheDocument();
+      expect(screen.getByText(/We detected an API key/i)).toBeInTheDocument();
     });
+    expect(screen.getByText(/ANTHROPIC_API_KEY/i)).toBeInTheDocument();
+    // The card now shows the suggested chat model up front and warns
+    // that Anthropic doesn't offer embeddings — so the operator knows
+    // what they're getting before clicking Configure.
+    expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
+    expect(screen.getByText(/Anthropic doesn't offer embeddings/i)).toBeInTheDocument();
+    expect(screen.getByText(/Existing defaults are never overwritten/i)).toBeInTheDocument();
   });
 
-  it('Shows the inline provider form when no providers exist', async () => {
-    vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
-
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        stepIndex: 1,
-        providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-        agentDraft: {
-          name: '',
-          slug: '',
-          description: '',
-          systemInstructions: '',
-          model: 'claude-opus-4-6',
-          provider: 'anthropic',
-        },
-        createdAgentSlug: null,
+  it('Provider step shows both chat + embedding suggestions when the provider supports both', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        providerTotal: 0,
+        detected: [
+          {
+            slug: 'openai',
+            name: 'OpenAI',
+            providerType: 'openai-compatible',
+            defaultBaseUrl: 'https://api.openai.com/v1',
+            apiKeyEnvVar: 'OPENAI_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: false,
+            isLocal: false,
+            suggestedDefaultChatModel: 'gpt-4o-mini',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: 'text-embedding-3-small',
+          },
+        ],
       })
     );
+
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 0 }));
 
     render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
     });
-    expect(document.getElementById('provider-name')).not.toBeNull();
-    expect(document.getElementById('provider-slug')).not.toBeNull();
+    expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+    expect(screen.queryByText(/doesn't offer embeddings/i)).not.toBeInTheDocument();
   });
 
-  it('Step 3 StepAgent client-side validation guard blocks submit with empty fields', async () => {
-    const fetchMock = mockFetchWithCounts(1, 0);
-    vi.stubGlobal('fetch', fetchMock);
+  // The "manual flavour-picker form" fallback test moved to
+  // `setup-wizard-steps.test.tsx` ("renders manual flavour-picker
+  // form when no providers and no env vars detected") — same
+  // assertions, lives next to the other Step 1 content checks.
+
+  it('Snaps back to Provider step when persisted state points beyond actual setup', async () => {
+    // No providers configured but persisted stepIndex points at smoke test.
+    // The wizard should redirect back to Provider, not let the user sit on
+    // a step that has no prerequisites met.
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
+
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 2 }));
+
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument());
+  });
+
+  it('Resume: saved progress at Defaults reopens on Defaults', async () => {
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
+
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 1 }));
+
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument());
+  });
+
+  it('Step indicator shows a clickable trail of completed steps', async () => {
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
     const user = userEvent.setup();
 
-    // Jump straight to step 3 (Create agent) with an empty agent draft.
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        stepIndex: 2,
-        providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-        agentDraft: {
-          name: '',
-          slug: '',
-          description: '',
-          systemInstructions: '',
-          model: '',
-          provider: 'anthropic',
-        },
-        createdAgentSlug: null,
-      })
-    );
+    // Open at step 3 (smoke test) — provider configured, defaults set.
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 2 }));
 
     render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-    await waitFor(() => expect(screen.getByText(/Step 3 of 5/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Step 3 of 4/i)).toBeInTheDocument());
 
-    // Bypass the browser `required` attribute by submitting through the form
-    // element directly — we want to hit the hook's client-side guard.
-    const submitButton = screen.getByRole('button', { name: /create agent/i });
-    const form = submitButton.closest('form');
-    expect(form).not.toBeNull();
-    await user.click(submitButton);
+    const ol = screen.getByLabelText(/setup progress/i);
+    const buttons = ol.querySelectorAll('button');
+    expect(buttons).toHaveLength(4);
 
-    // The client-side guard renders a friendly error…
-    // (If HTML5 required kicks in first, at minimum there's no POST to /agents.)
-    const agentPostCalls = fetchMock.mock.calls.filter((call) => {
-      const url = typeof call[0] === 'string' ? call[0] : '';
-      const init = call[1] as RequestInit | undefined;
-      return url.includes('/agents') && init?.method === 'POST';
-    });
-    expect(agentPostCalls).toHaveLength(0);
-  });
+    // Steps 0 and 1 are completed (clickable). Step 2 (current) and Step 3 (upcoming) are disabled.
+    expect(buttons[0]).not.toBeDisabled();
+    expect(buttons[1]).not.toBeDisabled();
+    expect(buttons[2]).toBeDisabled();
+    expect(buttons[3]).toBeDisabled();
 
-  it('Step 4 StepTestAgent sanitizes SSE error frames (never forwards raw error text)', async () => {
-    const SECRET = 'RAW_SDK_LEAK_abc123';
-
-    // Build a ReadableStream emitting a single SSE error frame with a
-    // "raw" provider error message. The hook must render a friendly
-    // fallback and must NOT surface the raw text.
-    const encoder = new TextEncoder();
-    const streamBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          encoder.encode(
-            `event: error\ndata: ${JSON.stringify({ code: 'internal_error', message: SECRET })}\n\n`
-          )
-        );
-        controller.close();
-      },
-    });
-
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      const urlStr = typeof url === 'string' ? url : '';
-      if (urlStr.includes('/providers')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ success: true, data: [], meta: { total: 1 } }),
-        });
-      }
-      if (urlStr.includes('/agents')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ success: true, data: [], meta: { total: 1 } }),
-        });
-      }
-      if (urlStr.includes('/chat/stream')) {
-        return Promise.resolve({ ok: true, body: streamBody });
-      }
-      return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
-
-    // Start directly on step 4 (Test your agent) with a created agent.
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        stepIndex: 3,
-        providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-        agentDraft: {
-          name: 'Test',
-          slug: 'test-agent',
-          description: 'x',
-          systemInstructions: 'x',
-          model: 'claude-opus-4-6',
-          provider: 'anthropic',
-        },
-        createdAgentSlug: 'test-agent',
-      })
-    );
-
-    render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-    await waitFor(() => expect(screen.getByText(/Step 4 of 5/i)).toBeInTheDocument());
-
-    await user.type(screen.getByLabelText(/your message/i), 'Hi');
-    await user.click(screen.getByRole('button', { name: /^send$/i }));
-
-    await waitFor(
-      () => {
-        expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    // Critical: the raw provider error must not appear anywhere in the DOM.
-    expect(document.body.textContent ?? '').not.toContain(SECRET);
-  });
-
-  it('Resume: saved progress at step 2 reopens on step 2', async () => {
-    vi.stubGlobal('fetch', mockFetchWithCounts(0, 0));
-
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        stepIndex: 1,
-        providerDraft: { name: '', slug: '', apiKeyEnvVar: '' },
-        agentDraft: {
-          name: '',
-          slug: '',
-          description: '',
-          systemInstructions: '',
-          model: 'claude-opus-4-6',
-          provider: 'anthropic',
-        },
-        createdAgentSlug: null,
-      })
-    );
-
-    render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-    await waitFor(() => expect(screen.getByText(/Step 2 of 5/i)).toBeInTheDocument());
+    // Clicking a completed step jumps the wizard back to it.
+    await user.click(buttons[0]);
+    await waitFor(() => expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument());
   });
 });

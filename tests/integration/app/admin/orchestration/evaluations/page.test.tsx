@@ -44,6 +44,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+  usePathname: vi.fn(() => '/admin/orchestration/evaluations'),
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -102,7 +104,7 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act: render server component (async)
-    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+    render(await EvaluationsListPage());
 
     // Assert: headings present
     expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
@@ -123,7 +125,7 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act
-    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+    render(await EvaluationsListPage());
 
     // Assert: evaluation titles appear (via EvaluationsTable)
     await waitFor(() => {
@@ -141,7 +143,7 @@ describe('EvaluationsListPage (server component)', () => {
       await import('@/app/admin/orchestration/evaluations/page');
 
     // Act: should not throw
-    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+    render(await EvaluationsListPage());
 
     // Assert: page renders (empty state in table)
     expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
@@ -158,7 +160,7 @@ describe('EvaluationsListPage (server component)', () => {
     const { default: EvaluationsListPage } =
       await import('@/app/admin/orchestration/evaluations/page');
 
-    render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+    render(await EvaluationsListPage());
 
     expect(screen.getByRole('heading', { name: /^testing/i })).toBeInTheDocument();
     expect(screen.getByText(/no evaluations found/i)).toBeInTheDocument();
@@ -175,7 +177,7 @@ describe('EvaluationsListPage (server component)', () => {
     // Act: should not throw
     let thrown = false;
     try {
-      render(await EvaluationsListPage({ searchParams: Promise.resolve({}) }));
+      render(await EvaluationsListPage());
     } catch {
       thrown = true;
     }

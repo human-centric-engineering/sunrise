@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { DefaultModelsForm } from '@/components/admin/orchestration/default-models-form';
 import {
   SettingsForm,
   type OrchestrationSettings,
@@ -10,42 +11,160 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
+import type { OrchestrationSettings as FullOrchestrationSettings } from '@/types/orchestration';
 
 export const metadata: Metadata = {
   title: 'Settings · AI Orchestration',
   description:
-    'Global orchestration settings — guard modes, budget, limits, retention, approvals, and search.',
+    'Global orchestration settings — default models, guard modes, budget, limits, retention, approvals, and search.',
 };
 
-async function getSettings(): Promise<OrchestrationSettings> {
-  const defaults: OrchestrationSettings = {
-    inputGuardMode: null,
-    outputGuardMode: null,
-    citationGuardMode: null,
-    globalMonthlyBudgetUsd: null,
-    defaultApprovalTimeoutMs: null,
-    approvalDefaultAction: null,
-    searchConfig: null,
-    webhookRetentionDays: null,
-    costLogRetentionDays: null,
-    auditLogRetentionDays: null,
-    maxConversationsPerUser: null,
-    maxMessagesPerConversation: null,
-    escalationConfig: null,
-  };
+const DEFAULT_SETTINGS: OrchestrationSettings = {
+  inputGuardMode: null,
+  outputGuardMode: null,
+  citationGuardMode: null,
+  globalMonthlyBudgetUsd: null,
+  defaultApprovalTimeoutMs: null,
+  approvalDefaultAction: null,
+  searchConfig: null,
+  webhookRetentionDays: null,
+  costLogRetentionDays: null,
+  auditLogRetentionDays: null,
+  maxConversationsPerUser: null,
+  maxMessagesPerConversation: null,
+  escalationConfig: null,
+};
+
+async function getSettings(): Promise<FullOrchestrationSettings | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS);
-    if (!res.ok) return defaults;
-    const body = await parseApiResponse<OrchestrationSettings>(res);
-    return body.success ? body.data : defaults;
+    if (!res.ok) return null;
+    const body = await parseApiResponse<FullOrchestrationSettings>(res);
+    return body.success ? body.data : null;
   } catch (err) {
     logger.error('settings page: fetch failed', err);
-    return defaults;
+    return null;
+  }
+}
+
+interface ChatMatrixRow {
+  modelId: string;
+  name: string;
+  providerSlug: string;
+  tierRole: string;
+}
+
+async function getChatModels(): Promise<ModelInfo[]> {
+  // Source from the curated provider-models matrix
+  // (`prisma/seeds/009-provider-models.ts`) rather than the chat-only
+  // model registry. The matrix has the full vendor catalogue per
+  // provider — e.g. GPT-5, GPT-4.1, GPT-4o, GPT-4o Mini for OpenAI —
+  // whereas the registry's static fallback only has 2 OpenAI entries.
+  //
+  // Filter to `capability=chat` so embedding-only models (Voyage, etc.)
+  // don't leak into the chat / routing / reasoning dropdowns.
+  try {
+    const res = await serverFetch(
+      `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=100`
+    );
+    if (!res.ok) return [];
+    const body = await parseApiResponse<ChatMatrixRow[]>(res);
+    if (!body.success) return [];
+    // Reshape to `ModelInfo` so the form's existing filtering /
+    // labelling logic stays the same. The fields that don't apply to
+    // matrix rows (cost, context, tool support) get stub values; the
+    // form only reads `id`, `name`, `provider`, `tier`.
+    return body.data.map((row) => ({
+      id: row.modelId,
+      name: row.name,
+      provider: row.providerSlug,
+      tier: matrixTierToModelTier(row.tierRole),
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      maxContext: 0,
+      supportsTools: false,
+    }));
+  } catch (err) {
+    logger.error('settings page: chat models fetch failed', err);
+    return [];
+  }
+}
+
+/** Map matrix `tierRole` strings to the registry's narrower `ModelTier`. */
+function matrixTierToModelTier(tierRole: string): ModelInfo['tier'] {
+  switch (tierRole) {
+    case 'thinking':
+      return 'frontier';
+    case 'worker':
+      return 'mid';
+    case 'infrastructure':
+    case 'control_plane':
+      return 'budget';
+    case 'local_sovereign':
+      return 'local';
+    default:
+      return 'mid';
+  }
+}
+
+interface ProviderSummary {
+  slug: string;
+  name: string;
+  isActive: boolean;
+}
+
+async function getProviders(): Promise<ProviderSummary[]> {
+  // The form uses configured providers to scope the chat/routing/reasoning
+  // dropdowns and to decide whether to render the "configure a provider
+  // first" CTA. Inactive rows are still returned so the form can list
+  // them but mark them as needing reactivation.
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<ProviderSummary[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('settings page: providers fetch failed', err);
+    return [];
+  }
+}
+
+interface EmbeddingModel {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+}
+
+async function getEmbeddingModels(): Promise<EmbeddingModel[]> {
+  // The embeddings dropdown is sourced separately from the chat-model
+  // registry — chat models can't embed and we don't want to mislead
+  // operators by listing them.
+  try {
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS);
+    if (!res.ok) return [];
+    const body = await parseApiResponse<EmbeddingModel[]>(res);
+    return body.success ? body.data : [];
+  } catch (err) {
+    logger.error('settings page: embedding models fetch failed', err);
+    return [];
   }
 }
 
 export default async function OrchestrationSettingsPage() {
-  const settings = await getSettings();
+  const [fullSettings, models, providers, embeddingModels] = await Promise.all([
+    getSettings(),
+    getChatModels(),
+    getProviders(),
+    getEmbeddingModels(),
+  ]);
+
+  // The narrow `OrchestrationSettings` shape that `SettingsForm` accepts
+  // is a structural subset of the full singleton, so we can hand the
+  // full row through. On fetch failure we fall back to typed defaults
+  // so the form still renders with empty fields.
+  const formSettings: OrchestrationSettings = fullSettings ?? DEFAULT_SETTINGS;
 
   return (
     <div className="space-y-6">
@@ -67,12 +186,19 @@ export default async function OrchestrationSettingsPage() {
           </FieldHelp>
         </h1>
         <p className="text-muted-foreground text-sm">
-          Global defaults for guard modes, spending caps, usage limits, retention, approvals, and
-          search tuning.
+          Default models, guard modes, spending caps, usage limits, retention, approvals, and search
+          tuning.
         </p>
       </header>
 
-      <SettingsForm initialSettings={settings} />
+      <DefaultModelsForm
+        settings={fullSettings}
+        models={models}
+        providers={providers}
+        embeddingModels={embeddingModels}
+      />
+
+      <SettingsForm initialSettings={formSettings} />
 
       <BackupPanel />
     </div>

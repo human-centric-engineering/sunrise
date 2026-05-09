@@ -315,8 +315,9 @@ const unit: SeedUnit = {
         description:
           'Evaluates provider model entries for accuracy and freshness. Proposes changes for admin review via the audit workflow.',
         systemInstructions: MODEL_AUDITOR_INSTRUCTIONS,
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
+        // Empty strings — resolved at runtime via agent-resolver.ts.
+        model: '',
+        provider: '',
         temperature: 0.2,
         maxTokens: 4096,
         monthlyBudgetUsd: 25,
@@ -432,8 +433,9 @@ const unit: SeedUnit = {
         description:
           'Synthesises provider model audit results into a consolidated human-readable report with recommendations.',
         systemInstructions: REPORT_WRITER_INSTRUCTIONS,
-        model: 'claude-sonnet-4-6',
-        provider: 'anthropic',
+        // Empty strings — resolved at runtime via agent-resolver.ts.
+        model: '',
+        provider: '',
         temperature: 0.3,
         maxTokens: 4096,
         isActive: true,

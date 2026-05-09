@@ -12,7 +12,6 @@ import type {
   GlobalCapStatus,
 } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import type { OrchestrationSettings } from '@/types/orchestration';
 
 export const metadata: Metadata = {
   title: 'Costs & Budget · AI Orchestration',
@@ -110,29 +109,18 @@ async function getModels(): Promise<ModelsResponse | null> {
   }
 }
 
-async function getSettings(): Promise<OrchestrationSettings | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.SETTINGS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<OrchestrationSettings>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('costs page: failed to load settings', err);
-    return null;
-  }
-}
-
 export default async function CostsPage() {
   // Ensure model pricing is current before rendering. No-op if cache
   // is fresh (< 24h); only hits OpenRouter when stale or on cold start.
   await refreshFromOpenRouter();
 
-  const [summary, alertsResponse, perModel, modelsResponse, settings] = await Promise.all([
+  // Settings are no longer needed here — the default-models form moved
+  // to the Settings page; the Costs page keeps a footer link to it.
+  const [summary, alertsResponse, perModel, modelsResponse] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
     getPerModel30Day(),
     getModels(),
-    getSettings(),
   ]);
 
   return (
@@ -173,7 +161,6 @@ export default async function CostsPage() {
         globalCap={alertsResponse?.globalCap ?? null}
         perModel={perModel}
         models={modelsResponse?.models ?? null}
-        settings={settings}
         registryFetchedAt={modelsResponse?.fetchedAt ?? null}
       />
     </div>

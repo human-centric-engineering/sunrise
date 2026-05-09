@@ -129,7 +129,7 @@ Two `CostSummary`-like types exist, deliberately named differently:
 
 **Pricing source pipeline:** Static fallback map (compiled in) → OpenRouter `/api/v1/models` (24h cache, Zod-validated) → per-provider discovery (marks `available: true`). The cost tracker multiplies actual token counts by these rates.
 
-**OpenRouter refresh on page load:** The costs page calls `refreshFromOpenRouter()` before rendering, ensuring current-rate data is never more than 24h stale (no-op when cache is warm).
+**OpenRouter refresh on page load:** The costs page calls `refreshFromOpenRouter()` before rendering, ensuring current-rate data is never more than 24h stale (no-op when cache is warm). Failures are negative-cached for 5 minutes — when OpenRouter is unreachable, subsequent calls inside that window short-circuit without re-issuing the (10-second timeout) fetch, so a remote outage doesn't compound into per-page-load slowdowns. After 5 minutes the next call retries; `force: true` bypasses both caches.
 
 ## Cost methodology panel
 

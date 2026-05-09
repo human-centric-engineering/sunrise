@@ -5,6 +5,10 @@
  *
  * Client-side tabs wrapper for managing active users and pending invitations.
  * Receives server-side fetched data as props.
+ *
+ * Tab state is URL-synced via `useUrlTabs` so deep links work
+ * (`?tab=invitations`), clicking the sidebar nav resets to the default,
+ * and browser back/forward navigates between tabs.
  */
 
 import Link from 'next/link';
@@ -13,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { UserPlus } from 'lucide-react';
 import { UserTable } from '@/components/admin/user-table';
 import { InvitationTable } from '@/components/admin/invitation-table';
+import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 
@@ -23,14 +28,26 @@ interface UserManagementTabsProps {
   invitationsMeta: PaginationMeta;
 }
 
+const ALLOWED_TABS = ['users', 'invitations'] as const;
+type UserManagementTab = (typeof ALLOWED_TABS)[number];
+
 export function UserManagementTabs({
   users,
   usersMeta,
   invitations,
   invitationsMeta,
 }: UserManagementTabsProps) {
+  const { activeTab, setActiveTab } = useUrlTabs<UserManagementTab>({
+    defaultTab: 'users',
+    allowedTabs: ALLOWED_TABS,
+  });
+
   return (
-    <Tabs defaultValue="users" className="space-y-4">
+    <Tabs
+      value={activeTab}
+      onValueChange={(v) => setActiveTab(v as UserManagementTab)}
+      className="space-y-4"
+    >
       <div className="flex items-center justify-between">
         <TabsList>
           <TabsTrigger value="users">

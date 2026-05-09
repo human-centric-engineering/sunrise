@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ProviderModelsPanel } from '@/components/admin/orchestration/provider-models-panel';
@@ -31,7 +31,8 @@ vi.mock('@/lib/api/client', () => ({
     constructor(
       message: string,
       public code = 'INTERNAL_ERROR',
-      public status = 500
+      public status = 500,
+      public details?: Record<string, unknown>
     ) {
       super(message);
       this.name = 'APIClientError';
@@ -104,9 +105,9 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
-        expect(screen.getByText('Claude Haiku 3')).toBeInTheDocument();
-        expect(screen.getByText('Claude Sonnet 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+        expect(screen.getByText('claude-haiku-3')).toBeInTheDocument();
+        expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
       });
     });
 
@@ -156,7 +157,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-3" providerName="Ollama" isLocal={true} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
       expect(screen.queryByText('Input $/1M')).not.toBeInTheDocument();
@@ -184,7 +185,7 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
       const initialCallCount = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
@@ -278,7 +279,7 @@ describe('ProviderModelsPanel', () => {
 
       await waitFor(() => {
         expect(apiClient.get).toHaveBeenCalled();
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
     });
 
@@ -342,17 +343,20 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      // Find the play button (test) for the first model
-      const testButtons = screen.getAllByTitle(/test/i);
-      await user.click(testButtons[0]);
+      // Target the Test button by its accessible name — the row order
+      // in the table now depends on the sort state, so picking element
+      // [0] would couple the assertion to the default sort.
+      await user.click(screen.getByRole('button', { name: /^test claude opus 4\.6$/i }));
 
       await waitFor(() => {
         expect(apiClient.post).toHaveBeenCalledWith(
           expect.stringContaining('/providers/prov-1/test-model'),
-          expect.objectContaining({ body: { model: 'claude-opus-4-6' } })
+          expect.objectContaining({
+            body: expect.objectContaining({ model: 'claude-opus-4-6' }),
+          })
         );
       });
 
@@ -370,14 +374,752 @@ describe('ProviderModelsPanel', () => {
       render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Claude Opus 4.6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      const testButtons = screen.getAllByTitle(/test/i);
-      await user.click(testButtons[0]);
+      await user.click(screen.getByRole('button', { name: /^test claude opus 4\.6$/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/didn.t respond/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Phase A/C — Matrix annotation + sectioning ─────────────────────────────
+
+  describe('matrix annotation and sectioning', () => {
+    const ENRICHED_MODELS: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        inMatrix: true,
+        matrixId: 'matrix-1',
+        capabilities: ['chat'],
+        tierRole: 'worker',
+      },
+      {
+        id: 'text-embedding-3-small',
+        name: 'text-embedding-3-small',
+        provider: 'openai',
+        tier: 'embedding',
+        inputCostPerMillion: 0.02,
+        outputCostPerMillion: 0,
+        maxContext: 8191,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['embedding'],
+        tierRole: null,
+      },
+      {
+        id: 'o3-pro-2025-06-10',
+        name: 'o3-pro',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 200000,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['reasoning'],
+        tierRole: null,
+      },
+      {
+        id: 'dall-e-3',
+        name: 'DALL-E 3',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: false,
+        inMatrix: false,
+        matrixId: null,
+        capabilities: ['image'],
+        tierRole: null,
+      },
+    ];
+
+    const ENRICHED_RESPONSE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: ENRICHED_MODELS,
+    };
+
+    it('renders an "In matrix" badge in the In matrix column for matched rows', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Scope the badge query to the matrix-matched row directly.
+      // The previous `toHaveLength(2)` count assertion would silently
+      // break (or false-positive) if any future label or tooltip
+      // mentioned "In matrix" again — this is more precise.
+      const matchedRow = screen.getByRole('row', { name: /gpt-4o-mini/i });
+      expect(within(matchedRow).getByText(/in matrix/i)).toBeInTheDocument();
+      // ...and the embedding row (not in matrix) does NOT carry the badge.
+      const unmatchedRow = screen.getByRole('row', { name: /text-embedding-3-small/i });
+      expect(within(unmatchedRow).queryByText(/in matrix/i)).not.toBeInTheDocument();
+    });
+
+    it('renders all rows in a single combined table (no section split)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Every row is visible immediately — no "In your matrix" /
+      // "Discovered" expand toggles, no rows hidden behind a closed
+      // section. The four enriched fixture rows all render in one go.
+      // The cell shows the canonical model id (the source of truth);
+      // the friendly `name` field is no longer rendered.
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+      expect(screen.getByText('o3-pro-2025-06-10')).toBeInTheDocument();
+      expect(screen.getByText('dall-e-3')).toBeInTheDocument();
+    });
+
+    it('shows a capability badge per row', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // The embedding row shows a capability badge with text "embedding".
+      // Need to disambiguate from the "Embedding" filter chip — assert
+      // on the count instead.
+      const matches = screen.getAllByText(/embedding/i);
+      // At least 2: the filter chip + the row capability badge
+      expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('clicking "In matrix" twice reverts to the default name-asc sort', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Click 1 — group matrix rows at top.
+      const inMatrixHeader = screen.getByRole('button', { name: /^in matrix/i });
+      await user.click(inMatrixHeader);
+      let rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('gpt-4o-mini');
+
+      // Click 2 — revert to id-asc, NOT flip to matrix-rows-at-bottom.
+      await user.click(inMatrixHeader);
+      rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('dall-e-3');
+    });
+
+    it('default sort is alphabetical by canonical model id (matrix rows interleaved)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Default sort is `id asc` — `dall-e-3` sorts before `gpt-4o-mini`
+      // (the lone matrix-matched row), proving the matrix grouping is
+      // NOT applied by default. Operators opt into grouping by clicking
+      // the "In matrix" column header.
+      const rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain('dall-e-3');
+    });
+  });
+
+  // ── Phase C — Search and filter ────────────────────────────────────────────
+
+  describe('search and filter', () => {
+    it('search input filters rows by id substring', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByPlaceholderText(/search models/i), 'haiku');
+
+      await waitFor(() => {
+        expect(screen.getByText('claude-haiku-3')).toBeInTheDocument();
+        expect(screen.queryByText('claude-opus-4-6')).not.toBeInTheDocument();
+      });
+    });
+
+    it('renders capability filter chips', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(MOCK_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-1" providerName="Anthropic" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: /filter by capability/i })).toBeInTheDocument();
+      });
+
+      // Chat / Embedding / Image / Audio / Other
+      expect(screen.getByRole('button', { name: /^chat$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^embedding$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^image$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^audio$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^other$/i })).toBeInTheDocument();
+    });
+
+    it('clicking the Embedding filter chip narrows rows to embedding models', async () => {
+      // The chip rendering test above only proves the chips appear —
+      // the actual filtering logic (`activeBuckets.has(bucketFor(...))`)
+      // wasn't exercised. This drives the toggleBucket reducer + the
+      // `filtered` memo's bucket arm.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o-mini',
+            name: 'GPT-4o mini',
+            provider: 'openai',
+            tier: 'budget',
+            inputCostPerMillion: 0.15,
+            outputCostPerMillion: 0.6,
+            maxContext: 128_000,
+            supportsTools: true,
+            capabilities: ['chat'],
+          },
+          {
+            id: 'text-embedding-3-small',
+            name: 'text-embedding-3-small',
+            provider: 'openai',
+            tier: 'budget',
+            inputCostPerMillion: 0.02,
+            outputCostPerMillion: 0,
+            maxContext: 8191,
+            supportsTools: false,
+            capabilities: ['embedding'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Both rows visible before any filter applied.
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+
+      // Chat row hidden, embedding row remains.
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      // Click again to deactivate — chat row returns.
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Sort by tier / context / cost columns ──────────────────────────────────
+
+  describe('sortable columns', () => {
+    const SORTABLE_FIXTURE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: [
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 5,
+          outputCostPerMillion: 15,
+          maxContext: 128_000,
+          supportsTools: true,
+          capabilities: ['chat'],
+        },
+        {
+          id: 'gpt-4o-mini',
+          name: 'GPT-4o mini',
+          provider: 'openai',
+          tier: 'budget',
+          inputCostPerMillion: 0.15,
+          outputCostPerMillion: 0.6,
+          maxContext: 16_000,
+          supportsTools: true,
+          capabilities: ['chat'],
+        },
+      ],
+    };
+
+    // The `inMatrix` and `name` paths already had explicit tests; this
+    // table covers the remaining four sort keys (tier / context /
+    // input / output) via one parameterised test. Each verifies that
+    // clicking the header lands the expected model first.
+    it.each([
+      // tier asc: budget < frontier
+      { column: /^tier/i, expectedFirstId: 'gpt-4o-mini' },
+      // context asc: 16k < 128k
+      { column: /^context/i, expectedFirstId: 'gpt-4o-mini' },
+      // input cost asc: 0.15 < 5
+      { column: /^input \$\/1m/i, expectedFirstId: 'gpt-4o-mini' },
+      // output cost asc: 0.6 < 15
+      { column: /^output \$\/1m/i, expectedFirstId: 'gpt-4o-mini' },
+    ])('clicking the $column header sorts ascending', async ({ column, expectedFirstId }) => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(SORTABLE_FIXTURE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: column }));
+
+      const rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain(expectedFirstId);
+    });
+  });
+
+  // ── Free / unknown cell tooltips ───────────────────────────────────────────
+
+  describe('cost cell display variants', () => {
+    it('renders "Free" for OpenRouter zero-pricing models (tier=local on non-local provider)', async () => {
+      // Source detection: cost=0 + tier='local' on a non-local provider
+      // signals a `:free` OpenRouter entry. The cell should render
+      // "Free" in green rather than "—" (the unknown variant).
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openrouter',
+        models: [
+          {
+            id: 'meta-llama/llama-3-8b-instruct:free',
+            name: 'Llama 3 8B Instruct (free)',
+            provider: 'openrouter',
+            tier: 'local', // OpenRouter parser's classifyTier(0)
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 8192,
+            supportsTools: false,
+            capabilities: ['chat'],
+          },
+        ],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenRouter" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('meta-llama/llama-3-8b-instruct:free')).toBeInTheDocument();
+      });
+
+      // Two "Free" labels — input cost cell + output cost cell.
+      const freeCells = screen.getAllByText('Free');
+      expect(freeCells.length).toBe(2);
+    });
+
+    it('renders em-dash for unknown pricing (tier=mid + cost=0 = not in OpenRouter)', async () => {
+      // Source forces tier='mid' for non-local providers when the model
+      // isn't in the registry. cost=0 here means "unknown", not "free".
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'mystery-model',
+            name: 'Mystery Model',
+            provider: 'openai',
+            tier: 'mid', // openai-compatible fallback
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['chat'],
+          },
+        ],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('mystery-model')).toBeInTheDocument();
+      });
+
+      // No Free labels (the mid-tier-zero-cost case is "unknown").
+      expect(screen.queryByText('Free')).not.toBeInTheDocument();
+      // Em-dashes render in the unknown cells (Context + Input + Output
+      // = 3, plus the Available column when not pre-set, so just check
+      // for at least 3).
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  // ── In-use column + filter ────────────────────────────────────────────────
+
+  describe('in-use column', () => {
+    const IN_USE_RESPONSE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: [
+        {
+          id: 'gpt-4o-mini',
+          name: 'GPT-4o mini',
+          provider: 'openai',
+          tier: 'worker',
+          inputCostPerMillion: 0.15,
+          outputCostPerMillion: 0.6,
+          maxContext: 128000,
+          supportsTools: true,
+          inMatrix: true,
+          matrixId: 'matrix-1',
+          capabilities: ['chat'],
+          tierRole: 'worker',
+          agents: [
+            { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' },
+            { id: 'agent-2', name: 'Researcher', slug: 'researcher' },
+          ],
+        },
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 5,
+          outputCostPerMillion: 15,
+          maxContext: 128000,
+          supportsTools: true,
+          inMatrix: false,
+          matrixId: null,
+          capabilities: ['chat'],
+          tierRole: null,
+          agents: [],
+        },
+      ] satisfies ProviderModelInfo[],
+    };
+
+    it('shows the agent count and renders 0 for unbound models', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Bound row shows the count as a popover trigger; unbound row shows a flat 0.
+      expect(
+        screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i })
+      ).toBeInTheDocument();
+      expect(screen.getByText('0')).toBeInTheDocument();
+    });
+
+    it('opens the popover and lists every bound agent with a link to its admin page', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i }));
+
+      const triageLink = await screen.findByRole('link', { name: /Triage Bot/ });
+      expect(triageLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-1');
+      expect(screen.getByRole('link', { name: /Researcher/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-2'
+      );
+    });
+
+    it('"In use" toggle hides models that have no bound agents', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      // Both rows visible by default.
+      expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole('button', { name: /show only models with at least one bound agent/i })
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+      });
+      // Bound row stays visible.
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+  });
+
+  // ── Phase B/C — Capability-aware Test button ──────────────────────────────
+
+  describe('capability-aware Test button', () => {
+    const ENRICHED: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+      },
+      {
+        id: 'text-embedding-3-small',
+        name: 'text-embedding-3-small',
+        provider: 'openai',
+        tier: 'embedding',
+        inputCostPerMillion: 0.02,
+        outputCostPerMillion: 0,
+        maxContext: 8191,
+        supportsTools: false,
+        capabilities: ['embedding'],
+      },
+      {
+        id: 'o3-pro-2025-06-10',
+        name: 'o3-pro',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 200000,
+        supportsTools: false,
+        capabilities: ['reasoning'],
+      },
+    ];
+
+    it('passes capability in the request body', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        latencyMs: 100,
+        model: 'text-embedding-3-small',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      // Both the model name and id are "text-embedding-3-small", so
+      // the string appears twice in the DOM. Find the test button via
+      // its accessible name (aria-label).
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /^test text-embedding-3-small$/i })
+        ).toBeInTheDocument();
+      });
+
+      const embeddingTestButton = screen.getByRole('button', {
+        name: /^test text-embedding-3-small$/i,
+      });
+      await user.click(embeddingTestButton);
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalledWith(
+          expect.stringContaining('/test-model'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              model: 'text-embedding-3-small',
+              capability: 'embedding',
+            }),
+          })
+        );
+      });
+    });
+
+    it('disables Test on reasoning / image / audio rows', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('o3-pro-2025-06-10')).toBeInTheDocument();
+      });
+
+      // The reasoning row's Test button is disabled — there is no
+      // enabled button whose accessible name is "Test o3-pro".
+      expect(screen.queryByRole('button', { name: /^test o3-pro$/i })).not.toBeInTheDocument();
+      // ...but the disabled button is rendered with an aria-label
+      // pointing at the disabled state.
+      expect(screen.getByLabelText(/test not supported for o3-pro/i)).toBeDisabled();
+    });
+  });
+
+  // ── Phase G — Add to matrix button ─────────────────────────────────────────
+
+  describe('Add to matrix button', () => {
+    const ENRICHED: ProviderModelInfo[] = [
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o mini',
+        provider: 'openai',
+        tier: 'worker',
+        inputCostPerMillion: 0.15,
+        outputCostPerMillion: 0.6,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+        inMatrix: false,
+      },
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 2.5,
+        outputCostPerMillion: 10,
+        maxContext: 128000,
+        supportsTools: true,
+        capabilities: ['chat'],
+        inMatrix: true,
+      },
+    ];
+
+    it('renders an Add button on rows that are not in the matrix', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: ENRICHED,
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Non-matrix row → Add button rendered.
+      expect(screen.getByLabelText(/add gpt-4o mini to matrix/i)).toBeInTheDocument();
+      // Matrix row → no Add button (the cell shows a dash).
+      expect(screen.queryByLabelText(/^add gpt-4o to matrix$/i)).not.toBeInTheDocument();
+    });
+
+    it('clicking Add opens the discovery dialog with provider preselected', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) => {
+        // Initial panel fetch returns the candidate list. The dialog's
+        // own discovery fetch reuses the same mock — return an
+        // appropriate shape for /discovery/models too so the dialog
+        // can render its candidates table.
+        if (url.includes('/discovery/models')) {
+          return Promise.resolve({
+            providerSlug: 'openai',
+            candidates: [
+              {
+                modelId: 'gpt-4o-mini',
+                name: 'GPT-4o mini',
+                sources: { vendor: true, openrouter: false },
+                inMatrix: false,
+                matrixId: null,
+                inferredCapability: 'chat',
+                suggested: {
+                  capabilities: ['chat'],
+                  tierRole: 'worker',
+                  reasoningDepth: 'medium',
+                  latency: 'fast',
+                  costEfficiency: 'very_high',
+                  contextLength: 'high',
+                  toolUse: 'strong',
+                  bestRole: 'Quick worker for tool calls',
+                  inputCostPerMillion: 0.15,
+                  outputCostPerMillion: 0.6,
+                  maxContext: 128000,
+                  slug: 'openai-gpt-4o-mini',
+                },
+              },
+            ],
+          });
+        }
+        return Promise.resolve({
+          providerId: 'prov-2',
+          slug: 'openai',
+          models: ENRICHED,
+        });
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/add gpt-4o mini to matrix/i)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText(/add gpt-4o mini to matrix/i));
+
+      // Dialog mounted — discovery step heading should be visible
+      // (provider step skipped because providerSlug was preselected).
+      await waitFor(() => {
+        // The dialog's continue button only shows in step 2/3.
+        expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument();
+      });
+
+      // The pre-checked row's checkbox is checked (via prefilledModelIds).
+      await waitFor(() => {
+        const checkbox = screen.getByRole('checkbox', {
+          name: /select gpt-4o mini/i,
+        });
+        expect(checkbox).toBeChecked();
       });
     });
   });

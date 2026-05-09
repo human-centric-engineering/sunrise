@@ -2,10 +2,14 @@
  * ProviderTestButton Component Tests
  *
  * Test Coverage:
- * - Success response with { modelCount: 12 } → "12 models available" green text
- * - Failure → "Couldn't reach this provider" red text; raw SDK error absent
+ * - Success → bare green check icon (model count in aria-label/title only)
+ * - Server returns `{ ok: false }` → friendly fallback message
+ * - Failure (thrown error) → "Couldn't reach this provider" red text; raw SDK error absent
  * - providerId===null + click → renders the disabledMessage
  * - onResult callback invoked with true on success, false on failure
+ *
+ * The footer success label was deliberately trimmed: the card body already
+ * shows the model count, so duplicating it in the footer crowded the UI.
  *
  * @see components/admin/orchestration/provider-test-button.tsx
  */
@@ -51,9 +55,34 @@ describe('ProviderTestButton', () => {
   // ── Success ────────────────────────────────────────────────────────────────
 
   describe('success', () => {
-    it('renders "12 models available" green text on success with modelCount: 12', async () => {
+    it('renders a bare green check icon on success — model count goes to aria-label/title', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 12 });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: Array.from({ length: 12 }, (_, i) => `model-${i}`),
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderTestButton providerId="prov-1" />);
+
+      await user.click(screen.getByRole('button', { name: /test connection/i }));
+
+      // The model count must NOT appear as visible text in the footer
+      // — the card body already renders it elsewhere. Duplicating
+      // crowded the UI.
+      await waitFor(() => {
+        const success = screen.getByLabelText(/connection succeeded/i);
+        expect(success).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/12 models available/i)).not.toBeInTheDocument();
+    });
+
+    it('keeps the model count discoverable via aria-label and title', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2', 'm3', 'm4', 'm5'],
+      });
 
       const user = userEvent.setup();
       render(<ProviderTestButton providerId="prov-1" />);
@@ -61,29 +90,19 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/12 models available/i)).toBeInTheDocument();
+        const success = screen.getByLabelText(/5 models available/i);
+        expect(success).toBeInTheDocument();
+        expect(success.getAttribute('title')).toBe('5 models available');
+        expect(success.className).toContain('text-green-600');
       });
     });
 
-    it('success renders green text (text-green-600 class present)', async () => {
+    it('calls onResult({ ok: true, modelCount }) on success', async () => {
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 5 });
-
-      const user = userEvent.setup();
-      render(<ProviderTestButton providerId="prov-1" />);
-
-      await user.click(screen.getByRole('button', { name: /test connection/i }));
-
-      await waitFor(() => {
-        const greenEl = document.querySelector('.text-green-600');
-        expect(greenEl).toBeTruthy();
-        expect(greenEl?.textContent).toContain('5 models available');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2', 'm3'],
       });
-    });
-
-    it('calls onResult(true) on success', async () => {
-      const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 3 });
 
       const onResult = vi.fn();
       const user = userEvent.setup();
@@ -92,8 +111,52 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(true);
+        expect(onResult).toHaveBeenCalledWith({ ok: true, modelCount: 3 });
       });
+    });
+
+    it('still resolves ok=true when the server returns an empty models list', async () => {
+      // Defensive regression: a working key with zero models should
+      // still render success (rare, but the count was previously the
+      // signal of failure for the buggy `modelCount`-reading path).
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: [] });
+
+      const user = userEvent.setup();
+      render(<ProviderTestButton providerId="prov-1" />);
+
+      await user.click(screen.getByRole('button', { name: /test connection/i }));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/0 models available/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── ok: false (server returned a sanitised failure) ─────────────────────────
+
+  describe('server-reported failure', () => {
+    it('renders friendly fallback when the server returns ok: false', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      // The /test route returns 200 with `{ ok: false, models: [], error }`
+      // when the provider rejected the connection — exercise that branch
+      // explicitly so a misconfigured key surfaces as red, not as
+      // "0 models available" green.
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: false,
+        models: [],
+        error: 'connection_failed',
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderTestButton providerId="prov-1" />);
+
+      await user.click(screen.getByRole('button', { name: /test connection/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/models available/i)).not.toBeInTheDocument();
     });
   });
 
@@ -150,7 +213,7 @@ describe('ProviderTestButton', () => {
       });
     });
 
-    it('calls onResult(false) on failure', async () => {
+    it('calls onResult({ ok: false, message }) on failure', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.post).mockRejectedValue(new Error('Network error'));
 
@@ -161,7 +224,9 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(false);
+        expect(onResult).toHaveBeenCalledWith(
+          expect.objectContaining({ ok: false, message: expect.stringMatching(/.+/) })
+        );
       });
     });
   });
@@ -190,7 +255,7 @@ describe('ProviderTestButton', () => {
       expect(apiClient.post).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
-    it('calls onResult(false) when providerId is null', async () => {
+    it('calls onResult({ ok: false, message }) when providerId is null', async () => {
       const onResult = vi.fn();
       const user = userEvent.setup();
       render(<ProviderTestButton providerId={null} onResult={onResult} />);
@@ -198,7 +263,9 @@ describe('ProviderTestButton', () => {
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
-        expect(onResult).toHaveBeenCalledWith(false);
+        expect(onResult).toHaveBeenCalledWith(
+          expect.objectContaining({ ok: false, message: expect.stringMatching(/.+/) })
+        );
       });
     });
 

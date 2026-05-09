@@ -27,7 +27,7 @@ async function getPatterns(): Promise<PatternSummary[]> {
 }
 
 interface PageProps {
-  searchParams: Promise<{ tab?: string; contextType?: string; contextId?: string }>;
+  searchParams: Promise<{ contextType?: string; contextId?: string }>;
 }
 
 export default async function LearnPage({ searchParams }: PageProps) {
@@ -75,7 +75,6 @@ export default async function LearnPage({ searchParams }: PageProps) {
 
       <LearningTabs
         patterns={patterns}
-        defaultTab={params.tab}
         contextType={params.contextType}
         contextId={params.contextId}
       />

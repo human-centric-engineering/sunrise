@@ -2,13 +2,13 @@
  * Unit Tests: CostsView
  *
  * Test Coverage:
- * - Renders all six sub-sections without crashing when all props are null
- * - Renders all six sub-sections without crashing with populated props
+ * - Renders all sub-sections without crashing when all props are null
+ * - Renders all sub-sections without crashing with populated props
  * - Passes summary to CostSummaryCards and BudgetAlertsList
  * - Passes trend and perModel to CostTrendChart
  * - Passes byAgent rows to PerAgentCostTable and byModel to PerModelBreakdownTable
  * - Passes summary and models to LocalVsCloudPanel
- * - Passes settings and models to OrchestrationSettingsForm
+ * - Renders an "Open Settings" link card pointing at /admin/orchestration/settings
  *
  * @see components/admin/orchestration/costs/costs-view.tsx
  */
@@ -75,16 +75,6 @@ vi.mock('@/components/admin/orchestration/costs/local-vs-cloud-panel', () => ({
   ),
 }));
 
-vi.mock('@/components/admin/orchestration/costs/orchestration-settings-form', () => ({
-  OrchestrationSettingsForm: ({ settings, models }: { settings: unknown; models: unknown }) => (
-    <div
-      data-testid="orchestration-settings-form"
-      data-has-settings={settings !== null ? 'true' : 'false'}
-      data-has-models={models !== null ? 'true' : 'false'}
-    />
-  ),
-}));
-
 vi.mock('@/components/admin/orchestration/costs/pricing-reference', () => ({
   PricingReference: ({ models, fetchedAt }: { models: unknown; fetchedAt: unknown }) => (
     <div
@@ -104,11 +94,8 @@ vi.mock('@/components/admin/orchestration/costs/cost-methodology', () => ({
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
 import type { CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import type { OrchestrationSettings } from '@/types/orchestration';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
-
-const NOW = new Date('2026-04-15T00:00:00.000Z');
 
 const MOCK_SUMMARY: CostSummary = {
   totals: { today: 1.5, week: 7.25, month: 42.0 },
@@ -141,34 +128,6 @@ const MOCK_MODELS: ModelInfo[] = [
   },
 ];
 
-const MOCK_SETTINGS: OrchestrationSettings = {
-  id: 'settings-1',
-  slug: 'global',
-  defaultModels: {
-    routing: 'claude-haiku-4-5',
-    chat: 'claude-haiku-4-5',
-    reasoning: 'claude-opus-4-6',
-    embeddings: 'claude-haiku-4-5',
-  },
-  globalMonthlyBudgetUsd: 500,
-  searchConfig: null,
-  lastSeededAt: null,
-  defaultApprovalTimeoutMs: null,
-  approvalDefaultAction: 'deny',
-  inputGuardMode: 'log_only',
-  outputGuardMode: 'log_only',
-  citationGuardMode: 'log_only',
-  webhookRetentionDays: null,
-  costLogRetentionDays: null,
-  auditLogRetentionDays: null,
-  maxConversationsPerUser: null,
-  maxMessagesPerConversation: null,
-  escalationConfig: null,
-  embedAllowedOrigins: [],
-  createdAt: NOW,
-  updatedAt: NOW,
-};
-
 const PER_MODEL = [{ key: 'claude-haiku-4-5', totalCostUsd: 8.0 }];
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -179,16 +138,9 @@ describe('CostsView', () => {
   });
 
   describe('null props (empty state)', () => {
-    it('renders all six sub-sections without crashing when all props are null', () => {
+    it('renders all sub-sections without crashing when all props are null', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
 
       expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
@@ -197,19 +149,15 @@ describe('CostsView', () => {
       expect(screen.getByTestId('per-agent-cost-table')).toBeInTheDocument();
       expect(screen.getByTestId('per-model-breakdown-table')).toBeInTheDocument();
       expect(screen.getByTestId('local-vs-cloud-panel')).toBeInTheDocument();
-      expect(screen.getByTestId('orchestration-settings-form')).toBeInTheDocument();
+      // The default-models form moved to the Settings page; the Costs
+      // page now points at it via a footer link instead of embedding
+      // the form directly.
+      expect(screen.getByRole('link', { name: /open settings/i })).toBeInTheDocument();
     });
 
     it('passes null summary to CostSummaryCards', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
       expect(screen.getByTestId('cost-summary-cards')).toHaveAttribute('data-has-summary', 'false');
     });
@@ -224,12 +172,11 @@ describe('CostsView', () => {
           globalCap={null}
           perModel={PER_MODEL}
           models={MOCK_MODELS}
-          settings={MOCK_SETTINGS}
         />
       );
     }
 
-    it('renders all six sub-sections without crashing with populated props', () => {
+    it('renders all sub-sections without crashing with populated props', () => {
       renderFull();
 
       expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
@@ -238,7 +185,7 @@ describe('CostsView', () => {
       expect(screen.getByTestId('per-agent-cost-table')).toBeInTheDocument();
       expect(screen.getByTestId('per-model-breakdown-table')).toBeInTheDocument();
       expect(screen.getByTestId('local-vs-cloud-panel')).toBeInTheDocument();
-      expect(screen.getByTestId('orchestration-settings-form')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /open settings/i })).toBeInTheDocument();
     });
 
     it('passes populated summary to CostSummaryCards', () => {
@@ -287,39 +234,24 @@ describe('CostsView', () => {
       expect(panel).toHaveAttribute('data-has-models', 'true');
     });
 
-    it('passes settings and models to OrchestrationSettingsForm', () => {
+    it('points the Settings link card at /admin/orchestration/settings', () => {
       renderFull();
-      const form = screen.getByTestId('orchestration-settings-form');
-      expect(form).toHaveAttribute('data-has-settings', 'true');
-      expect(form).toHaveAttribute('data-has-models', 'true');
+      const link = screen.getByRole('link', { name: /open settings/i });
+      expect(link).toHaveAttribute('href', '/admin/orchestration/settings');
     });
   });
 
   describe('null summary.trend fallback', () => {
     it('passes null trend to CostTrendChart when summary is null', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
       expect(screen.getByTestId('cost-trend-chart')).toHaveAttribute('data-has-trend', 'false');
     });
 
     it('passes null byAgent to PerAgentCostTable when summary is null', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
       expect(screen.getByTestId('per-agent-cost-table')).toHaveAttribute('data-has-rows', 'false');
     });
@@ -328,28 +260,14 @@ describe('CostsView', () => {
   describe('pricing reference and methodology sections', () => {
     it('renders PricingReference component', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
       expect(screen.getByTestId('pricing-reference')).toBeInTheDocument();
     });
 
     it('renders CostMethodology component', () => {
       render(
-        <CostsView
-          summary={null}
-          alerts={null}
-          globalCap={null}
-          perModel={null}
-          models={null}
-          settings={null}
-        />
+        <CostsView summary={null} alerts={null} globalCap={null} perModel={null} models={null} />
       );
       expect(screen.getByTestId('cost-methodology')).toBeInTheDocument();
     });
@@ -362,7 +280,6 @@ describe('CostsView', () => {
           globalCap={null}
           perModel={null}
           models={MOCK_MODELS}
-          settings={null}
           registryFetchedAt={1713139200000}
         />
       );

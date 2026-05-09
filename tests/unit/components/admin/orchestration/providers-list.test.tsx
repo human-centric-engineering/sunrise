@@ -129,17 +129,26 @@ const MOCK_MODELS_RESPONSE = {
 describe('ProvidersList', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    // Default the lazy model-count fetch to a never-resolving promise.
-    // This prevents the useEffect-triggered setState from firing after
-    // synchronous render-based tests finish, which would otherwise cause
-    // React "not wrapped in act(...)" warnings. Tests that need the
-    // resolved state override this mock explicitly.
+    // The provider-test-cache persists results in localStorage across
+    // tests within the same vitest worker; clear it so a "tested OK"
+    // state from a prior test doesn't bleed in and pre-paint the dot
+    // green before the test under examination clicks anything.
+    window.localStorage.clear();
+    // Default the lazy model-count fetch (apiClient.get) AND the
+    // mount-time auto-probe (apiClient.post → /test) to never-resolving
+    // promises. Both run from useEffect on first paint; without this
+    // default they'd settle after the test finished and produce React
+    // "not wrapped in act(...)" warnings, or — worse — pre-paint the
+    // status dot green before the test under examination clicks anything.
+    // Tests that need a resolved state override these mocks explicitly.
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(apiClient.post).mockImplementation(() => new Promise(() => {}));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
   });
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -239,19 +248,24 @@ describe('ProvidersList', () => {
   // ── Test connection ────────────────────────────────────────────────────────
 
   describe('test connection button', () => {
-    it('success renders "{n} models available" green text', async () => {
+    it('success surfaces model count in the test button aria-label', async () => {
       const { apiClient } = await import('@/lib/api/client');
       // First call = model count (lazy), second+ = test connection
       vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 12 });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: Array.from({ length: 12 }, (_, i) => `model-${i}`),
+      });
 
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
+      // The visible label is just an icon (footer was crowded otherwise).
+      // The count moved to aria-label / title on the success element.
       await waitFor(() => {
-        expect(screen.getByText(/12 models available/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/12 models available/i)).toBeInTheDocument();
       });
     });
 
@@ -279,14 +293,18 @@ describe('ProvidersList', () => {
     it('success updates status dot to green', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(MOCK_MODELS_RESPONSE);
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 5 });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2', 'm3', 'm4', 'm5'],
+      });
 
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
 
-      // No green dot yet
-      expect(document.querySelectorAll('.bg-green-500').length).toBe(0);
-
+      // The mount-time auto-probe runs the same /test call that the
+      // button does, so a green dot is already plausible before the
+      // user clicks. We assert the post-click state instead — the
+      // manual click path must still drive the dot to green.
       await user.click(screen.getByRole('button', { name: /test connection/i }));
 
       await waitFor(() => {
@@ -296,57 +314,295 @@ describe('ProvidersList', () => {
     });
   });
 
-  // ── Delete confirm flow ────────────────────────────────────────────────────
+  // ── Auto-probe on mount ───────────────────────────────────────────────────
 
-  describe('delete confirm flow', () => {
-    async function openDeleteDialog(user: ReturnType<typeof userEvent.setup>) {
-      // Find the more-horizontal button for the first provider card
+  describe('auto-probe on mount', () => {
+    it('fires a single POST /providers/test-bulk with every eligible provider id', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      // Bulk endpoint returns one row per requested id.
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [
+          { id: 'prov-1', ok: true, models: ['m1', 'm2'] },
+          { id: 'prov-3', ok: true, models: ['m1'] },
+        ],
+      });
+
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      // Anthropic (apiKeyPresent=true) and Ollama (isLocal=true) are
+      // probed. OpenAI (apiKeyPresent=false, !isLocal) is skipped — it
+      // already shows a red "Key missing" dot without a round-trip.
+      // The whole batch is a single HTTP call now.
+      await waitFor(() => {
+        const calls = vi.mocked(apiClient.post).mock.calls;
+        expect(calls.length).toBe(1);
+        expect(calls[0][0]).toContain('/providers/test-bulk');
+        const body = (calls[0][1] as { body: { providerIds: string[] } } | undefined)?.body;
+        expect(body?.providerIds).toEqual(expect.arrayContaining(['prov-1', 'prov-3']));
+        expect(body?.providerIds).not.toContain('prov-2');
+      });
+    });
+
+    it('paints a green dot once the auto-probe resolves with ok=true', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: true, models: ['m1', 'm2', 'm3'] }],
+      });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(document.querySelectorAll('.bg-green-500').length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('renders a full-width failure message below the footer when the auto-probe returns ok=false', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: false, models: [], error: 'connection_failed' }],
+      });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/couldn't reach this provider\. check the server logs for details/i)
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('clearing the result on reactivate removes the old failure message', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      // First mount: bulk probe returns ok=false for the only target.
+      vi.mocked(apiClient.post).mockResolvedValueOnce({
+        results: [{ id: 'prov-1', ok: false, models: [] }],
+      });
+      // Subsequent calls (reactivate PATCH, follow-up auto-probe) just
+      // resolve — we only care that the old message disappears.
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: true, models: ['m1'] }],
+      });
+
+      const inactiveProvider = makeProvider({ isActive: false });
+      // The inactive provider is NOT auto-probed (filter gates on isActive),
+      // so seed a failure message via the test-cache + state combo by
+      // rendering with a manual click instead. Easier approach: render
+      // active provider, await failure message, then assert clearing
+      // requires manual reactivate flow on inactive.
+      const failingProvider = makeProvider({ isActive: true });
+
+      const user = userEvent.setup();
+      const { rerender } = render(<ProvidersList initialProviders={[failingProvider]} />);
+
+      // Wait for the auto-probe failure message to appear.
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+
+      // Now simulate the row going inactive, then reactivating. Re-render
+      // with isActive: false to mirror what soft-delete does, then click
+      // Reactivate on the dropdown.
+      rerender(
+        <ProvidersList initialProviders={[{ ...inactiveProvider, id: failingProvider.id }]} />
+      );
+      const moreBtn = document.querySelectorAll('button[aria-haspopup="menu"]')[0];
+      await user.click(moreBtn as HTMLElement);
+      const reactivate = await screen.findByRole('menuitem', {
+        name: /^reactivate$/i,
+        hidden: true,
+      });
+      await user.click(reactivate);
+
+      // The reactivate handler clears `testResults[id]`, so the old
+      // failure message must be gone before the next auto-probe lands.
+      await waitFor(() => {
+        expect(screen.queryByText(/couldn't reach this provider/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('skips the probe when a recent cached result already exists', async () => {
+      const { setCachedTestResult } = await import('@/lib/orchestration/provider-test-cache');
+      setCachedTestResult('prov-1', { ok: true, modelCount: 3 });
+
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        results: [{ id: 'prov-1', ok: true, models: ['x'] }],
+      });
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      // Cached result hydrates testedOk on first render → green dot
+      // appears without firing /test.
+      await waitFor(() => {
+        expect(document.querySelectorAll('.bg-green-500').length).toBeGreaterThanOrEqual(1);
+      });
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('marks targets that the server omitted as failed', async () => {
+      // Defensive branch: the bulk endpoint silently drops provider
+      // ids that no longer exist (e.g. deleted between page load and
+      // the test fan-out). The client must not leave those targets
+      // stuck in the "testing…" pulse.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({
+        // Anthropic gets a result; the local Ollama row does NOT.
+        results: [{ id: 'prov-1', ok: true, models: ['m1'] }],
+      });
+
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      // The omitted-id (Ollama) should fall back to ok=false → its
+      // "couldn't reach this provider" message renders. We can't
+      // disambiguate which row owns the message in the multi-card
+      // layout, so we rely on the count: at least one failure message
+      // appears even though we returned a green result for prov-1.
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+    });
+
+    it('marks every target as failed when the bulk endpoint rejects', async () => {
+      // Whole-batch error path — the catch branch must cover every
+      // requested target so the spinner doesn't hang.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('network'));
+
+      render(<ProvidersList initialProviders={[THREE_PROVIDERS[0]]} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Deactivate confirm flow ────────────────────────────────────────────────
+  // The dropdown's "Delete" action was renamed to "Deactivate" because
+  // soft-delete is what it actually does. Hard-delete now lives behind
+  // a separate "Delete permanently" action covered below.
+
+  describe('deactivate confirm flow', () => {
+    async function openDeactivateDialog(user: ReturnType<typeof userEvent.setup>) {
       const moreBtn = document.querySelectorAll('button[aria-haspopup="menu"]')[0];
       await user.click(moreBtn as HTMLElement);
 
-      const deleteItem = await screen.findByRole('menuitem', { name: /delete/i, hidden: true });
-      await user.click(deleteItem);
+      const deactivateItem = await screen.findByRole('menuitem', {
+        name: /^deactivate$/i,
+        hidden: true,
+      });
+      await user.click(deactivateItem);
 
-      await waitFor(() => expect(screen.getByText('Delete provider')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('Deactivate provider')).toBeInTheDocument());
     }
 
-    it('clicking Delete in dropdown opens AlertDialog', async () => {
+    it('clicking Deactivate in dropdown opens the AlertDialog', async () => {
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
-      await openDeleteDialog(user);
+      await openDeactivateDialog(user);
 
-      expect(screen.getByText('Delete provider')).toBeInTheDocument();
+      expect(screen.getByText('Deactivate provider')).toBeInTheDocument();
     });
 
-    it('confirm delete calls apiClient.delete and removes the card', async () => {
+    it('confirm Deactivate calls apiClient.delete (soft-delete, no ?permanent flag)', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
 
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
-      await openDeleteDialog(user);
-      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+      await openDeactivateDialog(user);
+      await user.click(screen.getByRole('button', { name: /^deactivate$/i }));
 
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenCalledWith(expect.stringContaining('/providers/prov-1'));
+        // Soft-delete must NOT use the permanent flag.
+        const lastCallUrl = vi.mocked(apiClient.delete).mock.calls.at(-1)?.[0] as string;
+        expect(lastCallUrl).not.toContain('permanent=true');
       });
     });
 
-    it('cancelling delete closes dialog without calling delete', async () => {
+    it('cancelling closes the dialog without calling delete', async () => {
       const { apiClient } = await import('@/lib/api/client');
 
       const user = userEvent.setup();
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
-      await openDeleteDialog(user);
+      await openDeactivateDialog(user);
       await user.click(screen.getByRole('button', { name: /cancel/i }));
 
       await waitFor(() => {
-        expect(screen.queryByText('Delete provider')).not.toBeInTheDocument();
+        expect(screen.queryByText('Deactivate provider')).not.toBeInTheDocument();
       });
       expect(apiClient.delete).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+  });
+
+  // ── Permanent delete flow ──────────────────────────────────────────────────
+
+  describe('permanent delete flow', () => {
+    async function openPermanentDialog(user: ReturnType<typeof userEvent.setup>) {
+      const moreBtn = document.querySelectorAll('button[aria-haspopup="menu"]')[0];
+      await user.click(moreBtn as HTMLElement);
+
+      const permanentItem = await screen.findByRole('menuitem', {
+        name: /delete permanently/i,
+        hidden: true,
+      });
+      await user.click(permanentItem);
+
+      // Wait for the dialog body — uniquely identifies the dialog
+      // (the phrase "Delete permanently" itself appears multiple
+      // times: dialog title + action button + dropdown item).
+      await waitFor(() => expect(screen.getByText(/permanently deletes/i)).toBeInTheDocument());
+    }
+
+    it('clicking Delete permanently opens the strict dialog', async () => {
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      await openPermanentDialog(user);
+
+      expect(screen.getByText(/permanently deletes/i)).toBeInTheDocument();
+    });
+
+    it('confirm calls apiClient.delete with ?permanent=true and drops the card on success', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockResolvedValue({ success: true });
+
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      await openPermanentDialog(user);
+      await user.click(screen.getByRole('button', { name: /^Delete permanently$/i }));
+
+      await waitFor(() => {
+        const lastCallUrl = vi.mocked(apiClient.delete).mock.calls.at(-1)?.[0] as string;
+        expect(lastCallUrl).toContain('/providers/prov-1');
+        expect(lastCallUrl).toContain('permanent=true');
+      });
+    });
+
+    it('surfaces the server 409 message in the dialog when references block the delete', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          "Cannot permanently delete 'anthropic' — it is referenced by 3 agents and 0 cost log rows. Re-point or clear those first, or deactivate instead.",
+          'CONFLICT',
+          409
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
+
+      await openPermanentDialog(user);
+      await user.click(screen.getByRole('button', { name: /^Delete permanently$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 agents/i)).toBeInTheDocument();
+      });
     });
   });
 
@@ -468,7 +724,13 @@ describe('ProvidersList', () => {
       await user.click(viewModels);
 
       await waitFor(() => {
-        expect(screen.getByText('Model catalogue')).toBeInTheDocument();
+        // Query by dialog heading role + accessible name. Resilient to
+        // whitespace shifts and split-element renderings (e.g. if the
+        // title is later wrapped in spans for typography), unlike
+        // getByText with a `\s+` regex that requires a single text node.
+        expect(
+          screen.getByRole('heading', { name: /model catalogue.*anthropic/i })
+        ).toBeInTheDocument();
       });
     });
   });

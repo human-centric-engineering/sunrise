@@ -516,8 +516,31 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
               </TableRow>
             ) : agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center">
-                  No agents found.
+                <TableCell colSpan={10} className="py-10">
+                  <div className="mx-auto flex max-w-md flex-col items-center gap-3 text-center">
+                    <div className="bg-muted/50 rounded-full p-3">
+                      <Plus className="text-muted-foreground h-6 w-6" aria-hidden="true" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">No agents yet</p>
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        Agents are configured AI personas with a system prompt, a model, and
+                        capabilities they can call. Create your first one or run the setup wizard to
+                        get a guided walkthrough.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                      <Button asChild size="sm">
+                        <Link href="/admin/orchestration/agents/new">
+                          <Plus className="mr-2 h-4 w-4" />
+                          Create your first agent
+                        </Link>
+                      </Button>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href="/admin/orchestration">Open setup wizard</Link>
+                      </Button>
+                    </div>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : (
@@ -586,8 +609,21 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                       {agent._count.conversations}
                     </TableCell>
                     <TableCell className="text-xs">
-                      <span className="text-muted-foreground">{agent.provider} /</span>{' '}
-                      {agent.model}
+                      {agent.provider === '' && agent.model === '' ? (
+                        <Tip label="At runtime this agent uses the first active provider plus the default chat model from Orchestration Settings. Set the default chat model on the Settings page (Default models card) or via the setup wizard's 'Default models' step.">
+                          <Badge
+                            variant="secondary"
+                            className="px-1.5 py-0 text-[10px] font-medium"
+                          >
+                            System default
+                          </Badge>
+                        </Tip>
+                      ) : (
+                        <>
+                          <span className="text-muted-foreground">{agent.provider} /</span>{' '}
+                          {agent.model}
+                        </>
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {agent.monthlyBudgetUsd ? (

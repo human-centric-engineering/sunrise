@@ -18,12 +18,18 @@ import type { PatternSummary } from '@/types/orchestration';
 
 const pushMock = vi.fn();
 
+// `useSearchParams` returns `?tab=advisor` so the Advisor tab renders
+// on initial mount — these tests target the advisor content's
+// behaviour (workflow recommendation, navigation) rather than
+// tab-switching itself.
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({
     push: pushMock,
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams('tab=advisor')),
+  usePathname: vi.fn(() => '/admin/orchestration/learn'),
 }));
 
 // Capture the onStreamComplete prop so we can invoke it manually
