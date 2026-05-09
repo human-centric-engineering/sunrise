@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -140,6 +140,40 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   if (!current.isActive) {
     log.info('Provider model already inactive, skipping soft-delete', { modelId: id });
     return successResponse({ id, deleted: true });
+  }
+
+  // In-use guard: refuse to deactivate when at least one active agent
+  // is bound to the (providerSlug, modelId) pair. AiAgent stores both
+  // as plain strings (no FK), so we match the literal pair the matrix
+  // row was created for.
+  const boundAgents = await prisma.aiAgent.findMany({
+    where: {
+      isActive: true,
+      provider: current.providerSlug,
+      model: current.modelId,
+    },
+    select: { id: true, name: true, slug: true },
+    orderBy: { name: 'asc' },
+  });
+
+  if (boundAgents.length > 0) {
+    log.info('Provider model delete refused — bound to active agents', {
+      modelId: id,
+      slug: current.slug,
+      agentCount: boundAgents.length,
+    });
+    return errorResponse(
+      `Cannot delete model "${current.name}" — ${boundAgents.length} active agent${
+        boundAgents.length === 1 ? '' : 's'
+      } still ${boundAgents.length === 1 ? 'uses' : 'use'} it. Re-point ${
+        boundAgents.length === 1 ? 'that agent' : 'those agents'
+      } to a different model first.`,
+      {
+        code: 'MODEL_IN_USE',
+        status: 409,
+        details: { agents: boundAgents },
+      }
+    );
   }
 
   await prisma.aiProviderModel.update({

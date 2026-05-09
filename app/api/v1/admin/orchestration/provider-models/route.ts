@@ -68,6 +68,33 @@ export const GET = withAdminAuth(async (request, _session) => {
     }),
   ]);
 
+  // Bound active agents per (provider, modelId) pair. Scope the query
+  // to the slugs in the current page so a 100-row matrix doesn't drag
+  // the entire AiAgent table across the wire.
+  const providerSlugs = [...new Set(rows.map((r) => r.providerSlug))];
+  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  const agentRows =
+    providerSlugs.length === 0 || modelIds.length === 0
+      ? []
+      : await prisma.aiAgent.findMany({
+          where: {
+            isActive: true,
+            provider: { in: providerSlugs },
+            model: { in: modelIds },
+          },
+          select: { id: true, name: true, slug: true, provider: true, model: true },
+          orderBy: { name: 'asc' },
+        });
+
+  const agentsByKey = new Map<string, Array<{ id: string; name: string; slug: string }>>();
+  for (const a of agentRows) {
+    if (!a.provider || !a.model) continue;
+    const key = `${a.provider}::${a.model}`;
+    const list = agentsByKey.get(key) ?? [];
+    list.push({ id: a.id, name: a.name, slug: a.slug });
+    agentsByKey.set(key, list);
+  }
+
   const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
   const data = rows.map((model) => {
@@ -76,10 +103,17 @@ export const GET = withAdminAuth(async (request, _session) => {
       ...model,
       configured: !!config,
       configuredActive: config?.isActive ?? false,
+      agents: agentsByKey.get(`${model.providerSlug}::${model.modelId}`) ?? [],
     };
   });
 
-  log.info('Provider models listed', { count: rows.length, total, page, limit });
+  log.info('Provider models listed', {
+    count: rows.length,
+    total,
+    page,
+    limit,
+    modelsInUse: data.filter((m) => m.agents.length > 0).length,
+  });
 
   return paginatedResponse(data, { page, limit, total });
 });

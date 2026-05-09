@@ -43,6 +43,9 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: {
       findFirst: vi.fn(),
     },
+    aiAgent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
   },
 }));
 
@@ -617,5 +620,58 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
     expect(response.status).toBe(429);
+  });
+
+  it('returns 409 with bound agents when model is still in use', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
+    );
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' },
+      { id: 'agent-2', name: 'Researcher', slug: 'researcher' },
+    ] as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    expect(response.status).toBe(409);
+
+    const body = await parseJson<{
+      success: boolean;
+      error: {
+        code: string;
+        message: string;
+        details: { agents: Array<{ id: string; name: string; slug: string }> };
+      };
+    }>(response);
+
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('MODEL_IN_USE');
+    expect(body.error.details.agents).toHaveLength(2);
+    expect(body.error.details.agents.map((a) => a.slug)).toEqual(['triage-bot', 'researcher']);
+    // The DB write must be skipped — this is the whole point of the guard.
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+
+    // The agent lookup must be scoped to the same (provider, model) pair
+    // as the matrix row — never a cross-provider scan.
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isActive: true, provider: 'openai', model: 'gpt-4o-mini' },
+      })
+    );
+  });
+
+  it('soft-deletes when no active agent is bound to the model', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue(
+      makeModel({ isActive: false }) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isActive: false } })
+    );
   });
 });
