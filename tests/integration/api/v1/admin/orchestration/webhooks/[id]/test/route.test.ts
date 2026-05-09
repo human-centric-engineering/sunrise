@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 import {
+  createMockAuthSession,
   mockAdminUser,
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
@@ -48,7 +49,16 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
-    Response.json({ success: false, error: { code: 'RATE_LIMIT_EXCEEDED' } }, { status: 429 })
+    Response.json(
+      {
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many requests. Please try again later.',
+        },
+      },
+      { status: 429 }
+    )
   ),
 }));
 
@@ -58,21 +68,6 @@ vi.mock('@/lib/api/context', () => ({
   getRouteLogger: vi.fn(() =>
     Promise.resolve({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
   ),
-}));
-
-vi.mock('@/lib/logging', () => ({
-  logger: {
-    info: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    withContext: vi.fn(() => ({
-      info: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-      warn: vi.fn(),
-    })),
-  },
 }));
 
 vi.mock('@/lib/env', () => ({
@@ -200,9 +195,20 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
 
       // Act
       const response = await POST(makeRequest(), makeParams(WEBHOOK_ID));
+      const body = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
+        response
+      );
 
-      // Assert — rate limit fires before any DB call
+      // Assert — rate limit fires before any DB call; envelope matches the
+      // shape `createRateLimitResponse` produces in `lib/security/rate-limit.ts`.
       expect(response.status).toBe(429);
+      expect(body).toEqual({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many requests. Please try again later.',
+        },
+      });
       expect(vi.mocked(prisma.aiWebhookSubscription.findFirst)).not.toHaveBeenCalled();
     });
   });
@@ -274,11 +280,15 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
     });
 
     it('uses a different admin id to confirm cross-user isolation', async () => {
-      // Arrange: a second admin's session — the DB still returns null (ownership excluded)
-      vi.mocked(auth.api.getSession).mockResolvedValue({
-        ...mockAdminUser(),
-        user: { ...mockAdminUser().user, id: OTHER_ADMIN_ID },
-      });
+      // Arrange: a second admin's session — the DB still returns null (ownership excluded).
+      // Build the override keeping session.userId === user.id (better-auth contract).
+      const baseAdmin = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(
+        createMockAuthSession({
+          session: { ...baseAdmin.session, userId: OTHER_ADMIN_ID },
+          user: { ...baseAdmin.user, id: OTHER_ADMIN_ID, role: 'ADMIN' },
+        })
+      );
       vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
 
       // Act
@@ -470,7 +480,13 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       vi.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 200 }) as never);
 
       // Act
-      await POST(makeRequest(), makeParams(WEBHOOK_ID));
+      const response = await POST(makeRequest(), makeParams(WEBHOOK_ID));
+      const body = await parseJson<{ success: boolean; data: { success: boolean } }>(response);
+
+      // Assert: outer response is 200 success — confirms we're testing the success path
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(body.data.success).toBe(true);
 
       // Assert: the only DB method that should have been called is findFirst (a read).
       // The mock object has no create/update/delete — verifying findFirst was called once

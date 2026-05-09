@@ -19,12 +19,10 @@
  * - POST: allowed origin → delegates with { actorLabel: 'token:embed', corsHeaders }
  * - POST: getOrchestrationSettings throws → error propagates (no try/catch in route)
  *
- * MID-SPRINT FINDING: The plan specified a test for "null origin with
- * allowlist including '*'" expecting 204. However, `allowlistCorsHeaders`
- * rejects null origins unconditionally (`!requestOrigin` guard fires before
- * the allowlist check) and has no wildcard `'*'` support in its current
- * implementation. A null origin with `'*'` in the allowlist returns undefined
- * (→ 403). The test is marked as todo with evidence below.
+ * Wildcard semantics: when '*' is in `embedAllowedOrigins`, `allowlistCorsHeaders`
+ * returns literal `Access-Control-Allow-Origin: *` for any origin (including null).
+ * The wildcard-passthrough case is covered at L187 below.
+ * Helper-level tests: tests/unit/lib/orchestration/approval-route-helpers.test.ts.
  *
  * @see app/api/v1/orchestration/approvals/[id]/reject/embed/route.ts
  * @see lib/orchestration/approval-route-helpers.ts (allowlistCorsHeaders)

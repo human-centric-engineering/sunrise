@@ -201,3 +201,33 @@ describe('reducer — no-op guard branches', () => {
     expect(next).toBe(state);
   });
 });
+
+// ---------------------------------------------------------------------------
+// reducer — fallback message branches
+// ---------------------------------------------------------------------------
+
+describe('reducer — fallback message branches', () => {
+  it('falls back to "Workflow failed" when poll_failed has no payload message', () => {
+    // Arrange: waiting state — poll_failed dispatched without a payload message
+    const waitingState: CardState = { kind: 'waiting', action: 'approve' };
+    const event: ReducerEvent = { type: 'poll_failed' };
+
+    // Act
+    const next = reducer(waitingState, event);
+
+    // Assert: fallback ?? 'Workflow failed' at source L44
+    expect(next).toEqual({ kind: 'failed', message: 'Workflow failed' });
+  });
+
+  it('falls back to "Action failed" when failure has no payload message', () => {
+    // Arrange: idle state — generic failure event with no payload
+    const state: CardState = { kind: 'idle' };
+    const event: ReducerEvent = { type: 'failure' };
+
+    // Act
+    const next = reducer(state, event);
+
+    // Assert: fallback ?? 'Action failed' at source L48
+    expect(next).toEqual({ kind: 'failed', message: 'Action failed' });
+  });
+});

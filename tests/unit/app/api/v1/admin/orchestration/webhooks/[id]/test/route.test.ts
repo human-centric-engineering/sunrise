@@ -45,7 +45,16 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
-    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+    Response.json(
+      {
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many requests. Please try again later.',
+        },
+      },
+      { status: 429 }
+    )
   ),
 }));
 
@@ -332,11 +341,9 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
 
   describe('Error paths', () => {
     it('returns timeout error when fetch is aborted by the 5-second AbortController', async () => {
-      // Arrange: simulate the AbortController aborting fetch
-      // We use fake timers to control the 5s setTimeout in the source, but the
-      // most robust approach for a unit test is to mock fetch to reject with AbortError
-      // immediately (the controller.abort() path in catch).
-      vi.useRealTimers();
+      // Arrange: simulate the AbortController aborting fetch.
+      // AbortController's 5s timeout is bypassed by mocking fetch to reject with a
+      // synthetic AbortError directly — no fake timers needed.
       const abortError = new Error('The operation was aborted.');
       abortError.name = 'AbortError';
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError);

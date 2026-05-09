@@ -204,7 +204,7 @@ describe('ApprovalCard', () => {
       const u = typeof c[0] === 'string' ? c[0] : (c[0] as Request).url;
       return u.includes('/reject/chat');
     });
-    expect(submitCall).toBeDefined();
+    expect(submitCall, 'expected a fetch call to /reject/chat').toBeDefined();
     const submitUrl =
       typeof submitCall![0] === 'string' ? submitCall![0] : (submitCall![0] as Request).url;
     expect(submitUrl).toContain('token=reject-token-1');
@@ -290,7 +290,7 @@ describe('ApprovalCard — body shape and dialog interactions', () => {
     const submitCall = fetchSpy.mock.calls.find(
       ([url]) => typeof url === 'string' && url.includes('/approve/chat')
     );
-    expect(submitCall).toBeDefined();
+    expect(submitCall, 'expected a fetch call to /approve/chat').toBeDefined();
     const body = JSON.parse(submitCall![1]?.body as string);
     expect(body).toHaveProperty('notes', 'Looks good');
   }, 10_000);
@@ -313,7 +313,7 @@ describe('ApprovalCard — body shape and dialog interactions', () => {
     const submitCall = fetchSpy.mock.calls.find(
       ([url]) => typeof url === 'string' && url.includes('/approve/chat')
     );
-    expect(submitCall).toBeDefined();
+    expect(submitCall, 'expected a fetch call to /approve/chat').toBeDefined();
     const body = JSON.parse(submitCall![1]?.body as string);
     expect(body).not.toHaveProperty('notes');
   }, 10_000);
@@ -332,7 +332,11 @@ describe('ApprovalCard — body shape and dialog interactions', () => {
     const rejectBtn = screen.getByRole('button', { name: 'Reject' });
     expect(rejectBtn).toBeDisabled();
 
-    // Assert: no fetch call has been made
+    // Finding 3: also verify the handler guard holds. jsdom fires click events on
+    // disabled buttons (unlike userEvent which intentionally blocks them). Use
+    // fireEvent to bypass the disabled-state click suppression and confirm the
+    // handler guard `if (!rejectReason.trim()) return` fires, preventing fetch.
+    fireEvent.click(rejectBtn);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -354,7 +358,7 @@ describe('ApprovalCard — body shape and dialog interactions', () => {
     const submitCall = fetchSpy.mock.calls.find(
       ([url]) => typeof url === 'string' && url.includes('/approve/chat')
     );
-    expect(submitCall).toBeDefined();
+    expect(submitCall, 'expected a fetch call to /approve/chat').toBeDefined();
     expect(submitCall![1]?.credentials).toBe('include');
   }, 10_000);
 });
@@ -689,6 +693,67 @@ describe('ApprovalCard — error and cleanup paths', () => {
 
     unmount();
   }, 10_000);
+
+  it('dispatches failure with the error message when a non-AbortError is thrown during submit', async () => {
+    // Arrange: POST rejects with a generic network error (not AbortError).
+    // Exercises the else-branch of the catch at source L186:
+    //   `dispatch({ type: 'failure', payload: { message: err instanceof Error ? err.message : 'Request failed' } })`
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(() =>
+      Promise.reject(new Error('Network failure'))
+    );
+    const user = userEvent.setup();
+    render(<ApprovalCard pendingApproval={makePending()} onResolved={vi.fn()} />);
+
+    // Act
+    await user.click(screen.getByRole('button', { name: /approve action/i }));
+    await screen.findByRole('button', { name: 'Approve' });
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    // Assert: the non-AbortError dispatches `failure` with the error's message
+    await waitFor(() => {
+      expect(screen.getByText('Failed: Network failure')).toBeInTheDocument();
+    });
+  }, 10_000);
+
+  it('stays in waiting state when the poll fetch returns a non-2xx (non-ok) response', async () => {
+    // Arrange: POST succeeds; first poll returns 503 (non-ok, not a rejection).
+    // Exercises the `if (!res.ok) throw new Error(...)` branch at source L109.
+    // That throw enters the catch block's transient-error path and reschedules
+    // the poll rather than dispatching `failure`.
+    mockFetchSequence([
+      // Submit POST — succeeds
+      () => new Response(JSON.stringify({ success: true }), { status: 200 }),
+      // First poll — non-ok (503): triggers the transient-error path and reschedules
+      () => new Response(null, { status: 503 }),
+      // Subsequent polls — hang so the component stays in waiting state
+      () =>
+        new Response(JSON.stringify({ data: { status: 'running' } }), {
+          status: 200,
+        }),
+    ]);
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ApprovalCard pendingApproval={makePending()} onResolved={vi.fn()} />
+    );
+
+    // Act: approve, then wait for the waiting state to appear after POST succeeds
+    await user.click(screen.getByRole('button', { name: /approve action/i }));
+    await screen.findByRole('button', { name: 'Approve' });
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    // Assert: component enters waiting state (not failed) — the 503 was treated as transient
+    await waitFor(
+      () => {
+        expect(screen.getByText('Waiting for the workflow to finish…')).toBeInTheDocument();
+      },
+      { timeout: 6_000 }
+    );
+    // The non-ok response must NOT have dispatched failure
+    expect(screen.queryByText(/Failed:/i)).not.toBeInTheDocument();
+
+    // Cleanup
+    unmount();
+  }, 15_000);
 
   it('aborts both submit and poll AbortController signals when the component unmounts', async () => {
     // Arrange: capture the AbortSignal passed to each fetch call.

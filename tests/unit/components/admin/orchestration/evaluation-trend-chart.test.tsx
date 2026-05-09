@@ -28,8 +28,15 @@ import {
 // ResponsiveContainer MUST render children at usable size (not 0×0).
 // LineChart captures `data` as a JSON attr and exposes data-testid="line-chart".
 // Line captures key props as data-* attrs for contract assertions.
+// YAxis and Tooltip capture their formatter callbacks in module-level variables
+// so tests can invoke them directly to assert correctness.
 // Other components are no-op divs; they just need to not crash.
 // ---------------------------------------------------------------------------
+
+// Module-level variables to capture formatter callbacks for direct invocation in tests.
+let capturedTickFormatter: ((v: unknown) => string) | undefined;
+let capturedTooltipFormatter: ((value: unknown, name: unknown) => [string, string]) | undefined;
+
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="responsive-container">{children}</div>
@@ -66,8 +73,14 @@ vi.mock('recharts', () => ({
   ),
   CartesianGrid: () => <div data-testid="cartesian-grid" />,
   XAxis: () => <div data-testid="x-axis" />,
-  YAxis: () => <div data-testid="y-axis" />,
-  Tooltip: () => <div data-testid="tooltip" />,
+  YAxis: ({ tickFormatter }: { tickFormatter?: (v: unknown) => string }) => {
+    capturedTickFormatter = tickFormatter;
+    return <div data-testid="y-axis" />;
+  },
+  Tooltip: ({ formatter }: { formatter?: (value: unknown, name: unknown) => [string, string] }) => {
+    capturedTooltipFormatter = formatter;
+    return <div data-testid="tooltip" />;
+  },
   Legend: () => <div data-testid="legend" />,
 }));
 
@@ -100,8 +113,12 @@ const POINT_B: EvaluationTrendPoint = {
 // ---------------------------------------------------------------------------
 
 describe('EvaluationTrendChart', () => {
+  // Finding 8: removed vi.clearAllMocks() — the recharts mock uses static JSX factory
+  // functions with no vi.fn()s, so clearAllMocks() has nothing to clear. Instead we
+  // reset the module-level captured state (introduced for Finding 2) before each test.
   beforeEach(() => {
-    vi.clearAllMocks();
+    capturedTickFormatter = undefined;
+    capturedTooltipFormatter = undefined;
   });
 
   // --- Kept verbatim (lines 41, 46, 51, 57 of the original file) ---
@@ -197,11 +214,72 @@ describe('EvaluationTrendChart', () => {
       // Arrange + Act
       render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
 
-      // Assert: every Line must have data-connect-nulls="true"
+      // Assert: every Line must have data-connect-nulls="true".
+      // Mock at L64 stringifies connectNulls; this assertion verifies the prop
+      // is forwarded as truthy. The exact string 'true' confirms the boolean
+      // was not coerced to a falsy value before being passed to the Line.
       const lines = screen.getAllByTestId('line');
       for (const line of lines) {
         expect(line.getAttribute('data-connect-nulls')).toBe('true');
       }
+    });
+
+    // Finding 2: Formatter callbacks — YAxis tickFormatter and Tooltip formatter.
+    // The recharts mock captures these at render time into module-level variables
+    // so tests can invoke them directly. This catches regressions like switching
+    // `toFixed(1)` to `toFixed(2)` on the tick formatter or the Tooltip's null guard.
+
+    it('YAxis tickFormatter formats a numeric value to one decimal place', () => {
+      // Arrange: render to trigger capture
+      render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
+
+      // Assert: formatter is captured and produces the correct output
+      expect(capturedTickFormatter).toBeDefined();
+      expect(capturedTickFormatter!(0.9)).toBe('0.9');
+      expect(capturedTickFormatter!(0)).toBe('0.0');
+      expect(capturedTickFormatter!(1)).toBe('1.0');
+    });
+
+    it('Tooltip formatter formats a numeric value to two decimal places', () => {
+      // Arrange: render to trigger capture
+      render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
+
+      // Assert: formatter is captured and formats numbers correctly
+      expect(capturedTooltipFormatter).toBeDefined();
+      const [formattedValue] = capturedTooltipFormatter!(0.9567, 'Faithfulness');
+      expect(formattedValue).toBe('0.96');
+    });
+
+    it('Tooltip formatter returns "n/a" for non-numeric values (null metric guard)', () => {
+      // Arrange: render to trigger capture
+      render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
+
+      // Assert: non-numeric values fall through to the 'n/a' branch
+      expect(capturedTooltipFormatter).toBeDefined();
+      const [nullFormatted] = capturedTooltipFormatter!(null, 'Faithfulness');
+      expect(nullFormatted).toBe('n/a');
+      const [undefinedFormatted] = capturedTooltipFormatter!(undefined, 'Groundedness');
+      expect(undefinedFormatted).toBe('n/a');
+    });
+
+    it('Tooltip formatter returns the metric name as the label', () => {
+      // Arrange: render to trigger capture
+      render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
+
+      // Assert: second element of the tuple is the stringified name
+      expect(capturedTooltipFormatter).toBeDefined();
+      const [, label] = capturedTooltipFormatter!(0.85, 'Groundedness');
+      expect(label).toBe('Groundedness');
+    });
+
+    it('Tooltip formatter handles undefined name gracefully (returns empty string)', () => {
+      // Arrange: render to trigger capture
+      render(<EvaluationTrendChart points={[POINT_A, POINT_B]} />);
+
+      // Assert: undefined name yields empty string via String(name ?? '')
+      expect(capturedTooltipFormatter).toBeDefined();
+      const [, label] = capturedTooltipFormatter!(0.85, undefined);
+      expect(label).toBe('');
     });
   });
 
