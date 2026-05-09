@@ -302,10 +302,13 @@ describe('SetupWizard — step content', () => {
       seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
+      // Wait for the form fields directly — the wizard title renders
+      // before StepDefaultModels resolves its fetches and clears the
+      // loading spinner. Asserting on the title alone races on slower
+      // environments (e.g. CI).
       await waitFor(() => {
-        expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument();
+        expect(document.getElementById('default-chat-model')).not.toBeNull();
       });
-      expect(document.getElementById('default-chat-model')).not.toBeNull();
       expect(document.getElementById('default-embedding-model')).not.toBeNull();
     });
 
@@ -321,9 +324,10 @@ describe('SetupWizard — step content', () => {
       seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      await waitFor(() => expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument());
-
-      await user.click(screen.getByRole('button', { name: /continue/i }));
+      // Wait for the Continue button — it only renders once the
+      // StepDefaultModels effect has resolved and loading is false.
+      const continueButton = await screen.findByRole('button', { name: /continue/i });
+      await user.click(continueButton);
 
       await waitFor(() => {
         const patchCalls = fetchMock.mock.calls.filter((call) => {
