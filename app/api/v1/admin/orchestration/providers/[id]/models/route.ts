@@ -51,7 +51,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 
   try {
     const provider = await getProvider(row.slug);
-    const [liveModels, matrixRows] = await Promise.all([
+    const [liveModels, matrixRows, agentRows] = await Promise.all([
       provider.listModels(),
       // LEFT JOIN — annotate live SDK output with our curated matrix.
       // Matrix rows are the source of truth for capabilities + tier
@@ -65,9 +65,25 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
           tierRole: true,
         },
       }),
+      // LEFT JOIN — list active agents bound to this provider so the
+      // panel can surface "which agents use this model". Match is by
+      // (provider, model) string pair since AiAgent stores both as
+      // free-text rather than FKs.
+      prisma.aiAgent.findMany({
+        where: { provider: row.slug, isActive: true },
+        select: { id: true, name: true, slug: true, model: true },
+        orderBy: { name: 'asc' },
+      }),
     ]);
 
     const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
+    const agentsByModelId = new Map<string, Array<{ id: string; name: string; slug: string }>>();
+    for (const a of agentRows) {
+      if (!a.model) continue;
+      const list = agentsByModelId.get(a.model) ?? [];
+      list.push({ id: a.id, name: a.name, slug: a.slug });
+      agentsByModelId.set(a.model, list);
+    }
 
     const enriched = liveModels.map((m) => {
       const matrix = matrixByModelId.get(m.id);
@@ -81,6 +97,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         matrixId: matrix?.id ?? null,
         capabilities,
         tierRole: matrix?.tierRole ?? null,
+        agents: agentsByModelId.get(m.id) ?? [],
       };
     });
 
@@ -89,6 +106,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       slug: row.slug,
       modelCount: enriched.length,
       matrixMatched: enriched.filter((m) => m.inMatrix).length,
+      modelsInUse: enriched.filter((m) => m.agents.length > 0).length,
     });
     return successResponse({ providerId: id, slug: row.slug, models: enriched });
   } catch (err) {

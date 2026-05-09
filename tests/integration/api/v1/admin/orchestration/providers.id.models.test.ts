@@ -37,6 +37,9 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderModel: {
       findMany: vi.fn(() => Promise.resolve([])),
     },
+    aiAgent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
   },
 }));
 
@@ -295,6 +298,56 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       expect(byId.get('text-embedding-3-small')).toEqual(['embedding']);
       expect(byId.get('o3-pro-2025-06-10')).toEqual(['reasoning']);
       expect(byId.get('dall-e-3')).toEqual(['image']);
+    });
+
+    it('annotates each model with the active agents bound to it', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+        { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot', model: 'gpt-4o-mini' },
+        { id: 'agent-2', name: 'Researcher', slug: 'researcher', model: 'gpt-4o-mini' },
+        { id: 'agent-3', name: 'Summariser', slug: 'summariser', model: 'gpt-4o' },
+      ] as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' }),
+        makeModelInfo({ id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: {
+          models: Array<{
+            id: string;
+            agents: Array<{ id: string; name: string; slug: string }>;
+          }>;
+        };
+      }>(response);
+
+      const byId = new Map(data.data.models.map((m) => [m.id, m.agents]));
+      expect(byId.get('gpt-4o-mini')).toHaveLength(2);
+      expect(
+        byId
+          .get('gpt-4o-mini')
+          ?.map((a) => a.slug)
+          .sort()
+      ).toEqual(['researcher', 'triage-bot']);
+      expect(byId.get('gpt-4o')?.map((a) => a.slug)).toEqual(['summariser']);
+      // Models with no bound agent get an empty array, not undefined,
+      // so the panel can render `0` without conditional checks.
+      expect(byId.get('gpt-3.5-turbo')).toEqual([]);
+
+      // Query is filtered by provider slug + isActive — never a
+      // cross-provider scan.
+      expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { provider: 'openai', isActive: true },
+        })
+      );
     });
 
     it('matrix capabilities take precedence over inference', async () => {

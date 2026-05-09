@@ -32,11 +32,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, Plus, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Table,
   TableBody,
@@ -49,6 +51,12 @@ import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
+
+export interface ProviderModelAgentRef {
+  id: string;
+  name: string;
+  slug: string;
+}
 
 export interface ProviderModelInfo {
   id: string;
@@ -65,6 +73,9 @@ export interface ProviderModelInfo {
   matrixId?: string | null;
   capabilities?: string[];
   tierRole?: string | null;
+  // Active agents bound to (provider, modelId). Empty when no agent
+  // currently references the model.
+  agents?: ProviderModelAgentRef[];
 }
 
 interface ProviderModelsResponse {
@@ -97,7 +108,7 @@ type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
 // Columns the operator can sort on. `name` covers the Model column
 // (sorts on display name); `inMatrix` is the default — clicking it
 // flips matrix-first → discovered-first.
-type SortKey = 'name' | 'inMatrix' | 'tier' | 'context' | 'input' | 'output';
+type SortKey = 'name' | 'inMatrix' | 'inUse' | 'tier' | 'context' | 'input' | 'output';
 type SortDir = 'asc' | 'desc';
 
 const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
@@ -158,6 +169,7 @@ export function ProviderModelsPanel({
   const [testResults, setTestResults] = useState<Record<string, TestModelResult>>({});
   const [search, setSearch] = useState('');
   const [activeBuckets, setActiveBuckets] = useState<Set<FilterBucket>>(new Set());
+  const [inUseOnly, setInUseOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   // Phase G: when set, the discover-models dialog opens with the
@@ -226,12 +238,14 @@ export function ProviderModelsPanel({
     return models.filter((m) => {
       // Substring search on id + name. Empty string matches everything.
       if (q && !`${m.id} ${m.name}`.toLowerCase().includes(q)) return false;
+      // "In use" toggle — only show models with at least one bound agent.
+      if (inUseOnly && (m.agents?.length ?? 0) === 0) return false;
       // Empty filter set means "all" — only narrow when the operator
       // has selected at least one chip.
       if (activeBuckets.size === 0) return true;
       return activeBuckets.has(bucketFor(primaryCapability(m)));
     });
-  }, [models, search, activeBuckets]);
+  }, [models, search, activeBuckets, inUseOnly]);
 
   const sorted = useMemo(() => {
     if (!filtered) return null;
@@ -246,6 +260,10 @@ export function ProviderModelsPanel({
           // false → 0, true → 1; ascending puts non-matrix first, so the
           // default `desc` surfaces matrix rows at the top of the table.
           primary = Number(a.inMatrix ?? false) - Number(b.inMatrix ?? false);
+          break;
+        case 'inUse':
+          // Sort by agent count. Default `desc` surfaces in-use rows first.
+          primary = (a.agents?.length ?? 0) - (b.agents?.length ?? 0);
           break;
         case 'tier':
           primary = a.tier.localeCompare(b.tier);
@@ -274,10 +292,10 @@ export function ProviderModelsPanel({
   const handleSort = useCallback(
     (key: SortKey) => {
       if (sortKey === key) {
-        // `inMatrix` only has one useful direction (matrix-first). Second
-        // click on it reverts to the default `name asc` instead of flipping
-        // to non-matrix-first, which no operator would actually want.
-        if (key === 'inMatrix') {
+        // `inMatrix` and `inUse` only have one useful direction (curated
+        // / bound rows first). Second click reverts to the default `name
+        // asc` instead of flipping the rare-but-uninteresting direction.
+        if (key === 'inMatrix' || key === 'inUse') {
           setSortKey('name');
           setSortDir('asc');
           return;
@@ -287,8 +305,8 @@ export function ProviderModelsPanel({
       }
       setSortKey(key);
       // First click on a new key picks the more useful direction:
-      // matrix-first for `inMatrix`, ascending for everything else.
-      setSortDir(key === 'inMatrix' ? 'desc' : 'asc');
+      // matrix/in-use-first for those columns, ascending for everything else.
+      setSortDir(key === 'inMatrix' || key === 'inUse' ? 'desc' : 'asc');
     },
     [sortKey]
   );
@@ -373,6 +391,18 @@ export function ProviderModelsPanel({
                   </Button>
                 );
               })}
+              <Button
+                type="button"
+                variant={inUseOnly ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setInUseOnly((v) => !v)}
+                aria-pressed={inUseOnly}
+                aria-label="Show only models with at least one bound agent"
+                title="Show only models that at least one active agent is using"
+              >
+                In use
+              </Button>
             </div>
           </div>
 
@@ -400,6 +430,14 @@ export function ProviderModelsPanel({
                       activeKey={sortKey}
                       dir={sortDir}
                       onSort={handleSort}
+                    />
+                    <SortableHead
+                      label="In use"
+                      sortKey="inUse"
+                      activeKey={sortKey}
+                      dir={sortDir}
+                      onSort={handleSort}
+                      align="right"
                     />
                     <TableHead>Capabilities</TableHead>
                     <SortableHead
@@ -463,6 +501,46 @@ export function ProviderModelsPanel({
                             </Badge>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {(m.agents?.length ?? 0) === 0 ? (
+                            <span className="text-muted-foreground text-xs">0</span>
+                          ) : (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  className="cursor-pointer text-xs tabular-nums hover:underline"
+                                  aria-label={`Show ${m.agents?.length} agent${m.agents?.length === 1 ? '' : 's'} using ${m.name}`}
+                                >
+                                  {m.agents?.length} →
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-64 p-0" align="end">
+                                <div className="border-b px-3 py-2">
+                                  <p className="text-sm font-medium">
+                                    {m.agents?.length} agent
+                                    {m.agents?.length === 1 ? '' : 's'} using{' '}
+                                    <span className="font-semibold">{m.name}</span>
+                                  </p>
+                                </div>
+                                <ul className="max-h-48 overflow-y-auto py-1">
+                                  {m.agents?.map((agent) => (
+                                    <li key={agent.id}>
+                                      <Link
+                                        href={`/admin/orchestration/agents/${agent.id}`}
+                                        className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                      >
+                                        <span className="truncate">{agent.name}</span>
+                                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                          {agent.slug}
+                                        </span>
+                                      </Link>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </PopoverContent>
+                            </Popover>
                           )}
                         </TableCell>
                         <TableCell>
@@ -588,6 +666,7 @@ export function ProviderModelsPanel({
             }
           }}
           providerSlug={providerSlug}
+          providerName={providerName}
           prefilledModelIds={addModelId ? [addModelId] : []}
         />
       )}

@@ -591,6 +591,112 @@ describe('ProviderModelsPanel', () => {
     });
   });
 
+  // ── In-use column + filter ────────────────────────────────────────────────
+
+  describe('in-use column', () => {
+    const IN_USE_RESPONSE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: [
+        {
+          id: 'gpt-4o-mini',
+          name: 'GPT-4o mini',
+          provider: 'openai',
+          tier: 'worker',
+          inputCostPerMillion: 0.15,
+          outputCostPerMillion: 0.6,
+          maxContext: 128000,
+          supportsTools: true,
+          inMatrix: true,
+          matrixId: 'matrix-1',
+          capabilities: ['chat'],
+          tierRole: 'worker',
+          agents: [
+            { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' },
+            { id: 'agent-2', name: 'Researcher', slug: 'researcher' },
+          ],
+        },
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 5,
+          outputCostPerMillion: 15,
+          maxContext: 128000,
+          supportsTools: true,
+          inMatrix: false,
+          matrixId: null,
+          capabilities: ['chat'],
+          tierRole: null,
+          agents: [],
+        },
+      ] satisfies ProviderModelInfo[],
+    };
+
+    it('shows the agent count and renders 0 for unbound models', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      // Bound row shows the count as a popover trigger; unbound row shows a flat 0.
+      expect(
+        screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i })
+      ).toBeInTheDocument();
+      expect(screen.getByText('0')).toBeInTheDocument();
+    });
+
+    it('opens the popover and lists every bound agent with a link to its admin page', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i }));
+
+      const triageLink = await screen.findByRole('link', { name: /Triage Bot/ });
+      expect(triageLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-1');
+      expect(screen.getByRole('link', { name: /Researcher/ })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/agents/agent-2'
+      );
+    });
+
+    it('"In use" toggle hides models that have no bound agents', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+      });
+      // Both rows visible by default.
+      expect(screen.getByText('GPT-4o')).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole('button', { name: /show only models with at least one bound agent/i })
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText('GPT-4o')).not.toBeInTheDocument();
+      });
+      // Bound row stays visible.
+      expect(screen.getByText('GPT-4o mini')).toBeInTheDocument();
+    });
+  });
+
   // ── Phase B/C — Capability-aware Test button ──────────────────────────────
 
   describe('capability-aware Test button', () => {
