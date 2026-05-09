@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ProviderModelsPanel } from '@/components/admin/orchestration/provider-models-panel';
@@ -31,7 +31,8 @@ vi.mock('@/lib/api/client', () => ({
     constructor(
       message: string,
       public code = 'INTERNAL_ERROR',
-      public status = 500
+      public status = 500,
+      public details?: Record<string, unknown>
     ) {
       super(message);
       this.name = 'APIClientError';
@@ -462,11 +463,15 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      // The phrase "In matrix" appears twice in the DOM: once as the
-      // column header (rendered by SortableHead) and once as the badge
-      // on the single matrix-matched row. Two matches means the column
-      // exists AND the lone matrix row is annotated.
-      expect(screen.getAllByText(/in matrix/i)).toHaveLength(2);
+      // Scope the badge query to the matrix-matched row directly.
+      // The previous `toHaveLength(2)` count assertion would silently
+      // break (or false-positive) if any future label or tooltip
+      // mentioned "In matrix" again — this is more precise.
+      const matchedRow = screen.getByRole('row', { name: /gpt-4o-mini/i });
+      expect(within(matchedRow).getByText(/in matrix/i)).toBeInTheDocument();
+      // ...and the embedding row (not in matrix) does NOT carry the badge.
+      const unmatchedRow = screen.getByRole('row', { name: /text-embedding-3-small/i });
+      expect(within(unmatchedRow).queryByText(/in matrix/i)).not.toBeInTheDocument();
     });
 
     it('renders all rows in a single combined table (no section split)', async () => {

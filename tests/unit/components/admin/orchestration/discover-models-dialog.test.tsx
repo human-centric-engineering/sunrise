@@ -105,15 +105,23 @@ describe('DiscoverModelsDialog', () => {
       const user = userEvent.setup();
       render(<DiscoverModelsDialog open onOpenChange={() => {}} />);
 
+      // Wait on the combobox itself (the actual control under test)
+      // rather than the dialog description copy — the description is
+      // not what we're verifying here.
       await waitFor(() => {
-        expect(screen.getByText(/pick a configured provider/i)).toBeInTheDocument();
+        expect(screen.getByRole('combobox')).toBeInTheDocument();
       });
 
       const continueButton = screen.getByRole('button', { name: /continue/i });
       expect(continueButton).toBeDisabled();
 
-      // Open the select dropdown and pick OpenAI.
+      // Open the select dropdown and verify BOTH providers populated
+      // the option list (proves the loaded providers were mapped, not
+      // just that the dialog frame rendered).
       await user.click(screen.getByRole('combobox'));
+      expect(await screen.findByRole('option', { name: /openai/i })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /anthropic/i })).toBeInTheDocument();
+
       await user.click(screen.getByRole('option', { name: /openai/i }));
 
       expect(continueButton).toBeEnabled();

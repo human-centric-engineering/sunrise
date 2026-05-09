@@ -724,7 +724,13 @@ describe('ProvidersList', () => {
       await user.click(viewModels);
 
       await waitFor(() => {
-        expect(screen.getByText(/Model catalogue\s+—\s+Anthropic/)).toBeInTheDocument();
+        // Query by dialog heading role + accessible name. Resilient to
+        // whitespace shifts and split-element renderings (e.g. if the
+        // title is later wrapped in spans for typography), unlike
+        // getByText with a `\s+` regex that requires a single text node.
+        expect(
+          screen.getByRole('heading', { name: /model catalogue.*anthropic/i })
+        ).toBeInTheDocument();
       });
     });
   });

@@ -22,7 +22,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ProviderModelsMatrix } from '@/components/admin/orchestration/provider-models-matrix';
@@ -144,17 +144,22 @@ describe('ProviderModelsMatrix', () => {
   it('shows "Embedding" badge for embedding-only models', () => {
     render(
       <ProviderModelsMatrix
-        initialModels={[makeModel({ id: 'embed-1', capabilities: ['embedding'] })]}
+        initialModels={[
+          makeModel({
+            id: 'embed-1',
+            name: 'Embed Test Model',
+            capabilities: ['embedding'],
+          }),
+        ]}
       />
     );
 
-    // "Embedding" also appears in the decision heuristic table as a tier label.
-    // The capability badge has amber-colored classes; verify at least one amber badge exists.
-    const allEmbeddingText = screen.getAllByText('Embedding');
-    const amberBadge = allEmbeddingText.find(
-      (el) => el.className.includes('amber') || el.closest('[class*="amber"]') !== null
-    );
-    expect(amberBadge).toBeDefined();
+    // "Embedding" also appears in the decision heuristic table at the
+    // bottom of the source. Scope the badge query to the data row by
+    // its visible name (model.name is what the row's accessible name
+    // is built from) instead of inspecting class names.
+    const dataRow = screen.getByRole('row', { name: /embed test model/i });
+    expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
   });
 
   it('shows "Both" badge for models with chat and embedding capabilities', () => {

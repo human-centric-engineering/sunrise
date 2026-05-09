@@ -723,6 +723,15 @@ describe('AgentsTable', () => {
   // ── Created column ──────────────────────────────────────────────────────
 
   describe('created column', () => {
+    // Same time-pinning as `formatRelativeTime` below — see the comment
+    // there. This describe block also computes Date.now() offsets and
+    // expects exact relative-time strings, so it benefits from the
+    // same frozen clock to avoid boundary flake.
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-09T12:00:00Z'));
+    });
+
     it('shows relative time for agent creation date', () => {
       const agents: AiAgentListItem[] = [
         makeAgent({
@@ -833,6 +842,16 @@ describe('AgentsTable', () => {
   // ── formatRelativeTime branches ─────────────────────────────────────────
 
   describe('formatRelativeTime', () => {
+    // Override the suite-level timers for this describe only. The relative-
+    // time tests don't use userEvent, so freezing the clock is safe — and
+    // it kills the boundary-flake risk that `shouldAdvanceTime: true`
+    // introduces (e.g. `Date.now() - 3600_000` and the component's later
+    // `new Date()` reading slightly different wall-clock values).
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-09T12:00:00Z'));
+    });
+
     it('renders "just now" for agents created less than 1 minute ago', () => {
       const agents: AiAgentListItem[] = [
         makeAgent({

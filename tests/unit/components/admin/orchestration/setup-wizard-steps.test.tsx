@@ -325,12 +325,20 @@ describe('SetupWizard — step content', () => {
       await user.click(screen.getByRole('button', { name: /run test/i }));
 
       await waitFor(() => {
-        const calls = fetchMock.mock.calls.filter((call) => {
-          const url = typeof call[0] === 'string' ? call[0] : '';
-          const init = call[1] as RequestInit | undefined;
-          return init?.method === 'POST' && url.includes('/providers/prov-1/');
-        });
-        expect(calls.length).toBeGreaterThanOrEqual(2);
+        const postUrls = fetchMock.mock.calls
+          .filter((call) => {
+            const init = call[1] as RequestInit | undefined;
+            return init?.method === 'POST';
+          })
+          .map((call) => (typeof call[0] === 'string' ? call[0] : ''));
+        // Both the connectivity test (POST /providers/:id/test) AND the
+        // model-level test (POST /providers/:id/test-model) must fire —
+        // a count-only assertion would also pass if the same endpoint
+        // was hit twice or an unrelated endpoint slipped in.
+        expect(postUrls.some((u) => u.includes('/providers/prov-1/test-model'))).toBe(true);
+        expect(
+          postUrls.some((u) => u.includes('/providers/prov-1/test') && !u.includes('/test-model'))
+        ).toBe(true);
       });
 
       // Latency badge appears on success.

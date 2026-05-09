@@ -30,6 +30,8 @@ interface DetectionRow {
   alreadyConfigured: boolean;
   isLocal: boolean;
   suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
   suggestedEmbeddingModel: string | null;
 }
 
@@ -44,6 +46,8 @@ function makeDetection(overrides: Partial<DetectionRow> = {}): DetectionRow {
     alreadyConfigured: false,
     isLocal: false,
     suggestedDefaultChatModel: 'claude-sonnet-4-6',
+    suggestedRoutingModel: null,
+    suggestedReasoningModel: null,
     suggestedEmbeddingModel: null,
     ...overrides,
   };
@@ -206,6 +210,51 @@ describe('ProviderDetectionsBanner', () => {
       expect(body.providerType).toBe('anthropic');
     });
     expect(onProviderCreated).toHaveBeenCalled();
+  });
+
+  it('PATCHes /settings with routing + reasoning when those slots are empty', async () => {
+    // Source `persistSuggestedDefaults` writes patch.routing /
+    // patch.reasoning when the detection row carries non-null
+    // suggestions AND the stored defaults haven't already filled
+    // them. Without this test, a regression in the routing/reasoning
+    // write branches would ship green — the slots are unchecked by
+    // the existing "Configure POSTs" test, which only verifies the
+    // /providers POST body.
+    const fetchMock = makeFetchMock({
+      detected: [
+        makeDetection({
+          suggestedRoutingModel: 'claude-haiku-4-5',
+          suggestedReasoningModel: 'claude-opus-4-6',
+          suggestedEmbeddingModel: null,
+        }),
+      ],
+      defaultModels: {}, // no stored defaults — every slot is empty
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    render(<ProviderDetectionsBanner />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^configure$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^configure$/i }));
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find((call) => {
+        const u = typeof call[0] === 'string' ? call[0] : '';
+        const init = call[1] as RequestInit | undefined;
+        return u.includes('/settings') && init?.method === 'PATCH';
+      });
+      expect(patchCall).toBeDefined();
+      const body = JSON.parse((patchCall![1] as RequestInit).body as string);
+      expect(body.defaultModels).toMatchObject({
+        chat: 'claude-sonnet-4-6',
+        routing: 'claude-haiku-4-5',
+        reasoning: 'claude-opus-4-6',
+      });
+    });
   });
 
   it('shows an inline error when the POST fails and keeps the row visible', async () => {
