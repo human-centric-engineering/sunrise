@@ -78,6 +78,22 @@ describe('getSetupState', () => {
     expect(state.hasDefaultChatModel).toBe(false);
   });
 
+  it('excludes system-seeded agents from the hasAgent count', async () => {
+    // The hasAgent contract documents "Excludes system seeds" — the
+    // source filters via `where: { isSystem: false }` so seeded agents
+    // (pattern-advisor, quiz-master, mcp-system, model-auditor) don't
+    // suppress the setup-required banner on a fresh install. Without
+    // this assertion the filter could be removed and every test would
+    // still pass because mockResolvedValue ignores arguments.
+    vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+    vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+    await getSetupState();
+
+    expect(prisma.aiAgent.count).toHaveBeenCalledWith({ where: { isSystem: false } });
+  });
+
   it('reports hasDefaultChatModel true when defaultModels.chat is set', async () => {
     vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
     vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);

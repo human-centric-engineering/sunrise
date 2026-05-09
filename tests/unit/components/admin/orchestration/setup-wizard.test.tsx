@@ -1,8 +1,16 @@
 /**
- * SetupWizard Component Tests
+ * SetupWizard Component Tests — top-level navigation and step indicator
  *
- * Covers initial render, the new 4-step layout, snap-back when persisted
- * state is stale, and the step indicator.
+ * Scope:
+ *   - Initial render at step 1 (fresh install)
+ *   - Detection-card content (env-var presence → suggested defaults)
+ *   - Snap-back when persisted state points beyond actual setup
+ *   - Resume from a stored stepIndex
+ *   - Step indicator renders the completed-trail
+ *
+ * Per-step API contracts (Continue advances, PATCH /settings on
+ * defaults, POST /test + /test-model on smoke step, Finish clears
+ * storage) live in `setup-wizard-steps.test.tsx`.
  *
  * The wizard's 4-step layout (config-oriented):
  *   0 provider · 1 defaults · 2 smoke test · 3 done
@@ -13,74 +21,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SetupWizard } from '@/components/admin/orchestration/setup-wizard';
-
-const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v3';
-
-interface MockFetchOptions {
-  providerTotal: number;
-  /** Detection rows returned by /providers/detect. */
-  detected?: Array<{
-    slug: string;
-    name: string;
-    providerType: 'anthropic' | 'openai-compatible' | 'voyage';
-    defaultBaseUrl: string | null;
-    apiKeyEnvVar: string | null;
-    apiKeyPresent: boolean;
-    alreadyConfigured: boolean;
-    isLocal: boolean;
-    suggestedDefaultChatModel: string | null;
-    suggestedEmbeddingModel: string | null;
-  }>;
-}
-
-function mockFetch(opts: MockFetchOptions) {
-  const detected = opts.detected ?? [];
-  return vi.fn().mockImplementation((url: string) => {
-    const urlStr = typeof url === 'string' ? url : '';
-    if (urlStr.includes('/providers/detect')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: { detected } }),
-      });
-    }
-    if (urlStr.includes('/providers')) {
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({ success: true, data: [], meta: { total: opts.providerTotal } }),
-      });
-    }
-    if (urlStr.includes('/settings')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: { defaultModels: {} } }),
-      });
-    }
-    if (urlStr.includes('/models')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true, data: [] }),
-      });
-    }
-    return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
-  });
-}
-
-function makeStoredState(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    stepIndex: 0,
-    providerDraft: {
-      name: '',
-      slug: '',
-      apiKeyEnvVar: '',
-      providerType: '',
-      baseUrl: '',
-      suggestedDefaultChatModel: '',
-      suggestedEmbeddingModel: '',
-    },
-    ...overrides,
-  });
-}
+import {
+  STORAGE_KEY,
+  makeFetchMock,
+  makeStoredState,
+} from '@/tests/unit/components/admin/orchestration/setup-wizard.helpers';
 
 describe('SetupWizard', () => {
   beforeEach(() => {
@@ -93,7 +38,7 @@ describe('SetupWizard', () => {
   });
 
   it('opens at step 1 of 4 (Provider) by default on a fresh install', async () => {
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 0 }));
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
 
     render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
@@ -103,22 +48,15 @@ describe('SetupWizard', () => {
     expect(screen.getByText(/Configure a provider/i)).toBeInTheDocument();
   });
 
-  it('Provider step auto-completes with a success card when providers already exist', async () => {
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 1 }));
-
-    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 0 }));
-
-    render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/already have a provider configured/i)).toBeInTheDocument();
-    });
-  });
+  // The "already-have-a-provider" success card test moved to
+  // `setup-wizard-steps.test.tsx` ("already-exists card auto-shows
+  // when providers exist and Continue advances") — that version is
+  // strictly stronger because it also asserts the Continue advance.
 
   it('Provider step surfaces detection cards when an env-var key is present', async () => {
     vi.stubGlobal(
       'fetch',
-      mockFetch({
+      makeFetchMock({
         providerTotal: 0,
         detected: [
           {
@@ -156,7 +94,7 @@ describe('SetupWizard', () => {
   it('Provider step shows both chat + embedding suggestions when the provider supports both', async () => {
     vi.stubGlobal(
       'fetch',
-      mockFetch({
+      makeFetchMock({
         providerTotal: 0,
         detected: [
           {
@@ -186,26 +124,16 @@ describe('SetupWizard', () => {
     expect(screen.queryByText(/doesn't offer embeddings/i)).not.toBeInTheDocument();
   });
 
-  it('Provider step falls back to the manual form when no keys are detected', async () => {
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 0 }));
-
-    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 0 }));
-
-    render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
-    });
-    expect(document.getElementById('provider-name')).not.toBeNull();
-    expect(document.getElementById('provider-slug')).not.toBeNull();
-    expect(document.getElementById('provider-flavour')).not.toBeNull();
-  });
+  // The "manual flavour-picker form" fallback test moved to
+  // `setup-wizard-steps.test.tsx` ("renders manual flavour-picker
+  // form when no providers and no env vars detected") — same
+  // assertions, lives next to the other Step 1 content checks.
 
   it('Snaps back to Provider step when persisted state points beyond actual setup', async () => {
     // No providers configured but persisted stepIndex points at smoke test.
     // The wizard should redirect back to Provider, not let the user sit on
     // a step that has no prerequisites met.
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 0 }));
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
 
     window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 2 }));
 
@@ -215,7 +143,7 @@ describe('SetupWizard', () => {
   });
 
   it('Resume: saved progress at Defaults reopens on Defaults', async () => {
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 1 }));
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
 
     window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 1 }));
 
@@ -225,7 +153,7 @@ describe('SetupWizard', () => {
   });
 
   it('Step indicator shows a clickable trail of completed steps', async () => {
-    vi.stubGlobal('fetch', mockFetch({ providerTotal: 1 }));
+    vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
     const user = userEvent.setup();
 
     // Open at step 3 (smoke test) — provider configured, defaults set.

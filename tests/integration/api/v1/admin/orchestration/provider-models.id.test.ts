@@ -261,235 +261,44 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(response.status).toBe(429);
   });
 
-  it('updates slug field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      slug: 'anthropic-claude-opus-4-updated',
-    } as never);
+  // Single-field PATCH cases share an identical shape: mock findUnique
+  // → mock update with one changed field → assert 200 + Prisma update
+  // received that field. it.each keeps the contract surface explicit
+  // (one row per supported field) without duplicating the wiring 12
+  // times. Compound-field cases (dimensions+schema+cost; meta block)
+  // stay as their own it() blocks below since they exercise multi-
+  // field payloads.
+  const singleFieldCases = [
+    { field: 'slug', value: 'anthropic-claude-opus-4-updated' },
+    { field: 'modelId', value: 'claude-opus-4-5' },
+    { field: 'description', value: 'Updated desc' },
+    { field: 'tierRole', value: 'worker' },
+    { field: 'reasoningDepth', value: 'high' },
+    { field: 'latency', value: 'fast' },
+    { field: 'costEfficiency', value: 'high' },
+    { field: 'contextLength', value: 'high' },
+    { field: 'toolUse', value: 'moderate' },
+    { field: 'bestRole', value: 'Code generation' },
+    { field: 'capabilities', value: ['chat', 'embedding'] },
+    { field: 'isActive', value: false },
+  ] as const;
 
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { slug: 'anthropic-claude-opus-4-updated' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ slug: 'anthropic-claude-opus-4-updated' }),
-      })
-    );
-  });
-
-  it('updates modelId field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      modelId: 'claude-opus-4-5',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { modelId: 'claude-opus-4-5' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ modelId: 'claude-opus-4-5' }) })
-    );
-  });
-
-  it('updates description field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      description: 'Updated desc',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { description: 'Updated desc' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ description: 'Updated desc' }) })
-    );
-  });
-
-  it('updates tierRole field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      tierRole: 'worker',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { tierRole: 'worker' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ tierRole: 'worker' }) })
-    );
-  });
-
-  it('updates reasoningDepth field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      reasoningDepth: 'high',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { reasoningDepth: 'high' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ reasoningDepth: 'high' }) })
-    );
-  });
-
-  it('updates latency field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      latency: 'fast',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { latency: 'fast' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ latency: 'fast' }) })
-    );
-  });
-
-  it('updates costEfficiency field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      costEfficiency: 'high',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { costEfficiency: 'high' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ costEfficiency: 'high' }) })
-    );
-  });
-
-  it('updates contextLength field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      contextLength: 'high',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { contextLength: 'high' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ contextLength: 'high' }) })
-    );
-  });
-
-  it('updates toolUse field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      toolUse: 'moderate',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { toolUse: 'moderate' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ toolUse: 'moderate' }) })
-    );
-  });
-
-  it('updates bestRole field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      bestRole: 'Code generation',
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { bestRole: 'Code generation' }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ bestRole: 'Code generation' }) })
-    );
-  });
-
-  it('updates capabilities field and returns 200', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    const existing = makeModel({ isDefault: false });
-    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
-      ...existing,
-      capabilities: ['chat', 'embedding'],
-    } as never);
-
-    const response = await PATCH(
-      makePatchRequest(MODEL_ID, { capabilities: ['chat', 'embedding'] }),
-      routeContext(MODEL_ID)
-    );
-    expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ capabilities: ['chat', 'embedding'] }),
-      })
-    );
-  });
-
-  it('updates isActive field and returns 200', async () => {
+  it.each(singleFieldCases)('updates $field field and returns 200', async ({ field, value }) => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const existing = makeModel({ isDefault: false, isActive: true });
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
     vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
       ...existing,
-      isActive: false,
+      [field]: value,
     } as never);
 
     const response = await PATCH(
-      makePatchRequest(MODEL_ID, { isActive: false }),
+      makePatchRequest(MODEL_ID, { [field]: value }),
       routeContext(MODEL_ID)
     );
     expect(response.status).toBe(200);
     expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ isActive: false }) })
+      expect.objectContaining({ data: expect.objectContaining({ [field]: value }) })
     );
   });
 
