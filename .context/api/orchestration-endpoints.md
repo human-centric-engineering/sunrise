@@ -283,9 +283,15 @@ Runs a live `testConnection()`. The response **strips raw SDK / fetch error mess
 
 ### `POST /providers/:id/test-model`
 
-Sends a trivial prompt (`"Say hello."`, maxTokens: 10, temperature: 0) to a specific provider + model combination and reports round-trip latency. Body: `{ model: string }`.
+Sends a trivial prompt to a specific provider + model combination and reports round-trip latency.
 
-Response: `{ ok: true, latencyMs: 246, model: "claude-sonnet-4-6" }` on success. On model failure: `{ ok: false, latencyMs: null, model }` at HTTP 200 (same convention as `/test`). Raw SDK errors are logged server-side but never forwarded.
+Body: `{ model: string, capability?: 'chat' | 'reasoning' | 'embedding' | 'image' | 'audio' | 'moderation' | 'unknown' }`. `capability` defaults to `'chat'` for backwards compatibility with pre-Phase B callers (the wizard smoke test and the agent-form test card). The route routes by capability:
+
+- **`chat`** — `provider.chat([{ role: 'user', content: 'Say hello.' }], { model, maxTokens: 10, temperature: 0 })`
+- **`embedding`** — `provider.embed('hello')` (cheaper than chat; exercises the same auth + base URL surface)
+- **`reasoning` / `image` / `audio` / `moderation` / `unknown`** — refused without an SDK call; returns `{ ok: false, error: 'unsupported_test_capability', message: <human-readable reason> }`
+
+Response: HTTP 200 with `{ ok: true, latencyMs: 246, model, capability }` on success. On model failure: `{ ok: false, latencyMs: null, model, capability, error: 'model_test_failed' }`. Raw SDK errors are logged server-side but never forwarded — the panel keys off the stable `error` string to distinguish failure modes from unsupported capabilities.
 
 ### `GET / POST /providers/:id/health`
 
@@ -295,7 +301,16 @@ Circuit breaker status for a provider. `GET` returns `{ providerId, slug, state,
 
 ### `GET /providers/:id/models`
 
-Asks the provider directly. Same error-sanitization guarantee as `/test`.
+Live model listing for a single provider. Behaviour:
+
+1. **Rate-limited** by `adminLimiter` (returns 429 on excess).
+2. **API key check** — non-local providers without their `apiKeyEnvVar` set return 422 `API_KEY_MISSING` (no SDK call attempted).
+3. **OpenRouter refresh** — for non-local providers, `await refreshFromOpenRouter()` runs before listing so the registry's `getModel(id)` lookup returns live context + pricing instead of the static fallback's zeros. Idempotent and 24h-cached. Skipped for local providers — their models aren't in OpenRouter and the call would be wasted on fully-local setups.
+4. **`provider.listModels()`** — asks the SDK what's available. Each result is enriched via `getModel(id)` against the now-refreshed registry.
+5. **Matrix LEFT JOIN** — annotates each row with `inMatrix: boolean`, `matrixId: string | null`, `capabilities: string[]`, `tierRole: string | null` from `AiProviderModel`. Capabilities from the matrix take precedence; unmatched rows fall back to `inferCapability(slug, modelId)` so they still get a meaningful badge + a routed Test button.
+6. **Agents LEFT JOIN** — annotates each row with `agents: Array<{ id, name, slug }>` for active `AiAgent` rows bound to `(provider, modelId)`. Powers the "agents using this model" column in the View Models panel.
+
+Returns 503 `PROVIDER_UNAVAILABLE` if `listModels` throws — same error-sanitization guarantee as `/test` (raw SDK errors are logged server-side but never forwarded).
 
 ### `GET /providers/detect`
 

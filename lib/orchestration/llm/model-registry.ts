@@ -35,14 +35,24 @@ import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_FETCH_TIMEOUT_MS = 10_000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Negative-cache window after a refresh failure. Without this, a
+// downstream OpenRouter outage would cause every panel load to make a
+// fresh 10-second timeout call until OpenRouter recovers — turning a
+// remote outage into a local user-facing slowdown. 5 minutes is short
+// enough that operators won't notice when OpenRouter recovers, but
+// long enough to absorb a flurry of concurrent admin requests.
+const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 
 interface RegistryState {
   /** Map keyed by canonical id (and also indexed by full `provider/id` form). */
   models: Map<string, ModelInfo>;
+  /** Epoch ms of last successful refresh, 0 if never refreshed. */
   fetchedAt: number;
+  /** Epoch ms of last failed refresh attempt, 0 if no recent failure. */
+  failedAt: number;
 }
 
-let state: RegistryState = { models: buildFallbackMap(), fetchedAt: 0 };
+let state: RegistryState = { models: buildFallbackMap(), fetchedAt: 0, failedAt: 0 };
 let inflightRefresh: Promise<void> | null = null;
 
 /**
@@ -50,12 +60,15 @@ let inflightRefresh: Promise<void> | null = null;
  *
  * Deduplicates concurrent callers via `inflightRefresh`. Falls back
  * silently to the static map on failure — callers can still query
- * the registry afterwards.
+ * the registry afterwards. Failures negative-cache for
+ * FAILURE_BACKOFF_MS so a downstream outage doesn't cause every
+ * caller to retry the timeout.
  */
 export async function refreshFromOpenRouter(options: { force?: boolean } = {}): Promise<void> {
   const now = Date.now();
-  if (!options.force && state.fetchedAt !== 0 && now - state.fetchedAt < CACHE_TTL_MS) {
-    return;
+  if (!options.force) {
+    if (state.fetchedAt !== 0 && now - state.fetchedAt < CACHE_TTL_MS) return;
+    if (state.failedAt !== 0 && now - state.failedAt < FAILURE_BACKOFF_MS) return;
   }
 
   if (inflightRefresh) return inflightRefresh;
@@ -96,16 +109,18 @@ export async function refreshFromOpenRouter(options: { force?: boolean } = {}): 
         added += 1;
       }
 
-      state = { models: merged, fetchedAt: Date.now() };
+      // Successful refresh — clear the failure timestamp so the next
+      // expiry of the success TTL gets a clean retry, not a backoff.
+      state = { models: merged, fetchedAt: Date.now(), failedAt: 0 };
       logger.info('Model registry refreshed from OpenRouter', { modelCount: added });
     } catch (err) {
       logger.warn('Model registry refresh failed; using fallback map', {
         error: err instanceof Error ? err.message : String(err),
       });
-      // Preserve any previously-cached state; only seed fallback on first-run failure.
-      if (state.fetchedAt === 0) {
-        state = { models: buildFallbackMap(), fetchedAt: 0 };
-      }
+      // Preserve the existing models map (already initialised with the
+      // fallback at module load) and stamp failedAt so the next call
+      // within FAILURE_BACKOFF_MS short-circuits without another fetch.
+      state = { ...state, failedAt: Date.now() };
     } finally {
       inflightRefresh = null;
     }
@@ -132,7 +147,7 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
         updated.set(model.id, { ...model, available: true });
       }
     }
-    state = { models: updated, fetchedAt: state.fetchedAt };
+    state = { ...state, models: updated };
     return discovered;
   } catch (err) {
     logger.warn('refreshFromProvider failed', {
@@ -179,7 +194,7 @@ export function getRegistryFetchedAt(): number {
  * rely on the 24-hour TTL and `refreshFromOpenRouter({ force: true })`.
  */
 export function __resetForTests(): void {
-  state = { models: buildFallbackMap(), fetchedAt: 0 };
+  state = { models: buildFallbackMap(), fetchedAt: 0, failedAt: 0 };
   inflightRefresh = null;
 }
 

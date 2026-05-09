@@ -144,10 +144,31 @@ const TESTABLE_ACTION: Partial<Record<Capability, string>> = {
 };
 
 // Reason text shown on the per-cell tooltip when context / pricing is
-// missing. Same string for all three columns since the cause is always
-// the same — the model isn't in OpenRouter's catalogue.
-const UNKNOWN_FIELD_REASON =
+// missing. Two variants:
+//   - Remote providers: the OpenRouter catalogue is the upstream source
+//     for this data, so a missing value means the model isn't listed
+//     there (common for niche fine-tunes and some embedding models).
+//   - Local providers: OpenRouter doesn't list local models at all, so
+//     the catalogue isn't even consulted. Context length isn't reported
+//     by the OpenAI-compatible /v1/models endpoint that local hosts
+//     use, so the value is structurally unavailable.
+const UNKNOWN_FIELD_REASON_REMOTE =
   "Not listed in OpenRouter's catalogue — common for niche fine-tunes and embedding-only models.";
+const UNKNOWN_FIELD_REASON_LOCAL =
+  "Local providers don't expose context length via the /v1/models endpoint — the value isn't reported by the host.";
+
+// Tooltip for OpenRouter-listed models with explicit zero pricing
+// (e.g. `:free` Llama variants). Distinguishes "we know it's free"
+// from "we don't know the price" — the latter renders as "—".
+//
+// Detection: zero cost + `tier === 'local'` on a non-local provider.
+// The OpenRouter parser's classifyTier() returns 'local' when
+// inputCostPerMillion <= 0, so a non-local provider listing a
+// tier='local' row is a reliable "free in OpenRouter" signal. The
+// openai-compatible fallback for unknown models forces tier='mid',
+// not 'local', so we won't false-positive on missing-from-catalogue.
+const FREE_MODEL_REASON =
+  'Listed in OpenRouter with zero per-token pricing — typically promotional or community access (e.g. :free model variants).';
 
 function primaryCapability(model: ProviderModelInfo): Capability {
   // Default to 'chat' when the route didn't enrich. Keeps backwards
@@ -574,7 +595,11 @@ export function ProviderModelsPanel({
                           {m.maxContext > 0 ? (
                             `${m.maxContext.toLocaleString()} tok`
                           ) : (
-                            <Tip label={UNKNOWN_FIELD_REASON}>
+                            <Tip
+                              label={
+                                isLocal ? UNKNOWN_FIELD_REASON_LOCAL : UNKNOWN_FIELD_REASON_REMOTE
+                              }
+                            >
                               <span className="text-muted-foreground cursor-help">—</span>
                             </Tip>
                           )}
@@ -587,8 +612,12 @@ export function ProviderModelsPanel({
                             <TableCell className="text-right text-xs tabular-nums">
                               {m.inputCostPerMillion > 0 ? (
                                 `$${m.inputCostPerMillion.toFixed(2)}`
+                              ) : m.tier === 'local' ? (
+                                <Tip label={FREE_MODEL_REASON}>
+                                  <span className="cursor-help text-green-600">Free</span>
+                                </Tip>
                               ) : (
-                                <Tip label={UNKNOWN_FIELD_REASON}>
+                                <Tip label={UNKNOWN_FIELD_REASON_REMOTE}>
                                   <span className="text-muted-foreground cursor-help">—</span>
                                 </Tip>
                               )}
@@ -596,8 +625,12 @@ export function ProviderModelsPanel({
                             <TableCell className="text-right text-xs tabular-nums">
                               {m.outputCostPerMillion > 0 ? (
                                 `$${m.outputCostPerMillion.toFixed(2)}`
+                              ) : m.tier === 'local' ? (
+                                <Tip label={FREE_MODEL_REASON}>
+                                  <span className="cursor-help text-green-600">Free</span>
+                                </Tip>
                               ) : (
-                                <Tip label={UNKNOWN_FIELD_REASON}>
+                                <Tip label={UNKNOWN_FIELD_REASON_REMOTE}>
                                   <span className="text-muted-foreground cursor-help">—</span>
                                 </Tip>
                               )}

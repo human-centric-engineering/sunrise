@@ -168,6 +168,30 @@ describe('refreshFromOpenRouter TTL cache', () => {
     // Assert: fetch still called only once — TTL cache returned early
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
+
+  it('negative-caches a refresh failure so subsequent calls within the backoff window do not retry', async () => {
+    // Failure path with no negative-cache used to retry on every
+    // subsequent call — when OpenRouter went down, every panel load
+    // would re-issue a 10-second timeout. The 5-minute backoff turns a
+    // remote outage into one slow request, not N.
+    const mockFetch = vi.fn().mockRejectedValue(new Error('Network unreachable'));
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    // First call fails — fetch fires, error is swallowed inside the
+    // function (no throw), failedAt is stamped.
+    await registry.refreshFromOpenRouter({ force: true });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Second call without force, immediately after — must short-circuit
+    // off failedAt without firing fetch again.
+    await registry.refreshFromOpenRouter();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Third call WITH force — the operator explicitly asked to retry,
+    // so the backoff is bypassed.
+    await registry.refreshFromOpenRouter({ force: true });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('refreshFromOpenRouter error cases', () => {

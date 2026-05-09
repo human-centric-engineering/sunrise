@@ -66,6 +66,7 @@ vi.mock('@/lib/security/rate-limit', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -225,6 +226,42 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       }>(response);
       expect(body.success).toBe(true);
       expect(body.data.models).toHaveLength(2);
+    });
+  });
+
+  describe('OpenRouter catalogue refresh', () => {
+    it('calls refreshFromOpenRouter before listing models for non-local providers', async () => {
+      // The route enriches each live model via the registry's
+      // getModel(id) lookup; without a refresh, the registry holds
+      // only the small static fallback map and most rows show 0
+      // context / 0 cost. A regression that drops this call would
+      // surface in the UI as zeros across the catalogue — a real
+      // user-facing bug — so it deserves a dedicated assertion.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProviderRow() as never);
+      mockListModels.mockResolvedValue([makeModelInfo()]);
+
+      await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(refreshFromOpenRouter).toHaveBeenCalled();
+    });
+
+    it('skips refreshFromOpenRouter for local providers (their models are not in OpenRouter)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({
+          name: 'Ollama',
+          slug: 'ollama-local',
+          apiKeyEnvVar: null,
+          isLocal: true,
+        }) as never
+      );
+      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'llama3', name: 'Llama 3' })]);
+
+      await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+
+      expect(refreshFromOpenRouter).not.toHaveBeenCalled();
     });
   });
 
