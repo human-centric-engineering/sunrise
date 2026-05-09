@@ -160,10 +160,20 @@ async function callEmbeddingApi(
     const errorText = await response.text();
     let message = errorText;
     try {
-      const parsed = JSON.parse(errorText) as { error?: { message?: string } };
-      if (parsed.error?.message) message = parsed.error.message;
+      // The embedding provider's error envelope isn't part of our
+      // contract — different vendors shape it differently. Validate
+      // structurally with Zod so a malformed JSON or unexpected shape
+      // falls back to the raw text rather than throwing in the parse
+      // branch.
+      const errorResponseSchema = z.object({
+        error: z.object({ message: z.string().optional() }).partial().optional(),
+      });
+      const parsed = errorResponseSchema.safeParse(JSON.parse(errorText));
+      if (parsed.success && parsed.data.error?.message) {
+        message = parsed.data.error.message;
+      }
     } catch {
-      // use raw text as-is
+      // JSON.parse threw — vendor returned non-JSON. Use raw text as-is.
     }
     throw new Error(`Embedding API error (${response.status}): ${message}`);
   }

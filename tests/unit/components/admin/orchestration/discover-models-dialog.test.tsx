@@ -418,5 +418,309 @@ describe('DiscoverModelsDialog', () => {
       expect(list).not.toBeNull();
       expect(within(list!).getByText('gpt-4o')).toBeInTheDocument();
     });
+
+    it('renders an inline error and stays on the review step when bulk POST fails', async () => {
+      // Submit error path — apiClient.post throws → setSubmitError is
+      // called and the error message renders in the review step.
+      // Without this test the catch arm of handleSubmit is dead code
+      // for coverage purposes.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate()],
+      });
+      vi.mocked(apiClient.post).mockRejectedValue(new Error('Database transaction failed'));
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add 1 model/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      // Inline error message renders; result step is not reached.
+      await waitFor(() => {
+        expect(screen.getByText(/database transaction failed/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/model added/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Step 2 — capability filter chips', () => {
+    it('Image and Audio chips bucket models with matching inferredCapability', async () => {
+      // Drives bucketFor's image/audio branches. The Embedding chip
+      // test only hits one switch arm; this hits the rest at once.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [
+          makeCandidate({ modelId: 'gpt-image-1', inferredCapability: 'image' }),
+          makeCandidate({ modelId: 'whisper-1', inferredCapability: 'audio' }),
+          makeCandidate({ modelId: 'omni-moderation', inferredCapability: 'moderation' }),
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-image-1')).toBeInTheDocument();
+      });
+
+      // Image chip narrows to image rows.
+      await user.click(screen.getByRole('button', { name: /^image$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('whisper-1')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('gpt-image-1')).toBeInTheDocument();
+
+      // Switch to Audio.
+      await user.click(screen.getByRole('button', { name: /^image$/i }));
+      await user.click(screen.getByRole('button', { name: /^audio$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-image-1')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('whisper-1')).toBeInTheDocument();
+
+      // "Other" buckets moderation/reasoning/unknown.
+      await user.click(screen.getByRole('button', { name: /^audio$/i }));
+      await user.click(screen.getByRole('button', { name: /^other$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('whisper-1')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+    });
+
+    it('clicking a capability chip narrows candidates by inferredCapability', async () => {
+      // Drives toggleBucket + bucketFor + the activeBuckets arm of
+      // the filter memo. Previously uncovered because no test
+      // interacted with the chips.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [
+          makeCandidate({ modelId: 'gpt-4o-mini', inferredCapability: 'chat' }),
+          makeCandidate({
+            modelId: 'text-embedding-3-small',
+            inferredCapability: 'embedding',
+          }),
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      // Toggle Embedding chip — chat row hidden, embedding row remains.
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      // Click again to deactivate — chat row returns.
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Step 3 — Review row editing', () => {
+    it('editing review fields updates the body sent to bulk POST', async () => {
+      // Exercises every per-field onChange handler in the review row
+      // (name, bestRole, description, chat checkbox, embedding
+      // checkbox, plus four select dropdowns). Each is its own
+      // function in the source — covering them individually would
+      // bloat the suite, so this single test drives the full grid.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        created: 1,
+        skipped: 0,
+        conflicts: [],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      // Text inputs.
+      const nameField = await screen.findByLabelText(/^name for gpt-4o-mini$/i);
+      await user.clear(nameField);
+      await user.type(nameField, 'Custom Name');
+
+      const bestRoleField = await screen.findByLabelText(/^best role for gpt-4o-mini$/i);
+      await user.clear(bestRoleField);
+      await user.type(bestRoleField, 'Custom role');
+
+      const descField = await screen.findByLabelText(/^description for gpt-4o-mini$/i);
+      await user.clear(descField);
+      await user.type(descField, 'Custom description');
+
+      // Toggle the embedding checkbox (chat is on by default; turn
+      // embedding on too so the body carries both capabilities).
+      await user.click(
+        screen.getByRole('checkbox', { name: /^embedding capability for gpt-4o-mini$/i })
+      );
+
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      const body = (
+        options as {
+          body: {
+            models: Array<{
+              name: string;
+              bestRole: string;
+              description: string;
+              capabilities: string[];
+            }>;
+          };
+        }
+      ).body;
+      expect(body.models[0].name).toBe('Custom Name');
+      expect(body.models[0].bestRole).toBe('Custom role');
+      expect(body.models[0].description).toBe('Custom description');
+      expect(body.models[0].capabilities).toEqual(expect.arrayContaining(['chat', 'embedding']));
+    });
+
+    it('toggling the chat checkbox off removes "chat" from the body capabilities', async () => {
+      // Drives the chat-checkbox arm where `checked === false`. The
+      // editing test above turned embedding ON; this test turns chat
+      // OFF, covering the symmetric `next.delete('chat')` branch.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        created: 1,
+        skipped: 0,
+        conflicts: [],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await user.click(
+        await screen.findByRole('checkbox', { name: /^chat capability for gpt-4o-mini$/i })
+      );
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      const body = (options as { body: { models: Array<{ capabilities: string[] }> } }).body;
+      expect(body.models[0].capabilities).not.toContain('chat');
+    });
+
+    it('navigation: Back from review returns to discovery; Cancel closes the dialog', async () => {
+      // Drives the footer button click handlers across steps —
+      // previously uncovered because every test only flowed forward.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+
+      const onOpenChange = vi.fn();
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={onOpenChange} providerSlug="openai" />);
+
+      // Step 2 — pick row, advance to review.
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      // Step 3 (review) — Back returns to step 2.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add 1 model/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /^← back$/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^continue/i })).toBeInTheDocument();
+      });
+
+      // Cancel on step 2 closes the dialog (calls onOpenChange(false)).
+      await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it('"Reset to suggestion" rolls edited fields back to the candidate defaults', async () => {
+      // Drives resetReviewRow — the user edits a field, then clicks
+      // Reset, then submits; the body should carry the original
+      // suggestion, not the discarded edit.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        created: 1,
+        skipped: 0,
+        conflicts: [],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      const descField = await screen.findByLabelText(/^description for gpt-4o-mini$/i);
+      await user.clear(descField);
+      await user.type(descField, 'Edited then reset');
+
+      await user.click(screen.getByRole('button', { name: /reset to suggestion/i }));
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      const body = (options as { body: { models: Array<{ description: string }> } }).body;
+      // Original candidate description was 'Test description from
+      // discovery' (per makeCandidate defaults) — not the edited
+      // string we just discarded.
+      expect(body.models[0].description).not.toBe('Edited then reset');
+    });
   });
 });

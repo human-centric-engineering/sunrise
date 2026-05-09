@@ -62,6 +62,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { z } from 'zod';
 import type { AiProviderConfig } from '@/types/prisma';
 import {
   DeleteProviderDialog,
@@ -94,6 +95,15 @@ export interface ProviderRow extends AiProviderConfig {
     openedAt: string | null;
   };
 }
+
+// Sunrise envelope shape for the post-create refetch. Inner row
+// contents are validated by the admin route handler — this schema
+// only guards what could realistically drift from a network seam:
+// the success flag and the data array shape.
+const refreshResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.array(z.unknown()),
+});
 
 export interface ProvidersListProps {
   initialProviders: ProviderRow[];
@@ -358,10 +368,15 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         cache: 'no-store',
       });
       if (!res.ok) return;
-      const body = (await res.json()) as { success?: boolean; data?: ProviderRow[] };
-      if (body.success && Array.isArray(body.data)) {
-        setProviders(body.data);
-      }
+      // Validate the envelope shape — `apiClient.get()` would do this
+      // for us, but we need cache: 'no-store' on this specific path
+      // (post-create refetch) so we go through raw fetch and own the
+      // parse. The row contents are owned by the admin endpoint and
+      // already typed there; this check guards the network seam.
+      const json: unknown = await res.json();
+      const parsed = refreshResponseSchema.safeParse(json);
+      if (!parsed.success) return;
+      setProviders(parsed.data.data as ProviderRow[]);
     } catch {
       // Silent — the banner already showed any error from the create call.
     } finally {

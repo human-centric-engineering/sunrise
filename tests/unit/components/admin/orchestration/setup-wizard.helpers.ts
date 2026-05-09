@@ -37,6 +37,8 @@ export interface DetectionRowFixture {
   alreadyConfigured: boolean;
   isLocal: boolean;
   suggestedDefaultChatModel: string | null;
+  suggestedRoutingModel: string | null;
+  suggestedReasoningModel: string | null;
   suggestedEmbeddingModel: string | null;
 }
 

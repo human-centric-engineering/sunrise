@@ -176,12 +176,46 @@ describe('OrchestrationSettingsPage', () => {
   // returned empty arrays in tests because their fetches resolved to
   // `{ ok: false }` from the global mock.
   it('passes chat models, providers, and embedding models through to DefaultModelsForm', async () => {
+    // Cover every matrixTierToModelTier branch by including one row
+    // per tierRole the source maps. Without this the switch arms for
+    // worker / infrastructure / control_plane / local_sovereign /
+    // default stay uncovered.
     const chatRows = [
       {
         modelId: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
         providerSlug: 'anthropic',
         tierRole: 'thinking',
+      },
+      {
+        modelId: 'claude-haiku-4-5',
+        name: 'Claude Haiku 4.5',
+        providerSlug: 'anthropic',
+        tierRole: 'worker',
+      },
+      {
+        modelId: 'embed-mini',
+        name: 'Embed Mini',
+        providerSlug: 'anthropic',
+        tierRole: 'infrastructure',
+      },
+      {
+        modelId: 'control-plane-bot',
+        name: 'Control Plane Bot',
+        providerSlug: 'anthropic',
+        tierRole: 'control_plane',
+      },
+      {
+        modelId: 'ollama-llama',
+        name: 'Local Llama',
+        providerSlug: 'ollama',
+        tierRole: 'local_sovereign',
+      },
+      {
+        modelId: 'unknown-tier',
+        name: 'Unknown Tier',
+        providerSlug: 'anthropic',
+        tierRole: 'something-new',
       },
     ];
     const providers = [{ slug: 'anthropic', name: 'Anthropic', isActive: true }];
@@ -218,12 +252,21 @@ describe('OrchestrationSettingsPage', () => {
     // Chat rows are reshaped to ModelInfo by the source — assert the
     // shape the form actually receives, not the raw matrix row.
     const passedModels = JSON.parse(form.getAttribute('data-models') ?? '[]');
-    expect(passedModels).toHaveLength(1);
-    expect(passedModels[0]).toMatchObject({
-      id: 'claude-sonnet-4-6',
-      name: 'Claude Sonnet 4.6',
-      provider: 'anthropic',
-      tier: 'frontier', // matrixTierToModelTier('thinking') => 'frontier'
+    expect(passedModels).toHaveLength(6);
+    // matrixTierToModelTier maps:
+    //   thinking → frontier, worker → mid,
+    //   infrastructure / control_plane → budget,
+    //   local_sovereign → local, default → mid.
+    const tierByModelId = Object.fromEntries(
+      passedModels.map((m: { id: string; tier: string }) => [m.id, m.tier])
+    );
+    expect(tierByModelId).toMatchObject({
+      'claude-sonnet-4-6': 'frontier',
+      'claude-haiku-4-5': 'mid',
+      'embed-mini': 'budget',
+      'control-plane-bot': 'budget',
+      'ollama-llama': 'local',
+      'unknown-tier': 'mid', // default arm
     });
     expect(JSON.parse(form.getAttribute('data-providers') ?? '[]')).toEqual(providers);
     expect(JSON.parse(form.getAttribute('data-embeddings') ?? '[]')).toEqual(embeddingModels);

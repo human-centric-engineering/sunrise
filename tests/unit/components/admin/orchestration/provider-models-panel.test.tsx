@@ -594,6 +594,204 @@ describe('ProviderModelsPanel', () => {
       expect(screen.getByRole('button', { name: /^audio$/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^other$/i })).toBeInTheDocument();
     });
+
+    it('clicking the Embedding filter chip narrows rows to embedding models', async () => {
+      // The chip rendering test above only proves the chips appear —
+      // the actual filtering logic (`activeBuckets.has(bucketFor(...))`)
+      // wasn't exercised. This drives the toggleBucket reducer + the
+      // `filtered` memo's bucket arm.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o-mini',
+            name: 'GPT-4o mini',
+            provider: 'openai',
+            tier: 'budget',
+            inputCostPerMillion: 0.15,
+            outputCostPerMillion: 0.6,
+            maxContext: 128_000,
+            supportsTools: true,
+            capabilities: ['chat'],
+          },
+          {
+            id: 'text-embedding-3-small',
+            name: 'text-embedding-3-small',
+            provider: 'openai',
+            tier: 'budget',
+            inputCostPerMillion: 0.02,
+            outputCostPerMillion: 0,
+            maxContext: 8191,
+            supportsTools: false,
+            capabilities: ['embedding'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+
+      // Both rows visible before any filter applied.
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+
+      // Chat row hidden, embedding row remains.
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('text-embedding-3-small')).toBeInTheDocument();
+
+      // Click again to deactivate — chat row returns.
+      await user.click(screen.getByRole('button', { name: /^embedding$/i }));
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Sort by tier / context / cost columns ──────────────────────────────────
+
+  describe('sortable columns', () => {
+    const SORTABLE_FIXTURE = {
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: [
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 5,
+          outputCostPerMillion: 15,
+          maxContext: 128_000,
+          supportsTools: true,
+          capabilities: ['chat'],
+        },
+        {
+          id: 'gpt-4o-mini',
+          name: 'GPT-4o mini',
+          provider: 'openai',
+          tier: 'budget',
+          inputCostPerMillion: 0.15,
+          outputCostPerMillion: 0.6,
+          maxContext: 16_000,
+          supportsTools: true,
+          capabilities: ['chat'],
+        },
+      ],
+    };
+
+    // The `inMatrix` and `name` paths already had explicit tests; this
+    // table covers the remaining four sort keys (tier / context /
+    // input / output) via one parameterised test. Each verifies that
+    // clicking the header lands the expected model first.
+    it.each([
+      // tier asc: budget < frontier
+      { column: /^tier/i, expectedFirstId: 'gpt-4o-mini' },
+      // context asc: 16k < 128k
+      { column: /^context/i, expectedFirstId: 'gpt-4o-mini' },
+      // input cost asc: 0.15 < 5
+      { column: /^input \$\/1m/i, expectedFirstId: 'gpt-4o-mini' },
+      // output cost asc: 0.6 < 15
+      { column: /^output \$\/1m/i, expectedFirstId: 'gpt-4o-mini' },
+    ])('clicking the $column header sorts ascending', async ({ column, expectedFirstId }) => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(SORTABLE_FIXTURE);
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: column }));
+
+      const rows = document.querySelectorAll('tbody tr');
+      expect(rows[0]?.textContent).toContain(expectedFirstId);
+    });
+  });
+
+  // ── Free / unknown cell tooltips ───────────────────────────────────────────
+
+  describe('cost cell display variants', () => {
+    it('renders "Free" for OpenRouter zero-pricing models (tier=local on non-local provider)', async () => {
+      // Source detection: cost=0 + tier='local' on a non-local provider
+      // signals a `:free` OpenRouter entry. The cell should render
+      // "Free" in green rather than "—" (the unknown variant).
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openrouter',
+        models: [
+          {
+            id: 'meta-llama/llama-3-8b-instruct:free',
+            name: 'Llama 3 8B Instruct (free)',
+            provider: 'openrouter',
+            tier: 'local', // OpenRouter parser's classifyTier(0)
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 8192,
+            supportsTools: false,
+            capabilities: ['chat'],
+          },
+        ],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenRouter" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('meta-llama/llama-3-8b-instruct:free')).toBeInTheDocument();
+      });
+
+      // Two "Free" labels — input cost cell + output cost cell.
+      const freeCells = screen.getAllByText('Free');
+      expect(freeCells.length).toBe(2);
+    });
+
+    it('renders em-dash for unknown pricing (tier=mid + cost=0 = not in OpenRouter)', async () => {
+      // Source forces tier='mid' for non-local providers when the model
+      // isn't in the registry. cost=0 here means "unknown", not "free".
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'mystery-model',
+            name: 'Mystery Model',
+            provider: 'openai',
+            tier: 'mid', // openai-compatible fallback
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['chat'],
+          },
+        ],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('mystery-model')).toBeInTheDocument();
+      });
+
+      // No Free labels (the mid-tier-zero-cost case is "unknown").
+      expect(screen.queryByText('Free')).not.toBeInTheDocument();
+      // Em-dashes render in the unknown cells (Context + Input + Output
+      // = 3, plus the Available column when not pre-set, so just check
+      // for at least 3).
+      const dashes = screen.getAllByText('—');
+      expect(dashes.length).toBeGreaterThanOrEqual(3);
+    });
   });
 
   // ── In-use column + filter ────────────────────────────────────────────────
