@@ -54,6 +54,12 @@ export interface ModelRowAgentRef {
   slug: string;
 }
 
+export interface ModelRowWorkflowRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export interface ModelRow {
   id: string;
   slug: string;
@@ -233,6 +239,7 @@ export function ProviderModelsMatrix({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBlockedAgents, setDeleteBlockedAgents] = useState<ModelRowAgentRef[]>([]);
+  const [deleteBlockedWorkflows, setDeleteBlockedWorkflows] = useState<ModelRowWorkflowRef[]>([]);
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -242,14 +249,20 @@ export function ProviderModelsMatrix({
       await apiClient.delete(API.ADMIN.ORCHESTRATION.providerModelById(deleteTarget.id));
       setDeleteTarget(null);
       setDeleteBlockedAgents([]);
+      setDeleteBlockedWorkflows([]);
       router.refresh();
     } catch (err) {
-      // 409 → in-use guard tripped. Pull the bound-agent list out of
+      // 409 → in-use guard tripped. Pull the blocking-ref lists out of
       // the structured details so the dialog can render names + slugs
       // instead of just an opaque error message.
       if (err instanceof APIClientError) {
-        if (err.status === 409 && Array.isArray(err.details?.agents)) {
-          setDeleteBlockedAgents(err.details.agents as ModelRowAgentRef[]);
+        if (err.status === 409) {
+          if (Array.isArray(err.details?.agents)) {
+            setDeleteBlockedAgents(err.details.agents as ModelRowAgentRef[]);
+          }
+          if (Array.isArray(err.details?.workflows)) {
+            setDeleteBlockedWorkflows(err.details.workflows as ModelRowWorkflowRef[]);
+          }
         }
         setDeleteError(err.message);
       } else {
@@ -264,7 +277,10 @@ export function ProviderModelsMatrix({
     setDeleteTarget(null);
     setDeleteError(null);
     setDeleteBlockedAgents([]);
+    setDeleteBlockedWorkflows([]);
   }, []);
+
+  const deleteBlocked = deleteBlockedAgents.length + deleteBlockedWorkflows.length > 0;
 
   const providers = useMemo(
     () => [...new Set(initialModels.map((m) => m.providerSlug))].sort(),
@@ -603,11 +619,11 @@ export function ProviderModelsMatrix({
             <AlertDialogDescription>
               {deleteTarget ? (
                 <>
-                  This soft-deletes <strong>{deleteTarget.name}</strong> from the matrix — it stops
-                  appearing in selection lists. You can re-add it later via the Discover dialog.
+                  Permanently removes <strong>{deleteTarget.name}</strong> from the matrix. Discover
+                  models will list it again if the provider still serves it.
                 </>
               ) : (
-                'This soft-deletes the model from the matrix.'
+                'Permanently removes the model from the matrix.'
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -636,7 +652,35 @@ export function ProviderModelsMatrix({
             </div>
           )}
 
-          {deleteError && deleteBlockedAgents.length === 0 && (
+          {deleteBlockedWorkflows.length > 0 && (
+            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              <p className="font-medium">
+                {deleteBlockedWorkflows.length} workflow
+                {deleteBlockedWorkflows.length === 1 ? '' : 's'} pin
+                {deleteBlockedWorkflows.length === 1 ? 's' : ''} this model via{' '}
+                <code>modelOverride</code> — edit{' '}
+                {deleteBlockedWorkflows.length === 1 ? 'it' : 'them'} first:
+              </p>
+              <ul className="text-muted-foreground mt-1 list-inside list-disc">
+                {deleteBlockedWorkflows.slice(0, 8).map((w) => (
+                  <li key={w.id}>
+                    <Link
+                      href={`/admin/orchestration/workflows/${w.id}`}
+                      className="hover:underline"
+                    >
+                      {w.name}
+                    </Link>{' '}
+                    <span className="font-mono text-xs">({w.slug})</span>
+                  </li>
+                ))}
+                {deleteBlockedWorkflows.length > 8 && (
+                  <li>…and {deleteBlockedWorkflows.length - 8} more</li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {deleteError && !deleteBlocked && (
             <p className="text-destructive text-sm">{deleteError}</p>
           )}
 
@@ -645,13 +689,13 @@ export function ProviderModelsMatrix({
             <AlertDialogAction
               onClick={(e) => {
                 // Default closes the dialog; we want to keep it open if the
-                // 409 response surfaces a list of bound agents the operator
-                // needs to act on.
+                // 409 response surfaces a list of bound refs the operator
+                // needs to act on first.
                 e.preventDefault();
                 void handleConfirmDelete();
               }}
               className="bg-red-600 hover:bg-red-700"
-              disabled={deleting || deleteBlockedAgents.length > 0}
+              disabled={deleting || deleteBlocked}
             >
               {deleting ? (
                 <>

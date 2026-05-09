@@ -8,7 +8,8 @@
  * Key assertions:
  *   - GET returns enriched model with configured flag
  *   - PATCH updates fields and sets isDefault=false on seed rows
- *   - DELETE soft-deletes (sets isActive=false)
+ *   - DELETE hard-deletes (removes the row), refused with 409 when any
+ *     active agent or active workflow still references the model
  *   - 404 for unknown id
  *   - Auth and rate-limiting enforced
  *
@@ -39,11 +40,15 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderModel: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     aiProviderConfig: {
       findFirst: vi.fn(),
     },
     aiAgent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
+    aiWorkflow: {
       findMany: vi.fn(() => Promise.resolve([])),
     },
   },
@@ -593,12 +598,10 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(response.status).toBe(404);
   });
 
-  it('soft-deletes by setting isActive=false', async () => {
+  it('hard-deletes the row when nothing references it', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue(
-      makeModel({ isActive: false }) as never
-    );
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
     expect(response.status).toBe(200);
@@ -607,11 +610,9 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.deleted).toBe(true);
 
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { isActive: false },
-      })
-    );
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalledWith({ where: { id: MODEL_ID } });
+    // Hard-delete must not silently fall back to a soft-delete update.
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
   });
 
   it('returns 429 when rate-limited', async () => {
@@ -622,7 +623,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(response.status).toBe(429);
   });
 
-  it('returns 409 with bound agents when model is still in use', async () => {
+  it('returns 409 with bound agents when an active agent uses the model', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
       makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
@@ -640,7 +641,10 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       error: {
         code: string;
         message: string;
-        details: { agents: Array<{ id: string; name: string; slug: string }> };
+        details: {
+          agents: Array<{ id: string; name: string; slug: string }>;
+          workflows: Array<{ id: string; name: string; slug: string }>;
+        };
       };
     }>(response);
 
@@ -648,8 +652,9 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(body.error.code).toBe('MODEL_IN_USE');
     expect(body.error.details.agents).toHaveLength(2);
     expect(body.error.details.agents.map((a) => a.slug)).toEqual(['triage-bot', 'researcher']);
-    // The DB write must be skipped — this is the whole point of the guard.
-    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+    expect(body.error.details.workflows).toEqual([]);
+    // The DB delete must be skipped — this is the whole point of the guard.
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
 
     // The agent lookup must be scoped to the same (provider, model) pair
     // as the matrix row — never a cross-provider scan.
@@ -660,18 +665,80 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     );
   });
 
-  it('soft-deletes when no active agent is bound to the model', async () => {
+  it('returns 409 with bound workflows when a workflow pins the model via modelOverride', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
+    );
+    // No agents bound, but two active workflows pin the model — one in
+    // its published version, one in its in-progress draft.
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([
+      {
+        id: 'wf-1',
+        name: 'Support Router',
+        slug: 'support-router',
+        draftDefinition: null,
+        publishedVersion: {
+          snapshot: {
+            steps: [{ id: 's1', type: 'llm_call', config: { modelOverride: 'gpt-4o-mini' } }],
+          },
+        },
+      },
+      {
+        id: 'wf-2',
+        name: 'Refund Flow',
+        slug: 'refund-flow',
+        draftDefinition: {
+          steps: [{ id: 's1', type: 'route', config: { modelOverride: 'gpt-4o-mini' } }],
+        },
+        publishedVersion: null,
+      },
+      {
+        // Pins a different model — must not be reported as a blocker.
+        id: 'wf-3',
+        name: 'Unrelated',
+        slug: 'unrelated',
+        draftDefinition: null,
+        publishedVersion: {
+          snapshot: {
+            steps: [{ id: 's1', type: 'llm_call', config: { modelOverride: 'claude-haiku' } }],
+          },
+        },
+      },
+    ] as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    expect(response.status).toBe(409);
+
+    const body = await parseJson<{
+      success: boolean;
+      error: {
+        code: string;
+        details: {
+          agents: Array<{ slug: string }>;
+          workflows: Array<{ id: string; name: string; slug: string }>;
+        };
+      };
+    }>(response);
+
+    expect(body.error.code).toBe('MODEL_IN_USE');
+    expect(body.error.details.workflows.map((w) => w.slug)).toEqual([
+      'support-router',
+      'refund-flow',
+    ]);
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('hard-deletes when no active agent or workflow references the model', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue(
-      makeModel({ isActive: false }) as never
-    );
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
     expect(response.status).toBe(200);
-    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { isActive: false } })
-    );
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalledWith({ where: { id: MODEL_ID } });
   });
 });

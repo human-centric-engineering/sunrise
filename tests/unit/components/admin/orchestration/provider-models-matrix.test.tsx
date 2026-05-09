@@ -525,7 +525,7 @@ describe('ProviderModelsMatrix', () => {
 
       // Dialog appears with the model name in the description.
       expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
-      expect(screen.getByText(/soft-deletes/i)).toBeInTheDocument();
+      expect(screen.getByText(/permanently removes/i)).toBeInTheDocument();
 
       await user.click(screen.getByRole('button', { name: /^delete$/i }));
 
@@ -565,6 +565,38 @@ describe('ProviderModelsMatrix', () => {
 
       // Delete button is disabled — the operator has to re-point the
       // agent before the action can complete.
+      const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
+      expect(deleteBtn).toBeDisabled();
+    });
+
+    it('renders the bound-workflow list and disables Delete on a 409 response', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          'Cannot delete model "GPT-5" — 1 active workflow still references it.',
+          'MODEL_IN_USE',
+          409,
+          {
+            agents: [],
+            workflows: [{ id: 'wf-1', name: 'Support Router', slug: 'support-router' }],
+          }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // Bound-workflow list appears with a deep link to the workflow.
+      expect(await screen.findByText('Support Router')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /support router/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/workflows/wf-1'
+      );
+
+      // Delete button is disabled until the workflow is re-pointed.
       const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
       expect(deleteBtn).toBeDisabled();
     });
