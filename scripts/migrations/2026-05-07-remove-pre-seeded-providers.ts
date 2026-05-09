@@ -31,9 +31,10 @@ import { logger } from '@/lib/logging';
  * ---------------------
  * For each of the 3 slugs below:
  *   - Read the row.
- *   - Confirm it matches its seed shape exactly (`providerType`,
- *     `baseUrl`, `apiKeyEnvVar`). If the operator has edited any of
- *     those fields, the row is treated as customised and SKIPPED.
+ *   - Confirm it matches its seed shape exactly (`name`, `providerType`,
+ *     `baseUrl`, `apiKeyEnvVar`). If the operator has renamed the row
+ *     or edited any of those fields, the row is treated as customised
+ *     and SKIPPED.
  *   - Confirm no agent has `provider = <slug>`. If any agent still
  *     references the slug, the row is SKIPPED so we don't break that
  *     agent's chat binding.
@@ -70,18 +71,21 @@ import { logger } from '@/lib/logging';
 const PRE_SEEDED_PROVIDERS = [
   {
     slug: 'anthropic',
+    expectedName: 'Anthropic',
     expectedProviderType: 'anthropic',
     expectedBaseUrl: null as string | null,
     expectedApiKeyEnvVar: 'ANTHROPIC_API_KEY' as string | null,
   },
   {
     slug: 'openai',
+    expectedName: 'OpenAI',
     expectedProviderType: 'openai-compatible',
     expectedBaseUrl: 'https://api.openai.com/v1' as string | null,
     expectedApiKeyEnvVar: 'OPENAI_API_KEY' as string | null,
   },
   {
     slug: 'ollama-local',
+    expectedName: 'Ollama (Local)',
     expectedProviderType: 'openai-compatible',
     expectedBaseUrl: 'http://localhost:11434/v1' as string | null,
     expectedApiKeyEnvVar: null as string | null,
@@ -103,10 +107,15 @@ async function main(): Promise<void> {
     }
 
     // ── Step 2: customisation check ──────────────────────────────────
-    // The original seed used a fixed (providerType, baseUrl, apiKeyEnvVar)
-    // triple per slug. If any of those have drifted, the operator has
-    // been editing, and we don't touch their work.
+    // The original seed used a fixed (name, providerType, baseUrl,
+    // apiKeyEnvVar) tuple per slug. If any of those have drifted, the
+    // operator has been editing, and we don't touch their work. Name
+    // is part of the check because the admin UI lets operators rename
+    // a row freely; a "Anthropic" → "My Custom Anthropic" rename would
+    // otherwise pass the previous (providerType/baseUrl/apiKeyEnvVar)
+    // triple check and the row would be silently destroyed.
     const customised =
+      row.name !== seed.expectedName ||
       row.providerType !== seed.expectedProviderType ||
       row.baseUrl !== seed.expectedBaseUrl ||
       row.apiKeyEnvVar !== seed.expectedApiKeyEnvVar;
@@ -114,6 +123,7 @@ async function main(): Promise<void> {
     if (customised) {
       logger.warn('  ⚠️  skipped — row has been customised', {
         slug: seed.slug,
+        name: row.name,
         providerType: row.providerType,
         baseUrl: row.baseUrl,
         apiKeyEnvVar: row.apiKeyEnvVar,
