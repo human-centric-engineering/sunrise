@@ -44,6 +44,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+  usePathname: vi.fn(() => '/admin/orchestration/evaluations'),
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

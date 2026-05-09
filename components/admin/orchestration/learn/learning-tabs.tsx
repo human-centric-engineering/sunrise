@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API } from '@/lib/api/endpoints';
+import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
 import type { PatternSummary } from '@/types/orchestration';
 
@@ -18,10 +19,12 @@ import { PatternCardGrid } from '@/components/admin/orchestration/learn/pattern-
 
 interface LearningTabsProps {
   patterns: PatternSummary[];
-  defaultTab?: string;
   contextType?: string;
   contextId?: string;
 }
+
+const ALLOWED_TABS = ['patterns', 'advisor', 'quiz'] as const;
+type LearningTab = (typeof ALLOWED_TABS)[number];
 
 const ADVISOR_PROMPTS = [
   'What pattern should I use for content moderation?',
@@ -56,8 +59,12 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
-export function LearningTabs({ patterns, defaultTab, contextType, contextId }: LearningTabsProps) {
+export function LearningTabs({ patterns, contextType, contextId }: LearningTabsProps) {
   const router = useRouter();
+  const { activeTab, setActiveTab } = useUrlTabs<LearningTab>({
+    defaultTab: 'patterns',
+    allowedTabs: ALLOWED_TABS,
+  });
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
@@ -108,7 +115,7 @@ export function LearningTabs({ patterns, defaultTab, contextType, contextId }: L
   }, [router, workflowRecommendation]);
 
   return (
-    <Tabs defaultValue={defaultTab ?? 'patterns'}>
+    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as LearningTab)}>
       <TabsList>
         <TabsTrigger value="patterns">Patterns</TabsTrigger>
         <TabsTrigger value="advisor">Advisor</TabsTrigger>
