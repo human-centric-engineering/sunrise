@@ -113,16 +113,25 @@ describe('CostsPage (server component)', () => {
     // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
 
-    // Mock all fetches to succeed
+    // Mock all fetches to succeed. `globalCap` and `fetchedAt` mirror
+    // the real AlertsResponse / ModelsResponse shapes — without them
+    // the page reads `?? null` fallbacks and the corresponding UI
+    // branches go untested.
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
     vi.mocked(parseApiResponse)
       .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY }) // summary
-      .mockResolvedValueOnce({ success: true, data: { alerts: MOCK_ALERTS } }) // alerts
+      .mockResolvedValueOnce({
+        success: true,
+        data: { alerts: MOCK_ALERTS, globalCap: { cap: 100, spent: 60, exceeded: false } },
+      }) // alerts
       .mockResolvedValueOnce({
         success: true,
         data: { rows: [], groupBy: 'model' },
       }) // perModel
-      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } }); // models
+      .mockResolvedValueOnce({
+        success: true,
+        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
+      }); // models
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
@@ -140,9 +149,15 @@ describe('CostsPage (server component)', () => {
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
     vi.mocked(parseApiResponse)
       .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY })
-      .mockResolvedValueOnce({ success: true, data: { alerts: MOCK_ALERTS } })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { alerts: MOCK_ALERTS, globalCap: { cap: 100, spent: 60, exceeded: false } },
+      })
       .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
-      .mockResolvedValueOnce({ success: true, data: { models: MOCK_MODELS } });
+      .mockResolvedValueOnce({
+        success: true,
+        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
+      });
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
@@ -161,45 +176,80 @@ describe('CostsPage (server component)', () => {
     expect(screen.getByTestId('local-vs-cloud-panel')).toBeInTheDocument();
   });
 
-  it('renders stable empty-state layout and does not throw when every fetch rejects', async () => {
-    // Arrange
+  it('renders the global-cap-exceeded alert block when globalCap.exceeded is true', async () => {
+    // Covers the BudgetAlertsList `hasGlobalCapAlert` branch — when
+    // `globalCap.exceeded === true` the component renders a distinct
+    // "Global monthly budget exceeded" block. Without globalCap in the
+    // mock fixture this branch was unreachable.
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: MOCK_SUMMARY })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          alerts: [],
+          globalCap: { cap: 100, spent: 110, exceeded: true },
+        },
+      })
+      .mockResolvedValueOnce({ success: true, data: { rows: [], groupBy: 'model' } })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { models: MOCK_MODELS, fetchedAt: 1715260800000 },
+      });
+
+    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+    render(await CostsPage());
+
+    expect(screen.getByText(/global monthly budget exceeded/i)).toBeInTheDocument();
+  });
+
+  it('renders stable empty-state layout when every fetch rejects, and logs each helper failure', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { logger } = await import('@/lib/logging');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network failure'));
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-    // Act
-    let thrown = false;
-    try {
-      render(await CostsPage());
-    } catch {
-      thrown = true;
-    }
+    // Direct render — Vitest surfaces unhandled exceptions natively, so
+    // a try/catch flag is redundant. The real contract: each failed
+    // helper logs via logger.error AND the page still renders.
+    render(await CostsPage());
 
-    // Assert: never throws
-    expect(thrown).toBe(false);
-
-    // Assert: page heading still renders (structural stability)
     expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(
+      'costs page: failed to load cost summary',
+      expect.any(Error)
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'costs page: failed to load budget alerts',
+      expect.any(Error)
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'costs page: failed to load per-model breakdown',
+      expect.any(Error)
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'costs page: failed to load models',
+      expect.any(Error)
+    );
   });
 
-  it('does not throw when serverFetch returns non-ok status', async () => {
-    // Arrange
+  it('renders the heading when serverFetch returns non-ok status (no helper throws, none log)', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { logger } = await import('@/lib/logging');
     vi.mocked(serverFetch).mockResolvedValue({ ok: false, status: 500 } as Response);
 
     const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
-    // Act
-    let thrown = false;
-    try {
-      render(await CostsPage());
-    } catch {
-      thrown = true;
-    }
+    render(await CostsPage());
 
-    // Assert
-    expect(thrown).toBe(false);
     expect(screen.getByRole('heading', { name: /costs & budget/i })).toBeInTheDocument();
+    // Non-ok responses take the `if (!res.ok) return null` early-out
+    // (NOT the catch arm) — so logger.error must NOT fire. Asserting
+    // this distinguishes the "non-ok" path from the "throws" path
+    // covered by the previous test.
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

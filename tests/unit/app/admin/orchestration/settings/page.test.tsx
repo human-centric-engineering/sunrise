@@ -17,7 +17,19 @@ vi.mock('@/components/admin/orchestration/settings-form', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/default-models-form', () => ({
-  DefaultModelsForm: () => <div data-testid="default-models-form" />,
+  DefaultModelsForm: (props: {
+    settings: unknown;
+    models: unknown;
+    providers: unknown;
+    embeddingModels: unknown;
+  }) => (
+    <div
+      data-testid="default-models-form"
+      data-models={JSON.stringify(props.models)}
+      data-providers={JSON.stringify(props.providers)}
+      data-embeddings={JSON.stringify(props.embeddingModels)}
+    />
+  ),
 }));
 
 vi.mock('@/components/admin/orchestration/settings/backup-panel', () => ({
@@ -131,8 +143,12 @@ describe('OrchestrationSettingsPage', () => {
     expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
   });
 
-  // 6. serverFetch throws: logger.error called and defaults passed to SettingsForm
-  it('calls logger.error and passes defaults to SettingsForm when serverFetch throws', async () => {
+  // 6. serverFetch throws: logger.error called for ALL four helpers and
+  // defaults passed to SettingsForm. Each helper has its own try/catch
+  // with a distinct message — toHaveBeenCalledWith is a partial check,
+  // so a regression that broke any one of the chat/providers/embeddings
+  // error branches would have been invisible without this coverage.
+  it('calls logger.error for each of the four helpers and passes defaults when serverFetch throws', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
@@ -140,7 +156,77 @@ describe('OrchestrationSettingsPage', () => {
 
     const form = screen.getByTestId('settings-form');
     expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
+    expect(logger.error).toHaveBeenCalledTimes(4);
     expect(logger.error).toHaveBeenCalledWith('settings page: fetch failed', fetchError);
+    expect(logger.error).toHaveBeenCalledWith(
+      'settings page: chat models fetch failed',
+      fetchError
+    );
+    expect(logger.error).toHaveBeenCalledWith('settings page: providers fetch failed', fetchError);
+    expect(logger.error).toHaveBeenCalledWith(
+      'settings page: embedding models fetch failed',
+      fetchError
+    );
+  });
+
+  // 6b. Happy path covering ALL four parallel serverFetch calls — proves
+  // each helper's data lands on the corresponding DefaultModelsForm prop
+  // (chat models, providers, embedding models). The original happy-path
+  // test only verified settings; the other three helpers always
+  // returned empty arrays in tests because their fetches resolved to
+  // `{ ok: false }` from the global mock.
+  it('passes chat models, providers, and embedding models through to DefaultModelsForm', async () => {
+    const chatRows = [
+      {
+        modelId: 'claude-sonnet-4-6',
+        name: 'Claude Sonnet 4.6',
+        providerSlug: 'anthropic',
+        tierRole: 'thinking',
+      },
+    ];
+    const providers = [{ slug: 'anthropic', name: 'Anthropic', isActive: true }];
+    const embeddingModels = [
+      { id: 'voyage-3', name: 'Voyage 3', provider: 'voyage', model: 'voyage-3' },
+    ];
+
+    // serverFetch returns a tagged response so parseApiResponse can
+    // dispatch on the original URL — Promise.all() does not guarantee
+    // call ordering, so dispatching by URL is more robust than relying
+    // on mockResolvedValueOnce sequencing.
+    vi.mocked(serverFetch).mockImplementation(((url: string) =>
+      Promise.resolve({ ok: true, _testUrl: url } as unknown as Response)) as never);
+    vi.mocked(parseApiResponse).mockImplementation(((res: Response & { _testUrl?: string }) => {
+      const url = res._testUrl ?? '';
+      if (url.includes(API.ADMIN.ORCHESTRATION.SETTINGS)) {
+        return Promise.resolve({ success: true, data: mockSettings });
+      }
+      if (url.includes(API.ADMIN.ORCHESTRATION.PROVIDER_MODELS)) {
+        return Promise.resolve({ success: true, data: chatRows });
+      }
+      if (url.includes(API.ADMIN.ORCHESTRATION.PROVIDERS)) {
+        return Promise.resolve({ success: true, data: providers });
+      }
+      if (url.includes(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS)) {
+        return Promise.resolve({ success: true, data: embeddingModels });
+      }
+      return Promise.resolve({ success: false });
+    }) as never);
+
+    render(await OrchestrationSettingsPage());
+
+    const form = screen.getByTestId('default-models-form');
+    // Chat rows are reshaped to ModelInfo by the source — assert the
+    // shape the form actually receives, not the raw matrix row.
+    const passedModels = JSON.parse(form.getAttribute('data-models') ?? '[]');
+    expect(passedModels).toHaveLength(1);
+    expect(passedModels[0]).toMatchObject({
+      id: 'claude-sonnet-4-6',
+      name: 'Claude Sonnet 4.6',
+      provider: 'anthropic',
+      tier: 'frontier', // matrixTierToModelTier('thinking') => 'frontier'
+    });
+    expect(JSON.parse(form.getAttribute('data-providers') ?? '[]')).toEqual(providers);
+    expect(JSON.parse(form.getAttribute('data-embeddings') ?? '[]')).toEqual(embeddingModels);
   });
 
   // 7. Renders breadcrumb link to /admin/orchestration

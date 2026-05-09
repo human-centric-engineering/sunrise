@@ -107,14 +107,21 @@ describe('NewProviderPage (server component)', () => {
     });
   });
 
-  it('renders a form element', async () => {
+  it('mounts the create-provider button inside a <form> for native submit', async () => {
     mockSetupState(false);
     const { default: NewProviderPage } =
       await import('@/app/admin/orchestration/providers/new/page');
 
     render(await NewProviderPage());
 
-    expect(document.querySelector('form')).toBeTruthy();
+    // querySelector('form').toBeTruthy() reports `expected null to be
+    // truthy` on failure, which doesn't tell you which form went
+    // missing. Anchor on the submit button (a contract this page
+    // owns) and walk up to the form ancestor — that proves both that
+    // the form mounts AND that pressing Enter / clicking submit will
+    // trigger native submission, which the original test did not.
+    const submit = screen.getByRole('button', { name: /create provider/i });
+    expect(submit.closest('form')).not.toBeNull();
   });
 
   it('renders breadcrumb navigation links', async () => {

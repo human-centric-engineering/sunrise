@@ -150,23 +150,23 @@ describe('AgentsListPage (server component)', () => {
     expect(screen.getByText(/no agents yet/i)).toBeInTheDocument();
   });
 
-  it('does not throw when serverFetch rejects', async () => {
-    // Arrange
+  it('logs the fetch failure and still renders the page when serverFetch rejects', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { logger } = await import('@/lib/logging');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: AgentsListPage } = await import('@/app/admin/orchestration/agents/page');
 
-    // Act: should not throw
-    let thrown = false;
-    try {
-      render(await AgentsListPage());
-    } catch {
-      thrown = true;
-    }
+    // Direct render — Vitest reports unhandled exceptions natively, so
+    // a try/catch + thrown-flag pattern adds no signal. The real
+    // contract: logger.error fires with the page's error context AND
+    // the page still renders the heading (graceful degradation).
+    render(await AgentsListPage());
 
-    // Assert
-    expect(thrown).toBe(false);
     expect(screen.getByRole('heading', { name: /^agents$/i })).toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(
+      'agents list page: initial fetch failed',
+      expect.any(Error)
+    );
   });
 });
