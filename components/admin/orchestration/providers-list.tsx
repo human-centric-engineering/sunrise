@@ -96,13 +96,42 @@ export interface ProviderRow extends AiProviderConfig {
   };
 }
 
-// Sunrise envelope shape for the post-create refetch. Inner row
-// contents are validated by the admin route handler — this schema
-// only guards what could realistically drift from a network seam:
-// the success flag and the data array shape.
+// Sunrise envelope shape for the post-create refetch. The inner row
+// schema validates every field this component reads — id/slug/etc. for
+// state, providerType/baseUrl/apiKeyEnvVar for status logic, and the
+// optional circuitBreaker block for the dot colour. Unknown extras pass
+// through (`.passthrough()`) so the schema doesn't break if a future
+// admin endpoint adds fields the UI doesn't yet know about.
+const providerRowSchema = z
+  .object({
+    id: z.string(),
+    slug: z.string(),
+    name: z.string(),
+    providerType: z.string(),
+    baseUrl: z.string().nullable(),
+    apiKeyEnvVar: z.string().nullable(),
+    isLocal: z.boolean(),
+    isActive: z.boolean(),
+    metadata: z.unknown().nullable(),
+    timeoutMs: z.number().nullable(),
+    maxRetries: z.number().nullable(),
+    createdBy: z.string(),
+    createdAt: z.union([z.string(), z.date()]),
+    updatedAt: z.union([z.string(), z.date()]),
+    apiKeyPresent: z.boolean(),
+    circuitBreaker: z
+      .object({
+        state: z.enum(['closed', 'open', 'half-open']),
+        failureCount: z.number(),
+        openedAt: z.string().nullable(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 const refreshResponseSchema = z.object({
   success: z.literal(true),
-  data: z.array(z.unknown()),
+  data: z.array(providerRowSchema),
 });
 
 export interface ProvidersListProps {
@@ -376,6 +405,10 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       const json: unknown = await res.json();
       const parsed = refreshResponseSchema.safeParse(json);
       if (!parsed.success) return;
+      // Zod has now validated every field this component depends on; the
+      // cast just narrows from the schema's inferred type (with optional
+      // passthrough extras) to the local `ProviderRow` interface, which
+      // is the same shape with stricter `metadata: Json` typing.
       setProviders(parsed.data.data as ProviderRow[]);
     } catch {
       // Silent — the banner already showed any error from the create call.
