@@ -218,12 +218,14 @@ When the agent triggers a workflow (via the `run_workflow` capability) that paus
 
 The `/approve/embed` and `/reject/embed` routes enforce CORS against `OrchestrationSettings.embedAllowedOrigins`. **Admins must populate this allowlist with the partner-site origin** before the embed widget can submit approvals — the default empty array means every embed-channel POST is rejected with a 403. Origin `null` is always rejected (sandboxed iframes, file:// loads).
 
+Wildcard `'*'` is intentionally not supported on these routes. Both the write-side Zod schema (`lib/validations/orchestration.ts`) and the read-side parser (`parseEmbedAllowedOrigins` in `lib/orchestration/settings.ts`) reject any entry that fails `new URL().origin` normalisation. The exact-match-only posture forces every fork to think about origins explicitly. Forks that genuinely need wildcard CORS for these endpoints must change all three sites together (write schema, read parser, and `allowlistCorsHeaders`); adding wildcard at one site alone produces dead code.
+
 The `/status` endpoint uses permissive CORS (`*`) so the widget can poll from any partner origin. Token authentication is the gate: anyone with a valid HMAC token can read execution state, matching the audience model where the recipient is the end user themselves.
 
 After a terminal poll state, the card writes a synthesised follow-up message into the existing input field and triggers `send()` — the LLM gets a fresh turn carrying the workflow output as if the user typed `Workflow approved. Result: { … }` themselves.
 
 ### embedAllowedOrigins setting
 
-`OrchestrationSettings.embedAllowedOrigins: Json` — array of origin strings (`https://` URLs, plus `http://localhost` and `http://127.0.0.1` for development). Read at the top of every `/embed` POST and validated against the request `Origin` header. Malformed entries are dropped at hydration time so a corrupt setting can't crash the approval routes.
+`OrchestrationSettings.embedAllowedOrigins: Json` — array of origin strings (`https://` URLs, plus `http://localhost` and `http://127.0.0.1` for development). Read at the top of every `/embed` POST and validated against the request `Origin` header. Malformed entries are dropped at hydration time so a corrupt setting can't crash the approval routes; each drop emits a `logger.warn` with the offending value, index, and reason so operators can spot a misconfigured allowlist in the logs.
 
 Configure via the global orchestration settings UI; updates take effect on the next request (no caching).

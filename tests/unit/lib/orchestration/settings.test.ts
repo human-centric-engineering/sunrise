@@ -32,9 +32,19 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   })),
 }));
 
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   parseStoredDefaults,
@@ -482,6 +492,84 @@ describe('hydrateSettings', () => {
         ] as unknown as Prisma.JsonValue,
       });
       expect(hydrateSettings(row).embedAllowedOrigins).toEqual(['https://valid.com']);
+    });
+
+    describe('observable drops (logger.warn)', () => {
+      // Silent dropping of corrupted DB rows is a deeper bug surfaced during
+      // the test-coverage uplift on this branch — admins importing or directly
+      // writing a malformed allowlist would otherwise see all approval POSTs
+      // return 403 with no signal in logs. parseEmbedAllowedOrigins now emits
+      // a structured warning per drop while preserving the safety-net contract
+      // (we never fail the request — just log + carry on with the valid subset).
+      beforeEach(() => {
+        vi.mocked(logger.warn).mockClear();
+      });
+
+      it('warns when the entire field is not an array', () => {
+        const row = makeRow({
+          embedAllowedOrigins: 'not-an-array' as unknown as Prisma.JsonValue,
+        });
+        hydrateSettings(row);
+        expect(logger.warn).toHaveBeenCalledWith(
+          'embedAllowedOrigins is not an array — ignoring entire field',
+          { type: 'string' }
+        );
+      });
+
+      it('warns when an entry is not a string and identifies its index', () => {
+        const row = makeRow({
+          embedAllowedOrigins: [
+            'https://valid.com',
+            42 as unknown as string,
+          ] as unknown as Prisma.JsonValue,
+        });
+        hydrateSettings(row);
+        expect(logger.warn).toHaveBeenCalledWith(
+          'embedAllowedOrigins entry is not a string — dropping',
+          { index: 1, type: 'number' }
+        );
+      });
+
+      it('warns when an entry is an unparseable URL and includes the value plus parse error', () => {
+        const row = makeRow({ embedAllowedOrigins: ['not-a-url'] });
+        hydrateSettings(row);
+        expect(logger.warn).toHaveBeenCalledWith(
+          'embedAllowedOrigins entry is not a valid URL — dropping',
+          expect.objectContaining({
+            index: 0,
+            value: 'not-a-url',
+            error: expect.any(String),
+          })
+        );
+      });
+
+      it('warns when an entry has an unsupported protocol/host (e.g. http://attacker.com)', () => {
+        const row = makeRow({ embedAllowedOrigins: ['http://attacker.com'] });
+        hydrateSettings(row);
+        expect(logger.warn).toHaveBeenCalledWith(
+          'embedAllowedOrigins entry has unsupported protocol or host — dropping',
+          expect.objectContaining({
+            index: 0,
+            value: 'http://attacker.com',
+            protocol: 'http:',
+            hostname: 'attacker.com',
+          })
+        );
+      });
+
+      it('does not warn when every entry is valid', () => {
+        const row = makeRow({
+          embedAllowedOrigins: ['https://partner.com', 'http://localhost:3000'],
+        });
+        hydrateSettings(row);
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
+
+      it('does not warn when the field is null or undefined (default empty case)', () => {
+        const row = makeRow({ embedAllowedOrigins: null as unknown as Prisma.JsonValue });
+        hydrateSettings(row);
+        expect(logger.warn).not.toHaveBeenCalled();
+      });
     });
   });
 });

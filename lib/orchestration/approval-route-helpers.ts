@@ -264,7 +264,20 @@ export function singleOriginCorsHeaders(
   };
 }
 
-/** Build CORS headers for an allowlist, rejecting `null` and non-listed origins. */
+/**
+ * Build CORS headers for an exact-match allowlist.
+ *
+ * Returns headers only when `requestOrigin` is a non-null exact match of an
+ * allowlisted origin; rejects `null` (sandboxed iframes, file://) and any
+ * non-listed origin. Wildcard `'*'` is intentionally NOT supported — the
+ * write-side Zod schema in `lib/validations/orchestration.ts` and the
+ * read-side `parseEmbedAllowedOrigins` in `lib/orchestration/settings.ts`
+ * both reject any entry that fails `new URL().origin` normalisation, so
+ * `'*'` cannot reach this helper from real config. Adding wildcard support
+ * here without aligning the parser pipeline produces dead code; downstream
+ * forks that need wildcard CORS for these endpoints must change all three
+ * sites together.
+ */
 export function allowlistCorsHeaders(
   requestOrigin: string | null,
   allowedOrigins: string[],
