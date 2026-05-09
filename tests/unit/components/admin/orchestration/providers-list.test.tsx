@@ -724,7 +724,7 @@ describe('ProvidersList', () => {
       await user.click(viewModels);
 
       await waitFor(() => {
-        expect(screen.getByText('Model catalogue')).toBeInTheDocument();
+        expect(screen.getByText(/Model catalogue\s+—\s+Anthropic/)).toBeInTheDocument();
       });
     });
   });

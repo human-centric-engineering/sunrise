@@ -780,7 +780,9 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
       >
         <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>Model catalogue</DialogTitle>
+            <DialogTitle>
+              {modelsDialogFor ? `Model catalogue — ${modelsDialogFor.name}` : 'Model catalogue'}
+            </DialogTitle>
           </DialogHeader>
           {modelsDialogFor && (
             // One scroll region for the whole panel — the table's sticky

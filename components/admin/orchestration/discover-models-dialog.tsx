@@ -193,6 +193,13 @@ export interface DiscoverModelsDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Pre-fill the provider so step 1 is skipped. */
   providerSlug?: string;
+  /**
+   * Display name for the pre-filled provider. Used in the dialog title and
+   * discovery step header so the operator knows which provider's catalogue
+   * they're looking at. When the operator picks via the step-1 dropdown,
+   * the name is derived from the loaded providers list instead.
+   */
+  providerName?: string;
   /** Pre-check the named modelIds in step 2. Useful for the View Models reuse path. */
   prefilledModelIds?: string[];
   /** Called after a successful bulk create so the parent can refresh its data. */
@@ -205,6 +212,7 @@ export function DiscoverModelsDialog({
   open,
   onOpenChange,
   providerSlug: initialProviderSlug,
+  providerName: initialProviderName,
   prefilledModelIds,
   onCreated,
 }: DiscoverModelsDialogProps): React.ReactElement {
@@ -414,13 +422,28 @@ export function DiscoverModelsDialog({
     return candidates.filter((c) => selected.has(c.modelId) && !c.inMatrix);
   }, [candidates, selected]);
 
+  // Active provider name shown in the title bar and discovery header.
+  // Prefer the explicit prop (set when a caller pre-fills the provider
+  // and skips step 1); otherwise resolve from the loaded providers
+  // list once the operator picks via the dropdown.
+  const activeProviderName = useMemo(() => {
+    if (initialProviderName) return initialProviderName;
+    if (!providerSlug || !providers) return null;
+    return providers.find((p) => p.slug === providerSlug)?.name ?? null;
+  }, [initialProviderName, providerSlug, providers]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4" aria-hidden="true" />
-            Discover models
+            <span>
+              Discover models
+              {activeProviderName ? (
+                <span className="text-muted-foreground font-normal"> — {activeProviderName}</span>
+              ) : null}
+            </span>
           </DialogTitle>
           <DialogDescription>
             {step === 'provider' && 'Pick a configured provider to discover models from.'}
