@@ -36,6 +36,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
+import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -65,6 +66,36 @@ import { cn } from '@/lib/utils';
 // agentDraft and createdAgentSlug removed from persisted state.
 const STORAGE_KEY = 'sunrise.orchestration.setup-wizard.v3';
 const TOTAL_STEPS = 4;
+
+// Sunrise envelope shape for every wizard fetch. Every step validates
+// the response through Zod before reading any field — the wizard runs
+// against a freshly-installed instance whose admin endpoints could be
+// proxied or version-skewed, and unvalidated `as` casts let bad shapes
+// propagate silently into setState calls.
+function envelopeSchema<T extends z.ZodTypeAny>(dataSchema: T) {
+  return z.object({
+    success: z.boolean().optional(),
+    data: dataSchema.optional(),
+  });
+}
+
+const defaultModelsStoredSchema = z.object({
+  defaultModelsStored: z.record(z.string(), z.string()).optional(),
+});
+
+const defaultModelsSchema = z.object({
+  defaultModels: z.record(z.string(), z.string()).optional(),
+});
+
+const providerTestResultSchema = z.object({
+  ok: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+const modelTestResultSchema = z.object({
+  ok: z.boolean().optional(),
+  latencyMs: z.number().optional(),
+});
 
 interface ProviderDraft {
   name: string;
@@ -362,6 +393,25 @@ interface DetectionRow {
   suggestedEmbeddingModel: string | null;
 }
 
+const detectionRowSchema: z.ZodType<DetectionRow> = z.object({
+  slug: z.string(),
+  name: z.string(),
+  providerType: z.enum(['anthropic', 'openai-compatible', 'voyage']),
+  defaultBaseUrl: z.string().nullable(),
+  apiKeyEnvVar: z.string().nullable(),
+  apiKeyPresent: z.boolean(),
+  alreadyConfigured: z.boolean(),
+  isLocal: z.boolean(),
+  suggestedDefaultChatModel: z.string().nullable(),
+  suggestedRoutingModel: z.string().nullable(),
+  suggestedReasoningModel: z.string().nullable(),
+  suggestedEmbeddingModel: z.string().nullable(),
+});
+
+const detectionResultSchema = z.object({
+  detected: z.array(detectionRowSchema).optional(),
+});
+
 function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -384,12 +434,9 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
         setHasExisting(await paginatedTotalGt0(providerRes));
 
         if (detectRes.ok) {
-          const body = (await detectRes.json()) as {
-            success?: boolean;
-            data?: { detected?: DetectionRow[] };
-          };
-          if (body.success && body.data?.detected) {
-            setDetection(body.data.detected);
+          const parsed = envelopeSchema(detectionResultSchema).safeParse(await detectRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data?.detected) {
+            setDetection(parsed.data.data.detected);
           } else {
             setDetection([]);
           }
@@ -426,11 +473,9 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' });
       if (!res.ok) return;
-      const body = (await res.json()) as {
-        success?: boolean;
-        data?: { defaultModelsStored?: Partial<Record<string, string>> };
-      };
-      const stored = body.success ? (body.data?.defaultModelsStored ?? {}) : {};
+      const parsed = envelopeSchema(defaultModelsStoredSchema).safeParse(await res.json());
+      const stored =
+        parsed.success && parsed.data.success ? (parsed.data.data?.defaultModelsStored ?? {}) : {};
       const patch: Record<string, string> = {};
       if (row.suggestedDefaultChatModel && !stored.chat) {
         patch.chat = row.suggestedDefaultChatModel;
@@ -839,6 +884,12 @@ interface ModelOption {
   available?: boolean;
 }
 
+const modelOptionSchema: z.ZodType<ModelOption> = z.object({
+  id: z.string(),
+  provider: z.string(),
+  available: z.boolean().optional(),
+});
+
 function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -858,20 +909,19 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
         if (cancelled) return;
 
         if (settingsRes.ok) {
-          const body = (await settingsRes.json()) as {
-            success?: boolean;
-            data?: { defaultModels?: Record<string, string> };
-          };
-          if (body.success && body.data?.defaultModels) {
-            setChatModel(body.data.defaultModels.chat ?? '');
-            setEmbeddingModel(body.data.defaultModels.embeddings ?? '');
+          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data?.defaultModels) {
+            setChatModel(parsed.data.data.defaultModels.chat ?? '');
+            setEmbeddingModel(parsed.data.data.defaultModels.embeddings ?? '');
           }
         }
 
         if (modelsRes.ok) {
-          const body = (await modelsRes.json()) as { success?: boolean; data?: ModelOption[] };
-          if (body.success && Array.isArray(body.data)) {
-            setModels(body.data);
+          const parsed = envelopeSchema(z.array(modelOptionSchema)).safeParse(
+            await modelsRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setModels(parsed.data.data);
           }
         }
       } catch {
@@ -1014,6 +1064,14 @@ interface ProviderTestRow {
   apiKeyPresent: boolean;
 }
 
+const providerTestRowSchema: z.ZodType<ProviderTestRow> = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  isLocal: z.boolean(),
+  apiKeyPresent: z.boolean(),
+});
+
 type TestStatus = 'idle' | 'running' | 'ok' | 'failed';
 
 interface ProviderTestResult {
@@ -1056,22 +1114,18 @@ function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
         if (cancelled) return;
 
         if (providersRes.ok) {
-          const body = (await providersRes.json()) as {
-            success?: boolean;
-            data?: ProviderTestRow[];
-          };
-          if (body.success && Array.isArray(body.data)) {
-            setProviders(body.data);
+          const parsed = envelopeSchema(z.array(providerTestRowSchema)).safeParse(
+            await providersRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setProviders(parsed.data.data);
           }
         }
 
         if (settingsRes.ok) {
-          const body = (await settingsRes.json()) as {
-            success?: boolean;
-            data?: { defaultModels?: Record<string, string> };
-          };
-          if (body.success) {
-            setChatModel(body.data?.defaultModels?.chat ?? '');
+          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success) {
+            setChatModel(parsed.data.data?.defaultModels?.chat ?? '');
           }
         }
       } catch {
@@ -1106,11 +1160,8 @@ function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
         }));
         return;
       }
-      const testBody = (await testRes.json()) as {
-        success?: boolean;
-        data?: { ok?: boolean; error?: string };
-      };
-      if (!testBody.success || !testBody.data?.ok) {
+      const testParsed = envelopeSchema(providerTestResultSchema).safeParse(await testRes.json());
+      if (!testParsed.success || !testParsed.data.success || !testParsed.data.data?.ok) {
         setResults((prev) => ({
           ...prev,
           [row.id]: {
@@ -1149,18 +1200,14 @@ function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
         }));
         return;
       }
-      const modelBody = (await modelRes.json()) as {
-        success?: boolean;
-        data?: { ok?: boolean; latencyMs?: number };
-      };
-      if (modelBody.success && modelBody.data?.ok) {
+      const modelParsed = envelopeSchema(modelTestResultSchema).safeParse(await modelRes.json());
+      if (modelParsed.success && modelParsed.data.success && modelParsed.data.data?.ok) {
+        const latencyMs = modelParsed.data.data.latencyMs;
         setResults((prev) => ({
           ...prev,
           [row.id]: {
             status: 'ok',
-            ...(typeof modelBody.data?.latencyMs === 'number'
-              ? { latencyMs: modelBody.data.latencyMs }
-              : {}),
+            ...(typeof latencyMs === 'number' ? { latencyMs } : {}),
           },
         }));
       } else {
