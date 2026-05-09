@@ -723,6 +723,84 @@ The fail-loudly intent is preserved: a regression that fails to short-circuit fa
 
 ---
 
+### 24. Fake Timers in Component Tests — Cascade and userEvent Incompatibility
+
+**Problem**: Three failure modes share a single root cause — fake timers interact badly with the async testing tools you reach for reflexively. Each fails with a misleading symptom (test timeout pointing at the `it(...)` line, not the actual hang).
+
+1. **Cascade across tests.** A fake-timer test that crashes before its own `vi.useRealTimers()` line leaves fake timers active globally. The next test — even one that never asked for fake timers — hangs on its very first `await user.click(...)`, because userEvent's internal pointer-event delays use setTimeout under the hood and never advance. Without a guard in `afterEach`, **one fake-timer failure breaks every subsequent test in the file** until a real-timer call is reached.
+
+2. **userEvent + fake timers don't mix.** Even within a single fake-timer test, `userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })` is not enough — userEvent's internal Promise chain still has microtask awaits the `advanceTimers` config doesn't reach. The click hangs.
+
+3. **`findByRole` (any `findBy*`) hangs.** RTL's `waitFor` polling uses real-timer-style scheduling; with fake timers, its polling timer is fake and never fires. `findBy*` queries hang silently to the test budget.
+
+**Solution**:
+
+**Reset timers FIRST in `afterEach` — before mock cleanup:**
+
+```typescript
+afterEach(() => {
+  // FIRST: guards against fake-timer leak from a crashing fake-timer test.
+  // restoreAllMocks does NOT reset timers.
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  cleanup();
+});
+```
+
+**Inside fake-timer tests, use `fireEvent` (not userEvent), wrap in `act`, flush microtasks explicitly:**
+
+```typescript
+it('shows the budget-expired advisory after the poll budget is exceeded', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(globalThis, 'fetch').mockImplementation(/* ... */);
+  render(<Component />);
+
+  // Open dialog — fireEvent is synchronous, fake-timer safe
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /open dialog/i }));
+  });
+
+  // Trigger async work (POST, etc.) — flush microtask explicitly so
+  // the next-action promise settles before timers advance
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await Promise.resolve();
+  });
+
+  // Advance fake time. advanceTimersByTimeAsync flushes microtasks
+  // between each fired timer, so polling chains settle inside the act.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1_000 + 10_000);
+  });
+
+  // Synchronous assertion — re-render already happened inside act()
+  expect(screen.getByText(/expired/i)).toBeInTheDocument();
+});
+```
+
+**Use synchronous `getByRole` (not `findByRole`) inside fake-timer tests:**
+
+```typescript
+// ❌ Hangs — findBy* uses waitFor polling, frozen under fake timers
+await user.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+// ✅ Works — Radix dialogs open synchronously when their `open` prop changes,
+// and after `await act(...)` the dialog button is in the DOM
+await act(async () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+});
+```
+
+**Codebase exemplar**: `tests/unit/components/forms/profile-form.test.tsx` (the "should hide success message after 3 seconds" test) is the established pattern — fireEvent + act + advanceTimersByTime for fake-timer paths, userEvent only for real-timer paths.
+
+**Symptom decoder**: if a test times out at the `it(...)` line in the error stack rather than at a specific line of test code, the cause is almost always one of these three. Check `vi.useFakeTimers()` is paired with `fireEvent` (not `userEvent`) and that `afterEach` resets timers before mocks.
+
+**Signal for `/test-write`**: when planning component tests with timer-driven behaviour (polling, debounce, timeout banners), specify the fake-timer + fireEvent pattern in the plan's per-file Notes so the agent doesn't reach for userEvent reflexively. Plans that just say "use fake timers" get the userEvent default and break.
+
+**Status**: ✅ DOCUMENTED — Discovered while executing Sprint 1 Batch 1.4 (low-coverage triage, approval-card.tsx) on `tests/unit/components/admin/orchestration/chat/approval-card.test.tsx`. Two fake-timer tests (budget-expired, exponential backoff) hung at `it(...)`, and four unrelated real-timer tests cascaded into hangs because the first fake-timer crash leaked. Fix landed three changes: `afterEach` reset, `findByRole`→`getByRole`, `userEvent`→`fireEvent`. All 24 component tests + 13 helper tests pass. The `/test-engineer` agent's first attempt hit all three failure modes in one batch, which is why this is worth capturing — the cluster is one pattern, not three.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:
