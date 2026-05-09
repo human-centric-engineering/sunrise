@@ -22,28 +22,37 @@
  * (none today, but possible) don't crash during SSR.
  */
 
+import { z } from 'zod';
+
 const STORAGE_KEY = 'sunrise.orchestration.provider-test-cache.v1';
 const TTL_MS = 10 * 60 * 1000;
 
-export interface CachedProviderTestResult {
+// Schema is authoritative: localStorage is external data (user-controlled,
+// XSS-reachable, version-skewable across releases) so the cache is parsed
+// through Zod on every read. A corrupt or partial entry yields `{}` rather
+// than wrong-typed values surfacing in `setCachedTestResult`'s callers.
+const cachedResultSchema = z.object({
   /** True when the most recent `/test` call returned `{ ok: true }`. */
-  ok: boolean;
+  ok: z.boolean(),
   /** Length of the `models` array reported by `/test`. */
-  modelCount: number;
+  modelCount: z.number(),
   /** Epoch ms when the test ran. */
-  testedAt: number;
-}
+  testedAt: z.number(),
+});
 
-type CacheShape = Record<string, CachedProviderTestResult>;
+const cacheShapeSchema = z.record(z.string(), cachedResultSchema);
+
+export type CachedProviderTestResult = z.infer<typeof cachedResultSchema>;
+
+type CacheShape = z.infer<typeof cacheShapeSchema>;
 
 function readCache(): CacheShape {
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as CacheShape;
+    const parsed = cacheShapeSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : {};
   } catch {
     return {};
   }
