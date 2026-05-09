@@ -167,12 +167,17 @@ export function hydrateSettings(row: {
  * written before the schema landed, or via paths that bypass the
  * schema (direct DB write, future import/restore, etc.).
  *
- * Drops every entry that fails normalisation and logs a warning per
- * drop with the offending value, index, and reason — silent dropping
- * makes corrupted DB rows invisible to operators (an admin who imports
- * a malformed allowlist would just see all approval POSTs return 403
- * with no signal in logs). Logging keeps the safety-net behaviour
- * (we never fail the request) while making misconfiguration visible.
+ * Drops every entry that fails normalisation and logs `logger.warn` per
+ * drop with a stable message string plus a context-specific structured
+ * field set: `index` (entry position) and `value` (the offending string)
+ * are emitted whenever they apply, augmented by `error` for URL parse
+ * failures, `protocol`/`hostname` for unsupported-origin drops, and
+ * `type` for non-string entries (or for the whole-field drop when the
+ * column isn't an array). Silent dropping would otherwise make
+ * corrupted DB rows invisible to operators — an admin who imports a
+ * malformed allowlist would just see all approval POSTs return 403 with
+ * no signal in logs. Logging keeps the safety-net behaviour (we never
+ * fail the request) while making misconfiguration visible.
  */
 function parseEmbedAllowedOrigins(raw: Prisma.JsonValue | null | undefined): string[] {
   if (raw === null || raw === undefined) return [];
