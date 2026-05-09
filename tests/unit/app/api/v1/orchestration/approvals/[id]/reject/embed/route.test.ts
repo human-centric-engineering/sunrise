@@ -13,16 +13,16 @@
  * Test Coverage:
  * - OPTIONS: matching origin → 204 + CORS headers
  * - OPTIONS: non-matching origin → 403
- * - OPTIONS: null origin with non-wildcard allowlist → 403
+ * - OPTIONS: null origin → 403 (always rejected; no wildcard path exists)
  * - OPTIONS: empty embedAllowedOrigins → 403
  * - POST: denied origin → 403 JSON ORIGIN_DENIED, handleRejectRequest NOT called
  * - POST: allowed origin → delegates with { actorLabel: 'token:embed', corsHeaders }
  * - POST: getOrchestrationSettings throws → error propagates (no try/catch in route)
  *
- * Wildcard semantics: when '*' is in `embedAllowedOrigins`, `allowlistCorsHeaders`
- * returns literal `Access-Control-Allow-Origin: *` for any origin (including null).
- * The wildcard-passthrough case is covered at L187 below.
- * Helper-level tests: tests/unit/lib/orchestration/approval-route-helpers.test.ts.
+ * Wildcard '*' is intentionally not supported by the parser pipeline — the
+ * Zod schema in lib/validations/orchestration.ts and parseEmbedAllowedOrigins
+ * in lib/orchestration/settings.ts both reject anything that fails
+ * `new URL().origin`, which '*' does. Helper-level tests pin that contract.
  *
  * @see app/api/v1/orchestration/approvals/[id]/reject/embed/route.ts
  * @see lib/orchestration/approval-route-helpers.ts (allowlistCorsHeaders)
@@ -152,10 +152,12 @@ describe('reject/embed route', () => {
       );
     });
 
-    it('returns 403 when origin is null and the helper denies (no wildcard configured)', async () => {
-      // Arrange: helper returns undefined (denial). For an exact-match allowlist
-      // without `'*'`, the helper rejects null origins. The wildcard-allowed
-      // case is covered separately below.
+    it('returns 403 when origin is null (always rejected)', async () => {
+      // Arrange: helper returns undefined for null origins unconditionally.
+      // Wildcard '*' is not supported by the parser pipeline (Zod schema +
+      // parseEmbedAllowedOrigins both reject anything that fails
+      // `new URL().origin`), so there is no "wildcard configured" case to
+      // cover here.
       mockAllowlistCorsHeaders.mockReturnValue(undefined);
       const request = makeRequest(null);
 
@@ -180,32 +182,6 @@ describe('reject/embed route', () => {
       // Assert: 403 for all origins when allowlist is empty
       expect(response.status).toBe(403);
       expect(mockAllowlistCorsHeaders).toHaveBeenCalledWith('https://anywhere.com', [], 'POST');
-    });
-
-    it("returns 204 when origin is null and the allowlist includes '*' (wildcard passthrough)", async () => {
-      // Arrange: when '*' is in the allowlist, the helper returns literal
-      // wildcard CORS headers regardless of the requesting origin (including
-      // null/missing). The route's job is to pass them through.
-      // Helper-level wildcard semantics covered in
-      // tests/unit/lib/orchestration/approval-route-helpers.test.ts.
-      const wildcardHeaders = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Max-Age': '86400',
-        Vary: 'Origin',
-      };
-      mockGetOrchestrationSettings.mockResolvedValue({ embedAllowedOrigins: ['*'] });
-      mockAllowlistCorsHeaders.mockReturnValue(wildcardHeaders);
-      const request = makeRequest(null);
-
-      // Act
-      const response = await OPTIONS(request);
-
-      // Assert: 204 + wildcard headers attached
-      expect(response.status).toBe(204);
-      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-      expect(mockAllowlistCorsHeaders).toHaveBeenCalledWith('null', ['*'], 'POST');
     });
   });
 

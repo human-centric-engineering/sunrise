@@ -265,33 +265,32 @@ export function singleOriginCorsHeaders(
 }
 
 /**
- * Build CORS headers for an allowlist.
+ * Build CORS headers for an exact-match allowlist.
  *
- * - If `'*'` is in `allowedOrigins`, returns a literal `Access-Control-Allow-Origin: *`
- *   for any requesting origin (including `null`/missing). The CORS spec forbids
- *   `credentials: 'include'` with literal `*`, which is correct for these
- *   token-authenticated public endpoints — there are no cookies to leak.
- * - Otherwise, returns headers only when `requestOrigin` is a non-null exact
- *   match of an allowlisted origin; rejects `null` (sandboxed iframes, file://)
- *   and any non-listed origin.
+ * Returns headers only when `requestOrigin` is a non-null exact match of an
+ * allowlisted origin; rejects `null` (sandboxed iframes, file://) and any
+ * non-listed origin. Wildcard `'*'` is intentionally NOT supported — the
+ * write-side Zod schema in `lib/validations/orchestration.ts` and the
+ * read-side `parseEmbedAllowedOrigins` in `lib/orchestration/settings.ts`
+ * both reject any entry that fails `new URL().origin` normalisation, so
+ * `'*'` cannot reach this helper from real config. Adding wildcard support
+ * here without aligning the parser pipeline produces dead code; downstream
+ * forks that need wildcard CORS for these endpoints must change all three
+ * sites together.
  */
 export function allowlistCorsHeaders(
   requestOrigin: string | null,
   allowedOrigins: string[],
   methods: string
 ): Record<string, string> | undefined {
-  const baseHeaders = {
+  if (!requestOrigin || requestOrigin === 'null' || !allowedOrigins.includes(requestOrigin)) {
+    return undefined;
+  }
+  return {
+    'Access-Control-Allow-Origin': requestOrigin,
     'Access-Control-Allow-Methods': `${methods}, OPTIONS`,
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
-  } as const;
-
-  if (allowedOrigins.includes('*')) {
-    return { 'Access-Control-Allow-Origin': '*', ...baseHeaders };
-  }
-  if (!requestOrigin || requestOrigin === 'null' || !allowedOrigins.includes(requestOrigin)) {
-    return undefined;
-  }
-  return { 'Access-Control-Allow-Origin': requestOrigin, ...baseHeaders };
+  };
 }

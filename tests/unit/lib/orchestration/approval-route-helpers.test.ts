@@ -88,42 +88,26 @@ describe('allowlistCorsHeaders', () => {
     });
   });
 
-  describe("wildcard allowlist ('*')", () => {
-    // The CORS spec forbids `credentials: 'include'` with literal
-    // `Access-Control-Allow-Origin: *`. These embed endpoints authenticate via
-    // a token in the URL query string, so credentials are not in play and the
-    // wildcard is safe.
+  describe("wildcard ('*') is intentionally not supported", () => {
+    // Wildcard CORS for the approve/reject embed endpoints would require
+    // changing all three sites in the parser pipeline together: the Zod
+    // schema in lib/validations/orchestration.ts, parseEmbedAllowedOrigins
+    // in lib/orchestration/settings.ts, and this helper. Adding wildcard
+    // support to the helper alone produces dead code because the parser
+    // strips every entry that fails new URL().origin (which '*' does).
+    // These tests pin that contract so a future contributor doesn't reintroduce
+    // a half-wired wildcard.
 
-    it("returns literal '*' when '*' is in the allowlist and origin matches a real value", () => {
+    it("returns undefined when '*' is in the allowlist and an origin matches", () => {
+      // '*' is treated as just another non-matching string. The helper
+      // does not special-case it.
       const result = allowlistCorsHeaders('https://customer-1.com', ['*'], 'POST');
-
-      // Must NOT echo back the requesting origin — that would imply
-      // per-origin behaviour and re-introduce the credential vector.
-      expect(result?.['Access-Control-Allow-Origin']).toBe('*');
-      expect(result?.['Access-Control-Allow-Methods']).toBe('POST, OPTIONS');
+      expect(result).toBeUndefined();
     });
 
-    it("returns literal '*' for null origin when '*' is in the allowlist", () => {
-      // Null origin is the case the route plan flagged: with a wildcard
-      // configured, an admin has explicitly opted into "any origin can call
-      // this", which includes sandboxed iframes / file:// (null origin).
+    it("returns undefined for null origin even when '*' is in the allowlist", () => {
       const result = allowlistCorsHeaders(null, ['*'], 'POST');
-      expect(result?.['Access-Control-Allow-Origin']).toBe('*');
-    });
-
-    it("returns literal '*' for the string 'null' origin when '*' is in the allowlist", () => {
-      const result = allowlistCorsHeaders('null', ['*'], 'POST');
-      expect(result?.['Access-Control-Allow-Origin']).toBe('*');
-    });
-
-    it("returns literal '*' even when both '*' and specific origins are in the allowlist", () => {
-      // If the admin set both, the wildcard wins — that's the explicit intent.
-      const result = allowlistCorsHeaders(
-        'https://attacker.com',
-        ['*', 'https://specific.com'],
-        'POST'
-      );
-      expect(result?.['Access-Control-Allow-Origin']).toBe('*');
+      expect(result).toBeUndefined();
     });
   });
 });

@@ -8,6 +8,7 @@
 
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import {
   searchConfigSchema,
@@ -165,19 +166,55 @@ export function hydrateSettings(row: {
  * `.transform()`); this read-side parse is the safety net for rows
  * written before the schema landed, or via paths that bypass the
  * schema (direct DB write, future import/restore, etc.).
+ *
+ * Drops every entry that fails normalisation and logs a warning per
+ * drop with the offending value, index, and reason — silent dropping
+ * makes corrupted DB rows invisible to operators (an admin who imports
+ * a malformed allowlist would just see all approval POSTs return 403
+ * with no signal in logs). Logging keeps the safety-net behaviour
+ * (we never fail the request) while making misconfiguration visible.
  */
 function parseEmbedAllowedOrigins(raw: Prisma.JsonValue | null | undefined): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((v): string[] => {
-    if (typeof v !== 'string') return [];
-    try {
-      const u = new URL(v);
-      const allowed =
-        u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1';
-      return allowed ? [u.origin] : [];
-    } catch {
+  if (raw === null || raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    logger.warn('embedAllowedOrigins is not an array — ignoring entire field', {
+      type: typeof raw,
+    });
+    return [];
+  }
+  return raw.flatMap((v, index): string[] => {
+    if (typeof v !== 'string') {
+      logger.warn('embedAllowedOrigins entry is not a string — dropping', {
+        index,
+        type: typeof v,
+      });
       return [];
     }
+    let parsed: URL;
+    try {
+      parsed = new URL(v);
+    } catch (err) {
+      logger.warn('embedAllowedOrigins entry is not a valid URL — dropping', {
+        index,
+        value: v,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+    const allowed =
+      parsed.protocol === 'https:' ||
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1';
+    if (!allowed) {
+      logger.warn('embedAllowedOrigins entry has unsupported protocol or host — dropping', {
+        index,
+        value: v,
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+      });
+      return [];
+    }
+    return [parsed.origin];
   });
 }
 
