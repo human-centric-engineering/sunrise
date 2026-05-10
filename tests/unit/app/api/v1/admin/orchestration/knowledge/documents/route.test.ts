@@ -448,6 +448,39 @@ describe('Knowledge Documents API', () => {
       expect(previewDocument).toHaveBeenCalledOnce();
       expect(uploadDocumentFromBuffer).not.toHaveBeenCalled();
     });
+
+    it('serialises missing PDF author as null, not undefined', async () => {
+      // Regression: `DocumentPreview.author` is `string | undefined`. JSON
+      // serialises `undefined` as the key being absent, but the client's
+      // Zod schema declares author `.nullable()` (string | null) and
+      // rejects undefined with "Invalid input: expected string, received
+      // undefined". The route must coerce undefined → null so the wire
+      // format matches the schema's contract.
+      vi.mocked(requiresPreview).mockReturnValue(true);
+      vi.mocked(previewDocument).mockResolvedValue({
+        document: { ...mockDocument, id: 'doc-pdf-002', fileName: 'no-author.pdf' },
+        extractedText: 'PDF without author metadata',
+        title: 'Untitled',
+        // author intentionally omitted — PDF has no Author key.
+        sectionCount: 1,
+        warnings: [],
+      } as never);
+
+      const res = await POST(
+        makeFileRequest('no-author.pdf', new Uint8Array([0, 1, 2]).buffer, 'application/pdf')
+      );
+      const json = JSON.parse(await res.text()) as {
+        data: { preview: { author: unknown } };
+      };
+
+      expect(res.status).toBe(201);
+      // The presence-and-null assertion is the contract: the key must
+      // appear in the JSON envelope and its value must be null. A bare
+      // `toBeNull()` would also pass if the key was absent, which would
+      // re-introduce the bug.
+      expect(Object.prototype.hasOwnProperty.call(json.data.preview, 'author')).toBe(true);
+      expect(json.data.preview.author).toBeNull();
+    });
   });
 
   // ── POST — Rate limiting and auth ────────────────────────────────────────
