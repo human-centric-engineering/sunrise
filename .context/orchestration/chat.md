@@ -106,6 +106,39 @@ Concretely:
 9. **`warning`** — non-terminal, may appear at any point. Carries `code` and `message`. Codes: `budget_warning` (agent at ≥80% spend), `input_flagged` (input guard detected a pattern), `output_flagged` (output guard detected a pattern), `citation_missing` / `citation_hallucinated` (citation guard detected a violation in `warn_and_continue` mode), `provider_retry` (falling back to next provider). Clients should display transiently and clear when the stream ends.
 10. **`content_reset`** — emitted when the provider fallback activates mid-stream. Carries `reason: 'provider_fallback'`. **Clients must discard all buffered `content` deltas** received before this event and start accumulating fresh.
 
+## Voice input (transcription)
+
+End-users can dictate messages instead of typing. The chat surfaces (admin `AgentTestChat` and the embed widget) record audio via `MediaRecorder`, POST it to a transcribe endpoint, and put the resulting text into the input field. The chat send path itself is unchanged — voice input produces a regular user message.
+
+**Flow:**
+
+```
+mic button click
+   → MediaRecorder.start()
+   → user speaks
+   → mic button click again (or 3-min auto-stop)
+   → MediaRecorder.stop()
+   → POST audio blob → transcribe endpoint
+   → endpoint resolves agent, picks audio provider, calls provider.transcribe()
+   → returns { text, durationMs }
+   → input field is populated with text
+   → user clicks Send (or edits, then sends)
+   → standard chat send path (POST /chat/stream)
+```
+
+**Endpoints:**
+
+- Admin: `POST /api/v1/admin/orchestration/chat/transcribe` (session auth, multipart). See `.context/api/orchestration-endpoints.md`.
+- Embed: `POST /api/v1/embed/speech-to-text` (embed-token auth, multipart). See `.context/api/consumer-chat.md`.
+
+Both gate on `AiAgent.enableVoiceInput && AiOrchestrationSettings.voiceInputGloballyEnabled`. The embed surface additionally requires an audio-capable provider before exposing the mic button — surface in the `voiceInputEnabled` field of `/widget-config`.
+
+**Provider routing:** capability-based via `getAudioProvider()` in `lib/orchestration/llm/provider-manager.ts`. See `.context/orchestration/llm-providers.md` for the routing semantics and `.context/orchestration/meta/architectural-decisions.md` (ADR 3.7a) for why this is separate from `TaskIntent`.
+
+**Audio retention:** none. Bytes flow request → provider → discard; only the transcript is persisted (as a normal user message).
+
+**Cost tracking:** `CostOperation = 'transcription'` rows on `AiCostLog`, priced per-minute (`WHISPER_USD_PER_MINUTE = 0.006`) using `durationMs` reported by the provider. See `.context/orchestration/cost-tracking.md`.
+
 ## Citations
 
 When the LLM grounds a response in retrieved knowledge, the handler accumulates a turn-level citations envelope and surfaces it through three channels:

@@ -9,17 +9,20 @@ End-user-facing chat endpoints for interacting with publicly visible AI agents. 
 
 ## Quick reference
 
-| Endpoint                                           | Method | Purpose                         |
-| -------------------------------------------------- | ------ | ------------------------------- |
-| `/chat/stream`                                     | POST   | Streaming chat turn (SSE)       |
-| `/chat/agents`                                     | GET    | List publicly available agents  |
-| `/chat/agents/:slug/validate-token`                | POST   | Validate an invite token        |
-| `/chat/conversations`                              | GET    | List user's own conversations   |
-| `/chat/conversations/search`                       | GET    | Search conversations by content |
-| `/chat/conversations/:id`                          | GET    | Single conversation detail      |
-| `/chat/conversations/:id`                          | DELETE | Delete own conversation         |
-| `/chat/conversations/:id/messages`                 | GET    | Messages for a conversation     |
-| `/chat/conversations/:id/messages/:messageId/rate` | POST   | Rate an assistant message       |
+| Endpoint                                           | Method | Purpose                                          |
+| -------------------------------------------------- | ------ | ------------------------------------------------ |
+| `/chat/stream`                                     | POST   | Streaming chat turn (SSE)                        |
+| `/chat/agents`                                     | GET    | List publicly available agents                   |
+| `/chat/agents/:slug/validate-token`                | POST   | Validate an invite token                         |
+| `/chat/conversations`                              | GET    | List user's own conversations                    |
+| `/chat/conversations/search`                       | GET    | Search conversations by content                  |
+| `/chat/conversations/:id`                          | GET    | Single conversation detail                       |
+| `/chat/conversations/:id`                          | DELETE | Delete own conversation                          |
+| `/chat/conversations/:id/messages`                 | GET    | Messages for a conversation                      |
+| `/chat/conversations/:id/messages/:messageId/rate` | POST   | Rate an assistant message                        |
+| `/embed/widget-config`                             | GET    | Embed widget appearance + voice-input flag       |
+| `/embed/chat/stream`                               | POST   | Streaming chat turn for embed widget (SSE)       |
+| `/embed/speech-to-text`                            | POST   | Speech-to-text — multipart audio in (embed only) |
 
 ## Endpoints
 
@@ -219,6 +222,34 @@ Checks: agent exists and is `invite_only`, token exists, not revoked, not expire
 **Rate limiting:** `chatLimiter` (per IP).
 
 **Key file:** `app/api/v1/chat/agents/[slug]/validate-token/route.ts`
+
+### POST `/embed/speech-to-text`
+
+Speech-to-text upload from the embed widget. Same shape as the admin transcribe endpoint, authenticated via `X-Embed-Token` instead of session.
+
+**Auth:** `X-Embed-Token` header. The token resolves to an agent + allowed origins.
+**Rate limit:** `audioLimiter` (10 req/min, keyed by `audio:embed:${embedToken}:${clientIp}`).
+**CORS:** echoes the matched origin from the token's `allowedOrigins`; supports `OPTIONS` preflight.
+**Runtime:** `nodejs` with `maxDuration = 60`.
+
+**Form fields:**
+
+| Field      | Type     | Required | Notes                                                                          |
+| ---------- | -------- | -------- | ------------------------------------------------------------------------------ |
+| `audio`    | `File`   | yes      | Audio bytes. Max 25 MB. Allowed MIME prefixes: `audio/{webm,mp4,mpeg,wav,ogg}` |
+| `language` | `string` | no       | ISO 639-1 hint                                                                 |
+
+The widget does not send `agentId` — the embed token is the authority on agent identity. The route injects the resolved id into the multipart body before validation.
+
+**Success:** `200 { success: true, data: { text, durationMs, language? } }`.
+
+**Error envelope codes:** `MISSING_TOKEN` (401), `INVALID_TOKEN` (401), `ORIGIN_DENIED` (403), `VOICE_DISABLED` (403, agent or global toggle off), `NOT_FOUND` (404), `NO_AUDIO_PROVIDER` (503), `AUDIO_TOO_LARGE` (413), `AUDIO_INVALID_TYPE` (415), `TRANSCRIPTION_FAILED` (502).
+
+**Behaviour:** identical to the admin path — provider resolved via `getAudioProvider()`, audio discarded after transcription, `CostOperation = 'transcription'` row written tagged to the agent. The transcript is returned to the widget for the user to review and send via the standard chat-stream path; the endpoint does not start a chat turn itself.
+
+**Browser-side prerequisites** (enforced by the widget, not the endpoint): HTTPS or localhost (Web Audio refuses otherwise), `MediaRecorder` + `getUserMedia` support, parent site's `Permissions-Policy` allowing `microphone` (cannot be overridden from the embed). See `.context/orchestration/embed.md#voice-input` for the full client-side story and the iframe `allow="microphone"` requirement.
+
+**Key files:** `app/api/v1/embed/speech-to-text/route.ts`, `lib/validations/transcribe.ts`, `lib/orchestration/llm/provider-manager.ts` (`getAudioProvider`).
 
 ---
 

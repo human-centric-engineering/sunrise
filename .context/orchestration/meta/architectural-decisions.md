@@ -523,6 +523,32 @@ This section covers how an agent actually executes — the structure of a workfl
 
 **Where it lives:** `lib/orchestration/llm/provider-selector.ts`, `.context/orchestration/provider-selection-matrix.md`.
 
+### 3.7a Audio capability routing — capability lookup, not task intent
+
+**What is it?** Voice input requires routing audio bytes to a transcription model (e.g. Whisper). The chat path already has a "task intent" router (3.7) that picks a model by tier and quality. The natural-looking move is to extend `TaskIntent` with `'audio'` and reuse the existing matrix.
+
+**What we chose:** A separate `getAudioProvider()` helper that filters `AiProviderModel` rows by `capabilities ∋ 'audio'` and returns the first row whose backing provider implements an optional `transcribe()` method. No `TaskIntent` change.
+
+**Alternatives**
+
+| Option                                                   | Why not                                                                                                                                                                                       |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add `'audio'` to `TaskIntent` and reuse the selector     | Conflates two orthogonal dimensions. `TaskIntent` is about cost/quality tier; Whisper is a single SKU and has no tier. Bolting it on means the selector has to special-case audio everywhere. |
+| Sub-interface `AudioCapableProvider extends LlmProvider` | Type-tighter but heavyweight for one method. Costs every test mock an extra branch. The optional-method pattern matches `embed()` (only Voyage / OpenAI implement it well).                   |
+| Hard-code the OpenAI Whisper call in the route           | Burns the provider-agnostic posture from PR #173 the moment a second provider (Groq Whisper, Deepgram) lands.                                                                                 |
+
+**Why this approach**
+
+- **`AiProviderModel.capabilities` is already the truth source.** Capability inference (`whisper-*` → `'audio'`) was wired before voice input shipped; the routing layer just consumes it. Adding a Groq Whisper row enables Groq audio routing with zero TypeScript changes.
+- **`transcribe?` optional on `LlmProvider`.** Forcing `AnthropicProvider` (no audio API) to implement-and-throw is noise; the routing layer rejects providers without `transcribe` before dispatch.
+- **Circuit-breaker reuse.** `getAudioProvider()` walks past providers with an open breaker, so an Whisper outage falls through to the next configured audio provider just like chat.
+
+**Tradeoff**
+
+- The audio path is small enough (one method, one cost shape) that "second tier router" feels like overkill — but the alternative (extending `TaskIntent`) ramifies through every selector test and the admin UI tier picker.
+
+**Where it lives:** `lib/orchestration/llm/provider-manager.ts` (`getAudioProvider`), `lib/orchestration/llm/openai-compatible.ts` (`transcribe` impl), `lib/orchestration/llm/capability-inference.ts` (`'audio'` capability), `.context/orchestration/llm-providers.md`.
+
 ### 3.8 User memory: per-user-per-agent persistent facts
 
 **What is it?** Conversations end and start; the same user often returns days later. "User memory" is a key-value store that lets an agent remember things across conversations — a user's name, their preferences, the topic they care about — without including every prior conversation in the prompt.

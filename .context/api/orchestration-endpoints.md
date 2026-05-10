@@ -68,6 +68,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                                                                    | 5.1     |
 | `/executions/:id/retry-step`              | POST               | Retry from a failed step                                                                             | 7.0     |
 | `/chat/stream`                            | POST               | Streaming chat turn (SSE)                                                                            | 3.3     |
+| `/chat/transcribe`                        | POST               | Speech-to-text — multipart audio in, transcript out                                                  | —       |
 | `/knowledge/search`                       | POST               | Hybrid vector + keyword search                                                                       | 3.3     |
 | `/knowledge/patterns/:number`             | GET                | Fetch all chunks for a single design pattern                                                         | 3.3     |
 | `/knowledge/documents`                    | GET, POST          | List / upload document (multipart)                                                                   | 3.3     |
@@ -568,6 +569,46 @@ while (true) {
 ```
 
 `EventSource` is not usable here because `EventSource` cannot send a `POST` body.
+
+### `POST /chat/transcribe`
+
+Speech-to-text upload. Accepts a multipart/form-data body, returns the transcribed text plus the audio duration so the chat surface can populate its input field.
+
+**Auth:** Admin session.
+**Rate limit:** `audioLimiter` (10 req/min, keyed by `audio:user:${userId}`).
+**Runtime:** `nodejs` with `maxDuration = 60`.
+
+**Form fields:**
+
+| Field      | Type     | Required | Notes                                                                               |
+| ---------- | -------- | -------- | ----------------------------------------------------------------------------------- |
+| `audio`    | `File`   | yes      | Audio bytes. Max 25 MB. MIME must start with one of `audio/{webm,mp4,mpeg,wav,ogg}` |
+| `agentId`  | `string` | yes      | Agent the transcript is destined for (gates the per-agent voice toggle)             |
+| `language` | `string` | no       | ISO 639-1 hint (e.g. `en`, `es`); helps Whisper short-circuit auto-detect           |
+
+**Success:** `200 { success: true, data: { text, durationMs, language? } }`.
+
+**Error envelope codes:**
+
+- `MISSING_AUDIO` (400) — no `audio` field in the body.
+- `AUDIO_EMPTY` (400) — zero-byte audio.
+- `AUDIO_TOO_LARGE` (413) — exceeds the 25 MB cap.
+- `AUDIO_INVALID_TYPE` (415) — MIME not in the allowlist.
+- `MISSING_AGENT_ID` (400) — `agentId` field absent.
+- `INVALID_LANGUAGE` (400) — language hint doesn't match the ISO 639-1 pattern.
+- `VOICE_DISABLED` (403) — per-agent toggle off, or org-wide kill switch off.
+- `NOT_FOUND` (404) — agent doesn't exist or is inactive.
+- `NO_AUDIO_PROVIDER` (503) — no `AiProviderModel` row with the `'audio'` capability.
+- `TRANSCRIPTION_FAILED` (502) — provider raised. Sanitised; check server logs.
+
+**Behaviour:** writes a `CostOperation = 'transcription'` row to `AiCostLog` tagged to the agent (per-minute pricing via `WHISPER_USD_PER_MINUTE * durationMs / 60_000`; `metadata.durationMs` set). Audio bytes are not persisted.
+
+```bash
+curl -X POST /api/v1/admin/orchestration/chat/transcribe \
+  -H "Cookie: session=..." \
+  -F "audio=@voice.webm;type=audio/webm" \
+  -F "agentId=cmjbv4i3x0..."
+```
 
 ---
 
