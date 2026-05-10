@@ -189,7 +189,16 @@ export async function parsePdf(
   const warnings: string[] = [];
 
   const parser = new PDFParse({ data: buffer });
-  const [textResult, infoResult] = await Promise.all([parser.getText(), parser.getInfo()]);
+  // Must NOT run getText and getInfo via Promise.all: both call
+  // PDFParse#load() which races on `if (this.doc === undefined)`.
+  // Concurrent callers both reach pdfjs.getDocument(this.options),
+  // and pdfjs transfers `data.buffer` via structuredClone's transfer
+  // list — the second transfer hits a detached ArrayBuffer and Node
+  // throws `DataCloneError: Cannot transfer object of unsupported type.`
+  // Sequential awaits let the first call cache `this.doc` so the
+  // second short-circuits without re-transferring the buffer.
+  const infoResult = await parser.getInfo();
+  const textResult = await parser.getText();
 
   const metadata: Record<string, string> = { format: 'pdf' };
   const pdfInfo = infoResult.info as Record<string, unknown> | undefined;
