@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { z } from 'zod';
 
 import { API } from '@/lib/api/endpoints';
+import { EmbeddingProjectionView } from '@/components/admin/orchestration/knowledge/embedding-projection-view';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
 
@@ -78,11 +79,19 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
-  const [view, setView] = useState<'structure' | 'embedded'>('structure');
+  const [view, setView] = useState<'structure' | 'embedded' | 'embedding-space'>('structure');
 
   const [graphError, setGraphError] = useState<string | null>(null);
 
   const fetchGraph = useCallback(async () => {
+    // The embedding-space view fetches its own data via
+    // EmbeddingProjectionView; no need to hit /knowledge/graph for it.
+    if (view === 'embedding-space') {
+      setLoading(false);
+      setGraphData(null);
+      setGraphError(null);
+      return;
+    }
     setLoading(true);
     setGraphData(null);
     setSelectedNode(null);
@@ -111,6 +120,61 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
   useEffect(() => {
     void fetchGraph();
   }, [fetchGraph]);
+
+  // Toggle is reused in two places — the embedding-space early-return
+  // (which bypasses the graph fetch entirely) and the main render path
+  // below the graph chart. Defining it here keeps the two surfaces in
+  // lockstep so a future change can't accidentally diverge them.
+  const viewToggle = (
+    <div className="flex items-center gap-3">
+      <span className="text-muted-foreground text-xs font-medium">View</span>
+      <div className="bg-muted inline-flex items-center rounded-lg p-1">
+        <button
+          type="button"
+          onClick={() => setView('structure')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'structure'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Structure
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('embedded')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'embedded'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Embedded
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('embedding-space')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'embedding-space'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Embedding space
+        </button>
+      </div>
+      {view === 'embedded' && (
+        <span className="text-muted-foreground text-xs">
+          Showing only chunks with vector embeddings
+        </span>
+      )}
+      {view === 'embedding-space' && (
+        <span className="text-muted-foreground text-xs">
+          UMAP-projected chunks — clusters = semantic similarity
+        </span>
+      )}
+    </div>
+  );
 
   // Build ECharts option
   const chartOption = useMemo(() => {
@@ -358,6 +422,21 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
     if (node) setSelectedNode(node);
   }, []);
 
+  // Embedding-space view bypasses the structural graph entirely — it
+  // has its own data source (/knowledge/embeddings) and its own
+  // loading/error/empty handling, so we short-circuit before the graph
+  // chrome (stats cards, search, fullscreen) which doesn't apply.
+  // This early return must come AFTER all hook calls — React requires
+  // hooks be invoked in the same order on every render.
+  if (view === 'embedding-space') {
+    return (
+      <div className="space-y-4">
+        {viewToggle}
+        <EmbeddingProjectionView scope={scope} />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -381,30 +460,15 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
 
   if (!graphData || graphData.stats.documentCount === 0) {
     const scopeLabel = scope === 'system' ? 'system' : scope === 'app' ? 'app-specific' : '';
-    // When the embedded view is empty but structure has data, show the toggle so users can switch back
+    // When the embedded view is empty but structure has data, the
+    // toggle lets the user jump back. Showing the full three-button
+    // toggle here keeps the UI consistent — including offering the
+    // Embedding-space view, which has its own data path and may have
+    // results even when the structural graph looks empty.
     const showToggle = view === 'embedded' && graphData !== null;
     return (
       <div className="space-y-4">
-        {showToggle && (
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-xs font-medium">View</span>
-            <div className="bg-muted inline-flex items-center rounded-lg p-1">
-              <button
-                type="button"
-                onClick={() => setView('structure')}
-                className="text-muted-foreground hover:text-foreground rounded-md px-3 py-1 text-xs font-medium transition-colors"
-              >
-                Structure
-              </button>
-              <button
-                type="button"
-                className="bg-background text-foreground rounded-md px-3 py-1 text-xs font-medium shadow-sm transition-colors"
-              >
-                Embedded
-              </button>
-            </div>
-          </div>
-        )}
+        {showToggle && viewToggle}
         <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
           <Network className="mx-auto mb-3 h-10 w-10 opacity-40" />
           <p className="text-sm font-medium">
@@ -612,47 +676,25 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
               status. <strong>Embedded</strong> filters to only chunks that have vector embeddings —
               useful to see what is actually searchable by your agents.
             </p>
+            <p className="mt-1">
+              <strong>Embedding space</strong> is a different view of the same data: each chunk
+              becomes a single point on a 2D scatter plot whose position is derived from its
+              embedding vector via UMAP.{' '}
+              <strong>Neighbouring points are semantically similar</strong> — so visible clusters
+              tell you what topics your knowledge base actually covers, and outliers are chunks that
+              don&apos;t fit any cluster. Points are coloured by source document.
+            </p>
             <p className="mt-2 text-xs">
-              When the knowledge base exceeds 500 chunks, individual chunk nodes are hidden for
-              performance and the graph shows document-level nodes only.
+              When the knowledge base exceeds 500 chunks, individual chunk nodes in the Structure /
+              Embedded views are hidden for performance and the graph shows document-level nodes
+              only. The Embedding-space view samples up to 2,000 points before rendering.
             </p>
           </FieldHelp>
         </span>
       </div>
 
-      {/* View toggle: Structure / Embedded */}
-      <div className="flex items-center gap-3">
-        <span className="text-muted-foreground text-xs font-medium">View</span>
-        <div className="bg-muted inline-flex items-center rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setView('structure')}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              view === 'structure'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Structure
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('embedded')}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              view === 'embedded'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Embedded
-          </button>
-        </div>
-        {view === 'embedded' && (
-          <span className="text-muted-foreground text-xs">
-            Showing only chunks with vector embeddings
-          </span>
-        )}
-      </div>
+      {/* View toggle: Structure / Embedded / Embedding space */}
+      {viewToggle}
 
       {graphContent}
 

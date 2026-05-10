@@ -109,7 +109,8 @@
     "recharts": "^3.8.1",
     "resend": "^6.9.2",
     "sharp": "^0.34.5",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "umap-js": "^1.4.0"
   },
   "overrides": {
     "hono": "^4.11.7",

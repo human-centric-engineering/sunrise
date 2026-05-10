@@ -167,6 +167,7 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}/chunks`,
       KNOWLEDGE_SEARCH: '/api/v1/admin/orchestration/knowledge/search',
       KNOWLEDGE_GRAPH: '/api/v1/admin/orchestration/knowledge/graph',
+      KNOWLEDGE_EMBEDDINGS: '/api/v1/admin/orchestration/knowledge/embeddings',
       KNOWLEDGE_PATTERNS: '/api/v1/admin/orchestration/knowledge/patterns',
       knowledgePatternByNumber: (num: number): string =>
         `/api/v1/admin/orchestration/knowledge/patterns/${num}`,
