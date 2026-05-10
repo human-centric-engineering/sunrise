@@ -304,6 +304,147 @@ describe('POST /api/v1/embed/speech-to-text — happy path', () => {
   });
 });
 
+// ── Hardening: edge cases + abuse vectors ──────────────────────────────────
+
+describe('POST /api/v1/embed/speech-to-text — token authority over body agentId', () => {
+  it('ignores any agentId in the multipart body and uses the token-resolved agentId', async () => {
+    // A malicious widget could try to bill cost to a different agent by
+    // sending its id in the body. The token's resolved agentId is the only
+    // authority — the form value must not affect routing or cost attribution.
+    const fd = makeFormData();
+    fd.set('agentId', 'agent-MALICIOUS');
+
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 2000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest({ formData: fd }));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
+      where: { id: VALID_CONTEXT.agentId },
+      select: expect.any(Object),
+    });
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: VALID_CONTEXT.agentId })
+    );
+  });
+});
+
+describe('POST /api/v1/embed/speech-to-text — origin handling', () => {
+  it('rejects with ORIGIN_DENIED when the request omits the Origin header but allowedOrigins is non-empty', async () => {
+    vi.mocked(isOriginAllowed).mockReturnValue(false);
+    const response = await POST(makePostRequest({ origin: null }));
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('ORIGIN_DENIED');
+  });
+
+  it('allows missing Origin when the token has empty allowedOrigins (server-to-server use)', async () => {
+    vi.mocked(resolveEmbedToken).mockResolvedValue({
+      ...VALID_CONTEXT,
+      allowedOrigins: [],
+    } as never);
+    vi.mocked(isOriginAllowed).mockReturnValue(true);
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest({ origin: null }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+});
+
+describe('POST /api/v1/embed/speech-to-text — CORS on validation failures', () => {
+  it('attaches CORS headers to a 413 AUDIO_TOO_LARGE response so the partner origin can read it', async () => {
+    const tooBig = new File([new Uint8Array(26 * 1024 * 1024)], 'big.webm', {
+      type: 'audio/webm',
+    });
+    const response = await POST(makePostRequest({ formData: makeFormData(tooBig) }));
+
+    expect(response.status).toBe(413);
+    // Without CORS headers on the error path, the embedded widget on the
+    // partner origin can't read the JSON body and surfaces a generic
+    // "fetch failed" instead of the AUDIO_TOO_LARGE specific message.
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://partner.com');
+  });
+
+  it('attaches CORS headers to a 415 AUDIO_INVALID_TYPE response', async () => {
+    const wrong = new File([new Uint8Array([1, 2])], 'doc.txt', { type: 'text/plain' });
+    const response = await POST(makePostRequest({ formData: makeFormData(wrong) }));
+
+    expect(response.status).toBe(415);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://partner.com');
+  });
+});
+
+describe('POST /api/v1/embed/speech-to-text — cost-log shape', () => {
+  it('does not write a `language` metadata key when the provider returned no language', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'no lang',
+      durationMs: 1000,
+      model: 'whisper-1',
+      // language: undefined — provider could omit when audio is too short to detect
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makePostRequest());
+
+    const call = vi.mocked(logCost).mock.calls[0]?.[0];
+    expect(call).toBeDefined();
+    expect(call).not.toHaveProperty('metadata');
+  });
+
+  it('records durationMs=0 cleanly when the provider reports no usage', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'silence',
+      durationMs: 0,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest());
+    expect(response.status).toBe(200);
+
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'transcription',
+        durationMs: 0,
+      })
+    );
+  });
+});
+
+describe('POST /api/v1/embed/speech-to-text — error envelope shape', () => {
+  it('does not leak provider error message text into the response body', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockRejectedValue(
+      new Error('OpenAI rate limit hit; key sk-... please rotate')
+    );
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest());
+    const body = await parseJson<{ error: { code: string; message: string } }>(response);
+
+    // Generic message — provider details stay in server logs, never the body.
+    expect(body.error.code).toBe('TRANSCRIPTION_FAILED');
+    expect(body.error.message).not.toContain('sk-');
+    expect(body.error.message).not.toContain('rate limit');
+    expect(body.error.message).toBe('Transcription failed');
+  });
+});
+
 describe('OPTIONS /api/v1/embed/speech-to-text', () => {
   it('returns 204 with CORS headers when token resolves', async () => {
     const response = await OPTIONS(

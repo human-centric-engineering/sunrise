@@ -384,3 +384,138 @@ describe('Happy path', () => {
     );
   });
 });
+
+// ── Hardening: edge cases + abuse vectors ──────────────────────────────────
+
+describe('Cost tracking edge cases', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('writes durationMs=0 cleanly when the provider reports no usage info', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'silence',
+      durationMs: 0,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+    expect(response.status).toBe(200);
+
+    // logCost still fires — calculateTranscriptionCost handles 0 ms as $0.
+    // The downstream caller can audit "no usage reported" via the duration
+    // field rather than the row being absent entirely.
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'transcription', durationMs: 0 })
+    );
+  });
+
+  it('omits language metadata when the provider returned no language field', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'no lang',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    const call = vi.mocked(logCost).mock.calls[0]?.[0];
+    expect(call).toBeDefined();
+    expect(call).not.toHaveProperty('metadata');
+  });
+});
+
+describe('Error envelope hygiene', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('never surfaces the provider error message verbatim to the client', async () => {
+    const audio = makeAudioResolution();
+    // A provider error containing fragments that look like a leaked secret.
+    audio.provider.transcribe.mockRejectedValue(
+      new Error('401 Unauthorized: invalid api_key=sk-leaked-12345')
+    );
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+    const body = await parseJson<{ error: { code: string; message: string } }>(response);
+
+    expect(body.error.code).toBe('TRANSCRIPTION_FAILED');
+    expect(body.error.message).toBe('Transcription failed');
+    expect(body.error.message).not.toContain('sk-');
+    expect(body.error.message).not.toContain('api_key');
+    expect(body.error.message).not.toContain('Unauthorized');
+  });
+});
+
+describe('Filename / MIME forwarding', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('forwards the picked filename and content type to the provider', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const file = new File([new Uint8Array([1, 2])], 'recording.mp4', {
+      type: 'audio/mp4;codecs=mp4a.40.2',
+    });
+    await POST(makeRequestWithFormData(makeAudioFormData({ audio: file })));
+
+    expect(audio.provider.transcribe).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        filename: 'recording.mp4',
+        mimeType: 'audio/mp4;codecs=mp4a.40.2',
+      })
+    );
+  });
+
+  it('falls back to audio.webm when the upload has no filename', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    // Empty filename — the route's `file.name || 'audio.webm'` fallback.
+    const file = new File([new Uint8Array([1, 2])], '', { type: 'audio/webm' });
+    await POST(makeRequestWithFormData(makeAudioFormData({ audio: file })));
+
+    expect(audio.provider.transcribe).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({ filename: 'audio.webm' })
+    );
+  });
+});
+
+describe('Voice toggle interaction with rate limit', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('still consumes the rate limit budget when the request would be rejected as VOICE_DISABLED', async () => {
+    // Rate limit is checked before the toggle gate so an attacker can't burn
+    // through Whisper budget by spamming voice-disabled agents — but they
+    // also shouldn't get a free pass. Each call consumes the bucket.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({ enableVoiceInput: false }) as never
+    );
+
+    await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(audioLimiter.check).toHaveBeenCalled();
+  });
+});
