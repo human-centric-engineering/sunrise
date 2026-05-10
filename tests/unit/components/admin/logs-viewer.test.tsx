@@ -990,6 +990,160 @@ describe('components/admin/logs-viewer', () => {
     });
   });
 
+  describe('copy log entry', () => {
+    // happy-dom ships a real clipboard implementation, so spy on the
+    // prototype's `writeText` rather than reassigning `navigator.clipboard`
+    // (which is exposed via a non-writable getter and silently no-ops on
+    // direct assignment).
+    let writeTextSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      writeTextSpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      writeTextSpy.mockRestore();
+    });
+
+    it('shows a Copy button inside the expanded panel', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+
+      // Act: expand the error log so the copy button mounts
+      await user.click(screen.getByText('Database connection failed').closest('button')!);
+
+      // Assert
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /copy log entry to clipboard/i })
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('writes a formatted log entry to the clipboard on click', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+      await user.click(screen.getByText('Database connection failed').closest('button')!);
+
+      // Act
+      const copyButton = await screen.findByRole('button', {
+        name: /copy log entry to clipboard/i,
+      });
+      await user.click(copyButton);
+
+      // Assert: clipboard called once with a string containing the
+      // bracketed timestamp, the upper-cased level, the message, the
+      // context block, and the full error block.
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1);
+      });
+      const text = writeTextSpy.mock.calls[0][0] as string;
+      expect(text).toContain('[2025-01-20T12:00:00.000Z] ERROR: Database connection failed');
+      expect(text).toContain('Context:');
+      expect(text).toContain('"requestId": "req-123"');
+      expect(text).toContain('Error: ConnectionError: Connection timeout');
+      expect(text).toContain('Code: ETIMEDOUT');
+      expect(text).toContain('Stack:');
+    });
+
+    it('includes Metadata block when entry has meta but no context/error', async () => {
+      // Arrange — log-4 (debug) has only `meta` populated
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+      await user.click(screen.getByText('Cache hit for user profile').closest('button')!);
+
+      // Act
+      await user.click(await screen.findByRole('button', { name: /copy log entry to clipboard/i }));
+
+      // Assert
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1);
+      });
+      const text = writeTextSpy.mock.calls[0][0] as string;
+      expect(text).toContain('[2025-01-20T11:45:00.000Z] DEBUG: Cache hit for user profile');
+      expect(text).toContain('Metadata:');
+      expect(text).toContain('"cacheKey": "user:profile:user-2"');
+      expect(text).not.toContain('Context:');
+      expect(text).not.toContain('Error:');
+    });
+
+    it('flips to a "Copied" state on success and reverts after 2 seconds', async () => {
+      // Arrange
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+      await user.click(screen.getByText('Database connection failed').closest('button')!);
+
+      // Act
+      await user.click(await screen.findByRole('button', { name: /copy log entry to clipboard/i }));
+
+      // Assert: button text + aria-label flip to "Copied"
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /log copied to clipboard/i })
+        ).toBeInTheDocument();
+      });
+
+      // Act: advance past the 2s revert timeout
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      // Assert: reverts to the default "Copy" label
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /copy log entry to clipboard/i })
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('does not toggle the parent accordion row when the button is clicked', async () => {
+      // Arrange — open the row first so we can click the copy button
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+      await user.click(screen.getByText('Database connection failed').closest('button')!);
+      const copyButton = await screen.findByRole('button', {
+        name: /copy log entry to clipboard/i,
+      });
+
+      // Act
+      await user.click(copyButton);
+
+      // Assert: the expanded panel content is still visible — clicking
+      // copy must not bubble to the AccordionTrigger and collapse the row.
+      // (If propagation had bubbled, the ConnectionError details would
+      // be removed from the DOM.)
+      expect(screen.getByText(/ConnectionError:/)).toBeInTheDocument();
+    });
+
+    it('fails silently when clipboard.writeText rejects', async () => {
+      // Arrange — clipboard API throws (insecure context, denied permission)
+      writeTextSpy.mockRejectedValueOnce(new Error('NotAllowedError'));
+      const user = userEvent.setup({ delay: null });
+      render(<LogsViewer initialLogs={mockLogs} initialMeta={mockMeta} />);
+      await user.click(screen.getByText('Database connection failed').closest('button')!);
+      const copyButton = await screen.findByRole('button', {
+        name: /copy log entry to clipboard/i,
+      });
+
+      // Act
+      await user.click(copyButton);
+
+      // Assert: writeText was attempted, but the button stays in the
+      // "Copy" state — no "Copied" affordance shown for a failed write.
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        screen.queryByRole('button', { name: /log copied to clipboard/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /copy log entry to clipboard/i })
+      ).toBeInTheDocument();
+    });
+  });
+
   describe('level badge styling', () => {
     it('should apply error badge styling', () => {
       // Arrange & Act
