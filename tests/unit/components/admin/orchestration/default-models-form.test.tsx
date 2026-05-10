@@ -348,6 +348,60 @@ describe('DefaultModelsForm', () => {
         expect(screen.getByText('Saved')).toBeInTheDocument();
       });
     });
+
+    it('omits empty slots from the payload so partial saves do not 400', async () => {
+      // Regression: server schema requires `z.string().min(1)` per task,
+      // so the form must filter out empty values before submitting. With
+      // only chat saved, the payload should contain `{ chat }` and
+      // nothing else — not `{ routing: '', chat, reasoning: '', embeddings: '' }`.
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+
+      render(
+        <DefaultModelsForm
+          settings={{
+            ...MOCK_SETTINGS,
+            defaultModelsStored: { chat: 'claude-sonnet-4-6' },
+          }}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // Mark the form dirty by clicking "Use suggestion" on the routing
+      // slot (which is empty in stored). That gives us {chat, routing}
+      // in the payload but still leaves reasoning/embeddings empty.
+      const [firstUseSuggestion] = screen.getAllByRole('button', { name: /use suggestion/i });
+      await act(async () => {
+        fireEvent.click(firstUseSuggestion);
+      });
+
+      const form = screen.getByTestId('default-models-form').closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(
+        () => {
+          expect(mockedPatch).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 3000 }
+      );
+
+      const [, firstCallOptions] = mockedPatch.mock.calls[0];
+      const sentBody = firstCallOptions.body as {
+        defaultModels: Record<string, string>;
+      };
+      // Empty slots must not appear in the payload at all.
+      expect(sentBody.defaultModels).not.toHaveProperty('reasoning');
+      expect(sentBody.defaultModels).not.toHaveProperty('embeddings');
+      // No empty-string values anywhere.
+      for (const v of Object.values(sentBody.defaultModels)) {
+        expect(v).not.toBe('');
+      }
+      // The chat slot the operator already had stored is preserved.
+      expect(sentBody.defaultModels.chat).toBe('claude-sonnet-4-6');
+    });
   });
 
   describe('form submission — error handling', () => {

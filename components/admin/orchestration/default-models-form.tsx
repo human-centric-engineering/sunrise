@@ -239,14 +239,17 @@ export function DefaultModelsForm({
     setError(null);
     try {
       const parsed = settingsFormSchema.parse(data);
-      const payload = {
-        defaultModels: {
-          routing: parsed.routing,
-          chat: parsed.chat,
-          reasoning: parsed.reasoning,
-          embeddings: parsed.embeddings,
-        },
-      };
+      // Server schema rejects empty strings (`z.string().min(1)`); filter
+      // them out so a partial save (e.g. only chat picked, embeddings
+      // left blank) doesn't 400 the whole request. The server merges by
+      // key, so any slot we omit keeps its existing stored value.
+      const defaultModels = Object.fromEntries(
+        TASK_TYPES.flatMap((task) => {
+          const v = parsed[task];
+          return v && v.length > 0 ? [[task, v]] : [];
+        })
+      );
+      const payload = { defaultModels };
       await apiClient.patch<OrchestrationSettings>(API.ADMIN.ORCHESTRATION.SETTINGS, {
         body: payload,
       });
