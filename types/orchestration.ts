@@ -90,6 +90,7 @@ export const CostOperation = {
   TOOL_CALL: 'tool_call',
   EMBEDDING: 'embedding',
   EVALUATION: 'evaluation',
+  TRANSCRIPTION: 'transcription',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 

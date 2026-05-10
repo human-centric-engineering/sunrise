@@ -281,8 +281,14 @@ export function setSecurityHeaders(response: NextResponse, nonce?: string): void
   // Control referrer information
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
-  // Disable unnecessary browser features
-  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  // Disable unnecessary browser features.
+  // `microphone=(self)` allows the admin chat surface to invoke
+  // `getUserMedia({ audio: true })` for voice input. The embed widget
+  // mounts on the *parent* site via `<script>` + Shadow DOM, so it
+  // inherits the parent site's Permissions-Policy — this header does
+  // not unlock the mic on partner pages. Iframe embedders need
+  // `allow="microphone"` on the iframe element.
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(self), camera=()');
 
   // HSTS in production only - enforces HTTPS
   if (process.env.NODE_ENV === 'production') {

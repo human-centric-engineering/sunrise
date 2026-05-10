@@ -24,7 +24,8 @@
  * Platform-agnostic: no Next.js imports.
  */
 
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
+import type { TranscriptionVerbose } from 'openai/resources/audio/transcriptions';
 import type {
   ChatCompletion,
   ChatCompletionChunk,
@@ -58,6 +59,8 @@ import type {
   LlmToolChoice,
   ModelInfo,
   StreamChunk,
+  TranscribeOptions,
+  TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
 
@@ -282,6 +285,58 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     } catch (err) {
       throw toProviderError(err, 'OpenAI-compatible embed request failed');
     }
+  }
+
+  async transcribe(
+    audio: Blob | Buffer | ArrayBuffer | Uint8Array,
+    options: TranscribeOptions
+  ): Promise<TranscribeResponse> {
+    logger.info('OpenAI-compatible transcribe request', {
+      provider: this.name,
+      model: options.model,
+      hasLanguage: Boolean(options.language),
+      isLocal: this.isLocal,
+    });
+
+    const filename = options.filename ?? 'audio.webm';
+    const mimeType =
+      options.mimeType ?? (audio instanceof Blob ? audio.type : 'application/octet-stream');
+
+    let upload: Awaited<ReturnType<typeof toFile>>;
+    try {
+      upload = await toFile(audio, filename, mimeType ? { type: mimeType } : undefined);
+    } catch (err) {
+      throw toProviderError(err, 'failed to prepare audio upload');
+    }
+
+    let result: TranscriptionVerbose;
+    try {
+      result = await withRetry<TranscriptionVerbose>(
+        () =>
+          this.client.audio.transcriptions.create({
+            file: upload,
+            model: options.model,
+            response_format: 'verbose_json',
+            ...(options.language ? { language: options.language } : {}),
+            ...(options.prompt ? { prompt: options.prompt } : {}),
+          }),
+        {
+          maxRetries: this.maxRetries,
+          isLocal: this.isLocal,
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+          operation: 'openai.audio.transcriptions.create',
+        }
+      );
+    } catch (err) {
+      throw toProviderError(err, 'OpenAI-compatible transcribe request failed');
+    }
+
+    return {
+      text: result.text,
+      durationMs: Math.round((result.duration ?? 0) * 1000),
+      ...(result.language ? { language: result.language } : {}),
+      model: options.model,
+    };
   }
 
   async listModels(): Promise<ModelInfo[]> {
