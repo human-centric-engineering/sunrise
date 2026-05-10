@@ -189,6 +189,74 @@ describe('useVoiceRecording', () => {
     expect(result.current.error?.code).toBe('permission_denied');
   });
 
+  it('surfaces SecurityError as permission_denied (cross-origin / permissions-policy block)', async () => {
+    // SecurityError fires when the calling document is not in a secure
+    // context, or when the parent's Permissions-Policy denies the
+    // microphone. The hook maps it to the same `permission_denied` code
+    // as NotAllowedError because the user-facing remedy is identical.
+    getUserMediaMock.mockRejectedValueOnce(
+      Object.assign(new Error('blocked by permissions policy'), { name: 'SecurityError' })
+    );
+    const { result } = renderHook(() => useVoiceRecording());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.state).toBe('idle');
+    expect(result.current.error?.code).toBe('permission_denied');
+  });
+
+  it('surfaces NotFoundError (no microphone) as capture_failed', async () => {
+    // Distinguishes hardware-absent failures from permission denials —
+    // the user can grant permission, but no software remedy adds a mic.
+    getUserMediaMock.mockRejectedValueOnce(
+      Object.assign(new Error('no microphone'), { name: 'NotFoundError' })
+    );
+    const { result } = renderHook(() => useVoiceRecording());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.state).toBe('idle');
+    expect(result.current.error?.code).toBe('capture_failed');
+  });
+
+  it('surfaces capture_failed when the MediaRecorder constructor throws', async () => {
+    // Some browsers reject MediaRecorder construction on unusual codec /
+    // stream-shape combinations even after `getUserMedia` succeeds. The
+    // hook must release the stream tracks (no orphaned mic) and surface
+    // a useful error.
+    const OriginalRecorder = (globalThis as { MediaRecorder?: typeof MediaRecorder })
+      .MediaRecorder!;
+    class ThrowingRecorder {
+      static isTypeSupported = (
+        OriginalRecorder as unknown as { isTypeSupported: (m: string) => boolean }
+      ).isTypeSupported;
+      constructor() {
+        throw new Error('codec rejected by recorder');
+      }
+    }
+    // @ts-expect-error swap in the throwing recorder for this test only
+    globalThis.MediaRecorder = ThrowingRecorder;
+
+    const { result } = renderHook(() => useVoiceRecording());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.state).toBe('idle');
+    expect(result.current.error?.code).toBe('capture_failed');
+    // Stream tracks must be torn down even though recording never started —
+    // otherwise the mic indicator stays on with no path to release it.
+    expect(stopTrackMock).toHaveBeenCalled();
+
+    // Restore for downstream tests.
+    globalThis.MediaRecorder = OriginalRecorder;
+  });
+
   it('cancel() stops the recorder and tears down the stream', async () => {
     const { result } = renderHook(() => useVoiceRecording());
 
@@ -313,6 +381,66 @@ describe('useVoiceRecording', () => {
 
     unmount();
 
+    expect(stopTrackMock).toHaveBeenCalled();
+  });
+
+  it('passes mimeType="" when no PREFERRED_MIMES candidate is supported', async () => {
+    // A browser that has MediaRecorder but doesn't support any of the
+    // preferred codecs falls through to the empty-string fallback in
+    // pickSupportedMime — passed as undefined options to the recorder
+    // constructor, letting the browser pick its own default.
+    const original = (MockRecorder as unknown as { isTypeSupported: (m: string) => boolean })
+      .isTypeSupported;
+    (MockRecorder as unknown as { isTypeSupported: (m: string) => boolean }).isTypeSupported = () =>
+      false;
+
+    const { result } = renderHook(() => useVoiceRecording());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    // Hook proceeds without an explicit mimeType. The MockRecorder default
+    // ('audio/webm') still applies for the captured-blob assertion.
+    expect(result.current.state).toBe('recording');
+    expect(latestRecorder?.mimeType).toBe('audio/webm');
+
+    // Restore.
+    (MockRecorder as unknown as { isTypeSupported: (m: string) => boolean }).isTypeSupported =
+      original;
+  });
+
+  it('surfaces capture_failed when recorder.stop() throws synchronously', async () => {
+    // The MediaRecorder spec allows `.stop()` to throw on unusual states
+    // (e.g. recorder ended unexpectedly). The hook must drop into the
+    // catch path: surface `capture_failed`, tear down the stream, and
+    // resolve the in-flight stop promise with null so the caller knows
+    // the recording didn't yield a blob.
+    const { result } = renderHook(() => useVoiceRecording());
+
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(latestRecorder).not.toBeNull();
+
+    // Override the mock recorder's stop to throw — the catch block at
+    // use-voice-recording.ts:288-299 is the regression target.
+    const throwOnStop = (): void => {
+      throw new Error('recorder ended unexpectedly');
+    };
+    Object.defineProperty(latestRecorder!, 'stop', {
+      value: throwOnStop,
+      configurable: true,
+    });
+
+    let captured: { blob: Blob; mimeType: string; durationMs: number } | null = null;
+    await act(async () => {
+      captured = (await result.current.stop()) ?? null;
+    });
+
+    expect(captured).toBeNull();
+    expect(result.current.state).toBe('idle');
+    expect(result.current.error?.code).toBe('capture_failed');
     expect(stopTrackMock).toHaveBeenCalled();
   });
 

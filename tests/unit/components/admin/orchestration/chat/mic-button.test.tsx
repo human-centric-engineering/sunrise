@@ -204,6 +204,52 @@ describe('MicButton', () => {
     );
   });
 
+  it.each([
+    ['NO_AUDIO_PROVIDER', /no speech-to-text provider is configured/i],
+    ['AUDIO_TOO_LARGE', /recording is too long/i],
+    ['AUDIO_INVALID_TYPE', /audio format we cannot transcribe/i],
+  ])('translates %s into a user-facing message', async (code, pattern) => {
+    // Each known error code maps to its own copy in `formatErrorMessage`;
+    // covering them as a group ensures the switch-case branches don't
+    // silently fall through to the generic fallback when refactored.
+    const props = makeProps();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: false, error: { code } }), { status: 400 })
+    );
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...props} />);
+    await user.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(props.onError).toHaveBeenCalled());
+    expect(props.onError).toHaveBeenCalledWith(expect.stringMatching(pattern));
+  });
+
+  it('falls back to the server-supplied message for unknown error codes', async () => {
+    // The default switch-arm forwards the server's message verbatim —
+    // so a future code added without an explicit translation still
+    // surfaces something useful rather than a generic stub.
+    const props = makeProps();
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'SOMETHING_NEW', message: 'specific upstream detail' },
+        }),
+        { status: 500 }
+      )
+    );
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...props} />);
+    await user.click(screen.getByRole('button'));
+
+    await waitFor(() => expect(props.onError).toHaveBeenCalled());
+    expect(props.onError).toHaveBeenCalledWith('specific upstream detail');
+  });
+
   it('calls onError when fetch throws', async () => {
     const props = makeProps();
     fetchMock.mockRejectedValue(new Error('boom'));
@@ -234,5 +280,61 @@ describe('MicButton', () => {
     render(<MicButton {...props} />);
 
     await waitFor(() => expect(props.onError).toHaveBeenCalledWith('mic denied'));
+  });
+
+  it('silently bails when stop() returns null (empty/cancelled recording)', async () => {
+    // `useVoiceRecording.stop()` resolves to `null` when the recorder
+    // produced no data (rare but possible: zero-length MediaStream, an
+    // immediate cancel). The button must NOT call fetch — uploading an
+    // empty body would be wasted bandwidth + a wasted Whisper call —
+    // and must NOT invoke onTranscript / onError.
+    const props = makeProps();
+    stopMock.mockResolvedValueOnce(null as unknown as Awaited<ReturnType<typeof stopMock>>);
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...props} />);
+    await user.click(screen.getByRole('button'));
+
+    expect(stopMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(props.onTranscript).not.toHaveBeenCalled();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it('does not double-fire when clicked again while still transcribing', async () => {
+    // The button toggles to a busy state while the upload is in flight.
+    // A second click during this window must not start another recording
+    // or fire another fetch — `disabled` on the underlying Button is
+    // load-bearing here, but the click handler also short-circuits.
+    const props = makeProps();
+    let resolveFetch: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    hookState.state = 'recording';
+    const user = userEvent.setup();
+
+    render(<MicButton {...props} />);
+
+    // First click: starts the stop+upload flow but the fetch hangs.
+    await user.click(screen.getByRole('button'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Second click while the request is still pending — must not call
+    // fetch again. Note the button is in DOM-disabled state so this is
+    // belt-and-braces, but tests must catch a regression that removes
+    // either the disabled prop OR the click-handler short-circuit.
+    await user.click(screen.getByRole('button'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight fetch so the test cleans up.
+    resolveFetch?.(
+      new Response(JSON.stringify({ success: true, data: { text: 'ok' } }), { status: 200 })
+    );
+    await waitFor(() => expect(props.onTranscript).toHaveBeenCalled());
   });
 });

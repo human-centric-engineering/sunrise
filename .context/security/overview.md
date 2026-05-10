@@ -47,12 +47,17 @@ setSecurityHeaders(response, nonce);
 | `X-Frame-Options`           | `DENY`                                                  | Clickjacking prevention       |
 | `X-Content-Type-Options`    | `nosniff`                                               | MIME type sniffing prevention |
 | `Referrer-Policy`           | `strict-origin-when-cross-origin`                       | Referrer leakage control      |
-| `Permissions-Policy`        | `geolocation=(), microphone=(), camera=()`              | Feature restriction           |
+| `Permissions-Policy`        | `geolocation=(), microphone=(self), camera=()`          | Feature restriction           |
 | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (production only) | HTTPS enforcement             |
 
 **Deprecated Headers**:
 
 - ❌ `X-XSS-Protection` - Removed. Deprecated by browsers, replaced by CSP.
+
+**Permissions-Policy notes**:
+
+- `microphone=(self)` lets the admin app call `getUserMedia({ audio: true })` for voice input on first-party origins; `geolocation=()` and `camera=()` remain fully denied.
+- The embed widget mounts on partner sites via `<script>` injection and inherits the **parent site's** `Permissions-Policy`. Sunrise cannot override it from the script payload — partner sites must allow microphone access in their own policy (and iframe embedders need `allow="microphone"` on the iframe element).
 
 ## Content Security Policy (CSP)
 
@@ -172,6 +177,7 @@ Sliding window rate limiter with a pluggable backing store. Defaults to in-memor
 | `uploadLimiter`            | 10 requests  | 15 minutes | File uploads                |
 | `inviteLimiter`            | 10 requests  | 15 minutes | Sending invitations         |
 | `cspReportLimiter`         | 20 requests  | 1 minute   | CSP violation reports       |
+| `audioLimiter`             | 10 requests  | 1 minute   | Audio transcription (voice) |
 
 ### Usage
 
