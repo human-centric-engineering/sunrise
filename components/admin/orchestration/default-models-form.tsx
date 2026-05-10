@@ -325,13 +325,21 @@ export function DefaultModelsForm({
               <div className="grid gap-4 sm:grid-cols-2">
                 {TASK_TYPES.map((task) => {
                   const isEmbeddings = task === 'embeddings';
-                  const suggested = hydrated?.[task] ?? '';
                   const optionsForTask = isEmbeddings
                     ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
                     : chatLikeOptions.map((m) => ({
                         id: m.id,
                         label: `${m.name} (${m.tier})`,
                       }));
+                  // Drop suggestions that aren't actually in the dropdown for
+                  // this slot — e.g. a chat-tier model proposed for embeddings.
+                  // Showing "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in
+                  // the embeddings dropdown is misleading and the
+                  // "Use suggestion" button is already a no-op for those ids.
+                  const rawSuggested = hydrated?.[task] ?? '';
+                  const suggested = optionsForTask.some((o) => o.id === rawSuggested)
+                    ? rawSuggested
+                    : '';
                   const suggestedLabel =
                     optionsForTask.find((o) => o.id === suggested)?.label ?? suggested;
 

@@ -391,6 +391,19 @@ describe('computeDefaultModelMap', () => {
     expect(typeof defaults.routing).toBe('string');
     expect(defaults.routing.length).toBeGreaterThan(0);
   });
+
+  it('leaves the embeddings slot empty — chat-only registry cannot suggest an embedding model', () => {
+    // Regression: previously this returned the cheapest non-local budget
+    // model (e.g. gpt-4o-mini) for embeddings. Chat-tier models can't
+    // embed, so the UI was showing nonsense suggestions like
+    // "Suggested: gpt-4o-mini" in the embeddings dropdown footer.
+    // Embedding suggestions belong to the embedding-model registry
+    // (lib/orchestration/llm/embedding-models.ts); this map should
+    // signal "no suggestion" with an empty string.
+    registry.__resetForTests();
+    const defaults = registry.computeDefaultModelMap();
+    expect(defaults.embeddings).toBe('');
+  });
 });
 
 describe('getRegistryFetchedAt', () => {

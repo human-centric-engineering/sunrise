@@ -554,6 +554,54 @@ describe('DefaultModelsForm', () => {
       expect(screen.queryByRole('option', { name: /Claude Sonnet/i })).not.toBeInTheDocument();
     });
 
+    it('does not show a suggestion footer for embeddings when the suggested id is not an embedding-capable model', () => {
+      // Regression: computeDefaultModelMap previously suggested a chat
+      // model (e.g. gpt-4o-mini) for embeddings. Even if a stale row in
+      // the DB still carries that bad value, the form must not render
+      // it as "Suggested:" — there's no matching dropdown option, so
+      // "Use suggestion" would be a no-op and the operator would be
+      // confused.
+      const providers = [
+        { slug: 'anthropic', name: 'Anthropic', isActive: true },
+        { slug: 'openai', name: 'OpenAI', isActive: true },
+      ];
+      const settingsWithBadEmbeddingsSuggestion: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        // Hydrated map has the bad suggestion …
+        defaultModels: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'gpt-4o-mini',
+        },
+        // … but the operator hasn't saved an embeddings override.
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithBadEmbeddingsSuggestion}
+          models={MOCK_MODELS}
+          providers={providers}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // The footer for the empty embeddings slot must NOT show the
+      // chat-model id as a suggestion. Other slots can still show
+      // Saved-override badges; we only assert "gpt-4o-mini" never appears.
+      expect(screen.queryByText(/gpt-4o-mini/)).not.toBeInTheDocument();
+      // And the form should fall through to the no-suggestion message
+      // for the embeddings slot.
+      expect(
+        screen.getByText(/No suggestion available — pick a model from the dropdown/i)
+      ).toBeInTheDocument();
+    });
+
     it('embeddings shows the no-embedding-provider hint when none of the configured providers offer embeddings', () => {
       // Anthropic only, no embedding-capable model in MOCK_EMBEDDING_MODELS.
       const settingsWithEmptyEmbed: OrchestrationSettings = {

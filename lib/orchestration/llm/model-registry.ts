@@ -210,7 +210,12 @@ export function __resetForTests(): void {
  * Preference order:
  *   - `chat` / `routing` — cheapest budget-tier model
  *   - `reasoning` — frontier-tier, falls back to mid, then any non-local
- *   - `embeddings` — first embeddings-capable entry, else any non-local
+ *   - `embeddings` — left empty; this registry is chat-only and has no
+ *     way to know which entries (if any) can embed. The embedding-model
+ *     registry (`lib/orchestration/llm/embedding-models.ts`) is the
+ *     authoritative source, but it's DB-backed/async and can't be read
+ *     from this sync function. Operators pick an embeddings model
+ *     manually from the form's embeddings-only dropdown.
  */
 export function computeDefaultModelMap(): Record<TaskType, string> {
   const all = dedupeModels(state.models).filter((m) => m.tier !== 'local');
@@ -219,16 +224,15 @@ export function computeDefaultModelMap(): Record<TaskType, string> {
   const mid = byCost.find((m) => m.tier === 'mid') ?? budget;
   const frontier = byCost.find((m) => m.tier === 'frontier') ?? mid;
 
-  // No embeddings tier in the registry today — fall back to the cheapest non-local.
-  const embeddings = budget;
-
   // If the registry is empty (test or refresh-failed state), fall back to known
   // ids from the fallback map.
   return {
     routing: budget?.id ?? 'claude-haiku-4-5',
     chat: budget?.id ?? 'claude-haiku-4-5',
     reasoning: frontier?.id ?? 'claude-opus-4-6',
-    embeddings: embeddings?.id ?? 'claude-haiku-4-5',
+    // Empty signals "no suggestion" downstream — chat-tier models can't
+    // embed, so any guess from this registry would mislead operators.
+    embeddings: '',
   };
 }
 
