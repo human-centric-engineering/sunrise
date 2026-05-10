@@ -33,9 +33,13 @@ const hookState: RecordingHookState = {
   supported: true,
 };
 
-const startMock = vi.fn(async () => {
-  hookState.state = 'recording';
-});
+// `startMock` resolves with no body — the real `useVoiceRecording.start()`
+// updates internal state via React's `useState`, but our mock returns a
+// static object snapshot per render so reactive state is out of scope (see
+// the accept annotation below explaining the deliberate limitation). Tests
+// that need the post-start `recording` state pre-set `hookState.state`
+// before render rather than relying on click-driven mutation.
+const startMock = vi.fn(async () => {});
 
 const stopMock = vi.fn(async () => ({
   blob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'audio/webm' }),
@@ -43,10 +47,18 @@ const stopMock = vi.fn(async () => ({
   durationMs: 1500,
 }));
 
-const cancelMock = vi.fn(() => {
-  hookState.state = 'idle';
-});
+const cancelMock = vi.fn();
 
+// test-review:accept mock-realism — the hook mock reads `hookState` on each
+// invocation, so initial-render state IS responsive to pre-set values. What
+// it doesn't do is trigger a React re-render when `hookState` mutates AFTER
+// render — the `MicButton` component holds no internal state derived from
+// the hook's return that would force a re-render on its own. Every test in
+// this file pre-sets `hookState.*` before render and asserts at the
+// dispatch level (mock calls, props passed to children); none rely on
+// observing a state transition's rendered output. Adding a real
+// react-state-backed mock would be a substantial rewrite for no covered
+// scenario.
 vi.mock('@/lib/hooks/use-voice-recording', () => ({
   DEFAULT_MAX_DURATION_MS: 180_000,
   useVoiceRecording: () => ({
@@ -97,14 +109,14 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof MicButton>> = 
 describe('MicButton', () => {
   it('renders with idle aria-label', () => {
     render(<MicButton {...makeProps()} />);
-    expect(screen.getByRole('button', { name: /start voice input/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /start voice input/i })).toBeInTheDocument();
   });
 
   it('switches aria-label when recording', () => {
     hookState.state = 'recording';
     hookState.elapsedMs = 5_000;
     render(<MicButton {...makeProps()} />);
-    expect(screen.getByRole('button', { name: /stop recording/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /stop recording/i })).toBeInTheDocument();
   });
 
   it('calls start() on first click', async () => {

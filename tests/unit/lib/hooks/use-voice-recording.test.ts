@@ -16,12 +16,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
+// `PREFERRED_MIMES` drives `MockRecorder.isTypeSupported` below; importing
+// it here keeps the mock's support set aligned with the source list. The
+// hook itself has no module-side effects that would interfere with mocks
+// being installed first.
+import { PREFERRED_MIMES, useVoiceRecording } from '@/lib/hooks/use-voice-recording';
+
 // ---------------------------------------------------------------------------
 // Mock MediaRecorder + getUserMedia on the global before importing the hook
 // ---------------------------------------------------------------------------
 
 const stopMock = vi.fn();
 const startMock = vi.fn();
+/**
+ * Most-recently-constructed recorder. Tests that need to fire the
+ * `error` event (the `capture_failed` regression) reach into this
+ * reference rather than monkey-patching, mirroring how a real browser
+ * fires events on the live recorder instance.
+ */
+let latestRecorder: MockRecorder | null = null;
 
 class MockRecorder {
   public state: 'inactive' | 'recording' | 'paused' = 'inactive';
@@ -30,6 +43,11 @@ class MockRecorder {
 
   constructor(_stream: MediaStream, options?: { mimeType?: string }) {
     this.mimeType = options?.mimeType ?? 'audio/webm';
+    // Tracking the most-recent instance lets tests fire events on the live
+    // recorder without monkey-patching the prototype. `this` is required
+    // here — eslint's no-this-alias is over-eager for this idiom.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    latestRecorder = this;
   }
 
   addEventListener(event: string, cb: (event?: unknown) => void): void {
@@ -68,9 +86,12 @@ class MockRecorder {
   }
 }
 
+// Drive `isTypeSupported` from the source's canonical `PREFERRED_MIMES`
+// list. Adding or reordering a MIME in the source automatically extends
+// the mock's support set so tests don't fall behind.
 (MockRecorder as unknown as { isTypeSupported: (mime: string) => boolean }).isTypeSupported = (
   mime: string
-) => mime === 'audio/webm;codecs=opus' || mime === 'audio/webm';
+) => (PREFERRED_MIMES as readonly string[]).includes(mime);
 
 const stopTrackMock = vi.fn();
 const getUserMediaMock = vi.fn();
@@ -80,6 +101,7 @@ beforeEach(() => {
   startMock.mockReset();
   stopTrackMock.mockReset();
   getUserMediaMock.mockReset();
+  latestRecorder = null;
   getUserMediaMock.mockResolvedValue({
     getTracks: () => [{ stop: stopTrackMock }],
   } as unknown as MediaStream);
@@ -99,8 +121,9 @@ afterEach(() => {
   globalThis.MediaRecorder = undefined;
 });
 
-// Dynamic import after mocks land.
-const { useVoiceRecording } = await import('@/lib/hooks/use-voice-recording');
+// `useVoiceRecording` and `PREFERRED_MIMES` are imported at the top of the
+// file (before the MediaRecorder mock setup) so the mock's `isTypeSupported`
+// can derive its support set from the canonical list.
 
 describe('useVoiceRecording', () => {
   it('reports supported when MediaRecorder + getUserMedia are present', () => {
@@ -265,22 +288,18 @@ describe('useVoiceRecording', () => {
       await result.current.start();
     });
 
-    // Simulate the browser firing 'error' on the MediaRecorder (e.g. the OS
-    // revoked the device handle mid-record).
-    const recorder = (globalThis as { MediaRecorder?: unknown }).MediaRecorder;
-    expect(recorder).toBeDefined();
+    expect(latestRecorder).not.toBeNull();
 
+    // Fire the actual `error` event on the recorder — exercises the source's
+    // `recorder.addEventListener('error', ...)` handler. Without this, the
+    // test was passing on a `cancel()` shortcut that bypassed the error
+    // handler entirely.
     await act(async () => {
-      // The hook calls cancel() inside the error handler, which sets state to
-      // idle. We invoke that path by reaching into the singleton recorder
-      // instance the mock keeps.
-      // Find the most-recent recorder. The mock class stores listeners; we'd
-      // need to expose it — instead, simulate by calling cancel() which is
-      // what the error handler does, after manually setting an error state.
-      result.current.cancel();
+      latestRecorder!.simulateError();
     });
 
     expect(result.current.state).toBe('idle');
+    expect(result.current.error?.code).toBe('capture_failed');
     expect(stopTrackMock).toHaveBeenCalled();
   });
 

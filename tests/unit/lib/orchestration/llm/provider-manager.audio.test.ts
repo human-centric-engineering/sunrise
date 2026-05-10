@@ -47,10 +47,13 @@ vi.mock('openai', () => {
   return { default: MockOpenAI, toFile: vi.fn() };
 });
 
-const { prisma } = await import('@/lib/db/client');
-const { getAudioProvider, clearCache, registerProviderInstance } =
-  await import('@/lib/orchestration/llm/provider-manager');
-const { resetAllBreakers, getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
+import { prisma } from '@/lib/db/client';
+import {
+  clearCache,
+  getAudioProvider,
+  registerProviderInstance,
+} from '@/lib/orchestration/llm/provider-manager';
+import { getBreaker, resetAllBreakers } from '@/lib/orchestration/llm/circuit-breaker';
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -25,8 +25,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 /** Hard cap for client-side recording. Exceeded clips are auto-stopped. */
 export const DEFAULT_MAX_DURATION_MS = 180_000;
 
-/** MIME candidates in preference order. */
-const PREFERRED_MIMES = [
+/**
+ * MIME candidates in preference order. Exported so test mocks (notably
+ * `MockRecorder.isTypeSupported` in `tests/unit/lib/hooks/use-voice-recording.test.ts`)
+ * can derive their support set from the canonical list rather than
+ * duplicating it — keeps tests aligned with the source when a new MIME
+ * is added or the order changes.
+ */
+export const PREFERRED_MIMES = [
   'audio/webm;codecs=opus',
   'audio/webm',
   'audio/mp4;codecs=mp4a.40.2',

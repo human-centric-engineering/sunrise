@@ -9,9 +9,9 @@
  * Key security assertions:
  * - Admin auth required (401/403 otherwise)
  * - Rate limited on POST (adminLimiter)
- * - File size limit enforced (10 MB)
- * - Extension whitelist enforced (.md, .markdown, .txt only)
- * - Non-text MIME types rejected
+ * - File size limit enforced (50 MB; 413 FILE_TOO_LARGE)
+ * - Extension whitelist enforced via `ALLOWED_EXTENSIONS` (400 INVALID_FILE_TYPE)
+ * - Pre-parse Content-Length guard rejects oversize bodies before allocation
  * - Missing file field returns 400
  */
 
@@ -153,11 +153,19 @@ describe('GET /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await GET(makeGetRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: unknown[];
+        meta: { page: number; limit: number; total: number; totalPages: number };
+      }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
-      expect(data.meta).toBeDefined();
+      expect(data.meta).toMatchObject({
+        page: expect.any(Number),
+        limit: expect.any(Number),
+        total: 1,
+      });
     });
 
     it('passes status filter to Prisma WHERE clause', async () => {
@@ -373,20 +381,9 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 when file exceeds 10 MB size limit', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-
-      // 11 MB file
-      const bigContent = new Uint8Array(11 * 1024 * 1024);
-      const formData = new FormData();
-      formData.append('file', new File([bigContent], 'big.md', { type: 'text/markdown' }));
-
-      const response = await POST(makePostRequestWithFormData(formData));
-
-      expect(response.status).toBe(400);
-      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
-      expect(data.success).toBe(false);
-    });
+    // Size-limit coverage lives in the "Pre-parse body-size guard" describe
+    // block below (Content-Length-driven 413) and the post-parse test "returns
+    // 413 FILE_TOO_LARGE when file exceeds MAX_UPLOAD_BYTES (post-parse)".
 
     it('returns 400 INVALID_FILE_TYPE when file has unsupported extension (.exe)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
@@ -449,6 +446,20 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       await POST(makePostRequestWithFormData(formData));
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+
+    it('returns 429 when adminLimiter rejects the POST', async () => {
+      // Verifies the 429 response shape end-to-end. The unit-level test
+      // covers the same case (route.test.ts) — this integration variant
+      // pins the contract through the wider auth + handler wiring.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+      const formData = new FormData();
+      formData.append('file', new File(['# Hello'], 'hello.md', { type: 'text/markdown' }));
+
+      const response = await POST(makePostRequestWithFormData(formData));
+
+      expect(response.status).toBe(429);
     });
   });
 

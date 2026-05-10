@@ -219,6 +219,34 @@ describe('POST /api/v1/embed/speech-to-text — voice toggle gating', () => {
     const body = await parseJson<{ error: { code: string } }>(response);
     expect(body.error.code).toBe('VOICE_DISABLED');
   });
+
+  it('returns 404 NOT_FOUND when the embed-token agent does not exist (findUnique → null)', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+
+    const response = await POST(makePostRequest());
+
+    expect(response.status).toBe(404);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns 404 NOT_FOUND when the embed-token agent is inactive', async () => {
+    // The token may still be live and the row exists, but the agent has
+    // been deactivated since the token was issued. The route treats this
+    // as "agent not available" rather than a different code so an embed
+    // widget gets a uniform 404 in both cases.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: VALID_CONTEXT.agentId,
+      enableVoiceInput: true,
+      isActive: false,
+    } as never);
+
+    const response = await POST(makePostRequest());
+
+    expect(response.status).toBe(404);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('NOT_FOUND');
+  });
 });
 
 describe('POST /api/v1/embed/speech-to-text — body validation', () => {

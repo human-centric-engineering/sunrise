@@ -128,9 +128,9 @@ describe('AgentForm — voice input toggle', () => {
     await user.click(screen.getByRole('tab', { name: /model/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('switch', { name: /enable voice input/i })).toBeTruthy();
+      expect(screen.getByRole('switch', { name: /enable voice input/i })).toBeInTheDocument();
     });
-    expect(screen.getByText(/lets users speak instead of typing/i)).toBeTruthy();
+    expect(screen.getByText(/lets users speak instead of typing/i)).toBeInTheDocument();
   });
 
   it('reflects the current agent value (off by default)', async () => {

@@ -28,9 +28,12 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { prisma } = await import('@/lib/db/client');
-const { logCost, calculateTranscriptionCost, WHISPER_USD_PER_MINUTE } =
-  await import('@/lib/orchestration/llm/cost-tracker');
+import { prisma } from '@/lib/db/client';
+import {
+  WHISPER_USD_PER_MINUTE,
+  calculateTranscriptionCost,
+  logCost,
+} from '@/lib/orchestration/llm/cost-tracker';
 
 beforeEach(() => {
   vi.clearAllMocks();

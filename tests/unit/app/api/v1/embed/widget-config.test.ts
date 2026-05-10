@@ -32,7 +32,7 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  getAudioProvider: vi.fn().mockResolvedValue(null),
+  getAudioProvider: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -53,6 +53,7 @@ vi.mock('@/lib/logging', () => ({
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { prisma } from '@/lib/db/client';
 import { apiLimiter } from '@/lib/security/rate-limit';
+import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { GET, OPTIONS } from '@/app/api/v1/embed/widget-config/route';
 import { DEFAULT_WIDGET_CONFIG } from '@/lib/validations/orchestration';
 
@@ -89,6 +90,13 @@ beforeEach(() => {
   vi.mocked(apiLimiter.check).mockReturnValue({ success: true } as never);
   vi.mocked(resolveEmbedToken).mockResolvedValue(VALID_CONTEXT as never);
   vi.mocked(isOriginAllowed).mockReturnValue(true);
+  // `vi.clearAllMocks()` wipes any mock implementation set in `vi.mock()`
+  // factories — so re-stub the defaults here every run rather than relying
+  // on a once-only factory implementation that gets cleared.
+  vi.mocked(getAudioProvider).mockResolvedValue(null);
+  // Mirror the route's `select` shape so a future select-clause expansion
+  // (e.g. adding `isActive`) trips a typed-mock failure rather than silently
+  // leaking `undefined` into the route's reads.
   vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
     widgetConfig: null,
     enableVoiceInput: false,
@@ -192,7 +200,6 @@ describe('voiceInputEnabled in widget-config response', () => {
   });
 
   it('is false when no audio-capable provider is configured', async () => {
-    const { getAudioProvider } = await import('@/lib/orchestration/llm/provider-manager');
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
       widgetConfig: null,
       enableVoiceInput: true,
@@ -203,8 +210,22 @@ describe('voiceInputEnabled in widget-config response', () => {
     expect(body.data.voiceInputEnabled).toBe(false);
   });
 
+  it('is false when getAudioProvider rejects (catch branch defaults to false)', async () => {
+    // The route swallows getAudioProvider failures and defaults to false so
+    // a transient SDK / DB error never bubbles to the partner widget. Without
+    // this test the catch arm at route.ts:114-118 went unverified.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableVoiceInput: true,
+    } as never);
+    vi.mocked(getAudioProvider).mockRejectedValueOnce(new Error('provider lookup failed'));
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
+    expect(body.data.voiceInputEnabled).toBe(false);
+  });
+
   it('is true when all three conditions hold', async () => {
-    const { getAudioProvider } = await import('@/lib/orchestration/llm/provider-manager');
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
       widgetConfig: null,
       enableVoiceInput: true,

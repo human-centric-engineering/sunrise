@@ -420,7 +420,11 @@ describe('Cost tracking edge cases', () => {
     );
   });
 
-  it('omits language metadata when the provider returned no language field', async () => {
+  it('does not pass `metadata` to logCost when provider returns no language field', async () => {
+    // The route only forwards a `metadata` object to `logCost` when the
+    // provider returned a non-empty `language`. logCost itself stamps
+    // `durationMs` into metadata internally before persisting; this test
+    // pins the route's call-site contract — not the persisted DB shape.
     const audio = makeAudioResolution();
     audio.provider.transcribe.mockResolvedValue({
       text: 'no lang',

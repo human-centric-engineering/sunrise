@@ -465,12 +465,15 @@ describe('Knowledge Documents API', () => {
     });
 
     it('returns 429 when rate limited', async () => {
-      // Arrange
+      // Arrange — fixed reset value avoids wall-clock coupling. The route
+      // doesn't compare reset against `Date.now()` today, but a deterministic
+      // value also keeps any future reset-driven assertions stable across CI
+      // hosts where elapsed time would drift.
       vi.mocked(adminLimiter.check).mockReturnValue({
         success: false,
         limit: 10,
         remaining: 0,
-        reset: Date.now() + 60_000,
+        reset: 1_700_000_000 + 60,
       } as never);
 
       // Act

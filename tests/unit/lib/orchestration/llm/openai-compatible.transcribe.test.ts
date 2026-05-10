@@ -14,8 +14,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const transcriptionsCreateMock = vi.fn();
-const toFileMock = vi.fn();
+// `vi.hoisted()` keeps these mocks available inside the hoisted `vi.mock()`
+// factory below — without it, static imports of the SUT would resolve before
+// these `const` initialisers ran, leaving the factory referencing
+// uninitialised bindings.
+const { transcriptionsCreateMock, toFileMock } = vi.hoisted(() => ({
+  transcriptionsCreateMock: vi.fn(),
+  toFileMock: vi.fn(),
+}));
 
 vi.mock('openai', () => {
   class MockOpenAI {
@@ -32,8 +38,8 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { OpenAiCompatibleProvider } = await import('@/lib/orchestration/llm/openai-compatible');
-const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 
 beforeEach(() => {
   transcriptionsCreateMock.mockReset();
@@ -110,8 +116,8 @@ describe('OpenAiCompatibleProvider.transcribe', () => {
     await makeProvider().transcribe(Buffer.from('x'), { model: 'whisper-1' });
 
     const args = transcriptionsCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect('language' in args).toBe(false);
-    expect('prompt' in args).toBe(false);
+    expect(args).not.toHaveProperty('language');
+    expect(args).not.toHaveProperty('prompt');
   });
 
   it('uses provided filename and mimeType when wrapping the upload', async () => {

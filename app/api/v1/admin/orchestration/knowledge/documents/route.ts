@@ -33,7 +33,19 @@ import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB (EPUBs can be large)
+/**
+ * Maximum decoded file size accepted from a multipart upload, in bytes.
+ *
+ * 50 MB sized for EPUB / PDF inputs — typical text documents are well
+ * under 1 MB but textbook-grade PDFs and complete EPUBs land in the
+ * 10–40 MB range. Raising this further pushes the post-parse memory
+ * footprint into territory that would benefit from streaming ingestion.
+ *
+ * Synced with documentation in `.context/api/orchestration-endpoints.md`
+ * (the "Max size: 50 MB" row of the POST /knowledge/documents table) —
+ * keep both in step when changing.
+ */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 /**
  * Pre-parse body cap. Adds 4 KB of headroom over `MAX_UPLOAD_BYTES` for
  * multipart boundaries plus the optional `category` form field. Rejects
