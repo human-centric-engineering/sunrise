@@ -47,6 +47,8 @@ export const SECURITY_CONSTANTS = {
       CHAT: 20,
       /** Chat stream (consumer): 10 messages per minute per user */
       CONSUMER_CHAT: 10,
+      /** Audio transcription: 10 requests per minute per user/session */
+      AUDIO: 10,
     },
   },
 

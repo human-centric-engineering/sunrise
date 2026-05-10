@@ -1,0 +1,386 @@
+/**
+ * Integration Test: Admin Orchestration — Chat Transcribe (POST)
+ *
+ * POST /api/v1/admin/orchestration/chat/transcribe
+ *
+ * @see app/api/v1/admin/orchestration/chat/transcribe/route.ts
+ *
+ * Key assertions:
+ * - Admin auth required (401/403)
+ * - audioLimiter check enforced (429)
+ * - Multipart body required (400 INVALID_BODY)
+ * - Audio field required (400 MISSING_AUDIO)
+ * - Empty audio (400 AUDIO_EMPTY)
+ * - Oversize file rejected (413 AUDIO_TOO_LARGE)
+ * - Invalid MIME rejected (415 AUDIO_INVALID_TYPE)
+ * - agentId required (400 MISSING_AGENT_ID)
+ * - Global voice kill switch (403 VOICE_DISABLED)
+ * - Agent voice toggle off (403 VOICE_DISABLED)
+ * - Agent missing / inactive (404 NOT_FOUND)
+ * - No audio provider (503 NO_AUDIO_PROVIDER)
+ * - Provider throws (502 TRANSCRIPTION_FAILED)
+ * - 200 happy path: returns transcript + durationMs and writes cost log
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+import {
+  mockAdminUser,
+  mockAuthenticatedUser,
+  mockUnauthenticatedUser,
+} from '@/tests/helpers/auth';
+
+vi.mock('@/lib/auth/config', () => ({
+  auth: { api: { getSession: vi.fn() } },
+}));
+
+vi.mock('next/headers', () => ({
+  headers: vi.fn(() => Promise.resolve(new Headers())),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiAgent: { findUnique: vi.fn() },
+    aiOrchestrationSettings: { findUnique: vi.fn() },
+  },
+}));
+
+vi.mock('@/lib/security/rate-limit', () => ({
+  audioLimiter: { check: vi.fn(() => ({ success: true })) },
+  createRateLimitResponse: vi.fn(() =>
+    Response.json({ success: false, error: { code: 'RATE_LIMITED' } }, { status: 429 })
+  ),
+}));
+
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getAudioProvider: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
+  logCost: vi.fn(),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { audioLimiter } from '@/lib/security/rate-limit';
+import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
+import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { POST } from '@/app/api/v1/admin/orchestration/chat/transcribe/route';
+
+const AGENT_ID = 'cmjbv4i3x00003wsloputgwu1';
+
+function makeRequestWithFormData(formData: FormData): NextRequest {
+  return {
+    method: 'POST',
+    headers: new Headers(),
+    formData: () => Promise.resolve(formData),
+    url: 'http://localhost:3000/api/v1/admin/orchestration/chat/transcribe',
+  } as unknown as NextRequest;
+}
+
+function makeAudioFormData({
+  audio = new File([new Uint8Array([1, 2, 3, 4])], 'voice.webm', { type: 'audio/webm' }),
+  agentId = AGENT_ID,
+  language,
+}: {
+  audio?: File | string | null;
+  agentId?: string | null;
+  language?: string;
+} = {}): FormData {
+  const fd = new FormData();
+  if (audio !== null) fd.set('audio', audio as Blob | string);
+  if (agentId !== null) fd.set('agentId', agentId);
+  if (language !== undefined) fd.set('language', language);
+  return fd;
+}
+
+function makeAgent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: AGENT_ID,
+    enableVoiceInput: true,
+    isActive: true,
+    ...overrides,
+  };
+}
+
+function makeAudioResolution() {
+  return {
+    provider: { transcribe: vi.fn() },
+    modelId: 'whisper-1',
+    providerSlug: 'openai',
+  };
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  return JSON.parse(await response.text()) as T;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(audioLimiter.check).mockReturnValue({ success: true } as never);
+  vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+    voiceInputGloballyEnabled: true,
+  } as never);
+  vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+  vi.mocked(getAudioProvider).mockResolvedValue(makeAudioResolution() as never);
+});
+
+describe('Authentication', () => {
+  it('returns 401 when unauthenticated', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(401);
+  });
+
+  it('returns 403 when authenticated as non-admin', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('Rate limiting', () => {
+  it('returns 429 when audioLimiter rejects', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(audioLimiter.check).mockReturnValue({ success: false } as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(429);
+  });
+
+  it('keys the limiter by user id', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    const lastKey = vi.mocked(audioLimiter.check).mock.calls.at(-1)?.[0];
+    expect(lastKey).toMatch(/^audio:user:/);
+  });
+});
+
+describe('Body validation', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('returns 400 when audio field is missing', async () => {
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ audio: null })));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('MISSING_AUDIO');
+  });
+
+  it('returns 400 when audio is empty', async () => {
+    const empty = new File([], 'voice.webm', { type: 'audio/webm' });
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ audio: empty })));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('AUDIO_EMPTY');
+  });
+
+  it('returns 413 when audio exceeds 25 MB', async () => {
+    const tooBig = new File([new Uint8Array(26 * 1024 * 1024)], 'big.webm', {
+      type: 'audio/webm',
+    });
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ audio: tooBig })));
+
+    expect(response.status).toBe(413);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('AUDIO_TOO_LARGE');
+  });
+
+  it('returns 415 when MIME type is not allowed', async () => {
+    const wrong = new File([new Uint8Array([1, 2, 3])], 'doc.txt', { type: 'text/plain' });
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ audio: wrong })));
+
+    expect(response.status).toBe(415);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('AUDIO_INVALID_TYPE');
+  });
+
+  it('accepts audio/webm with codecs param', async () => {
+    const ok = new File([new Uint8Array([1, 2])], 'voice.webm', {
+      type: 'audio/webm;codecs=opus',
+    });
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hi',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ audio: ok })));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('returns 400 when agentId is missing', async () => {
+    const response = await POST(makeRequestWithFormData(makeAudioFormData({ agentId: null })));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('MISSING_AGENT_ID');
+  });
+
+  it('returns 400 when language is invalid', async () => {
+    const response = await POST(
+      makeRequestWithFormData(makeAudioFormData({ language: 'not-a-lang!!' }))
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('INVALID_LANGUAGE');
+  });
+});
+
+describe('Voice toggle gating', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('returns 403 VOICE_DISABLED when global toggle is off', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      voiceInputGloballyEnabled: false,
+    } as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('VOICE_DISABLED');
+  });
+
+  it('returns 403 VOICE_DISABLED when agent toggle is off', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({ enableVoiceInput: false }) as never
+    );
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('VOICE_DISABLED');
+  });
+
+  it('returns 404 NOT_FOUND when agent does not exist', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(404);
+  });
+
+  it('returns 404 NOT_FOUND when agent is inactive', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isActive: false }) as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(404);
+  });
+});
+
+describe('Provider routing', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('returns 503 NO_AUDIO_PROVIDER when no audio provider is configured', async () => {
+    vi.mocked(getAudioProvider).mockResolvedValue(null);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(503);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('NO_AUDIO_PROVIDER');
+  });
+
+  it('returns 502 TRANSCRIPTION_FAILED when provider throws', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockRejectedValue(new Error('upstream blew up'));
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(502);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('TRANSCRIPTION_FAILED');
+  });
+});
+
+describe('Happy path', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('returns transcript text, duration and language on success', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hello world',
+      durationMs: 2500,
+      language: 'en',
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ data: { text: string; durationMs: number; language: string } }>(
+      response
+    );
+    expect(body.data.text).toBe('hello world');
+    expect(body.data.durationMs).toBe(2500);
+    expect(body.data.language).toBe('en');
+  });
+
+  it('writes a transcription cost log row tagged to the agent', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hi',
+      durationMs: 5000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: AGENT_ID,
+        operation: 'transcription',
+        durationMs: 5000,
+        model: 'whisper-1',
+        provider: 'openai',
+      })
+    );
+  });
+
+  it('forwards the language hint to the provider', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hola',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makeRequestWithFormData(makeAudioFormData({ language: 'es' })));
+
+    expect(audio.provider.transcribe).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({ language: 'es' })
+    );
+  });
+});
