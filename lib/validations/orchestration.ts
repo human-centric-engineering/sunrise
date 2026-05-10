@@ -149,6 +149,8 @@ export const createAgentSchema = z.object({
     .nullable()
     .optional(),
 
+  enableVoiceInput: z.boolean().default(false),
+
   isActive: z.boolean().default(true),
 });
 
@@ -259,6 +261,8 @@ export const updateAgentSchema = z.object({
     .max(10000, 'Brand voice instructions must be less than 10000 characters')
     .nullable()
     .optional(),
+
+  enableVoiceInput: z.boolean().optional(),
 
   isActive: z.boolean().optional(),
 });

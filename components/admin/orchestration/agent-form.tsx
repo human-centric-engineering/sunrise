@@ -78,6 +78,7 @@ const agentFormSchema = z.object({
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']),
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
+  enableVoiceInput: z.boolean(),
   fallbackProviders: z.array(z.string()),
   knowledgeCategories: z.string().optional(),
   topicBoundaries: z.string().optional(),
@@ -142,6 +143,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       retentionDays: agent?.retentionDays ?? null,
       visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
       rateLimitRpm: agent?.rateLimitRpm ?? null,
+      enableVoiceInput: agent?.enableVoiceInput ?? false,
       fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
       knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
       topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
@@ -155,6 +157,7 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
   const currentName = watch('name');
   const currentInstructions = watch('systemInstructions');
   const currentIsActive = watch('isActive');
+  const currentVoiceInput = watch('enableVoiceInput');
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
@@ -711,6 +714,31 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
             )}
           </div>
 
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="enableVoiceInput">
+                Enable voice input{' '}
+                <FieldHelp title="Speech-to-text">
+                  When on, users see a microphone control in this agent&apos;s chat surfaces (admin
+                  test panel and any embed widgets) and can record audio that&apos;s transcribed
+                  before sending. Audio is forwarded to the configured speech-to-text provider (e.g.
+                  OpenAI Whisper) and discarded after transcription — only the transcript is stored
+                  as a normal user message. Voice input also requires the platform-wide switch in{' '}
+                  <strong>Settings → Orchestration</strong> to be on. Default: off.
+                </FieldHelp>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                Lets users speak instead of typing. Requires an audio-capable provider to be
+                configured.
+              </p>
+            </div>
+            <Switch
+              id="enableVoiceInput"
+              checked={currentVoiceInput}
+              onCheckedChange={(v) => setValue('enableVoiceInput', v, { shouldDirty: true })}
+            />
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="maxHistoryTokens">
               Max history tokens{' '}
@@ -1040,7 +1068,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
         {/* ================= TAB 7 — TEST ================= */}
         <TabsContent value="test" className="pt-4">
           {isEdit && agent ? (
-            <AgentTestChat agentSlug={agent.slug} minHeight="min-h-[200px]" />
+            <AgentTestChat
+              agentSlug={agent.slug}
+              agentId={agent.id}
+              voiceInputEnabled={currentVoiceInput}
+              minHeight="min-h-[200px]"
+            />
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">
               <p className="text-muted-foreground">Save the agent first to test a chat.</p>
