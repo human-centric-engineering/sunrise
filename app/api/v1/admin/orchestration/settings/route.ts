@@ -17,7 +17,7 @@
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
+import { successResponse, errorResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -25,6 +25,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
+import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
@@ -59,6 +60,29 @@ export const PATCH = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, updateOrchestrationSettingsSchema);
+
+  // Defence-in-depth: validate the embeddings slot against the DB-backed
+  // embedding-model registry. The Zod schema only enforces a non-empty
+  // string here (the chat-only `getModel()` lookup that backs the other
+  // task slots can't see embedding ids, and Zod refinements are sync), so
+  // without this check an admin could PATCH any string into the slot and
+  // the failure would only surface at the next chat turn that needs an
+  // embedding. The form's dropdown sends the bare model id (e.g.
+  // `text-embedding-3-small`), so we match against `EmbeddingModelInfo.model`.
+  if (body.defaultModels?.embeddings) {
+    const known = await getEmbeddingModels();
+    const isKnown = known.some((m) => m.model === body.defaultModels!.embeddings);
+    if (!isKnown) {
+      return errorResponse('Unknown embedding model id', {
+        code: 'VALIDATION_ERROR',
+        status: 400,
+        details: {
+          task: 'embeddings',
+          value: body.defaultModels.embeddings,
+        },
+      });
+    }
+  }
 
   // Merge patch into existing row. For `defaultModels` we start from computed
   // defaults (so missing keys always resolve), overlay the current row, then

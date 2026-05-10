@@ -1488,8 +1488,8 @@ Content-Type: application/json
 
 Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`:
 
-- `defaultModels` keys must be one of `routing | chat | reasoning | embeddings`
-- Chat/routing/reasoning ids must resolve via `getModel()` in the in-memory chat-model registry (`validateTaskDefaults()`); the embeddings slot is checked only as a non-empty string because embedding ids live in a separate DB-backed registry that can't be queried synchronously from a Zod refinement
+- `defaultModels` is a `z.partialRecord(z.enum(TASK_TYPES), z.string().min(1).max(200))` — any subset of `routing | chat | reasoning | embeddings` keys may be sent; omitted slots keep their previously-stored value (the route merges the patch into the existing row). Empty strings are still rejected.
+- Chat/routing/reasoning ids must resolve via `getModel()` in the in-memory chat-model registry (`validateTaskDefaults()`); the embeddings slot is checked as a non-empty string in the Zod schema because embedding ids live in a separate DB-backed registry that can't be queried synchronously from a Zod refinement, then re-validated in the route handler against `getEmbeddingModels()` (defence-in-depth — rejects bogus ids before they reach the DB)
 - `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
 - `searchConfig` — optional object `{ keywordBoostWeight: number, vectorWeight: number }` or `null` to reset to defaults. `keywordBoostWeight` must be between -0.2 and 0 (non-positive, reduces cosine distance for keyword matches). `vectorWeight` must be between 0.1 and 2.0 (multiplier on vector similarity score).
 - `lastSeededAt` — read-only, set automatically by the knowledge seeder; not accepted in PATCH

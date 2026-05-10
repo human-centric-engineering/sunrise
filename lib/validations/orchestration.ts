@@ -15,7 +15,7 @@ import {
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { KNOWN_STEP_TYPES, TASK_TYPES, type TaskType } from '@/types/orchestration';
+import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 
 // ============================================================================
@@ -1885,12 +1885,21 @@ export const escalationConfigSchema = z.object({
 
 export const updateOrchestrationSettingsSchema = z
   .object({
+    // `z.partialRecord` (not `z.record`) so admins can save a subset of
+    // the four task slots — e.g. updating only `chat` without re-stating
+    // `routing` / `reasoning` / `embeddings`. Zod 4's `z.record` with an
+    // enum key is exhaustive (every enum value is required), which would
+    // 400 every partial save the form makes after filtering empty slots.
+    // The route handler merges the patch into the existing row, so any
+    // omitted slot keeps its previously-stored value.
     defaultModels: z
-      .record(z.enum(TASK_TYPES), z.string().min(1).max(200))
+      .partialRecord(z.enum(TASK_TYPES), z.string().min(1).max(200))
       .optional()
       .superRefine((val, ctx) => {
         if (!val) return;
-        const errors = validateTaskDefaults(val as Partial<Record<TaskType, string>>);
+        // `z.partialRecord` already infers `Partial<Record<TaskType, string>>`,
+        // which matches what `validateTaskDefaults` accepts — no cast needed.
+        const errors = validateTaskDefaults(val);
         for (const err of errors) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
