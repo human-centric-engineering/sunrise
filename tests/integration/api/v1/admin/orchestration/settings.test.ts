@@ -81,6 +81,17 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   getDefaultModelForTask: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/llm/embedding-models', () => ({
+  // Minimal fixture shaped like EmbeddingModelInfo — only `model` is read.
+  // Tests that exercise the embeddings-validation guard override this in
+  // their own `beforeEach` if they need a different set.
+  getEmbeddingModels: vi.fn(async () => [
+    { model: 'text-embedding-3-small' },
+    { model: 'voyage-3' },
+    { model: 'nomic-embed-text' },
+  ]),
+}));
+
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
   computeChanges: vi.fn(),
@@ -337,15 +348,17 @@ describe('Admin Orchestration — /settings', () => {
       // so a "partial update" from the client perspective means sending all keys but
       // changing only one value — which is what this test verifies.
       //
-      // The validateTaskDefaults mock accepts any model id except 'not-a-real-model',
-      // so 'claude-opus-4-6' and 'claude-haiku-4-5' both pass validation.
+      // The validateTaskDefaults mock accepts any model id except 'not-a-real-model'.
+      // The embeddings slot is also re-validated by the route against the
+      // DB-backed embedding-model registry (mocked above), so we use a real
+      // embedding id here.
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
         makeSettingsRow({
           defaultModels: {
             routing: 'claude-opus-4-6',
             chat: 'claude-sonnet-4-6',
             reasoning: 'claude-opus-4-6',
-            embeddings: 'claude-haiku-4-5',
+            embeddings: 'text-embedding-3-small',
           },
         }) as never
       );
@@ -356,12 +369,13 @@ describe('Admin Orchestration — /settings', () => {
             routing: 'claude-opus-4-6', // changed
             chat: 'claude-sonnet-4-6',
             reasoning: 'claude-opus-4-6',
-            embeddings: 'claude-haiku-4-5',
+            embeddings: 'text-embedding-3-small',
           },
         })
       );
 
-      // Assert: 200 because all model ids are accepted by the validateTaskDefaults mock
+      // Assert: 200 because all model ids are accepted by the validateTaskDefaults
+      // mock and the embeddings id is in the embedding-models mock fixture.
       expect(res.status).toBe(200);
       const body = await parseJson<{ data: { defaultModels: Record<string, string> } }>(res);
       expect(body.data.defaultModels.routing).toBe('claude-opus-4-6');
@@ -644,6 +658,135 @@ describe('Admin Orchestration — /settings', () => {
       const origins = Array.from({ length: 101 }, (_, i) => `https://partner${i}.com`);
       const res = await PATCH(makePatch({ embedAllowedOrigins: origins }));
       expect(res.status).toBe(400);
+    });
+
+    // Defence-in-depth: the embeddings slot bypasses the chat-registry
+    // `getModel()` lookup that backs the other task slots, because the
+    // embedding-model registry is DB-backed/async and Zod refinements are
+    // sync. Without an explicit server check, an admin (or compromised
+    // admin token) could PATCH an arbitrary string into the slot and the
+    // failure would only surface at the next embed-using chat turn.
+    it('rejects an unknown embedding model id (400)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      const res = await PATCH(
+        makePatch({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'gpt-4o-mini', // chat model, not an embedding model
+          },
+        })
+      );
+
+      expect(res.status).toBe(400);
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; message: string; details?: { task?: string; value?: string } };
+      }>(res);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details?.task).toBe('embeddings');
+      expect(body.error.details?.value).toBe('gpt-4o-mini');
+      // Upsert must NOT have run — guard rejects before persistence.
+      expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).not.toHaveBeenCalled();
+    });
+
+    it('accepts a known embedding model id from the embedding-models registry', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'voyage-3',
+          },
+        }) as never
+      );
+
+      const res = await PATCH(
+        makePatch({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'voyage-3',
+          },
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).toHaveBeenCalledOnce();
+    });
+
+    it('skips the embeddings guard when no defaultModels patch is sent', async () => {
+      // PATCHes that don't touch defaultModels at all must not invoke
+      // the embedding-models registry — saving e.g. just a budget change
+      // shouldn't pay an extra DB read or fail if that lookup is broken.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ globalMonthlyBudgetUsd: 250 }) as never
+      );
+      const { getEmbeddingModels } = await import('@/lib/orchestration/llm/embedding-models');
+      vi.mocked(getEmbeddingModels).mockClear();
+
+      const res = await PATCH(makePatch({ globalMonthlyBudgetUsd: 250 }));
+
+      expect(res.status).toBe(200);
+      expect(vi.mocked(getEmbeddingModels)).not.toHaveBeenCalled();
+    });
+
+    it('accepts a partial defaultModels map with only one slot set', async () => {
+      // The form filters empty slots out of the PATCH payload before
+      // sending — picking only `chat` posts `{ defaultModels: { chat: '...' } }`
+      // with no other keys. The schema is `z.partialRecord` so this
+      // succeeds; the route merges the patch into the existing row,
+      // preserving routing/reasoning/embeddings as previously stored.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-sonnet-4-6',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'claude-haiku-4-5',
+          },
+        }) as never
+      );
+      const { getEmbeddingModels } = await import('@/lib/orchestration/llm/embedding-models');
+      vi.mocked(getEmbeddingModels).mockClear();
+
+      const res = await PATCH(makePatch({ defaultModels: { chat: 'claude-sonnet-4-6' } }));
+
+      expect(res.status).toBe(200);
+      // No embeddings slot in the patch, so the registry guard is skipped.
+      expect(vi.mocked(getEmbeddingModels)).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).toHaveBeenCalledOnce();
+    });
+
+    it('accepts an empty defaultModels patch (no-op merge)', async () => {
+      // Edge case: form sends `{ defaultModels: {} }` if every slot was
+      // emptied. Schema accepts (partialRecord), route merges nothing,
+      // existing values are preserved.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+
+      const res = await PATCH(makePatch({ defaultModels: {} }));
+
+      expect(res.status).toBe(200);
     });
   });
 

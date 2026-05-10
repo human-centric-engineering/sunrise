@@ -303,6 +303,32 @@ describe('ChatInterface', () => {
     });
   });
 
+  it('restores focus to the input after a turn completes', async () => {
+    // The input is `disabled={streaming}`, which drops focus when a
+    // turn starts. Without a refocus on the streaming → idle
+    // transition, the user has to click back into the input before
+    // typing the next message.
+    const user = userEvent.setup();
+    const stream = makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('hi'), doneFrame()]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hello');
+    // Click the send button — this moves focus to the button and the
+    // input is disabled while streaming, so the input definitely
+    // doesn't have focus mid-turn.
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(input).not.toBeDisabled();
+    });
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+    });
+  });
+
   it('tracks conversationId from start event for subsequent messages', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();

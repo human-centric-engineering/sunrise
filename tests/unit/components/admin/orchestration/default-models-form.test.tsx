@@ -348,6 +348,60 @@ describe('DefaultModelsForm', () => {
         expect(screen.getByText('Saved')).toBeInTheDocument();
       });
     });
+
+    it('omits empty slots from the payload so partial saves do not 400', async () => {
+      // Regression: server schema requires `z.string().min(1)` per task,
+      // so the form must filter out empty values before submitting. With
+      // only chat saved, the payload should contain `{ chat }` and
+      // nothing else — not `{ routing: '', chat, reasoning: '', embeddings: '' }`.
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+
+      render(
+        <DefaultModelsForm
+          settings={{
+            ...MOCK_SETTINGS,
+            defaultModelsStored: { chat: 'claude-sonnet-4-6' },
+          }}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // Mark the form dirty by clicking "Use suggestion" on the routing
+      // slot (which is empty in stored). That gives us {chat, routing}
+      // in the payload but still leaves reasoning/embeddings empty.
+      const [firstUseSuggestion] = screen.getAllByRole('button', { name: /use suggestion/i });
+      await act(async () => {
+        fireEvent.click(firstUseSuggestion);
+      });
+
+      const form = screen.getByTestId('default-models-form').closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(
+        () => {
+          expect(mockedPatch).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 3000 }
+      );
+
+      const [, firstCallOptions] = mockedPatch.mock.calls[0];
+      const sentBody = firstCallOptions.body as {
+        defaultModels: Record<string, string>;
+      };
+      // Empty slots must not appear in the payload at all.
+      expect(sentBody.defaultModels).not.toHaveProperty('reasoning');
+      expect(sentBody.defaultModels).not.toHaveProperty('embeddings');
+      // No empty-string values anywhere.
+      for (const v of Object.values(sentBody.defaultModels)) {
+        expect(v).not.toBe('');
+      }
+      // The chat slot the operator already had stored is preserved.
+      expect(sentBody.defaultModels.chat).toBe('claude-sonnet-4-6');
+    });
   });
 
   describe('form submission — error handling', () => {
@@ -552,6 +606,54 @@ describe('DefaultModelsForm', () => {
       // Only the OpenAI embedding option, not chat models.
       expect(screen.getByRole('option', { name: /text-embedding-3-small/i })).toBeInTheDocument();
       expect(screen.queryByRole('option', { name: /Claude Sonnet/i })).not.toBeInTheDocument();
+    });
+
+    it('does not show a suggestion footer for embeddings when the suggested id is not an embedding-capable model', () => {
+      // Regression: computeDefaultModelMap previously suggested a chat
+      // model (e.g. gpt-4o-mini) for embeddings. Even if a stale row in
+      // the DB still carries that bad value, the form must not render
+      // it as "Suggested:" — there's no matching dropdown option, so
+      // "Use suggestion" would be a no-op and the operator would be
+      // confused.
+      const providers = [
+        { slug: 'anthropic', name: 'Anthropic', isActive: true },
+        { slug: 'openai', name: 'OpenAI', isActive: true },
+      ];
+      const settingsWithBadEmbeddingsSuggestion: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        // Hydrated map has the bad suggestion …
+        defaultModels: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'gpt-4o-mini',
+        },
+        // … but the operator hasn't saved an embeddings override.
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithBadEmbeddingsSuggestion}
+          models={MOCK_MODELS}
+          providers={providers}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+
+      // The footer for the empty embeddings slot must NOT show the
+      // chat-model id as a suggestion. Other slots can still show
+      // Saved-override badges; we only assert "gpt-4o-mini" never appears.
+      expect(screen.queryByText(/gpt-4o-mini/)).not.toBeInTheDocument();
+      // And the form should fall through to the no-suggestion message
+      // for the embeddings slot.
+      expect(
+        screen.getByText(/No suggestion available — pick a model from the dropdown/i)
+      ).toBeInTheDocument();
     });
 
     it('embeddings shows the no-embedding-provider hint when none of the configured providers offer embeddings', () => {

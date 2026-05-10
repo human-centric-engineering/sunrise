@@ -127,6 +127,12 @@ export function ChatInterface({
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Tracks the previous `streaming` value so we can detect the
+  // true → false transition and refocus the input. Restoring focus only
+  // on transition (not every render) avoids stealing focus from
+  // other elements while a turn is mid-flight.
+  const wasStreamingRef = useRef(false);
 
   const typing = useTypingAnimation({
     disabled: !enableTypingAnimation,
@@ -150,6 +156,19 @@ export function ChatInterface({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Restore focus to the input when a turn completes so the user can
+  // type the next message without clicking back in. The `disabled`
+  // attribute drops focus when streaming begins, so we refocus on the
+  // true → false transition only — not on initial mount, which would
+  // steal focus from other elements when the chat is rendered as part
+  // of a larger page (e.g. the Learning Hub tabs).
+  useEffect(() => {
+    if (wasStreamingRef.current && !streaming) {
+      inputRef.current?.focus();
+    }
+    wasStreamingRef.current = streaming;
+  }, [streaming]);
 
   // Abort on unmount
   useEffect(() => {
@@ -555,6 +574,7 @@ export function ChatInterface({
       {/* Input */}
       <form onSubmit={handleSubmit} className="flex gap-2 border-t p-3">
         <Input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type a message..."

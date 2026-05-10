@@ -210,7 +210,12 @@ export function __resetForTests(): void {
  * Preference order:
  *   - `chat` / `routing` — cheapest budget-tier model
  *   - `reasoning` — frontier-tier, falls back to mid, then any non-local
- *   - `embeddings` — first embeddings-capable entry, else any non-local
+ *   - `embeddings` — left empty; this registry is chat-only and has no
+ *     way to know which entries (if any) can embed. The embedding-model
+ *     registry (`lib/orchestration/llm/embedding-models.ts`) is the
+ *     authoritative source, but it's DB-backed/async and can't be read
+ *     from this sync function. Operators pick an embeddings model
+ *     manually from the form's embeddings-only dropdown.
  */
 export function computeDefaultModelMap(): Record<TaskType, string> {
   const all = dedupeModels(state.models).filter((m) => m.tier !== 'local');
@@ -219,24 +224,32 @@ export function computeDefaultModelMap(): Record<TaskType, string> {
   const mid = byCost.find((m) => m.tier === 'mid') ?? budget;
   const frontier = byCost.find((m) => m.tier === 'frontier') ?? mid;
 
-  // No embeddings tier in the registry today — fall back to the cheapest non-local.
-  const embeddings = budget;
-
   // If the registry is empty (test or refresh-failed state), fall back to known
   // ids from the fallback map.
   return {
     routing: budget?.id ?? 'claude-haiku-4-5',
     chat: budget?.id ?? 'claude-haiku-4-5',
     reasoning: frontier?.id ?? 'claude-opus-4-6',
-    embeddings: embeddings?.id ?? 'claude-haiku-4-5',
+    // Empty signals "no suggestion" downstream — chat-tier models can't
+    // embed, so any guess from this registry would mislead operators.
+    embeddings: '',
   };
 }
 
 /**
- * Validate a partial `defaultModels` map: every model id must resolve
- * through `getModel()`. Returns an array of per-task error descriptors
- * (empty if everything is valid). Used by the Zod schema in
+ * Validate a partial `defaultModels` map: every chat-task model id must
+ * resolve through `getModel()`. Returns an array of per-task error
+ * descriptors (empty if everything is valid). Used by the Zod schema in
  * `lib/validations/orchestration.ts` so the route never sees an unknown id.
+ *
+ * Embeddings are validated only as a non-empty string. Embedding model
+ * ids (e.g. `text-embedding-3-small`, `voyage-3`, `nomic-embed-text`)
+ * live in a separate DB-backed registry (`embedding-models.ts`) and
+ * cannot be looked up synchronously here. The admin UI's embeddings
+ * dropdown is sourced from that registry, so operators can only pick
+ * valid options through normal flow; if someone POSTs a bogus id
+ * directly, the embedder will surface a clear runtime error when the
+ * provider rejects the model.
  */
 export function validateTaskDefaults(
   defaults: Partial<Record<TaskType, string>>
@@ -249,6 +262,7 @@ export function validateTaskDefaults(
       errors.push({ task, message: 'Model id must be a non-empty string' });
       continue;
     }
+    if (task === 'embeddings') continue;
     if (!getModel(id)) {
       errors.push({ task, message: `Unknown model id: ${id}` });
     }

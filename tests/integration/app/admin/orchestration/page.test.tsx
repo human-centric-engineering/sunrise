@@ -149,7 +149,13 @@ async function setupHappyPathMocks(setupState: SetupStateMock): Promise<void> {
       } as never;
     }
     if (url.includes('/models')) {
-      return { success: true, data: [] } as never;
+      // The real endpoint returns `{ models, refreshed, fetchedAt }`,
+      // not a flat array. Test fixtures must mirror that shape so the
+      // page's `getModels` unwrap (`body.data.models`) gets exercised
+      // — earlier the mock returned `data: []`, which silently passed
+      // both the old broken code (treating data as the array) and the
+      // new code (Array.isArray check returning null).
+      return { success: true, data: { models: [], refreshed: false, fetchedAt: 0 } } as never;
     }
     if (url.includes('/agents')) {
       // Paginated total — meta.total is the field the helper reads.

@@ -962,6 +962,12 @@ export function GET(request: NextRequest): Response {
       activeAbort = null;
       statusEl.style.display = 'none';
       statusEl.textContent = '';
+      // Restore focus to the input so the user can type the next
+      // message without clicking back in. Clicking the send button
+      // moves focus to the button; this returns it to the input.
+      // Enter-key submissions already keep focus on the input, so
+      // calling focus() here is a no-op in that path.
+      input.focus();
     }
 
     function send() {

@@ -30,6 +30,10 @@ Reusable SSE streaming chat component for embedding in admin panels. Lives at `c
 
 When `enableTypingAnimation` is true, content deltas are buffered and revealed at a controlled rate via `requestAnimationFrame`, producing a natural "typing" effect. Uses the `useTypingAnimation` hook (`lib/hooks/use-typing-animation.ts`). When disabled (default), deltas are appended immediately — identical to pre-existing behavior.
 
+### Input focus retention
+
+The `<Input>` is `disabled={streaming}` while a turn is in flight, which drops focus when streaming starts. A `wasStreamingRef` tracks the previous streaming value and a `useEffect` calls `inputRef.current?.focus()` on the streaming → idle transition only — not on initial mount, which would steal focus from other elements when the chat is rendered as part of a larger page (e.g. the Learning Hub tabs). Result: the cursor stays in the input across turns so users can keep typing without clicking back in. `AgentTestChat` follows the same pattern on its `<Textarea>`.
+
 ### Thinking Indicator
 
 While the assistant message is empty during streaming (agent is processing), the `ThinkingIndicator` component (`components/admin/orchestration/chat/thinking-indicator.tsx`) displays three animated bouncing dots with an optional status message (e.g., "Thinking...", "Executing search_documents"). Replaces the previous `Loader2` spinner.

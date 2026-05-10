@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { TaskType } from '@/types/orchestration';
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -340,6 +341,31 @@ describe('validateTaskDefaults', () => {
     expect(errors[0].task).toBe('chat');
     expect(errors[0].message).toMatch(/non-empty/);
   });
+
+  it('does not require embeddings ids to be in the chat-model registry', () => {
+    // Regression: PATCH /settings was rejecting every valid embedding
+    // model id (text-embedding-3-small, voyage-3, nomic-embed-text, …)
+    // because the chat-model registry doesn't contain them. Embedding
+    // ids live in a separate DB-backed registry, so the chat-tier
+    // registry should only enforce non-emptiness for the embeddings
+    // slot.
+    const defaults: Partial<Record<TaskType, string>> = {
+      chat: 'claude-haiku-4-5',
+      embeddings: 'text-embedding-3-small',
+    };
+    const errors = registry.validateTaskDefaults(defaults);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('still rejects an empty embeddings id', () => {
+    // The embeddings carve-out applies only to the registry lookup —
+    // the non-empty guard remains so callers can't sneak '' through.
+    const defaults: Partial<Record<TaskType, string>> = { embeddings: '' };
+    const errors = registry.validateTaskDefaults(defaults);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].task).toBe('embeddings');
+    expect(errors[0].message).toMatch(/non-empty/);
+  });
 });
 
 describe('computeDefaultModelMap', () => {
@@ -364,6 +390,19 @@ describe('computeDefaultModelMap', () => {
     // Assert: the fallback is one of the known static ids (not undefined)
     expect(typeof defaults.routing).toBe('string');
     expect(defaults.routing.length).toBeGreaterThan(0);
+  });
+
+  it('leaves the embeddings slot empty — chat-only registry cannot suggest an embedding model', () => {
+    // Regression: previously this returned the cheapest non-local budget
+    // model (e.g. gpt-4o-mini) for embeddings. Chat-tier models can't
+    // embed, so the UI was showing nonsense suggestions like
+    // "Suggested: gpt-4o-mini" in the embeddings dropdown footer.
+    // Embedding suggestions belong to the embedding-model registry
+    // (lib/orchestration/llm/embedding-models.ts); this map should
+    // signal "no suggestion" with an empty string.
+    registry.__resetForTests();
+    const defaults = registry.computeDefaultModelMap();
+    expect(defaults.embeddings).toBe('');
   });
 });
 

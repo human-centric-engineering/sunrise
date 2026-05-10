@@ -109,14 +109,14 @@ For the admin HTTP API used by these pages, see [`../api/orchestration-endpoints
 
 `PATCH /api/v1/admin/orchestration/settings` — singleton row in `AiOrchestrationSettings`.
 
-| Setting                    | Purpose                                                                   | Default                           |
-| -------------------------- | ------------------------------------------------------------------------- | --------------------------------- |
-| `defaultModels`            | Task → model mapping (`routing`, `chat`, `reasoning`, `embeddings`)       | Auto-computed from model registry |
-| `globalMonthlyBudgetUsd`   | Hard cap across all agents                                                | `null` (unlimited)                |
-| `searchConfig`             | Knowledge base search tuning (vector weight, BM25 weight, hybrid on/off)  | `null` (built-in defaults)        |
-| `inputGuardMode`           | Prompt injection detection mode: `log_only`, `warn_and_continue`, `block` | `log_only`                        |
-| `defaultApprovalTimeoutMs` | Default timeout for human-approval steps (ms)                             | `null` (no timeout)               |
-| `approvalDefaultAction`    | Action when approval times out: `deny` or `allow`                         | `deny`                            |
+| Setting                    | Purpose                                                                   | Default                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `defaultModels`            | Task → model mapping (`routing`, `chat`, `reasoning`, `embeddings`)       | Auto-computed for chat/routing/reasoning; `embeddings` left empty — operator picks from the embeddings dropdown |
+| `globalMonthlyBudgetUsd`   | Hard cap across all agents                                                | `null` (unlimited)                                                                                              |
+| `searchConfig`             | Knowledge base search tuning (vector weight, BM25 weight, hybrid on/off)  | `null` (built-in defaults)                                                                                      |
+| `inputGuardMode`           | Prompt injection detection mode: `log_only`, `warn_and_continue`, `block` | `log_only`                                                                                                      |
+| `defaultApprovalTimeoutMs` | Default timeout for human-approval steps (ms)                             | `null` (no timeout)                                                                                             |
+| `approvalDefaultAction`    | Action when approval times out: `deny` or `allow`                         | `deny`                                                                                                          |
 
 Settings are cached for 30s. The PATCH route invalidates the cache immediately.
 

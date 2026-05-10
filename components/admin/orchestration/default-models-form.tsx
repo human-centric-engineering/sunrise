@@ -239,14 +239,17 @@ export function DefaultModelsForm({
     setError(null);
     try {
       const parsed = settingsFormSchema.parse(data);
-      const payload = {
-        defaultModels: {
-          routing: parsed.routing,
-          chat: parsed.chat,
-          reasoning: parsed.reasoning,
-          embeddings: parsed.embeddings,
-        },
-      };
+      // Server schema rejects empty strings (`z.string().min(1)`); filter
+      // them out so a partial save (e.g. only chat picked, embeddings
+      // left blank) doesn't 400 the whole request. The server merges by
+      // key, so any slot we omit keeps its existing stored value.
+      const defaultModels = Object.fromEntries(
+        TASK_TYPES.flatMap((task) => {
+          const v = parsed[task];
+          return v && v.length > 0 ? [[task, v]] : [];
+        })
+      );
+      const payload = { defaultModels };
       await apiClient.patch<OrchestrationSettings>(API.ADMIN.ORCHESTRATION.SETTINGS, {
         body: payload,
       });
@@ -325,13 +328,21 @@ export function DefaultModelsForm({
               <div className="grid gap-4 sm:grid-cols-2">
                 {TASK_TYPES.map((task) => {
                   const isEmbeddings = task === 'embeddings';
-                  const suggested = hydrated?.[task] ?? '';
                   const optionsForTask = isEmbeddings
                     ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
                     : chatLikeOptions.map((m) => ({
                         id: m.id,
                         label: `${m.name} (${m.tier})`,
                       }));
+                  // Drop suggestions that aren't actually in the dropdown for
+                  // this slot — e.g. a chat-tier model proposed for embeddings.
+                  // Showing "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in
+                  // the embeddings dropdown is misleading and the
+                  // "Use suggestion" button is already a no-op for those ids.
+                  const rawSuggested = hydrated?.[task] ?? '';
+                  const suggested = optionsForTask.some((o) => o.id === rawSuggested)
+                    ? rawSuggested
+                    : '';
                   const suggestedLabel =
                     optionsForTask.find((o) => o.id === suggested)?.label ?? suggested;
 

@@ -33,6 +33,8 @@ import {
   AlertTriangle,
   Info,
   Bug,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ClientDate } from '@/components/ui/client-date';
@@ -85,6 +87,79 @@ function getLevelConfig(level: string): {
 }
 
 /**
+ * Format a log entry as plain text suitable for clipboard / bug reports.
+ */
+function formatLogForCopy(entry: LogEntry): string {
+  const lines: string[] = [];
+  lines.push(`[${entry.timestamp}] ${entry.level.toUpperCase()}: ${entry.message}`);
+
+  if (entry.context && Object.keys(entry.context).length > 0) {
+    lines.push('', 'Context:', JSON.stringify(entry.context, null, 2));
+  }
+  if (entry.meta && Object.keys(entry.meta).length > 0) {
+    lines.push('', 'Metadata:', JSON.stringify(entry.meta, null, 2));
+  }
+  if (entry.error) {
+    lines.push('', `Error: ${entry.error.name}: ${entry.error.message}`);
+    if (entry.error.code) lines.push(`Code: ${entry.error.code}`);
+    if (entry.error.stack) lines.push('Stack:', entry.error.stack);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Copy-to-clipboard button for a single log entry.
+ * Stops propagation so it doesn't toggle the parent accordion row.
+ */
+function CopyLogButton({
+  entry,
+  className,
+}: {
+  entry: LogEntry;
+  className?: string;
+}): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    void (async (): Promise<void> => {
+      try {
+        await navigator.clipboard.writeText(formatLogForCopy(entry));
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard API unavailable (insecure context, denied permission) — silent failure.
+      }
+    })();
+  };
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={handleCopy}
+      aria-label={copied ? 'Log copied to clipboard' : 'Copy log entry to clipboard'}
+      title={copied ? 'Copied!' : 'Copy log'}
+      className={cn('h-7 px-2 text-xs', className)}
+    >
+      {copied ? (
+        <>
+          <Check className="mr-1 h-3 w-3" />
+          Copied
+        </>
+      ) : (
+        <>
+          <Copy className="mr-1 h-3 w-3" />
+          Copy
+        </>
+      )}
+    </Button>
+  );
+}
+
+/**
  * Single log entry component
  */
 function LogEntryItem({ entry }: { entry: LogEntry }) {
@@ -123,7 +198,8 @@ function LogEntryItem({ entry }: { entry: LogEntry }) {
     <AccordionItem value={entry.id} className="border-b last:border-b-0">
       <AccordionTrigger className="px-4 py-3 hover:no-underline">{entryContent}</AccordionTrigger>
       <AccordionContent className="px-4 pb-4">
-        <div className="space-y-3 text-sm">
+        <div className="relative space-y-3 pt-1 pr-20 text-sm">
+          <CopyLogButton entry={entry} className="absolute top-0 right-0 z-10" />
           {hasContext && (
             <div>
               <p className="text-muted-foreground mb-1 text-xs font-medium">Context:</p>
