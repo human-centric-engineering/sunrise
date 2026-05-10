@@ -67,6 +67,20 @@ describe('DocumentUploadZone', () => {
     expect(screen.getByText(/\.md, \.txt, \.csv, \.epub, \.docx, \.pdf/)).toBeInTheDocument();
   });
 
+  it('renders the inline upload explainer with a "Read full guide" link', () => {
+    // Pinning this so a future refactor doesn't quietly drop the
+    // explainer — it's the user-facing answer to "what happens to my
+    // document on upload, and what will the graph show?"
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    expect(screen.getByText(/how upload works/i)).toBeInTheDocument();
+    // The pipeline summary mentions chunks + the embedding dimension,
+    // since users have asked "what is the difference between a chunk
+    // and an embedding".
+    expect(screen.getByText(/1,536-dimension vector/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /read full guide/i })).toBeInTheDocument();
+  });
+
   it('rejects files over 50 MB', async () => {
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
