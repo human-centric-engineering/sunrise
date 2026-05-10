@@ -83,6 +83,11 @@ export function AgentTestChat({
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Tracks the previous `streaming` value so we refocus the textarea
+  // only on the true → false transition — not on initial mount, which
+  // would steal focus from other elements on the agent test page.
+  const wasStreamingRef = useRef(false);
   const typing = useTypingAnimation({ chunkSize: 2 });
   const reply = typing.displayText;
 
@@ -91,6 +96,16 @@ export function AgentTestChat({
       abortRef.current?.abort();
     };
   }, []);
+
+  // Restore focus to the textarea when a turn completes so the user can
+  // type the next message without clicking back in. The `disabled`
+  // attribute drops focus when streaming begins.
+  useEffect(() => {
+    if (wasStreamingRef.current && !streaming) {
+      inputRef.current?.focus();
+    }
+    wasStreamingRef.current = streaming;
+  }, [streaming]);
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
@@ -219,6 +234,7 @@ export function AgentTestChat({
       >
         <Label htmlFor="agent-test-chat-input">Your message</Label>
         <Textarea
+          ref={inputRef}
           id="agent-test-chat-input"
           rows={2}
           value={message}

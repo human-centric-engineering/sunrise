@@ -277,6 +277,37 @@ describe('AgentTestChat', () => {
     expect(abortMock).toHaveBeenCalledOnce();
   });
 
+  it('restores focus to the textarea after a turn completes', async () => {
+    // The textarea is `disabled={streaming}`, which drops focus when
+    // a turn starts. Without a refocus on the streaming → idle
+    // transition, the user has to click back into the textarea
+    // before sending the next message.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(contentFrame('hello')));
+        controller.enqueue(
+          new TextEncoder().encode('event: done\ndata: {"tokenUsage":{},"costUsd":0}\n\n')
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="Hi" />);
+
+    const textarea = screen.getByLabelText(/your message/i);
+    // Click send — moves focus to the button and disables the textarea.
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => {
+      expect(textarea).not.toBeDisabled();
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveFocus();
+    });
+  });
+
   it('shows streaming indicator while request is in-flight', async () => {
     // Arrange — stream that resolves after a tick
     let resolve: (() => void) | null = null;

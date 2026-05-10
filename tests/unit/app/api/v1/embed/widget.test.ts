@@ -135,6 +135,20 @@ describe('GET /api/v1/embed/widget.js', () => {
     expect(body).toContain('activeAbort.abort()');
   });
 
+  it('endStream restores focus to the input so the next message can be typed without clicking', async () => {
+    // The send button is disabled while a turn is mid-flight; clicking
+    // it moves focus to the button. After the stream ends, focus must
+    // return to the input — otherwise the user has to click back into
+    // the input every turn.
+    const body = await GET(makeGetRequest()).text();
+
+    // Locate the endStream definition and assert it ends with an
+    // input.focus() call. Match across whitespace/newlines.
+    const endStreamMatch = body.match(/function endStream\(\)\s*\{[\s\S]*?\n\s*\}/);
+    expect(endStreamMatch).not.toBeNull();
+    expect(endStreamMatch![0]).toContain('input.focus()');
+  });
+
   it('shows error on mid-stream reader failure', async () => {
     const body = await GET(makeGetRequest()).text();
 
