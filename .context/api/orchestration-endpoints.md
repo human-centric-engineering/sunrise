@@ -592,7 +592,7 @@ Speech-to-text upload. Accepts a multipart/form-data body, returns the transcrib
 
 - `MISSING_AUDIO` (400) — no `audio` field in the body.
 - `AUDIO_EMPTY` (400) — zero-byte audio.
-- `AUDIO_TOO_LARGE` (413) — exceeds the 25 MB cap.
+- `AUDIO_TOO_LARGE` (413) — exceeds the 25 MB cap. Fires either pre-parse from the `Content-Length` header (heap protection) or post-parse from the file size check.
 - `AUDIO_INVALID_TYPE` (415) — MIME not in the allowlist.
 - `MISSING_AGENT_ID` (400) — `agentId` field absent.
 - `INVALID_LANGUAGE` (400) — language hint doesn't match the ISO 639-1 pattern.
@@ -601,7 +601,9 @@ Speech-to-text upload. Accepts a multipart/form-data body, returns the transcrib
 - `NO_AUDIO_PROVIDER` (503) — no `AiProviderModel` row with the `'audio'` capability.
 - `TRANSCRIPTION_FAILED` (502) — provider raised. Sanitised; check server logs.
 
-**Behaviour:** writes a `CostOperation = 'transcription'` row to `AiCostLog` tagged to the agent (per-minute pricing via `WHISPER_USD_PER_MINUTE * durationMs / 60_000`; `metadata.durationMs` set). Audio bytes are not persisted.
+**Behaviour:** writes a `CostOperation = 'transcription'` row to `AiCostLog` tagged to the agent (per-minute pricing via `WHISPER_USD_PER_MINUTE * durationMs / 60_000`; `metadata.durationMs` set). Audio bytes are not persisted — the route handler is asserted by `tests/integration/api/v1/admin/orchestration/chat.transcribe.test.ts` to never call any AiMessage / AiConversation / AiKnowledge write.
+
+**Platform body-size caveat:** the 25 MB cap is Sunrise's server-side limit. Vercel deployments (Hobby and default Pro) reject bodies over **4.5 MB** at the edge before the route runs. Self-hosted Node / Docker get the full 25 MB. See `.context/orchestration/embed.md#platform-body-size-limits` for the platform comparison.
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/chat/transcribe \

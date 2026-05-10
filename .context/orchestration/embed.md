@@ -142,6 +142,21 @@ Failed checks silently hide the button — there's no degraded "voice unavailabl
 
 **Error mapping.** Server error codes (`VOICE_DISABLED`, `NO_AUDIO_PROVIDER`, `AUDIO_TOO_LARGE`, `AUDIO_INVALID_TYPE`, `RATE_LIMITED`) map to friendly inline messages in `voiceErrEl`. The transcribe endpoint never persists audio — only the transcript becomes part of the conversation, via the standard chat send.
 
+#### Platform body-size limits
+
+The 25 MB cap documented above is Sunrise's server-side limit. The **effective** maximum upload depends on where the fork is deployed:
+
+| Platform                   | Effective body cap                              | Approx. recording length (Opus @ 64 kbps) |
+| -------------------------- | ----------------------------------------------- | ----------------------------------------- |
+| Self-hosted Node / Docker  | 25 MB (Sunrise cap)                             | ~50 minutes                               |
+| Vercel Hobby               | **4.5 MB** (platform default, before our route) | ~9 minutes                                |
+| Vercel Pro / Enterprise    | 4.5 MB default; configurable via plan settings  | varies                                    |
+| Cloudflare Workers / Pages | 100 MB (platform), capped to 25 MB by us        | ~50 minutes                               |
+
+On Vercel, requests over the platform cap are rejected by the edge **before** Sunrise's route runs — the user sees a generic gateway error, not the friendly `AUDIO_TOO_LARGE` envelope. The 3-minute client-side recording cap (~1.4 MB at 64 kbps Opus) keeps every typical recording well under the 4.5 MB ceiling, so this only bites on long uploads from `<input type="file">`-style integrations or fork-customised widgets that loosen the recorder limit.
+
+A pre-parse `Content-Length` guard in the route also rejects oversized bodies on self-hosted Node before the multipart parser allocates memory — so even malformed clients can't OOM the server.
+
 ## Chat stream endpoint
 
 ```

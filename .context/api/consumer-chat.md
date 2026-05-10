@@ -243,9 +243,11 @@ The widget does not send `agentId` — the embed token is the authority on agent
 
 **Success:** `200 { success: true, data: { text, durationMs, language? } }`.
 
-**Error envelope codes:** `MISSING_TOKEN` (401), `INVALID_TOKEN` (401), `ORIGIN_DENIED` (403), `VOICE_DISABLED` (403, agent or global toggle off), `NOT_FOUND` (404), `NO_AUDIO_PROVIDER` (503), `AUDIO_TOO_LARGE` (413), `AUDIO_INVALID_TYPE` (415), `TRANSCRIPTION_FAILED` (502).
+**Error envelope codes:** `MISSING_TOKEN` (401), `INVALID_TOKEN` (401), `ORIGIN_DENIED` (403), `VOICE_DISABLED` (403, agent or global toggle off), `NOT_FOUND` (404), `NO_AUDIO_PROVIDER` (503), `AUDIO_TOO_LARGE` (413, including pre-parse `Content-Length` rejection), `AUDIO_INVALID_TYPE` (415), `TRANSCRIPTION_FAILED` (502).
 
 **Behaviour:** identical to the admin path — provider resolved via `getAudioProvider()`, audio discarded after transcription, `CostOperation = 'transcription'` row written tagged to the agent. The transcript is returned to the widget for the user to review and send via the standard chat-stream path; the endpoint does not start a chat turn itself.
+
+**Platform body-size caveat:** the 25 MB cap is Sunrise's server-side limit. Vercel deployments (Hobby and default Pro) reject bodies over **4.5 MB** at the edge before the route runs, so widget integrations that loosen the recorder cap should plan around that lower bound. Self-hosted Node / Docker deployments get the full 25 MB. See `.context/orchestration/embed.md#platform-body-size-limits` for the platform comparison table.
 
 **Browser-side prerequisites** (enforced by the widget, not the endpoint): HTTPS or localhost (Web Audio refuses otherwise), `MediaRecorder` + `getUserMedia` support, parent site's `Permissions-Policy` allowing `microphone` (cannot be overridden from the embed). See `.context/orchestration/embed.md#voice-input` for the full client-side story and the iframe `allow="microphone"` requirement.
 
