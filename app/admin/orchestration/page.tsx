@@ -112,11 +112,17 @@ async function getDashboardStats(): Promise<DashboardStats | null> {
 }
 
 async function getModels(): Promise<ModelInfo[] | null> {
+  // The /models endpoint returns `{ models, refreshed, fetchedAt }` —
+  // unwrap to the array. Returning the wrapper object made downstream
+  // consumers (e.g. CostTrendChart's `for (const m of models ?? [])`)
+  // throw "is not iterable" silently, since `??` only short-circuits
+  // null/undefined and the object slipped past the type assertion.
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
     if (!res.ok) return null;
-    const body = await parseApiResponse<ModelInfo[]>(res);
-    return body.success ? body.data : null;
+    const body = await parseApiResponse<{ models: ModelInfo[] }>(res);
+    if (!body.success) return null;
+    return Array.isArray(body.data?.models) ? body.data.models : null;
   } catch (err) {
     logger.error('orchestration dashboard: failed to load models', err);
     return null;
