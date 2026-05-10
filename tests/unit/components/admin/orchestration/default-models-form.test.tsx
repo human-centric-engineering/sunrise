@@ -81,6 +81,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   maxMessagesPerConversation: null,
   escalationConfig: null,
   embedAllowedOrigins: [],
+  voiceInputGloballyEnabled: true,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

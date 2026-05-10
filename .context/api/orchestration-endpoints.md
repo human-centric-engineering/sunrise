@@ -825,10 +825,13 @@ Body for PATCH (`updateOrchestrationSettingsSchema`):
     "embeddings": "claude-haiku-4-5",
   },
   "globalMonthlyBudgetUsd": 500,
+  "voiceInputGloballyEnabled": true,
 }
 ```
 
-At least one of the two top-level fields must be present. Every model id is validated against the in-memory registry — unknown ids return `400`. `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000.
+At least one top-level field must be present. Every model id is validated against the in-memory registry — unknown ids return `400`. `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000.
+
+`voiceInputGloballyEnabled` is the org-wide kill switch for the voice-input feature (default `true`). When `false`, every agent's `enableVoiceInput` flag is treated as off regardless of its own value: the mic surface disappears from admin chat / embed widgets and the transcribe endpoints reject with `VOICE_DISABLED`. Use this for incident response or compliance pause without editing each agent.
 
 See [`../orchestration/admin-api.md` § Orchestration settings](../orchestration/admin-api.md#orchestration-settings-singleton) for enforcement semantics and [`../admin/orchestration-costs.md`](../admin/orchestration-costs.md) for the UI.
 

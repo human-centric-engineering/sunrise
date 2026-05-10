@@ -58,6 +58,7 @@ export interface OrchestrationSettings {
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   escalationConfig?: EscalationConfig | null;
+  voiceInputGloballyEnabled?: boolean;
 }
 
 export interface SettingsFormProps {
@@ -92,6 +93,8 @@ const settingsFormSchema = z.object({
   // Approvals
   approvalTimeout: nullableNumber.pipe(z.number().int().positive().max(3_600_000).nullable()),
   approvalDefaultAction: z.enum(APPROVAL_ACTIONS),
+  // Voice input
+  voiceInputGloballyEnabled: z.boolean(),
   // Search
   keywordBoostWeight: nullableNumber.pipe(z.number().min(-0.2).max(0).nullable()),
   vectorWeight: nullableNumber.pipe(z.number().min(0.1).max(2.0).nullable()),
@@ -170,6 +173,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       auditLogRetentionDays: toStr(initialSettings.auditLogRetentionDays),
       approvalTimeout: toStr(initialSettings.defaultApprovalTimeoutMs),
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
+      voiceInputGloballyEnabled: initialSettings.voiceInputGloballyEnabled ?? true,
       keywordBoostWeight: toStr(initialSettings.searchConfig?.keywordBoostWeight),
       vectorWeight: toStr(initialSettings.searchConfig?.vectorWeight),
       hybridEnabled: initialSettings.searchConfig?.hybridEnabled === true,
@@ -255,6 +259,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           auditLogRetentionDays: values.auditLogRetentionDays,
           defaultApprovalTimeoutMs: values.approvalTimeout,
           approvalDefaultAction: values.approvalDefaultAction,
+          voiceInputGloballyEnabled: values.voiceInputGloballyEnabled,
           searchConfig,
           escalationConfig,
         },
@@ -372,6 +377,43 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                     <SelectItem value="block">Block</SelectItem>
                   </SelectContent>
                 </Select>
+              )}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Voice input ────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Voice input</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Org-wide kill switch for the speech-to-text feature.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Controller
+              name="voiceInputGloballyEnabled"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Voice input globally enabled
+                  <FieldHelp title="Org-wide voice-input kill switch">
+                    Default: on. When off, every agent&apos;s individual{' '}
+                    <code>enableVoiceInput</code> toggle is treated as off regardless of its own
+                    value — the mic button disappears from admin chat and embed widgets and the
+                    transcribe endpoints reject with <code>VOICE_DISABLED</code>. Flip off for
+                    incident response, compliance pause, or pre-launch sandboxing without editing
+                    each agent.
+                  </FieldHelp>
+                </label>
               )}
             />
           </div>
