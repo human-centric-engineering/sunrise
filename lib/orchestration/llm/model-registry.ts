@@ -233,10 +233,19 @@ export function computeDefaultModelMap(): Record<TaskType, string> {
 }
 
 /**
- * Validate a partial `defaultModels` map: every model id must resolve
- * through `getModel()`. Returns an array of per-task error descriptors
- * (empty if everything is valid). Used by the Zod schema in
+ * Validate a partial `defaultModels` map: every chat-task model id must
+ * resolve through `getModel()`. Returns an array of per-task error
+ * descriptors (empty if everything is valid). Used by the Zod schema in
  * `lib/validations/orchestration.ts` so the route never sees an unknown id.
+ *
+ * Embeddings are validated only as a non-empty string. Embedding model
+ * ids (e.g. `text-embedding-3-small`, `voyage-3`, `nomic-embed-text`)
+ * live in a separate DB-backed registry (`embedding-models.ts`) and
+ * cannot be looked up synchronously here. The admin UI's embeddings
+ * dropdown is sourced from that registry, so operators can only pick
+ * valid options through normal flow; if someone POSTs a bogus id
+ * directly, the embedder will surface a clear runtime error when the
+ * provider rejects the model.
  */
 export function validateTaskDefaults(
   defaults: Partial<Record<TaskType, string>>
@@ -249,6 +258,7 @@ export function validateTaskDefaults(
       errors.push({ task, message: 'Model id must be a non-empty string' });
       continue;
     }
+    if (task === 'embeddings') continue;
     if (!getModel(id)) {
       errors.push({ task, message: `Unknown model id: ${id}` });
     }
