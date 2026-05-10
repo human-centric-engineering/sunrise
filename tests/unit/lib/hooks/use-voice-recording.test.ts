@@ -296,4 +296,45 @@ describe('useVoiceRecording', () => {
 
     expect(stopTrackMock).toHaveBeenCalled();
   });
+
+  it('unmount mid-getUserMedia stops the late-arriving MediaStream and never starts the recorder', async () => {
+    // Regression for the leak: if the component unmounts while
+    // `getUserMedia` is pending, the cleanup runs while `streamRef` is
+    // still null. Without the `isMountedRef` guard, the resolved stream
+    // would be assigned to a ref on an orphaned component and a recorder
+    // would start with no way to stop it — leaking the mic.
+    let resolveGum: ((stream: MediaStream) => void) | null = null;
+    getUserMediaMock.mockImplementationOnce(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveGum = resolve;
+        })
+    );
+
+    const { result, unmount } = renderHook(() => useVoiceRecording());
+
+    // Begin start() — it awaits getUserMedia which is pending.
+    let startPromise: Promise<void> | null = null;
+    act(() => {
+      startPromise = result.current.start();
+    });
+
+    // Unmount before the permission prompt resolves.
+    unmount();
+
+    // Now resolve getUserMedia with a fresh stream — the hook must
+    // release it because the component is gone.
+    await act(async () => {
+      resolveGum!({
+        getTracks: () => [{ stop: stopTrackMock }],
+      } as unknown as MediaStream);
+      await startPromise;
+    });
+
+    // Stream tracks released (single call from the mid-getUserMedia
+    // teardown — there's no mounted state machine to walk).
+    expect(stopTrackMock).toHaveBeenCalled();
+    // Recorder never starts on an unmounted component.
+    expect(startMock).not.toHaveBeenCalled();
+  });
 });

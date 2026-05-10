@@ -113,6 +113,13 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resolveStopRef = useRef<((value: VoiceRecording | null) => void) | null>(null);
   const stoppedDurationRef = useRef<number>(0);
+  // Tracks whether the consuming component is still mounted. The unmount
+  // cleanup flips this to `false`, and `start()` checks it after the
+  // `getUserMedia` await — without this, an unmount during the permission
+  // prompt would leak the resolved `MediaStream` (cleanup runs while
+  // `streamRef.current` is still null, then the late-arriving stream gets
+  // assigned and the recorder starts on an orphaned component).
+  const isMountedRef = useRef<boolean>(true);
 
   const teardownStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -145,8 +152,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   }, [teardownStream]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       // Ensure the mic indicator is released when the component unmounts mid-record.
+      isMountedRef.current = false;
       teardownStream();
     };
   }, [teardownStream]);
@@ -176,14 +185,27 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
         name === 'NotAllowedError' || name === 'SecurityError'
           ? 'permission_denied'
           : 'capture_failed';
-      setError({
-        code,
-        message:
-          code === 'permission_denied'
-            ? 'Microphone access was blocked. Allow it in your browser settings to record audio.'
-            : 'Could not access the microphone. Check that no other app is using it and try again.',
-      });
-      setState('idle');
+      // Only update React state if the component is still mounted —
+      // setState on an unmounted component is a no-op but emits a dev
+      // warning. The stream wasn't acquired so there's nothing to clean.
+      if (isMountedRef.current) {
+        setError({
+          code,
+          message:
+            code === 'permission_denied'
+              ? 'Microphone access was blocked. Allow it in your browser settings to record audio.'
+              : 'Could not access the microphone. Check that no other app is using it and try again.',
+        });
+        setState('idle');
+      }
+      return;
+    }
+
+    // Component unmounted while we were awaiting getUserMedia. The cleanup
+    // already ran but couldn't tear down a stream that didn't exist yet —
+    // we have it now and must release the mic immediately.
+    if (!isMountedRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
