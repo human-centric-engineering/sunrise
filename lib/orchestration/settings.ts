@@ -90,6 +90,7 @@ export function hydrateSettings(row: {
   maxMessagesPerConversation: number | null;
   escalationConfig?: Prisma.JsonValue | null;
   embedAllowedOrigins?: Prisma.JsonValue | null;
+  voiceInputGloballyEnabled?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -155,6 +156,10 @@ export function hydrateSettings(row: {
     maxMessagesPerConversation: row.maxMessagesPerConversation,
     escalationConfig: parseEscalationConfig(row.escalationConfig),
     embedAllowedOrigins: parseEmbedAllowedOrigins(row.embedAllowedOrigins),
+    // The migration's column default is `true` — the optional / nullable
+    // shape on the row type is defensive against pre-migration test
+    // fixtures that omit the field entirely.
+    voiceInputGloballyEnabled: row.voiceInputGloballyEnabled ?? true,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

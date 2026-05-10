@@ -231,6 +231,86 @@ export async function getProviderWithFallbacks(
   });
 }
 
+/**
+ * Resolved audio provider for transcription.
+ *
+ * `provider` is guaranteed to expose a `transcribe()` method (the
+ * helper rejects rows whose provider class doesn't implement audio).
+ * `modelId` is the upstream model id from `AiProviderModel.modelId`.
+ */
+export interface AudioProviderResolution {
+  provider: LlmProvider & { transcribe: NonNullable<LlmProvider['transcribe']> };
+  modelId: string;
+  providerSlug: string;
+}
+
+/**
+ * Resolve a provider + model for speech-to-text.
+ *
+ * Walks active `AiProviderModel` rows whose `capabilities` array
+ * includes `'audio'`, in registry order, and returns the first one
+ * whose backing provider:
+ *   - has a closed circuit breaker, and
+ *   - exposes a `transcribe()` method.
+ *
+ * Returns `null` when no audio-capable model is configured. Callers
+ * map this to a `NO_AUDIO_PROVIDER` user-facing error rather than a
+ * thrown exception, because "voice not configured" is an expected
+ * deployment state, not an error.
+ */
+export async function getAudioProvider(): Promise<AudioProviderResolution | null> {
+  const rows = await prisma.aiProviderModel.findMany({
+    where: {
+      isActive: true,
+      capabilities: { has: 'audio' },
+    },
+    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+  });
+
+  if (rows.length === 0) return null;
+
+  for (const row of rows) {
+    const breaker = getBreaker(row.providerSlug);
+    if (!breaker.canAttempt()) {
+      logger.info('Skipping audio provider — circuit breaker open', {
+        providerSlug: row.providerSlug,
+        modelId: row.modelId,
+      });
+      continue;
+    }
+
+    let provider: LlmProvider;
+    try {
+      provider = await getProvider(row.providerSlug);
+    } catch (err) {
+      logger.warn('Audio provider resolution failed, trying next', {
+        providerSlug: row.providerSlug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    if (typeof provider.transcribe !== 'function') {
+      logger.warn(
+        'Provider seeded with audio capability but does not implement transcribe(); skipping',
+        {
+          providerSlug: row.providerSlug,
+          modelId: row.modelId,
+        }
+      );
+      continue;
+    }
+
+    return {
+      provider: provider as AudioProviderResolution['provider'],
+      modelId: row.modelId,
+      providerSlug: row.providerSlug,
+    };
+  }
+
+  return null;
+}
+
 /** Evict one (or all) cached provider instances. */
 export function clearCache(slugOrName?: string): void {
   if (slugOrName) {

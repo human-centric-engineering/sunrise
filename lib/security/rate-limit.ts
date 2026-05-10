@@ -279,6 +279,21 @@ export const cspReportLimiter = createRateLimiter({
 });
 
 /**
+ * Rate limiter for audio transcription requests.
+ * Limit: 10 requests per minute per user (admin) or per embed token + IP (embed).
+ *
+ * Audio uploads are expensive (multi-MB payloads + a billable Whisper call
+ * per request) so the cap is tighter than the regular admin/consumer chat
+ * limits. Tokens should be keyed as `audio:user:${userId}` for admin and
+ * `audio:embed:${embedToken}:${clientIp}` for embed callers.
+ */
+export const audioLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.AUDIO,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Chat stream limiter (admin) — 20 messages per minute per user ID.
  * Keyed on user ID (not IP) to catch runaway admin usage.
  */

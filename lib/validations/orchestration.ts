@@ -149,6 +149,8 @@ export const createAgentSchema = z.object({
     .nullable()
     .optional(),
 
+  enableVoiceInput: z.boolean().default(false),
+
   isActive: z.boolean().default(true),
 });
 
@@ -259,6 +261,8 @@ export const updateAgentSchema = z.object({
     .max(10000, 'Brand voice instructions must be less than 10000 characters')
     .nullable()
     .optional(),
+
+  enableVoiceInput: z.boolean().optional(),
 
   isActive: z.boolean().optional(),
 });
@@ -1910,6 +1914,7 @@ export const updateOrchestrationSettingsSchema = z
       .nullable()
       .optional(),
     approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
+    voiceInputGloballyEnabled: z.boolean().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
@@ -2004,7 +2009,8 @@ export const updateOrchestrationSettingsSchema = z
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
       v.escalationConfig !== undefined ||
-      v.embedAllowedOrigins !== undefined,
+      v.embedAllowedOrigins !== undefined ||
+      v.voiceInputGloballyEnabled !== undefined,
     {
       message: 'At least one field must be provided',
     }

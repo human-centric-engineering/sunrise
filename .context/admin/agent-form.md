@@ -72,6 +72,14 @@ Multi-checkbox list populated from the provider list. When the primary provider'
 
 Optional number input. Per-agent rate limit in requests per minute. When set, overrides the global `chatLimiter` default for this agent. Leave blank for the global default.
 
+### Enable voice input
+
+Switch toggle (`AiAgent.enableVoiceInput`, default off). When on, the chat surfaces tied to this agent — `AgentTestChat` here in the form's Test tab and any embed widgets — render a microphone button in the input area. Recorded audio is streamed to the configured speech-to-text provider (e.g. OpenAI Whisper) and discarded; only the transcript becomes part of the conversation. Effective state also depends on the org-wide kill switch in **Settings → Orchestration**, which defaults to on.
+
+The form sends `enableVoiceInput: boolean` on the standard PATCH update. The toggle is unconditional in the UI — there's no gating against "no audio provider configured" because the same agent can be moved between deployments and the right surface for that signal is the embed widget's `/widget-config` (which hides the mic button when no provider exists).
+
+The effective maximum recording length depends on the deployment platform — Sunrise caps at 25 MB (~50 minutes of Opus audio) but Vercel Hobby/Pro reject anything over 4.5 MB at the platform edge. See `.context/orchestration/embed.md#platform-body-size-limits` for the comparison table.
+
 ### Connectivity check card
 
 **Component:** `<AgentTestCard>` at `components/admin/orchestration/agent-test-card.tsx`.
@@ -92,6 +100,7 @@ The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain 
 - **Temperature** — "How much the model varies its wording. 0 = always picks the most likely next word (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes incoherent. Default: `0.7`."
 - **Max output tokens** — "Upper bound on how long one reply can be. Defaults to `4096`. Only raise this if replies are getting cut off — higher values cost more on every turn."
 - **Monthly budget (USD)** — "Hard spend cap for this agent, in USD. When month-to-date spend exceeds the cap, new chats are rejected until the calendar month rolls over or you raise the limit. Leave blank to disable the cap."
+- **Enable voice input** — "When enabled, users can record audio messages that are automatically transcribed before sending to the agent. Audio is forwarded to the configured speech-to-text provider (e.g. OpenAI Whisper) and discarded after transcription — only the transcript is stored as a normal user message. Voice input also requires the platform-wide switch in Settings → Orchestration to be on. Default: off."
 
 ## Tab 3 — Instructions
 

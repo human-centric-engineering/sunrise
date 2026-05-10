@@ -59,6 +59,14 @@ interface LlmProvider {
   embed(text: string): Promise<number[]>;
   listModels(): Promise<ModelInfo[]>;
   testConnection(): Promise<{ ok: boolean; models: string[]; error?: string }>;
+
+  // Optional — providers that don't expose a transcription API simply omit this.
+  // Routing (`getAudioProvider`) filters by `AiProviderModel.capabilities` so the
+  // method is only ever called on providers that implement it.
+  transcribe?(
+    audio: Blob | Buffer | ArrayBuffer | Uint8Array,
+    options: TranscribeOptions
+  ): Promise<TranscribeResponse>;
 }
 ```
 
@@ -119,6 +127,16 @@ A single class covering every OpenAI-compatible chat completions host:
 Local servers get a `'not-needed'` sentinel API key (the OpenAI SDK rejects empty strings, local hosts ignore the `Authorization` header) and a shorter 10s default timeout.
 
 **Default embedding models** are picked automatically: `text-embedding-3-small` for cloud, `nomic-embed-text` for local. Override via `embeddingModel` option.
+
+### Audio transcription (`transcribe`)
+
+`OpenAiCompatibleProvider` implements `transcribe()` via the OpenAI SDK's `audio.transcriptions.create({ file, model, response_format: 'verbose_json' })`. The verbose response carries duration (seconds, converted to `durationMs`) and the auto-detected language. Works for OpenAI proper and any compatible host that exposes `/v1/audio/transcriptions` (Groq Whisper). Hosts that don't expose this endpoint (Ollama, vLLM, LM Studio in their default configs) won't be picked by `getAudioProvider()` because no `'audio'`-capability `AiProviderModel` row will exist for them — but if one is configured anyway the SDK call returns 404 and the route surfaces `TRANSCRIPTION_FAILED`.
+
+`AnthropicProvider` does not implement `transcribe()` — Anthropic has no first-party audio API.
+
+**`getAudioProvider()` (in `provider-manager.ts`)** is the entry point used by both the admin and embed transcribe routes. It queries `AiProviderModel` for rows where `capabilities` contains `'audio'`, ordered by `isDefault desc, createdAt asc`, walks past providers with an open circuit breaker, and returns the first instance whose `transcribe` is a function. Returns `null` when nothing matches — callers translate that to a `NO_AUDIO_PROVIDER` user-facing error (rather than a thrown exception, because "voice not configured" is an expected deployment state).
+
+The `'audio'` capability value is inferred for `whisper-*` and `tts-*` model ids by `lib/orchestration/llm/capability-inference.ts`. New audio providers seed an `AiProviderModel` row with `capabilities: ['audio']` to participate in routing.
 
 ## Provider Manager (DB-Backed Factory)
 

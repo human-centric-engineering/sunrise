@@ -157,6 +157,55 @@ export interface EmbedOptions {
   inputType?: 'document' | 'query';
 }
 
+/**
+ * Options for `LlmProvider.transcribe()` — speech-to-text.
+ *
+ * `model` is required and must reference a transcription-capable model
+ * (e.g. `'whisper-1'`). `language` is an optional ISO 639-1 hint that
+ * helps providers like OpenAI Whisper short-circuit language detection;
+ * omit to let the provider auto-detect.
+ */
+export interface TranscribeOptions {
+  model: string;
+  /** ISO 639-1 language code hint (e.g. `'en'`, `'es'`). */
+  language?: string;
+  /** Free-text prompt to bias spelling / vocabulary. */
+  prompt?: string;
+  /** Override the provider's default request timeout. */
+  timeoutMs?: number;
+  /** Caller-supplied cancellation signal. */
+  signal?: AbortSignal;
+  /**
+   * MIME type of the audio bytes — passed through to the upload as the
+   * file's content type. Required when `audio` is a raw `Buffer`; ignored
+   * when `audio` is a `Blob` (the blob's own type wins).
+   */
+  mimeType?: string;
+  /**
+   * Filename to advertise in the multipart upload. Some providers
+   * dispatch the codec from the extension; default is `'audio.webm'`.
+   */
+  filename?: string;
+}
+
+/**
+ * Result of a transcription call.
+ *
+ * `durationMs` is the audio duration in milliseconds when the provider
+ * reports it (Whisper does, in seconds — we convert). Falls back to 0
+ * when the provider's response shape lacks duration metadata, so cost
+ * tracking should treat 0 as "unknown" not "free".
+ */
+export interface TranscribeResponse {
+  text: string;
+  /** Duration of the input audio in milliseconds, or 0 if unreported. */
+  durationMs: number;
+  /** ISO 639-1 language detected or echoed by the provider, when reported. */
+  language?: string;
+  /** Echo of the model id the provider actually used. */
+  model: string;
+}
+
 /** Extract the text content from a message's content field. */
 export function getTextContent(content: string | ContentPart[]): string {
   if (typeof content === 'string') return content;

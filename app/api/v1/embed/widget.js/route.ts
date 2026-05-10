@@ -61,12 +61,14 @@ export function GET(request: NextRequest): Response {
     .catch(function () { return null; })
     .then(function (payload) {
       var server = payload && payload.success && payload.data && payload.data.config;
+      var voiceInputEnabled = !!(payload && payload.success && payload.data && payload.data.voiceInputEnabled);
       var cfg = DEFAULTS;
       if (server) {
         cfg = {};
         for (var k in DEFAULTS) cfg[k] = DEFAULTS[k];
         for (var k2 in server) cfg[k2] = server[k2];
       }
+      cfg.voiceInputEnabled = voiceInputEnabled;
       mount(cfg);
     });
 
@@ -241,6 +243,17 @@ export function GET(request: NextRequest): Response {
           font-size: 14px; font-weight: 500; font-family: inherit;
         }
         .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .mic-btn {
+          padding: 8px 10px; border: 1px solid var(--sw-border); border-radius: 8px;
+          background: var(--sw-input-bg); color: var(--sw-text); cursor: pointer;
+          font-size: 16px; line-height: 1; font-family: inherit; min-width: 36px;
+        }
+        .mic-btn[data-state="recording"] { background: #ef4444; color: #fff; border-color: #ef4444; }
+        .mic-btn[data-state="transcribing"] { opacity: 0.6; cursor: wait; }
+        .voice-error {
+          padding: 4px 12px; font-size: 12px; color: #b91c1c;
+          background: var(--sw-surface-muted); border-top: 1px solid var(--sw-border);
+        }
         .footer {
           padding: 6px 12px 8px; font-size: 11px; opacity: 0.6;
           text-align: center; border-top: 1px solid var(--sw-border);
@@ -259,9 +272,11 @@ export function GET(request: NextRequest): Response {
         <div class="status" style="display:none;"></div>
         <div class="starters" style="display:none;"></div>
         <div class="input-area">
+          <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
           <input type="text" />
           <button type="button" class="send-btn"></button>
         </div>
+        <div class="voice-error" style="display:none;" role="status" aria-live="polite"></div>
         <div class="footer" style="display:none;"></div>
       </div>
     \`;
@@ -282,6 +297,8 @@ export function GET(request: NextRequest): Response {
     var messagesEl = shadow.querySelector('.messages');
     var input = shadow.querySelector('.input-area input');
     var sendBtn = shadow.querySelector('.send-btn');
+    var micBtn = shadow.querySelector('.mic-btn');
+    var voiceErrEl = shadow.querySelector('.voice-error');
     var statusEl = shadow.querySelector('.status');
     var startersEl = shadow.querySelector('.starters');
     var footerEl = shadow.querySelector('.footer');
@@ -334,6 +351,195 @@ export function GET(request: NextRequest): Response {
         renderStarters();
       }
     });
+
+    // ── Voice input ────────────────────────────────────────────────────────
+    // The mic button is rendered conditionally:
+    //   1. cfg.voiceInputEnabled === true (computed server-side from agent
+    //      toggle ∧ global toggle ∧ at least one audio-capable provider).
+    //   2. Page is on HTTPS or localhost — getUserMedia refuses otherwise.
+    //   3. Browser supports MediaRecorder + navigator.mediaDevices.
+    // We do NOT try to override the parent site's Permissions-Policy; if
+    // mic access is blocked there, getUserMedia rejects with NotAllowedError
+    // and we surface a "Microphone disabled by site" message inline.
+    var MAX_VOICE_MS = 180000;
+    var voiceState = 'idle';
+    var voiceRecorder = null;
+    var voiceStream = null;
+    var voiceChunks = [];
+    var voiceStartedAt = 0;
+    var voiceAutoStop = null;
+
+    function isSecureForMic() {
+      try {
+        var loc = window.location;
+        return loc.protocol === 'https:' || loc.hostname === 'localhost' || loc.hostname === '127.0.0.1';
+      } catch (e) { return false; }
+    }
+
+    function micSupported() {
+      return typeof window.MediaRecorder !== 'undefined' &&
+        navigator && navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === 'function';
+    }
+
+    function setVoiceError(message) {
+      if (!message) {
+        voiceErrEl.textContent = '';
+        voiceErrEl.style.display = 'none';
+        return;
+      }
+      voiceErrEl.textContent = message;
+      voiceErrEl.style.display = '';
+    }
+
+    function setVoiceState(next) {
+      voiceState = next;
+      micBtn.setAttribute('data-state', next);
+      if (next === 'idle') {
+        micBtn.setAttribute('aria-label', 'Start voice input');
+        micBtn.innerHTML = '&#x1F3A4;';
+        micBtn.disabled = false;
+      } else if (next === 'recording') {
+        micBtn.setAttribute('aria-label', 'Stop recording');
+        micBtn.innerHTML = '&#x25A0;';
+        micBtn.disabled = false;
+      } else if (next === 'transcribing') {
+        micBtn.setAttribute('aria-label', 'Transcribing audio');
+        micBtn.innerHTML = '&#x2026;';
+        micBtn.disabled = true;
+      }
+    }
+
+    function pickVoiceMime() {
+      var prefs = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4'];
+      if (typeof window.MediaRecorder.isTypeSupported !== 'function') return '';
+      for (var i = 0; i < prefs.length; i++) {
+        if (window.MediaRecorder.isTypeSupported(prefs[i])) return prefs[i];
+      }
+      return '';
+    }
+
+    function teardownVoice() {
+      if (voiceAutoStop) { clearTimeout(voiceAutoStop); voiceAutoStop = null; }
+      if (voiceStream) {
+        try { voiceStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* ignore */ }
+        voiceStream = null;
+      }
+      voiceRecorder = null;
+    }
+
+    function startVoiceRecording() {
+      setVoiceError('');
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function (stream) {
+          voiceStream = stream;
+          voiceChunks = [];
+          var mime = pickVoiceMime();
+          try {
+            voiceRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+          } catch (err) {
+            teardownVoice();
+            setVoiceError('Could not start the recorder. Try a different browser.');
+            setVoiceState('idle');
+            return;
+          }
+          voiceRecorder.addEventListener('dataavailable', function (event) {
+            if (event.data && event.data.size > 0) voiceChunks.push(event.data);
+          });
+          voiceRecorder.addEventListener('stop', function () {
+            var type = (voiceChunks[0] && voiceChunks[0].type) || mime || 'audio/webm';
+            var blob = new Blob(voiceChunks, { type: type });
+            var elapsed = Date.now() - voiceStartedAt;
+            teardownVoice();
+            if (blob.size === 0) {
+              setVoiceState('idle');
+              return;
+            }
+            uploadVoice(blob, type, elapsed);
+          });
+          voiceStartedAt = Date.now();
+          voiceRecorder.start();
+          setVoiceState('recording');
+          voiceAutoStop = setTimeout(function () { stopVoiceRecording(); }, MAX_VOICE_MS);
+        })
+        .catch(function (err) {
+          teardownVoice();
+          var name = (err && err.name) || '';
+          if (name === 'NotAllowedError' || name === 'SecurityError') {
+            setVoiceError('Microphone disabled by your browser or this site.');
+          } else if (name === 'NotFoundError') {
+            setVoiceError('No microphone was found on this device.');
+          } else {
+            setVoiceError('Could not access the microphone.');
+          }
+          setVoiceState('idle');
+        });
+    }
+
+    function stopVoiceRecording() {
+      if (!voiceRecorder || voiceRecorder.state === 'inactive') return;
+      try { voiceRecorder.stop(); } catch (e) { /* fired by 'stop' listener anyway */ }
+    }
+
+    function filenameFor(mime) {
+      if (mime.indexOf('audio/mp4') === 0) return 'audio.mp4';
+      if (mime.indexOf('audio/webm') === 0) return 'audio.webm';
+      if (mime.indexOf('audio/ogg') === 0) return 'audio.ogg';
+      return 'audio.bin';
+    }
+
+    function uploadVoice(blob, mime, elapsedMs) {
+      setVoiceState('transcribing');
+      var fd = new FormData();
+      try {
+        fd.append('audio', new File([blob], filenameFor(mime), { type: mime }));
+      } catch (e) {
+        // Older browsers may lack the File constructor — fall back to the Blob.
+        fd.append('audio', blob, filenameFor(mime));
+      }
+      if (elapsedMs > 0) fd.append('clientDurationMs', String(elapsedMs));
+
+      fetch(apiBase + '/speech-to-text', {
+        method: 'POST',
+        headers: { 'X-Embed-Token': token },
+        body: fd
+      }).then(function (res) {
+        return res.json().then(function (body) { return { res: res, body: body }; });
+      }).then(function (out) {
+        var ok = out.res.ok && out.body && out.body.success && out.body.data && out.body.data.text;
+        if (!ok) {
+          var code = (out.body && out.body.error && out.body.error.code) || 'TRANSCRIPTION_FAILED';
+          var msg = formatVoiceError(code, out.body && out.body.error && out.body.error.message);
+          setVoiceError(msg);
+          setVoiceState('idle');
+          return;
+        }
+        var existing = input.value || '';
+        input.value = existing ? (existing.replace(/\\s+$/, '') + ' ' + out.body.data.text) : out.body.data.text;
+        input.focus();
+        setVoiceState('idle');
+      }).catch(function () {
+        setVoiceError('Could not reach the transcription service.');
+        setVoiceState('idle');
+      });
+    }
+
+    function formatVoiceError(code, fallback) {
+      if (code === 'VOICE_DISABLED') return 'Voice input is currently disabled for this chat.';
+      if (code === 'NO_AUDIO_PROVIDER') return 'Voice input is not available right now.';
+      if (code === 'AUDIO_TOO_LARGE') return 'That recording is too long. Please record a shorter clip.';
+      if (code === 'AUDIO_INVALID_TYPE') return 'This browser produced an audio format we cannot transcribe.';
+      if (code === 'RATE_LIMITED') return 'Too many voice messages in a short time. Try again in a minute.';
+      return fallback || 'Could not transcribe the recording.';
+    }
+
+    if (cfg.voiceInputEnabled && isSecureForMic() && micSupported()) {
+      micBtn.style.display = '';
+      micBtn.addEventListener('click', function () {
+        if (voiceState === 'idle') startVoiceRecording();
+        else if (voiceState === 'recording') stopVoiceRecording();
+      });
+    }
 
     newChatBtn.addEventListener('click', function() {
       if (activeAbort) { activeAbort.abort(); activeAbort = null; }

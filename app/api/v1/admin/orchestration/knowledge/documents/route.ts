@@ -5,9 +5,11 @@
  *   Paginated list with optional status + text filters.
  *
  * POST /api/v1/admin/orchestration/knowledge/documents
- *   Multipart upload. Text-only this session — extension whitelist is
- *   the source of truth (.md / .markdown / .txt). Caller-supplied MIME
- *   type is advisory; browsers often omit it for .md. 10 MB hard cap.
+ *   Multipart upload. Extension whitelist is the source of truth
+ *   (`ALLOWED_EXTENSIONS`). Caller-supplied MIME type is advisory —
+ *   browsers often omit it for .md. 50 MB hard cap (EPUBs can be
+ *   large); pre-parse `Content-Length` guard short-circuits oversize
+ *   bodies before allocation.
  *
  * Authentication: Admin role required.
  */
@@ -15,8 +17,9 @@
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { paginatedResponse, successResponse } from '@/lib/api/responses';
+import { errorResponse, paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
+import { enforceContentLengthCap } from '@/lib/api/multipart-guard';
 import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -30,7 +33,25 @@ import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB (EPUBs can be large)
+/**
+ * Maximum decoded file size accepted from a multipart upload, in bytes.
+ *
+ * 50 MB sized for EPUB / PDF inputs — typical text documents are well
+ * under 1 MB but textbook-grade PDFs and complete EPUBs land in the
+ * 10–40 MB range. Raising this further pushes the post-parse memory
+ * footprint into territory that would benefit from streaming ingestion.
+ *
+ * Synced with documentation in `.context/api/orchestration-endpoints.md`
+ * (the "Max size: 50 MB" row of the POST /knowledge/documents table) —
+ * keep both in step when changing.
+ */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+/**
+ * Pre-parse body cap. Adds 4 KB of headroom over `MAX_UPLOAD_BYTES` for
+ * multipart boundaries plus the optional `category` form field. Rejects
+ * with 413 `FILE_TOO_LARGE` before `request.formData()` allocates memory.
+ */
+const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 4 * 1024;
 const MAX_LINE_COUNT = 100_000;
 const MAX_LINE_LENGTH = 10_000;
 const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.csv', '.epub', '.docx', '.pdf'] as const;
@@ -90,6 +111,20 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
 
+  // Pre-parse body-size guard. `request.formData()` materialises the entire
+  // multipart body in memory before the post-parse `file.size` check fires,
+  // so a malicious admin could OOM a self-hosted Node process with a
+  // multi-GB body. The guard reads `Content-Length` and rejects with 413
+  // before any allocation. Same pattern as the transcribe routes and the
+  // MCP transport (`app/api/v1/mcp/route.ts:76-85`).
+  const oversize = enforceContentLengthCap(request, {
+    maxBytes: MAX_REQUEST_BYTES,
+    errorCode: 'FILE_TOO_LARGE',
+    errorMessage: 'File exceeds size limit',
+    details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
+  });
+  if (oversize) return oversize;
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -105,14 +140,23 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw new ValidationError('File too large', {
-      file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`],
+    // Mirrors the pre-parse `Content-Length` guard above: same code, same
+    // status, same envelope shape. The post-parse path catches the case
+    // where the client sent a small/missing Content-Length but a body
+    // that turned out to be oversize after parsing (chunked encoding, or
+    // a lying header).
+    return errorResponse('File exceeds size limit', {
+      code: 'FILE_TOO_LARGE',
+      status: 413,
+      details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
     });
   }
 
   if (!hasAllowedExtension(file.name)) {
-    throw new ValidationError('Unsupported file type', {
-      file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`],
+    return errorResponse('Unsupported file type', {
+      code: 'INVALID_FILE_TYPE',
+      status: 400,
+      details: { file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`] },
     });
   }
 

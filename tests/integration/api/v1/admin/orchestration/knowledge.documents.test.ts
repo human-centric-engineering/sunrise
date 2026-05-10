@@ -9,9 +9,9 @@
  * Key security assertions:
  * - Admin auth required (401/403 otherwise)
  * - Rate limited on POST (adminLimiter)
- * - File size limit enforced (10 MB)
- * - Extension whitelist enforced (.md, .markdown, .txt only)
- * - Non-text MIME types rejected
+ * - File size limit enforced (50 MB; 413 FILE_TOO_LARGE)
+ * - Extension whitelist enforced via `ALLOWED_EXTENSIONS` (400 INVALID_FILE_TYPE)
+ * - Pre-parse Content-Length guard rejects oversize bodies before allocation
  * - Missing file field returns 400
  */
 
@@ -153,11 +153,19 @@ describe('GET /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await GET(makeGetRequest());
 
       expect(response.status).toBe(200);
-      const data = await parseJson<{ success: boolean; data: unknown[]; meta: unknown }>(response);
+      const data = await parseJson<{
+        success: boolean;
+        data: unknown[];
+        meta: { page: number; limit: number; total: number; totalPages: number };
+      }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
-      expect(data.meta).toBeDefined();
+      expect(data.meta).toMatchObject({
+        page: expect.any(Number),
+        limit: expect.any(Number),
+        total: 1,
+      });
     });
 
     it('passes status filter to Prisma WHERE clause', async () => {
@@ -373,22 +381,11 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       expect(response.status).toBe(400);
     });
 
-    it('returns 400 when file exceeds 10 MB size limit', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Size-limit coverage lives in the "Pre-parse body-size guard" describe
+    // block below (Content-Length-driven 413) and the post-parse test "returns
+    // 413 FILE_TOO_LARGE when file exceeds MAX_UPLOAD_BYTES (post-parse)".
 
-      // 11 MB file
-      const bigContent = new Uint8Array(11 * 1024 * 1024);
-      const formData = new FormData();
-      formData.append('file', new File([bigContent], 'big.md', { type: 'text/markdown' }));
-
-      const response = await POST(makePostRequestWithFormData(formData));
-
-      expect(response.status).toBe(400);
-      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
-      expect(data.success).toBe(false);
-    });
-
-    it('returns 400 when file has unsupported extension (.exe)', async () => {
+    it('returns 400 INVALID_FILE_TYPE when file has unsupported extension (.exe)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const formData = new FormData();
       formData.append(
@@ -399,22 +396,11 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('INVALID_FILE_TYPE');
     });
 
-    it('returns 400 when file has unsupported extension (.exe)', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      const formData = new FormData();
-      formData.append(
-        'file',
-        new File(['binary'], 'malware.exe', { type: 'application/octet-stream' })
-      );
-
-      const response = await POST(makePostRequestWithFormData(formData));
-
-      expect(response.status).toBe(400);
-    });
-
-    it('returns 400 when file has unsupported extension (.xls)', async () => {
+    it('returns 400 INVALID_FILE_TYPE when file has unsupported extension (.xls)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const formData = new FormData();
       formData.append(
@@ -425,6 +411,28 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('INVALID_FILE_TYPE');
+    });
+
+    it('returns 413 FILE_TOO_LARGE when file exceeds MAX_UPLOAD_BYTES (post-parse)', async () => {
+      // The pre-parse `Content-Length` guard catches well-formed clients;
+      // this test covers the post-parse path — a client that sends a
+      // chunked body (no usable Content-Length) but turns out to be
+      // oversize once parsed. The route must return the same code and
+      // status as the pre-parse path so client error mapping is uniform.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const oversize = new File([new Uint8Array(51 * 1024 * 1024)], 'huge.md', {
+        type: 'text/markdown',
+      });
+      const formData = new FormData();
+      formData.append('file', oversize);
+
+      const response = await POST(makePostRequestWithFormData(formData));
+
+      expect(response.status).toBe(413);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('FILE_TOO_LARGE');
     });
   });
 
@@ -438,6 +446,86 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       await POST(makePostRequestWithFormData(formData));
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+
+    it('returns 429 when adminLimiter rejects the POST', async () => {
+      // Verifies the 429 response shape end-to-end. The unit-level test
+      // covers the same case (route.test.ts) — this integration variant
+      // pins the contract through the wider auth + handler wiring.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(adminLimiter.check).mockReturnValue({ success: false } as never);
+      const formData = new FormData();
+      formData.append('file', new File(['# Hello'], 'hello.md', { type: 'text/markdown' }));
+
+      const response = await POST(makePostRequestWithFormData(formData));
+
+      expect(response.status).toBe(429);
+    });
+  });
+
+  describe('Pre-parse body-size guard', () => {
+    function makePostRequestWithContentLength(
+      contentLength: string | null,
+      formDataSpy?: () => Promise<FormData>
+    ): NextRequest {
+      const headers = new Headers();
+      if (contentLength !== null) headers.set('content-length', contentLength);
+      const fd = new FormData();
+      fd.append('file', new File(['# Hello'], 'hello.md', { type: 'text/markdown' }));
+      return {
+        method: 'POST',
+        headers,
+        formData: formDataSpy ?? (() => Promise.resolve(fd)),
+        url: 'http://localhost:3000/api/v1/admin/orchestration/knowledge/documents',
+      } as unknown as NextRequest;
+    }
+
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    });
+
+    it('returns 413 FILE_TOO_LARGE when Content-Length declares an oversized body', async () => {
+      // 1 GB body — what an attacker would set in a heap-exhaustion attempt.
+      const response = await POST(makePostRequestWithContentLength('1073741824'));
+
+      expect(response.status).toBe(413);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('FILE_TOO_LARGE');
+    });
+
+    it('does NOT call request.formData() when the guard rejects (heap protection)', async () => {
+      const formDataSpy = vi.fn(() => Promise.resolve(new FormData()));
+
+      await POST(makePostRequestWithContentLength('1073741824', formDataSpy));
+
+      expect(formDataSpy).not.toHaveBeenCalled();
+    });
+
+    it('passes through when Content-Length is absent (chunked encoding fallback)', async () => {
+      vi.mocked(uploadDocument).mockResolvedValue(makeDocument() as never);
+
+      const response = await POST(makePostRequestWithContentLength(null));
+
+      // Falls through to the post-parse path; the file in the helper's
+      // default FormData passes the post-parse size check. Successful
+      // upload returns 201, not 200.
+      expect(response.status).toBe(201);
+    });
+
+    it('passes through when Content-Length is non-numeric', async () => {
+      vi.mocked(uploadDocument).mockResolvedValue(makeDocument() as never);
+
+      const response = await POST(makePostRequestWithContentLength('abc'));
+
+      expect(response.status).toBe(201);
+    });
+
+    it('still consumes the rate limit budget on oversized rejections', async () => {
+      // Auth + rate-limit run before the body cap so an authenticated
+      // attacker still pays for their oversize attempts.
+      await POST(makePostRequestWithContentLength('1073741824'));
+
+      expect(adminLimiter.check).toHaveBeenCalled();
     });
   });
 });

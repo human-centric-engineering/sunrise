@@ -350,3 +350,72 @@ describe('Embed widget per-agent config (Phase 2)', () => {
     expect(body).toContain('signal: cardController.signal');
   });
 });
+
+describe('Embed widget voice input (Phase 4)', () => {
+  it('reads cfg.voiceInputEnabled from the widget-config payload', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Server-side flag must be propagated through the config merge so the
+    // mic button only renders when the agent + global toggles + audio
+    // provider all line up.
+    expect(body).toContain('voiceInputEnabled');
+    expect(body).toContain('payload.data.voiceInputEnabled');
+  });
+
+  it('only mounts the mic button when secure context + MediaRecorder are present', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Three preconditions must all hold; we explicitly check protocol +
+    // hostname for HTTPS/localhost and feature-detect MediaRecorder +
+    // navigator.mediaDevices.getUserMedia.
+    expect(body).toContain('isSecureForMic');
+    expect(body).toContain('micSupported');
+    expect(body).toContain('cfg.voiceInputEnabled');
+    expect(body).toContain("protocol === 'https:'");
+    expect(body).toContain('window.MediaRecorder');
+    expect(body).toContain('navigator.mediaDevices.getUserMedia');
+  });
+
+  it('POSTs the recorded audio to the embed speech-to-text endpoint with the embed token', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("apiBase + '/speech-to-text'");
+    expect(body).toContain("'X-Embed-Token': token");
+    // Recorded blob is wrapped in a File for transparent MIME forwarding.
+    expect(body).toContain("fd.append('audio'");
+  });
+
+  it('honours the 3-minute client-side cap so users do not upload audio that exceeds the server limit', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('MAX_VOICE_MS');
+    expect(body).toContain('180000');
+    expect(body).toContain('voiceAutoStop = setTimeout');
+  });
+
+  it('runtime-detects an audio MIME the browser actually supports', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('isTypeSupported');
+    expect(body).toContain('audio/webm;codecs=opus');
+    expect(body).toContain('audio/mp4');
+  });
+
+  it('shows an inline message on permission denial rather than a generic error', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // We surface the parent-site Permissions-Policy story explicitly because
+    // there is nothing the embed can do about it server-side.
+    expect(body).toContain('Microphone disabled by your browser or this site');
+    expect(body).toContain("name === 'NotAllowedError'");
+  });
+
+  it('maps standard error codes to user-facing copy', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("code === 'VOICE_DISABLED'");
+    expect(body).toContain("code === 'NO_AUDIO_PROVIDER'");
+    expect(body).toContain("code === 'AUDIO_TOO_LARGE'");
+    expect(body).toContain("code === 'RATE_LIMITED'");
+  });
+
+  it('appends the transcript to the existing input value rather than overwriting', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Lets the user dictate, edit, and then dictate again without losing
+    // their typed prefix.
+    expect(body).toContain('input.value = existing');
+  });
+});

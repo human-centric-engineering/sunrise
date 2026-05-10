@@ -101,6 +101,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.approvalDefaultAction !== undefined) {
     updateData.approvalDefaultAction = body.approvalDefaultAction;
   }
+  if (body.voiceInputGloballyEnabled !== undefined) {
+    updateData.voiceInputGloballyEnabled = body.voiceInputGloballyEnabled;
+  }
   if (body.inputGuardMode !== undefined) {
     updateData.inputGuardMode = body.inputGuardMode;
   }

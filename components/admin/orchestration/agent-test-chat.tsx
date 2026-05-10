@@ -28,6 +28,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
+import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
@@ -38,6 +39,20 @@ import { pendingApprovalSchema } from '@/lib/validations/orchestration';
 export interface AgentTestChatProps {
   /** Agent slug to hit via `POST /chat/stream`. Required. */
   agentSlug: string;
+  /**
+   * Agent id used by the speech-to-text endpoint when `voiceInputEnabled`
+   * is true. Optional — voice input is hidden when this is absent (the
+   * setup wizard's first-run check passes only `agentSlug` because the
+   * agent hasn't been persisted yet).
+   */
+  agentId?: string;
+  /**
+   * When true (and `agentId` is present), shows a microphone button that
+   * records audio, transcribes it, and inserts the transcript into the
+   * message field. Audio is forwarded to the configured speech-to-text
+   * provider and discarded after transcription.
+   */
+  voiceInputEnabled?: boolean;
   /** Placeholder text in the message textarea. */
   placeholder?: string;
   /** Minimum height of the reply panel. Tailwind class, e.g. `min-h-[120px]`. */
@@ -54,6 +69,8 @@ const MIN_THINKING_MS = 1500;
 
 export function AgentTestChat({
   agentSlug,
+  agentId,
+  voiceInputEnabled = false,
   placeholder = DEFAULT_PLACEHOLDER,
   minHeight = 'min-h-[100px]',
   initialMessage = '',
@@ -216,7 +233,23 @@ export function AgentTestChat({
           }}
           disabled={streaming}
         />
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
+          {voiceInputEnabled && agentId && (
+            <MicButton
+              agentId={agentId}
+              endpoint="/api/v1/admin/orchestration/chat/transcribe"
+              disabled={streaming}
+              onTranscript={(text) =>
+                setMessage((current) => (current ? `${current.trimEnd()} ${text}` : text))
+              }
+              onError={(msg) =>
+                setError({
+                  title: 'Voice input failed',
+                  message: msg,
+                })
+              }
+            />
+          )}
           <Button type="submit" size="sm" disabled={streaming || !message.trim()}>
             {streaming ? 'Streaming…' : 'Send'}
           </Button>

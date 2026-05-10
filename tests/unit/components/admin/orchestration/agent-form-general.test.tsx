@@ -178,6 +178,7 @@ describe('AgentForm — General tab', () => {
         deletedAt: null,
         fallbackProviders: [],
         widgetConfig: null,
+        enableVoiceInput: false,
       };
 
       // Act

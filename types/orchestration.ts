@@ -90,6 +90,7 @@ export const CostOperation = {
   TOOL_CALL: 'tool_call',
   EMBEDDING: 'embedding',
   EVALUATION: 'evaluation',
+  TRANSCRIPTION: 'transcription',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 
@@ -851,6 +852,14 @@ export interface OrchestrationSettings {
    * before in-chat approvals will work from a partner site.
    */
   embedAllowedOrigins: string[];
+  /**
+   * Org-wide kill switch for the voice-input feature. Default `true` —
+   * agents with `enableVoiceInput=true` get the mic surface. Flip to
+   * `false` to disable transcription across every agent at once
+   * (incident response, compliance pause, pre-launch sandbox) without
+   * editing each agent row.
+   */
+  voiceInputGloballyEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

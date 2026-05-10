@@ -33,6 +33,18 @@ export interface ComputedCost {
   isLocal: boolean;
 }
 
+/**
+ * Whisper pricing — USD per minute of input audio.
+ *
+ * Hardcoded for v1 because OpenAI Whisper is the only audio model the
+ * platform currently routes to; per-minute pricing makes a per-token
+ * column on `AiProviderModel` the wrong shape. When a second audio
+ * provider lands (Deepgram, ElevenLabs, etc.), promote this to a
+ * `pricePerMinuteUsd` column on `AiProviderModel` and look it up by
+ * model id like the chat path does.
+ */
+export const WHISPER_USD_PER_MINUTE = 0.006;
+
 /** Parameters for `logCost`. */
 export interface LogCostParams {
   agentId?: string;
@@ -43,6 +55,13 @@ export interface LogCostParams {
   inputTokens: number;
   outputTokens: number;
   operation: CostOperation;
+  /**
+   * Audio duration in milliseconds — required when `operation` is
+   * `'transcription'`, ignored otherwise. Whisper is billed per minute
+   * of input audio, not per token, so the per-row cost derives from
+   * this field rather than the token counts.
+   */
+  durationMs?: number;
   /** Explicit override; otherwise inferred from the model registry tier. */
   isLocal?: boolean;
   metadata?: Record<string, unknown>;
@@ -54,6 +73,25 @@ export interface LogCostParams {
    */
   traceId?: string;
   spanId?: string;
+}
+
+/**
+ * Compute the USD cost of a transcription operation given an audio
+ * duration. Returns zeroed costs for non-positive durations so a
+ * provider returning `duration: 0` (no usage info) records as $0
+ * rather than NaN.
+ */
+export function calculateTranscriptionCost(durationMs: number): ComputedCost {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
+  }
+  const totalCostUsd = (durationMs / 60_000) * WHISPER_USD_PER_MINUTE;
+  return {
+    inputCostUsd: totalCostUsd,
+    outputCostUsd: 0,
+    totalCostUsd,
+    isLocal: false,
+  };
 }
 
 /** Budget snapshot returned by `checkBudget`. */
@@ -121,8 +159,18 @@ export function calculateCost(
  * the caller can continue serving the user-facing response).
  */
 export async function logCost(params: LogCostParams): Promise<AiCostLog | null> {
-  const cost = calculateCost(params.model, params.inputTokens, params.outputTokens);
+  const isTranscription = params.operation === 'transcription';
+  const cost = isTranscription
+    ? calculateTranscriptionCost(params.durationMs ?? 0)
+    : calculateCost(params.model, params.inputTokens, params.outputTokens);
   const isLocal = params.isLocal ?? cost.isLocal;
+
+  // Stamp duration into metadata for transcription rows so analytics can
+  // distinguish "no usage reported" (duration absent) from "0-second clip".
+  const metadata: Record<string, unknown> | undefined =
+    isTranscription && params.durationMs !== undefined
+      ? { ...(params.metadata ?? {}), durationMs: params.durationMs }
+      : params.metadata;
 
   const data: Prisma.AiCostLogUncheckedCreateInput = {
     model: params.model,
@@ -140,8 +188,8 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
   if (params.workflowExecutionId !== undefined) {
     data.workflowExecutionId = params.workflowExecutionId;
   }
-  if (params.metadata !== undefined) {
-    data.metadata = params.metadata as Prisma.InputJsonValue;
+  if (metadata !== undefined) {
+    data.metadata = metadata as Prisma.InputJsonValue;
   }
   // Empty strings (returned by the no-op tracer) are normalised away — only
   // real span IDs from a registered tracer land in the column.

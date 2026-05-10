@@ -346,6 +346,32 @@ Vacuously passes when no citations were produced, so non-RAG responses are never
 - **Per-conversation caps**: Configurable maximum messages per conversation
 - **Message embedding**: `AiMessageEmbedding` for conversation similarity search
 
+### 6.6 Voice input (transcription)
+
+Speech-to-text input on both chat surfaces — admin (`AgentTestChat`) and the third-party embed widget. Audio is recorded in the browser via `MediaRecorder`, uploaded as multipart, transcribed by an audio-capable provider (e.g. OpenAI Whisper), and discarded; only the transcript becomes a normal user message. Two independent toggles gate the feature:
+
+- **Per-agent**: `AiAgent.enableVoiceInput` (default `false`) — opt-in per agent so different audiences can have different surfaces.
+- **Org-wide kill switch**: `AiOrchestrationSettings.voiceInputGloballyEnabled` (default `true`) — flip off to disable voice across every agent without editing each row.
+
+The effective state is `agent.enableVoiceInput && settings.voiceInputGloballyEnabled`. The widget-config endpoint also requires at least one audio-capable provider to be configured before exposing the mic button, so users never see a control that's guaranteed to error.
+
+**Provider abstraction.** `LlmProvider.transcribe?(audio, options)` is an optional method. `OpenAiCompatibleProvider` implements it via the OpenAI SDK's `audio.transcriptions.create(...)` (works for OpenAI proper and for any compatible host that exposes `/v1/audio/transcriptions`, e.g. Groq Whisper). `AnthropicProvider` does not implement it.
+
+**Routing.** `getAudioProvider()` in `lib/orchestration/llm/provider-manager.ts` queries `AiProviderModel` rows whose `capabilities` array includes `'audio'`, ordered by `isDefault desc, createdAt asc`, walks past providers with an open circuit breaker, and returns the first instance that exposes `transcribe()`. No `TaskIntent` extension — `TaskIntent` maps to cost/quality tiers, and Whisper is a single SKU.
+
+**Cost tracking.** A new `CostOperation = 'transcription'` writes per-row to `AiCostLog`. Whisper is priced per minute, not per token, so cost derives from `durationMs` (passed in `LogCostParams`) using the hardcoded `WHISPER_USD_PER_MINUTE = 0.006`; tokens stay 0 and the duration is stamped into the metadata column for analytics.
+
+**Endpoints**:
+
+- `POST /api/v1/admin/orchestration/chat/transcribe` — admin auth, multipart audio upload, returns `{ text, durationMs, language? }`.
+- `POST /api/v1/embed/speech-to-text` — embed-token auth, same shape.
+
+Both run on Node.js runtime (`runtime = 'nodejs'`, `maxDuration = 60`), enforce a shared 25 MB cap, validate MIME against an allowlist (`audio/webm`, `audio/mp4`, `audio/mpeg`, `audio/wav`, `audio/ogg`), and rate-limit through `audioLimiter` (10 req/min keyed by user id on admin and `${embedToken}:${clientIp}` on embed). Error envelope codes: `VOICE_DISABLED`, `NO_AUDIO_PROVIDER`, `TRANSCRIPTION_FAILED`, `AUDIO_TOO_LARGE`, `AUDIO_INVALID_TYPE`.
+
+**Browser-side guarantees.** A reusable `useVoiceRecording` hook owns the `MediaRecorder` lifecycle: runtime MIME selection (Opus → MP4 → browser default to cover Chrome/Firefox/Safari/iOS), a 3-minute client-side auto-stop so users don't upload audio that the server cap will reject, elapsed-time tracking, and clean teardown of the `MediaStream` on cancel/unmount. The `<MicButton>` wires this into `AgentTestChat`. The embed widget mirrors the same state machine in plain ES5 inside the Shadow DOM.
+
+**Permissions-Policy**: the admin app's response headers ship `microphone=(self)` so `getUserMedia()` resolves on the admin domain. The embed widget mounts on the partner site via `<script>` and inherits that site's policy — the platform cannot override it. Iframe embedders need `allow="microphone"` on the iframe element for the mic to function.
+
 ---
 
 ## 7. Knowledge Base (RAG)

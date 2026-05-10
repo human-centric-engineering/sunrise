@@ -114,6 +114,7 @@ function makeSettingsRow(
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
     embedAllowedOrigins: unknown;
+    voiceInputGloballyEnabled: boolean;
   }> = {}
 ) {
   return {
@@ -138,6 +139,7 @@ function makeSettingsRow(
     auditLogRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
+    voiceInputGloballyEnabled: true as boolean,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -405,6 +407,42 @@ describe('Admin Orchestration — /settings', () => {
       expect(res.status).toBe(200);
       const body = await parseJson<{ data: { approvalDefaultAction: string | null } }>(res);
       expect(body.data.approvalDefaultAction).toBe('allow');
+    });
+
+    it('updates voiceInputGloballyEnabled to false (org-wide kill switch)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ voiceInputGloballyEnabled: false }) as never
+      );
+
+      const res = await PATCH(makePatch({ voiceInputGloballyEnabled: false }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { voiceInputGloballyEnabled: boolean } }>(res);
+      expect(body.data.voiceInputGloballyEnabled).toBe(false);
+
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.voiceInputGloballyEnabled).toBe(false);
+      expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
+    });
+
+    it('updates voiceInputGloballyEnabled back to true', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ voiceInputGloballyEnabled: true }) as never
+      );
+
+      const res = await PATCH(makePatch({ voiceInputGloballyEnabled: true }));
+
+      expect(res.status).toBe(200);
+      const body = await parseJson<{ data: { voiceInputGloballyEnabled: boolean } }>(res);
+      expect(body.data.voiceInputGloballyEnabled).toBe(true);
+
+      const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(upsertCall?.update.voiceInputGloballyEnabled).toBe(true);
+    });
+
+    it('rejects non-boolean voiceInputGloballyEnabled (400)', async () => {
+      const res = await PATCH(makePatch({ voiceInputGloballyEnabled: 'yes' }));
+      expect(res.status).toBe(400);
     });
 
     it('updates inputGuardMode to block', async () => {

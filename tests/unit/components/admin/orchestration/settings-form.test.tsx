@@ -261,6 +261,57 @@ describe('SettingsForm', () => {
         expect(screen.getByText('Saved')).toBeInTheDocument();
       });
     });
+
+    it('defaults voiceInputGloballyEnabled to true and sends it on submit', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({ voiceInputGloballyEnabled: true }),
+          })
+        );
+      });
+    });
+
+    it('toggles voiceInputGloballyEnabled off and sends false', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+
+      render(
+        <SettingsForm initialSettings={{ ...FULL_SETTINGS, voiceInputGloballyEnabled: true }} />
+      );
+
+      const toggle = screen.getByRole('checkbox', { name: /voice input globally enabled/i });
+      expect(toggle).toBeChecked();
+
+      await user.click(toggle);
+      expect(toggle).not.toBeChecked();
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/settings'),
+          expect.objectContaining({
+            body: expect.objectContaining({ voiceInputGloballyEnabled: false }),
+          })
+        );
+      });
+    });
   });
 
   // ── Error handling ──────────────────────────────────────────────────────

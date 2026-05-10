@@ -117,6 +117,46 @@ When the SSE stream emits a `citations` event (see [Streaming Chat — Citations
 
 All citation rendering uses `createElement` + `textContent` — model output is never passed through `innerHTML`, so a hostile knowledge document cannot inject DOM into the host page through the widget.
 
+### Voice input
+
+The `/widget-config` response includes a `voiceInputEnabled: boolean` flag computed server-side. It is `true` only when:
+
+1. The agent's per-agent toggle (`AiAgent.enableVoiceInput`) is on.
+2. The org-wide kill switch (`AiOrchestrationSettings.voiceInputGloballyEnabled`) is on.
+3. At least one configured `AiProviderModel` row has the `'audio'` capability and a healthy provider behind it.
+
+When all three hold, the widget renders a microphone button in the input row. Clicking it requests `getUserMedia({ audio: true })`, records via `MediaRecorder`, and POSTs the resulting blob to `POST /api/v1/embed/speech-to-text`. The transcript replaces / appends to the input field; the existing send path is unchanged.
+
+**Two more guards** apply client-side before the button renders, even when `voiceInputEnabled` is true:
+
+- **Secure context.** The page must be on HTTPS or `localhost` / `127.0.0.1`. `getUserMedia` rejects on plain HTTP.
+- **Browser support.** `window.MediaRecorder` and `navigator.mediaDevices.getUserMedia` must both exist.
+
+Failed checks silently hide the button — there's no degraded "voice unavailable" state because partner pages are heterogeneous and a half-rendered control is worse than no control.
+
+**Permissions-Policy caveat.** The widget mounts on the partner site via `<script>` injection — it inherits the parent site's `Permissions-Policy`, and Sunrise cannot override it. If the partner page sends `Permissions-Policy: microphone=()` (or no policy on a cross-origin iframe), `getUserMedia` rejects with `NotAllowedError` and the widget surfaces "Microphone disabled by your browser or this site." inline. Iframe embedders need `allow="microphone"` on the iframe element. Document this in the partner integration guide.
+
+**MIME selection.** The widget runtime-detects what `MediaRecorder.isTypeSupported(...)` returns and uses, in order: `audio/webm;codecs=opus` → `audio/webm` → `audio/mp4;codecs=mp4a.40.2` → `audio/mp4` → browser default. iOS Safari produces `audio/mp4`; Chrome/Firefox produce `audio/webm`. The picked MIME is forwarded as the upload's content type so the server validates correctly.
+
+**Recording cap.** A 3-minute client-side timer auto-stops the recorder so users don't upload audio that the 25 MB server cap will reject after a long pause.
+
+**Error mapping.** Server error codes (`VOICE_DISABLED`, `NO_AUDIO_PROVIDER`, `AUDIO_TOO_LARGE`, `AUDIO_INVALID_TYPE`, `RATE_LIMITED`) map to friendly inline messages in `voiceErrEl`. The transcribe endpoint never persists audio — only the transcript becomes part of the conversation, via the standard chat send.
+
+#### Platform body-size limits
+
+The 25 MB cap documented above is Sunrise's server-side limit. The **effective** maximum upload depends on where the fork is deployed:
+
+| Platform                   | Effective body cap                              | Approx. recording length (Opus @ 64 kbps) |
+| -------------------------- | ----------------------------------------------- | ----------------------------------------- |
+| Self-hosted Node / Docker  | 25 MB (Sunrise cap)                             | ~50 minutes                               |
+| Vercel Hobby               | **4.5 MB** (platform default, before our route) | ~9 minutes                                |
+| Vercel Pro / Enterprise    | 4.5 MB default; configurable via plan settings  | varies                                    |
+| Cloudflare Workers / Pages | 100 MB (platform), capped to 25 MB by us        | ~50 minutes                               |
+
+On Vercel, requests over the platform cap are rejected by the edge **before** Sunrise's route runs — the user sees a generic gateway error, not the friendly `AUDIO_TOO_LARGE` envelope. The 3-minute client-side recording cap (~1.4 MB at 64 kbps Opus) keeps every typical recording well under the 4.5 MB ceiling, so this only bites on long uploads from `<input type="file">`-style integrations or fork-customised widgets that loosen the recorder limit.
+
+A pre-parse `Content-Length` guard in the route also rejects oversized bodies on self-hosted Node before the multipart parser allocates memory — so even malformed clients can't OOM the server.
+
 ## Chat stream endpoint
 
 ```

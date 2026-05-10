@@ -316,8 +316,11 @@ describe('Knowledge Documents API', () => {
       );
     });
 
-    it('returns 400 when file exceeds the maximum size', async () => {
-      // Arrange: create a file larger than 50 MB (50 * 1024 * 1024 + 1 bytes)
+    it('returns 413 FILE_TOO_LARGE when file exceeds the maximum size (post-parse)', async () => {
+      // The pre-parse `Content-Length` guard catches well-formed clients;
+      // this exercises the post-parse path (chunked encoding or a lying
+      // header). Both paths must return the same code + status so
+      // client error mapping is uniform.
       const largeContent = 'x'.repeat(50 * 1024 * 1024 + 1);
       const file = new File([largeContent], 'huge.txt', { type: 'text/plain' });
       const formData = new FormData();
@@ -330,20 +333,20 @@ describe('Knowledge Documents API', () => {
         formData: async () => formData,
       } as unknown as NextRequest;
 
-      // Act
       const res = await POST(req);
 
-      // Assert
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('FILE_TOO_LARGE');
       expect(uploadDocument).not.toHaveBeenCalled();
     });
 
-    it('returns 400 for unsupported file extension', async () => {
-      // Arrange: .exe file
+    it('returns 400 INVALID_FILE_TYPE for unsupported file extension', async () => {
       const res = await POST(makeFileRequest('malware.exe', 'binary', 'application/octet-stream'));
 
-      // Assert
       expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('INVALID_FILE_TYPE');
       expect(uploadDocument).not.toHaveBeenCalled();
     });
 
@@ -462,12 +465,15 @@ describe('Knowledge Documents API', () => {
     });
 
     it('returns 429 when rate limited', async () => {
-      // Arrange
+      // Arrange — fixed reset value avoids wall-clock coupling. The route
+      // doesn't compare reset against `Date.now()` today, but a deterministic
+      // value also keeps any future reset-driven assertions stable across CI
+      // hosts where elapsed time would drift.
       vi.mocked(adminLimiter.check).mockReturnValue({
         success: false,
         limit: 10,
         remaining: 0,
-        reset: Date.now() + 60_000,
+        reset: 1_700_000_000 + 60,
       } as never);
 
       // Act

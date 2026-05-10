@@ -18,6 +18,8 @@ import type {
   LlmResponse,
   ModelInfo,
   StreamChunk,
+  TranscribeOptions,
+  TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
 
 /** Default request timeout for cloud providers. */
@@ -84,6 +86,19 @@ export interface LlmProvider {
    * can surface provider health without wrapping every call.
    */
   testConnection(): Promise<ProviderTestResult>;
+
+  /**
+   * Transcribe audio bytes to text. Optional — providers without an
+   * audio surface (e.g. Anthropic, plain Ollama) simply omit it. The
+   * routing layer (`getAudioProvider` in `provider-manager.ts`) filters
+   * to providers whose `AiProviderModel.capabilities` row includes
+   * `'audio'`, so callers can rely on this method being defined when
+   * a model with that capability is selected.
+   */
+  transcribe?(
+    audio: Blob | Buffer | ArrayBuffer | Uint8Array,
+    options: TranscribeOptions
+  ): Promise<TranscribeResponse>;
 }
 
 /**
