@@ -388,7 +388,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       expect(data.success).toBe(false);
     });
 
-    it('returns 400 when file has unsupported extension (.exe)', async () => {
+    it('returns 400 INVALID_FILE_TYPE when file has unsupported extension (.exe)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const formData = new FormData();
       formData.append(
@@ -399,22 +399,11 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('INVALID_FILE_TYPE');
     });
 
-    it('returns 400 when file has unsupported extension (.exe)', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      const formData = new FormData();
-      formData.append(
-        'file',
-        new File(['binary'], 'malware.exe', { type: 'application/octet-stream' })
-      );
-
-      const response = await POST(makePostRequestWithFormData(formData));
-
-      expect(response.status).toBe(400);
-    });
-
-    it('returns 400 when file has unsupported extension (.xls)', async () => {
+    it('returns 400 INVALID_FILE_TYPE when file has unsupported extension (.xls)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const formData = new FormData();
       formData.append(
@@ -425,6 +414,28 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('INVALID_FILE_TYPE');
+    });
+
+    it('returns 413 FILE_TOO_LARGE when file exceeds MAX_UPLOAD_BYTES (post-parse)', async () => {
+      // The pre-parse `Content-Length` guard catches well-formed clients;
+      // this test covers the post-parse path — a client that sends a
+      // chunked body (no usable Content-Length) but turns out to be
+      // oversize once parsed. The route must return the same code and
+      // status as the pre-parse path so client error mapping is uniform.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const oversize = new File([new Uint8Array(51 * 1024 * 1024)], 'huge.md', {
+        type: 'text/markdown',
+      });
+      const formData = new FormData();
+      formData.append('file', oversize);
+
+      const response = await POST(makePostRequestWithFormData(formData));
+
+      expect(response.status).toBe(413);
+      const data = await parseJson<{ error: { code: string } }>(response);
+      expect(data.error.code).toBe('FILE_TOO_LARGE');
     });
   });
 

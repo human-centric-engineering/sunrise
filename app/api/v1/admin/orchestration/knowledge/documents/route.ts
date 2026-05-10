@@ -5,9 +5,11 @@
  *   Paginated list with optional status + text filters.
  *
  * POST /api/v1/admin/orchestration/knowledge/documents
- *   Multipart upload. Text-only this session — extension whitelist is
- *   the source of truth (.md / .markdown / .txt). Caller-supplied MIME
- *   type is advisory; browsers often omit it for .md. 10 MB hard cap.
+ *   Multipart upload. Extension whitelist is the source of truth
+ *   (`ALLOWED_EXTENSIONS`). Caller-supplied MIME type is advisory —
+ *   browsers often omit it for .md. 50 MB hard cap (EPUBs can be
+ *   large); pre-parse `Content-Length` guard short-circuits oversize
+ *   bodies before allocation.
  *
  * Authentication: Admin role required.
  */
@@ -15,7 +17,7 @@
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { paginatedResponse, successResponse } from '@/lib/api/responses';
+import { errorResponse, paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { enforceContentLengthCap } from '@/lib/api/multipart-guard';
 import { validateQueryParams } from '@/lib/api/validation';
@@ -126,14 +128,23 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw new ValidationError('File too large', {
-      file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`],
+    // Mirrors the pre-parse `Content-Length` guard above: same code, same
+    // status, same envelope shape. The post-parse path catches the case
+    // where the client sent a small/missing Content-Length but a body
+    // that turned out to be oversize after parsing (chunked encoding, or
+    // a lying header).
+    return errorResponse('File exceeds size limit', {
+      code: 'FILE_TOO_LARGE',
+      status: 413,
+      details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
     });
   }
 
   if (!hasAllowedExtension(file.name)) {
-    throw new ValidationError('Unsupported file type', {
-      file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`],
+    return errorResponse('Unsupported file type', {
+      code: 'INVALID_FILE_TYPE',
+      status: 400,
+      details: { file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`] },
     });
   }
 
