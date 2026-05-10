@@ -18,6 +18,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { resolveWidgetConfig } from '@/lib/validations/orchestration';
+import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 
 function corsHeaders(origin: string | null, allowedOrigins: string[]): Record<string, string> {
   const effectiveOrigin =
@@ -85,15 +86,43 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
   }
 
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: ctx.agentId },
-    select: { widgetConfig: true },
-  });
+  const [agent, settings] = await Promise.all([
+    prisma.aiAgent.findUnique({
+      where: { id: ctx.agentId },
+      select: { widgetConfig: true, enableVoiceInput: true },
+    }),
+    prisma.aiOrchestrationSettings.findUnique({
+      where: { slug: 'global' },
+      select: { voiceInputGloballyEnabled: true },
+    }),
+  ]);
 
   const config = resolveWidgetConfig(agent?.widgetConfig);
   const headers = corsHeaders(origin, ctx.allowedOrigins);
 
-  logger.debug('Widget config resolved', { agentSlug: ctx.agentSlug });
+  // Voice input is exposed to the widget only when:
+  //   1. The org-wide kill switch is on (default true).
+  //   2. The agent has the per-agent toggle on.
+  //   3. There's at least one audio-capable provider configured — checking
+  //      this now means the widget never shows a mic button that always
+  //      errors with NO_AUDIO_PROVIDER on click.
+  let voiceInputEnabled = false;
+  if ((!settings || settings.voiceInputGloballyEnabled !== false) && agent?.enableVoiceInput) {
+    try {
+      const audio = await getAudioProvider();
+      voiceInputEnabled = audio !== null;
+    } catch (err) {
+      logger.warn('voiceInputEnabled probe failed; defaulting to false', {
+        agentSlug: ctx.agentSlug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
-  return NextResponse.json({ success: true, data: { config } }, { status: 200, headers });
+  logger.debug('Widget config resolved', { agentSlug: ctx.agentSlug, voiceInputEnabled });
+
+  return NextResponse.json(
+    { success: true, data: { config, voiceInputEnabled } },
+    { status: 200, headers }
+  );
 }

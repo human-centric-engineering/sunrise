@@ -27,7 +27,12 @@ vi.mock('@/lib/embed/auth', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findUnique: vi.fn() },
+    aiOrchestrationSettings: { findUnique: vi.fn() },
   },
+}));
+
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getAudioProvider: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -84,7 +89,13 @@ beforeEach(() => {
   vi.mocked(apiLimiter.check).mockReturnValue({ success: true } as never);
   vi.mocked(resolveEmbedToken).mockResolvedValue(VALID_CONTEXT as never);
   vi.mocked(isOriginAllowed).mockReturnValue(true);
-  vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ widgetConfig: null } as never);
+  vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    widgetConfig: null,
+    enableVoiceInput: false,
+  } as never);
+  vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+    voiceInputGloballyEnabled: true,
+  } as never);
 });
 
 describe('GET /api/v1/embed/widget-config', () => {
@@ -153,6 +164,62 @@ describe('GET /api/v1/embed/widget-config', () => {
       makeGetRequest({ 'X-Embed-Token': VALID_TOKEN, Origin: 'https://mysite.com' })
     );
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://mysite.com');
+  });
+});
+
+describe('voiceInputEnabled in widget-config response', () => {
+  it('is false when the agent toggle is off', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableVoiceInput: false,
+    } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
+    expect(body.data.voiceInputEnabled).toBe(false);
+  });
+
+  it('is false when the global kill switch is off, even if agent toggle is on', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableVoiceInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      voiceInputGloballyEnabled: false,
+    } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
+    expect(body.data.voiceInputEnabled).toBe(false);
+  });
+
+  it('is false when no audio-capable provider is configured', async () => {
+    const { getAudioProvider } = await import('@/lib/orchestration/llm/provider-manager');
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableVoiceInput: true,
+    } as never);
+    vi.mocked(getAudioProvider).mockResolvedValueOnce(null);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
+    expect(body.data.voiceInputEnabled).toBe(false);
+  });
+
+  it('is true when all three conditions hold', async () => {
+    const { getAudioProvider } = await import('@/lib/orchestration/llm/provider-manager');
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableVoiceInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      voiceInputGloballyEnabled: true,
+    } as never);
+    vi.mocked(getAudioProvider).mockResolvedValueOnce({
+      provider: { transcribe: vi.fn() },
+      modelId: 'whisper-1',
+      providerSlug: 'openai',
+    } as never);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
+    expect(body.data.voiceInputEnabled).toBe(true);
   });
 });
 
