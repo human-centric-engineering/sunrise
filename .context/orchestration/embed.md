@@ -105,6 +105,10 @@ The CSS custom properties set on the host: `--sw-primary`, `--sw-surface`, `--sw
 
 When the panel opens and the message list is empty, up to four chip buttons render above the input area populated from `conversationStarters`. Click → drops the text into the input and fires the same `send()` path as a typed message. Chips disappear on the first message. The chips are a soft-prompt UX — they do not bypass any rate limit or guard.
 
+#### Input focus retention
+
+`endStream()` calls `input.focus()` after every turn so the cursor returns to the input box and the user can keep typing without clicking back in. Click-to-send moves focus to the send button, so without this the focus would be left there. Enter-key submissions already keep focus on the input, so the call is a no-op in that path. The new-chat button and voice-input completion paths also call `input.focus()` for the same reason.
+
 #### XSS posture
 
 - Colour fields validated by `^#[0-9a-fA-F]{6}$` before being assigned to CSS variables.

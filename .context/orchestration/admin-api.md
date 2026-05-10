@@ -1489,7 +1489,7 @@ Content-Type: application/json
 Rate-limited by `adminLimiter`. Validated by `updateOrchestrationSettingsSchema`:
 
 - `defaultModels` keys must be one of `routing | chat | reasoning | embeddings`
-- Every model id must resolve via `getModel()` in the in-memory registry (`validateTaskDefaults()`)
+- Chat/routing/reasoning ids must resolve via `getModel()` in the in-memory chat-model registry (`validateTaskDefaults()`); the embeddings slot is checked only as a non-empty string because embedding ids live in a separate DB-backed registry that can't be queried synchronously from a Zod refinement
 - `globalMonthlyBudgetUsd` must be `null`, `0`, or a positive number ≤ 1,000,000
 - `searchConfig` — optional object `{ keywordBoostWeight: number, vectorWeight: number }` or `null` to reset to defaults. `keywordBoostWeight` must be between -0.2 and 0 (non-positive, reduces cosine distance for keyword matches). `vectorWeight` must be between 0.1 and 2.0 (multiplier on vector similarity score).
 - `lastSeededAt` — read-only, set automatically by the knowledge seeder; not accepted in PATCH

@@ -71,7 +71,7 @@ The form edits a single `AiOrchestrationSettings` row (`slug: 'global'`, lazily 
 
 ### Default model assignments
 
-A select for each `TaskType`: `routing` / `chat` / `reasoning` / `embeddings`. Saved via `PATCH /settings { defaultModels }`. The route validates every id against the in-memory model registry (via `validateTaskDefaults()` in `model-registry.ts`) and returns a 400 if any id is unknown — admins can't smuggle a typo through.
+A select for each `TaskType`: `routing` / `chat` / `reasoning` / `embeddings`. Saved via `PATCH /settings { defaultModels }`. The route validates ids via `validateTaskDefaults()` in `model-registry.ts`: chat/routing/reasoning ids must resolve through `getModel()` in the chat-model registry, but the embeddings slot is checked only as a non-empty string. Embedding ids (`text-embedding-3-small`, `voyage-3`, `nomic-embed-text`, …) live in the DB-backed embedding-model registry (`embedding-models.ts`) and can't be looked up synchronously here; the form's embeddings dropdown is sourced from that registry, so operators only see valid options through normal flow.
 
 The values resolve at runtime via `getDefaultModelForTask(task)` in `lib/orchestration/llm/settings-resolver.ts`, which is called whenever the chat handler needs a model for a task that the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
 
