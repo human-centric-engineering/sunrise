@@ -31,6 +31,12 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findUnique: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
+    // Models the route MUST NOT touch — wired here only so the regression
+    // test can assert the mocks were never called.
+    aiMessage: { create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    aiConversation: { create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    aiKnowledgeDocument: { create: vi.fn() },
+    aiKnowledgeChunk: { create: vi.fn(), createMany: vi.fn() },
   },
 }));
 
@@ -63,6 +69,7 @@ import { audioLimiter } from '@/lib/security/rate-limit';
 import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { POST, OPTIONS } from '@/app/api/v1/embed/speech-to-text/route';
+import { assertNoAudioPersistence } from '@/tests/helpers/no-audio-persistence';
 
 const VALID_TOKEN = 'tok_valid_1234';
 const VALID_CONTEXT = {
@@ -522,5 +529,60 @@ describe('OPTIONS /api/v1/embed/speech-to-text', () => {
     const response = await OPTIONS(makeOptionsRequest());
 
     expect(response.status).toBe(204);
+  });
+});
+
+// ── Audit invariant: no audio bytes ever reach the database ────────────────
+
+describe('Retention regression — audio is never persisted', () => {
+  it('does not call any AiMessage / AiConversation / AiKnowledge write on the happy path', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'embed transcript',
+      durationMs: 4000,
+      language: 'en',
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest());
+    expect(response.status).toBe(200);
+
+    expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.upsert).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.update).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.upsert).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.create).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.createMany).not.toHaveBeenCalled();
+  });
+
+  it('logCost arguments never carry binary data or audio-shaped keys', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'embed transcript',
+      durationMs: 4000,
+      language: 'en',
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makePostRequest());
+
+    assertNoAudioPersistence(vi.mocked(logCost), 'logCost');
+  });
+
+  it('still does not call AiMessage.create on the error path (TRANSCRIPTION_FAILED)', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockRejectedValue(new Error('upstream failure'));
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest());
+    expect(response.status).toBe(502);
+
+    expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled();
   });
 });

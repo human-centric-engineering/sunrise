@@ -42,6 +42,13 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findUnique: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
+    // Models the route MUST NOT touch — wired here only so the regression
+    // test can assert the mocks were never called. If a future contributor
+    // wires up audio persistence, the assertions below will trip.
+    aiMessage: { create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    aiConversation: { create: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    aiKnowledgeDocument: { create: vi.fn() },
+    aiKnowledgeChunk: { create: vi.fn(), createMany: vi.fn() },
   },
 }));
 
@@ -70,6 +77,7 @@ import { audioLimiter } from '@/lib/security/rate-limit';
 import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { POST } from '@/app/api/v1/admin/orchestration/chat/transcribe/route';
+import { assertNoAudioPersistence } from '@/tests/helpers/no-audio-persistence';
 
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwu1';
 
@@ -579,5 +587,72 @@ describe('Pre-parse body-size guard', () => {
     await POST(makeRequestWithContentLength('1073741824'));
 
     expect(audioLimiter.check).toHaveBeenCalled();
+  });
+});
+
+// ── Audit invariant: no audio bytes ever reach the database ────────────────
+
+describe('Retention regression — audio is never persisted', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('does not call any AiMessage / AiConversation / AiKnowledge write on the happy path', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hello world',
+      durationMs: 2500,
+      language: 'en',
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+    expect(response.status).toBe(200);
+
+    // The route must not write to any table that could store the audio
+    // bytes or the transcript directly. The transcript becomes a normal
+    // user message via the existing chat send path on a separate request.
+    expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.upsert).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.update).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.upsert).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.create).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.createMany).not.toHaveBeenCalled();
+  });
+
+  it('logCost arguments never carry binary data or audio-shaped keys', async () => {
+    // Even cost-log metadata must not stash audio "for analytics" — the
+    // helper recursively scans every recorded call argument.
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'hello',
+      durationMs: 1500,
+      language: 'en',
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    await POST(makeRequestWithFormData(makeAudioFormData()));
+
+    assertNoAudioPersistence(vi.mocked(logCost), 'logCost');
+  });
+
+  it('still does not call AiMessage.create on the error path (TRANSCRIPTION_FAILED)', async () => {
+    // Regression guard: a future "save partial transcript" feature would
+    // need to take an explicit decision about whether audio survives the
+    // failure path. For now: nothing is written.
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockRejectedValue(new Error('upstream blew up'));
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithFormData(makeAudioFormData()));
+    expect(response.status).toBe(502);
+
+    expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+    expect(prisma.aiMessage.update).not.toHaveBeenCalled();
   });
 });
