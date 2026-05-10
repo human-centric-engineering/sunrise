@@ -12,6 +12,7 @@
  */
 
 import { errorResponse } from '@/lib/api/responses';
+import { enforceContentLengthCap as genericContentLengthCap } from '@/lib/api/multipart-guard';
 
 /** 25 MB cap — matches OpenAI Whisper's request limit. */
 export const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
@@ -25,35 +26,20 @@ export const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
 export const MAX_REQUEST_BYTES = MAX_TRANSCRIBE_BYTES + 4 * 1024;
 
 /**
- * Enforce the body-size cap from the `Content-Length` header before
- * parsing. Returns a 413 `Response` to short-circuit the handler, or
- * `null` to pass through.
+ * Audio-specific wrapper around the generic content-length guard. Rejects
+ * the request with `AUDIO_TOO_LARGE` (413) when `Content-Length` exceeds
+ * `MAX_REQUEST_BYTES` — the same error code the post-parse `file.size`
+ * check uses, so client error mapping is unchanged.
  *
- * Why pre-parse: `request.formData()` materialises the entire multipart
- * body in memory before the validator's `file.size` check runs. On
- * self-hosted Node a malicious admin could send an arbitrarily large
- * body and exhaust the heap. This guard catches the common case
- * (well-formed clients always send `Content-Length`) cheaply.
- *
- * Why headroom semantics:
- *   - Missing `Content-Length` → pass through. Some proxies strip the
- *     header on chunked transfer encoding; the post-parse `file.size`
- *     check is the backstop in that case.
- *   - Non-numeric `Content-Length` → pass through. Don't reject good
- *     clients on a header glitch.
- *   - Numeric and over cap → reject with 413 `AUDIO_TOO_LARGE` (same
- *     code the post-parse path uses, so client error mapping is
- *     unchanged).
+ * The generic guard (`lib/api/multipart-guard.ts`) handles the header
+ * semantics (missing / non-numeric / over-cap); this wrapper just plugs
+ * in the audio-domain copy.
  */
 export function enforceContentLengthCap(request: Request): Response | null {
-  const header = request.headers.get('content-length');
-  if (!header) return null;
-  const length = Number.parseInt(header, 10);
-  if (!Number.isFinite(length)) return null;
-  if (length <= MAX_REQUEST_BYTES) return null;
-  return errorResponse('Audio file exceeds size limit', {
-    code: 'AUDIO_TOO_LARGE',
-    status: 413,
+  return genericContentLengthCap(request, {
+    maxBytes: MAX_REQUEST_BYTES,
+    errorCode: 'AUDIO_TOO_LARGE',
+    errorMessage: 'Audio file exceeds size limit',
     details: { audio: [`Maximum size is ${MAX_TRANSCRIBE_BYTES} bytes`] },
   });
 }

@@ -440,4 +440,70 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
     });
   });
+
+  describe('Pre-parse body-size guard', () => {
+    function makePostRequestWithContentLength(
+      contentLength: string | null,
+      formDataSpy?: () => Promise<FormData>
+    ): NextRequest {
+      const headers = new Headers();
+      if (contentLength !== null) headers.set('content-length', contentLength);
+      const fd = new FormData();
+      fd.append('file', new File(['# Hello'], 'hello.md', { type: 'text/markdown' }));
+      return {
+        method: 'POST',
+        headers,
+        formData: formDataSpy ?? (() => Promise.resolve(fd)),
+        url: 'http://localhost:3000/api/v1/admin/orchestration/knowledge/documents',
+      } as unknown as NextRequest;
+    }
+
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    });
+
+    it('returns 413 FILE_TOO_LARGE when Content-Length declares an oversized body', async () => {
+      // 1 GB body — what an attacker would set in a heap-exhaustion attempt.
+      const response = await POST(makePostRequestWithContentLength('1073741824'));
+
+      expect(response.status).toBe(413);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('FILE_TOO_LARGE');
+    });
+
+    it('does NOT call request.formData() when the guard rejects (heap protection)', async () => {
+      const formDataSpy = vi.fn(() => Promise.resolve(new FormData()));
+
+      await POST(makePostRequestWithContentLength('1073741824', formDataSpy));
+
+      expect(formDataSpy).not.toHaveBeenCalled();
+    });
+
+    it('passes through when Content-Length is absent (chunked encoding fallback)', async () => {
+      vi.mocked(uploadDocument).mockResolvedValue(makeDocument() as never);
+
+      const response = await POST(makePostRequestWithContentLength(null));
+
+      // Falls through to the post-parse path; the file in the helper's
+      // default FormData passes the post-parse size check. Successful
+      // upload returns 201, not 200.
+      expect(response.status).toBe(201);
+    });
+
+    it('passes through when Content-Length is non-numeric', async () => {
+      vi.mocked(uploadDocument).mockResolvedValue(makeDocument() as never);
+
+      const response = await POST(makePostRequestWithContentLength('abc'));
+
+      expect(response.status).toBe(201);
+    });
+
+    it('still consumes the rate limit budget on oversized rejections', async () => {
+      // Auth + rate-limit run before the body cap so an authenticated
+      // attacker still pays for their oversize attempts.
+      await POST(makePostRequestWithContentLength('1073741824'));
+
+      expect(adminLimiter.check).toHaveBeenCalled();
+    });
+  });
 });
