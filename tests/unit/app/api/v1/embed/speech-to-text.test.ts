@@ -426,6 +426,69 @@ describe('POST /api/v1/embed/speech-to-text — cost-log shape', () => {
   });
 });
 
+describe('POST /api/v1/embed/speech-to-text — pre-parse body-size guard', () => {
+  function makePostRequestWithContentLength({
+    contentLength,
+    formDataSpy,
+    origin = 'https://partner.com',
+  }: {
+    contentLength: string | null;
+    formDataSpy?: () => Promise<FormData>;
+    origin?: string | null;
+  }): NextRequest {
+    const headers = new Headers();
+    headers.set('x-embed-token', VALID_TOKEN);
+    if (origin) headers.set('origin', origin);
+    if (contentLength !== null) headers.set('content-length', contentLength);
+    return {
+      method: 'POST',
+      headers,
+      url: 'https://partner.com/api/v1/embed/speech-to-text',
+      formData: formDataSpy ?? (() => Promise.resolve(makeFormData())),
+    } as unknown as NextRequest;
+  }
+
+  it('returns 413 AUDIO_TOO_LARGE when Content-Length declares an oversized body', async () => {
+    const response = await POST(makePostRequestWithContentLength({ contentLength: '1073741824' }));
+
+    expect(response.status).toBe(413);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('AUDIO_TOO_LARGE');
+  });
+
+  it('attaches CORS headers to the 413 so the partner origin can read the error', async () => {
+    const response = await POST(makePostRequestWithContentLength({ contentLength: '1073741824' }));
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://partner.com');
+  });
+
+  it('does NOT call request.formData() when the guard rejects', async () => {
+    const formDataSpy = vi.fn(() => Promise.resolve(makeFormData()));
+
+    await POST(makePostRequestWithContentLength({ contentLength: '1073741824', formDataSpy }));
+
+    expect(formDataSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes through when Content-Length is absent', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequestWithContentLength({ contentLength: null }));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('runs auth + rate-limit before the body cap (consumes the bucket on oversize)', async () => {
+    await POST(makePostRequestWithContentLength({ contentLength: '1073741824' }));
+    expect(audioLimiter.check).toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/v1/embed/speech-to-text — error envelope shape', () => {
   it('does not leak provider error message text into the response body', async () => {
     const audio = makeAudioResolution();

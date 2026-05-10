@@ -519,3 +519,65 @@ describe('Voice toggle interaction with rate limit', () => {
     expect(audioLimiter.check).toHaveBeenCalled();
   });
 });
+
+// ── Pre-parse body-size guard ──────────────────────────────────────────────
+
+function makeRequestWithContentLength(
+  contentLength: string | null,
+  formDataSpy?: () => Promise<FormData>
+): NextRequest {
+  const headers = new Headers();
+  if (contentLength !== null) headers.set('content-length', contentLength);
+  return {
+    method: 'POST',
+    headers,
+    formData: formDataSpy ?? (() => Promise.resolve(makeAudioFormData())),
+    url: 'http://localhost:3000/api/v1/admin/orchestration/chat/transcribe',
+  } as unknown as NextRequest;
+}
+
+describe('Pre-parse body-size guard', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('returns 413 AUDIO_TOO_LARGE when Content-Length declares an oversized body', async () => {
+    const response = await POST(makeRequestWithContentLength('1073741824')); // 1 GB
+
+    expect(response.status).toBe(413);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('AUDIO_TOO_LARGE');
+  });
+
+  it('does NOT call request.formData() when the guard rejects (heap protection)', async () => {
+    // The whole point of the pre-parse guard: a 1 GB body must NOT be
+    // materialised into memory before being rejected.
+    const formDataSpy = vi.fn(() => Promise.resolve(makeAudioFormData()));
+
+    await POST(makeRequestWithContentLength('1073741824', formDataSpy));
+
+    expect(formDataSpy).not.toHaveBeenCalled();
+  });
+
+  it('passes through when Content-Length is absent (chunked encoding fallback)', async () => {
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockResolvedValue({
+      text: 'ok',
+      durationMs: 1000,
+      model: 'whisper-1',
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makeRequestWithContentLength(null));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('still consumes the rate limit budget on oversized rejections', async () => {
+    // Auth + rate-limit run before the body cap so an authenticated
+    // attacker still pays for their oversize attempts.
+    await POST(makeRequestWithContentLength('1073741824'));
+
+    expect(audioLimiter.check).toHaveBeenCalled();
+  });
+});

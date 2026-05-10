@@ -26,15 +26,21 @@ import { audioLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import { validateTranscribeUpload } from '@/lib/validations/transcribe';
+import { enforceContentLengthCap, validateTranscribeUpload } from '@/lib/validations/transcribe';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// Audit invariant: this handler MUST NOT persist audio bytes. The only DB
+// write on the happy path is `logCost(...)` for billing. Enforced by the
+// retention regression tests in tests/integration/api/v1/admin/orchestration/chat.transcribe.test.ts.
 export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const rateLimit = audioLimiter.check(`audio:user:${session.user.id}`);
   if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  const oversize = enforceContentLengthCap(request);
+  if (oversize) return oversize;
 
   let formData: FormData;
   try {

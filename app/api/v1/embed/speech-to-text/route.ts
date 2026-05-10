@@ -27,7 +27,7 @@ import { isOriginAllowed, resolveEmbedToken } from '@/lib/embed/auth';
 import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import { validateTranscribeUpload } from '@/lib/validations/transcribe';
+import { enforceContentLengthCap, validateTranscribeUpload } from '@/lib/validations/transcribe';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -58,6 +58,9 @@ export async function OPTIONS(request: NextRequest): Promise<NextResponse> {
   });
 }
 
+// Audit invariant: this handler MUST NOT persist audio bytes. The only DB
+// write on the happy path is `logCost(...)` for billing. Enforced by the
+// retention regression tests in tests/unit/app/api/v1/embed/speech-to-text.test.ts.
 export async function POST(request: NextRequest): Promise<Response> {
   const origin = request.headers.get('origin');
   const token = request.headers.get('x-embed-token');
@@ -86,6 +89,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const headers = corsHeaders(origin, ctx.allowedOrigins);
+
+  const oversize = enforceContentLengthCap(request);
+  if (oversize) {
+    // Re-wrap with CORS so the partner origin can read the 413 body.
+    const cloned = new Response(oversize.body, {
+      status: oversize.status,
+      headers: { ...Object.fromEntries(oversize.headers.entries()), ...headers },
+    });
+    return cloned;
+  }
 
   let formData: FormData;
   try {

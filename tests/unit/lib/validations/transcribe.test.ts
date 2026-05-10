@@ -19,9 +19,30 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ALLOWED_AUDIO_PREFIXES,
+  MAX_REQUEST_BYTES,
   MAX_TRANSCRIBE_BYTES,
+  enforceContentLengthCap,
   validateTranscribeUpload,
 } from '@/lib/validations/transcribe';
+
+function reqWithContentLength(value: string | null): Request {
+  // Note: `Content-Length` is a "forbidden header name" per the fetch spec,
+  // so happy-dom / undici strip it when constructing a real `Request`. The
+  // helper bypasses that with a duck-typed mock — the production code only
+  // calls `request.headers.get(...)`, which this satisfies.
+  const headers = new Headers();
+  if (value !== null) headers.set('x-mock-content-length', value);
+  return {
+    headers: {
+      get(name: string): string | null {
+        if (name.toLowerCase() === 'content-length') {
+          return headers.get('x-mock-content-length');
+        }
+        return headers.get(name);
+      },
+    },
+  } as unknown as Request;
+}
 
 function fd(
   fields: Partial<{ audio: File | string | null; agentId: string | null; language: string | null }>
@@ -193,6 +214,53 @@ describe('validateTranscribeUpload — language hint', () => {
     );
     const body = await readError(result);
     expect(body.error.code).toBe('INVALID_LANGUAGE');
+  });
+});
+
+describe('enforceContentLengthCap — pre-parse body-size guard', () => {
+  it('passes through when no Content-Length header is set', () => {
+    // Some proxies strip Content-Length for chunked transfer encoding; the
+    // post-parse `file.size` check is the backstop in that case.
+    expect(enforceContentLengthCap(reqWithContentLength(null))).toBeNull();
+  });
+
+  it('passes through when Content-Length is non-numeric', () => {
+    // A header glitch shouldn't reject good clients — fall through to the
+    // post-parse check.
+    expect(enforceContentLengthCap(reqWithContentLength('abc'))).toBeNull();
+  });
+
+  it('passes through when Content-Length is below MAX_REQUEST_BYTES', () => {
+    expect(enforceContentLengthCap(reqWithContentLength('1024'))).toBeNull();
+  });
+
+  it('passes through when Content-Length is exactly MAX_REQUEST_BYTES', () => {
+    expect(enforceContentLengthCap(reqWithContentLength(String(MAX_REQUEST_BYTES)))).toBeNull();
+  });
+
+  it('returns 413 AUDIO_TOO_LARGE when Content-Length exceeds MAX_REQUEST_BYTES', async () => {
+    const response = enforceContentLengthCap(reqWithContentLength(String(MAX_REQUEST_BYTES + 1)));
+    expect(response).not.toBeNull();
+    expect(response?.status).toBe(413);
+    const body = (await response!.json()) as {
+      success: boolean;
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(body.error.code).toBe('AUDIO_TOO_LARGE');
+    expect(body.error.details?.audio).toEqual([`Maximum size is ${MAX_TRANSCRIBE_BYTES} bytes`]);
+  });
+
+  it('returns 413 for blatantly oversized claims (DoS attempt)', async () => {
+    // 1 GB body — what an attacker would set in a heap-exhaustion attempt.
+    const response = enforceContentLengthCap(reqWithContentLength('1073741824'));
+    expect(response?.status).toBe(413);
+  });
+
+  it('MAX_REQUEST_BYTES has at least 4 KB headroom over MAX_TRANSCRIBE_BYTES', () => {
+    // A legitimate 25 MB upload's body is the file plus multipart overhead
+    // (boundaries + form-field headers). The headroom must absorb that
+    // overhead so we never reject a within-spec audio file.
+    expect(MAX_REQUEST_BYTES).toBeGreaterThanOrEqual(MAX_TRANSCRIBE_BYTES + 4 * 1024);
   });
 });
 
