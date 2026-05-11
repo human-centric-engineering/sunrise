@@ -432,4 +432,46 @@ describe('Embed widget voice input (Phase 4)', () => {
     // their typed prefix.
     expect(body).toContain('input.value = existing');
   });
+
+  it('renders a live recording indicator with level meter + elapsed timer above the input row', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // Markup — sits between .starters and .input-area, hidden by default.
+    expect(body).toContain('class="voice-indicator"');
+    expect(body).toContain('class="voice-meter"');
+    expect(body).toContain('class="voice-elapsed"');
+    // 7 bars (matches the React MicLevelMeter default) so they animate
+    // independently and read as a true level meter rather than a single
+    // pulse. Counting <span></span> repeats keeps us honest if a refactor
+    // accidentally drops some.
+    const barOpens = (body.match(/<span><\/span>/g) || []).length;
+    expect(barOpens).toBeGreaterThanOrEqual(7);
+    // JS hooks — analyser drives the bars, interval drives the timer.
+    expect(body).toContain('startVoiceVisualizer');
+    expect(body).toContain('AudioContext');
+    expect(body).toContain('createMediaStreamSource');
+    expect(body).toContain('getByteFrequencyData');
+    expect(body).toContain('requestAnimationFrame');
+    expect(body).toContain('voiceElapsedTick');
+    // Teardown must release the AudioContext + cancel the rAF loop;
+    // without this the embed leaks an audio context on every record.
+    expect(body).toContain('stopVoiceVisualizer');
+    expect(body).toContain('voiceAudioCtx.close');
+    expect(body).toContain('cancelAnimationFrame');
+  });
+
+  it('shows a one-time "Speak now — tap to stop" hint and dismisses it via localStorage', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // First-use coaching only — the flag flips the first time the user
+    // reaches the `recording` state, so subsequent sessions skip the hint.
+    expect(body).toContain('Speak now');
+    expect(body).toContain('tap to stop');
+    // Shared key with the React MicButton so the field name stays
+    // consistent across surfaces (different origins, different storage
+    // namespaces — but same identifier helps when grepping or migrating).
+    expect(body).toContain("'sunrise.voice-input.hint-dismissed.v1'");
+    expect(body).toContain('voiceHintDismissed');
+    expect(body).toContain('setVoiceHintDismissed');
+    expect(body).toContain('localStorage.getItem');
+    expect(body).toContain('localStorage.setItem');
+  });
 });

@@ -66,6 +66,10 @@ vi.mock('@/lib/hooks/use-voice-recording', () => ({
     elapsedMs: hookState.elapsedMs,
     error: hookState.error,
     supported: hookState.supported,
+    // `stream` feeds the MicLevelMeter visualizer. Tests never enter a real
+    // recording flow, so null is the correct fixture — the meter renders idle
+    // bars when stream is null and never spins up an AudioContext.
+    stream: null as MediaStream | null,
     start: startMock,
     stop: stopMock,
     cancel: cancelMock,

@@ -27,8 +27,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Mic, Square } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { MicLevelMeter } from '@/components/admin/orchestration/chat/mic-level-meter';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { cn } from '@/lib/utils';
 import { useVoiceRecording, DEFAULT_MAX_DURATION_MS } from '@/lib/hooks/use-voice-recording';
+
+/**
+ * localStorage key for the one-time "Speak now — tap to stop" hint.
+ * Bumped suffix → re-shows hint to existing users (use sparingly).
+ */
+const VOICE_HINT_DISMISSED_KEY = 'sunrise.voice-input.hint-dismissed.v1';
 
 export interface MicButtonProps {
   /** Agent id used for the multipart `agentId` field. */
@@ -76,6 +84,12 @@ export function MicButton({
 }: MicButtonProps) {
   const recording = useVoiceRecording({ maxDurationMs });
   const [submit, setSubmit] = useState<SubmitState>('idle');
+  // First-use coaching: show "Speak now — tap to stop" once, then never again.
+  // Flipped to `true` the first time the user enters the `recording` state.
+  const [hintDismissed, setHintDismissed] = useLocalStorage<boolean>(
+    VOICE_HINT_DISMISSED_KEY,
+    false
+  );
 
   // Surface recording-layer errors through the same channel as transcribe errors.
   useEffect(() => {
@@ -83,6 +97,14 @@ export function MicButton({
       onError?.(recording.error.message);
     }
   }, [recording.error, onError]);
+
+  // Mark the hint dismissed the moment the user reaches `recording` — they've
+  // now seen the panel, so future sessions go straight to the level meter.
+  useEffect(() => {
+    if (recording.state === 'recording' && !hintDismissed) {
+      setHintDismissed(true);
+    }
+  }, [recording.state, hintDismissed, setHintDismissed]);
 
   const ariaLabel = useMemo(() => {
     if (submit === 'transcribing') return 'Transcribing audio…';
@@ -158,9 +180,13 @@ export function MicButton({
   const isRecording = recording.state === 'recording';
   const isBusy = submit === 'transcribing' || recording.state === 'requesting';
   const buttonDisabled = disabled || isBusy;
+  // Render the hint only on the very first session — once the user has seen
+  // the panel during a record, the localStorage flag flips and we drop to the
+  // level-meter-only layout from then on.
+  const showHint = isRecording && !hintDismissed;
 
   return (
-    <>
+    <div className="relative inline-flex shrink-0">
       <Button
         type="button"
         size="sm"
@@ -178,14 +204,37 @@ export function MicButton({
           <Mic className="h-4 w-4" aria-hidden="true" />
         )}
       </Button>
+      {isRecording && (
+        <div
+          // Positioned above the button so it doesn't push the input row
+          // around mid-record. `right-0` anchors to the mic; on narrow
+          // screens the panel still fits because the meter + timer is
+          // ~140 px wide.
+          className="bg-popover text-popover-foreground absolute right-0 bottom-full z-10 mb-2 flex flex-col gap-1 rounded-md border px-3 py-2 shadow-md"
+          role="status"
+          aria-live="polite"
+          data-testid="mic-recording-indicator"
+        >
+          {showHint && (
+            <p className="text-foreground text-xs font-medium whitespace-nowrap">
+              Speak now — tap to stop
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <MicLevelMeter stream={recording.stream} />
+            <span className="text-muted-foreground font-mono text-xs tabular-nums">
+              {formatElapsed(recording.elapsedMs)}
+            </span>
+          </div>
+        </div>
+      )}
+      {/* Recording state is already announced by the visible indicator
+          panel above (role="status"). This live region covers the
+          transcription phase, which has no visible affordance of its own. */}
       <span role="status" aria-live="polite" className="sr-only">
-        {isRecording
-          ? `Recording, ${formatElapsed(recording.elapsedMs)} elapsed.`
-          : submit === 'transcribing'
-            ? 'Transcribing audio…'
-            : ''}
+        {submit === 'transcribing' ? 'Transcribing audio…' : ''}
       </span>
-    </>
+    </div>
   );
 }
 
