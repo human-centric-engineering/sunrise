@@ -438,10 +438,14 @@ describe('ProviderModelForm', () => {
       />
     );
 
+    // Locate the Context Length combobox by its visible value — the
+    // fixture is constructed so 'High' is unique to contextLength
+    // (other selects show Thinking / Very High / Fast / Medium /
+    // Strong). Index-based access would silently target the wrong
+    // control if the grid layout ever reorders.
     const triggers = screen.getAllByRole('combobox');
-    // contextLength is the 4th rating select (after tierRole, reasoningDepth, latency, costEfficiency)
-    // index: tierRole=0, reasoningDepth=1, latency=2, costEfficiency=3, contextLength=4, toolUse=5
-    const contextTrigger = triggers[4];
+    const contextTrigger = triggers.find((t) => t.textContent?.trim() === 'High');
+    if (!contextTrigger) throw new Error('Context Length trigger not found');
     await user.click(contextTrigger);
 
     await user.click(await screen.findByRole('option', { name: /^n\/a$/i }));

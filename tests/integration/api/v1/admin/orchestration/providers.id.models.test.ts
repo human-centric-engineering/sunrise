@@ -467,9 +467,9 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
         {
           id: 'matrix-1',
           modelId: 'text-embedding-3-small',
-          // Suppose the matrix has a custom capability list — it must
-          // win over the inference fallback.
-          capabilities: ['embedding', 'rerank'],
+          // Suppose the matrix carries a multi-capability list — the
+          // route must echo it verbatim and not fall back to inference.
+          capabilities: ['embedding', 'audio'],
           tierRole: 'embedding',
         },
       ] as never);
@@ -478,11 +478,18 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       ]);
 
       const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
       const data = await parseJson<{
         data: { models: Array<{ id: string; capabilities: string[]; tierRole: string | null }> };
       }>(response);
 
-      expect(data.data.models[0].capabilities).toEqual(['embedding', 'rerank']);
+      // Use a fully-valid widened capability ('audio') instead of the
+      // non-enum 'rerank' — Phase 1 widened the matrix to six capabilities
+      // and 'rerank' has never been part of capabilitySchema, so storing
+      // it would never round-trip in production. The contract under test
+      // is "matrix capabilities override the inferred default", not
+      // "arbitrary strings pass through".
+      expect(data.data.models[0].capabilities).toEqual(['embedding', 'audio']);
       expect(data.data.models[0].tierRole).toBe('embedding');
     });
   });

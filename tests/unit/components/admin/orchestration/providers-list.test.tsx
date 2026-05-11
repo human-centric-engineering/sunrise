@@ -51,6 +51,13 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
+// Module-level binding to the mocked apiClient — preferred over
+// dynamic `await import('@/lib/api/client')` calls inside hooks/tests.
+// Both bindings reference the same vi.fn() instances, so this carries
+// no behaviour change beyond removing the per-call import overhead
+// and the dynamic-cache resolution ambiguity flagged by /test-review.
+import { apiClient } from '@/lib/api/client';
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 function makeProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
@@ -127,7 +134,7 @@ const MOCK_MODELS_RESPONSE = {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ProvidersList', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     // The provider-test-cache persists results in localStorage across
     // tests within the same vitest worker; clear it so a "tested OK"
@@ -141,7 +148,6 @@ describe('ProvidersList', () => {
     // "not wrapped in act(...)" warnings, or — worse — pre-paint the
     // status dot green before the test under examination clicks anything.
     // Tests that need a resolved state override these mocks explicitly.
-    const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockImplementation(() => new Promise(() => {}));
     vi.mocked(apiClient.post).mockImplementation(() => new Promise(() => {}));
   });

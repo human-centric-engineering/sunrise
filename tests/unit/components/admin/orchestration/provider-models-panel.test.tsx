@@ -188,13 +188,16 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      const initialCallCount = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
+      // Clear the mount-time fetch from the history so the refresh
+      // assertion is exact ("clicking the button fired one fetch"),
+      // not a snapshot-then-compare ("more than before"). The latter
+      // is fragile against incidental calls between snapshot and click.
+      vi.mocked(apiClient.get).mockClear();
 
       await user.click(screen.getByRole('button', { name: /refresh models/i }));
 
       await waitFor(() => {
-        const calls = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
-        expect(calls).toBeGreaterThan(initialCallCount);
+        expect(apiClient.get).toHaveBeenCalledTimes(1);
       });
     });
   });
@@ -513,7 +516,7 @@ describe('ProviderModelsPanel', () => {
       expect(matches.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('clicking "In matrix" twice reverts to the default name-asc sort', async () => {
+    it('clicking "In matrix" twice falls back to alphabetical row order (id-asc)', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 

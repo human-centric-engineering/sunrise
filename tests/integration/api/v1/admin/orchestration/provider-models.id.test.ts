@@ -104,8 +104,11 @@ function makeModel(overrides: Record<string, unknown> = {}) {
     isActive: true,
     metadata: null,
     createdBy: ADMIN_ID,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    // Fixed timestamps so the fixture is deterministic — `new Date()`
+    // here would surface as a non-deterministic difference the moment a
+    // test asserts on the row's date fields.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
 }
@@ -393,6 +396,41 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
   });
 
+  it('skips prisma.update on empty PATCH body for an admin-customised row', async () => {
+    // Source: route.ts:101-106 — when the body has no user fields AND
+    // the row is already `isDefault: false`, the handler returns early
+    // with the current row. Verifies the no-op short-circuit.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: false });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+
+    const response = await PATCH(makePatchRequest(MODEL_ID, {}), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+  });
+
+  it('writes isDefault:false on empty PATCH body for a seed-managed row', async () => {
+    // Counter-test to the no-op skip: a seed row (isDefault: true)
+    // receiving an empty PATCH still triggers an update so future
+    // `npm run db:seed` runs leave it alone. Locks in the
+    // `if (current.isDefault) data.isDefault = false;` branch at L97-99.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: true });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue({
+      ...existing,
+      isDefault: false,
+    } as never);
+
+    const response = await PATCH(makePatchRequest(MODEL_ID, {}), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ isDefault: false }) })
+    );
+  });
+
   it('returns 400 VALIDATION_ERROR when slug is already taken (P2002)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const existing = makeModel({ isDefault: false });
@@ -554,12 +592,58 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       };
     }>(response);
 
+    // Full error envelope assertion — pattern #9. Without `success`
+    // being explicitly checked, a regression that returned a 409 with
+    // a truthy `success` (envelope shape drift) would slip past.
+    expect(body.success).toBe(false);
     expect(body.error.code).toBe('MODEL_IN_USE');
     expect(body.error.details.workflows.map((w) => w.slug)).toEqual([
       'support-router',
       'refund-flow',
     ]);
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('definitionPinsModel guards: tolerates malformed steps and non-LLM steps', async () => {
+    // Source: route.ts:208-222 — the guards skip non-object steps,
+    // missing `type` fields, non-LLM step types, non-object configs,
+    // and non-string modelOverride values. Without these guards a
+    // malformed workflow definition could spuriously block a delete
+    // (or worse: trip a TypeError mid-walk). Each guard branch is
+    // exercised by the fixture below; the delete is expected to
+    // succeed because no genuine pin exists.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
+    );
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([
+      {
+        id: 'wf-malformed',
+        name: 'Malformed Workflow',
+        slug: 'malformed',
+        draftDefinition: {
+          steps: [
+            null, // L213: non-object step
+            'string-step', // L213: non-object step
+            { id: 's1' }, // L215: missing type
+            { id: 's2', type: 123 }, // L215: non-string type
+            { id: 's3', type: 'webhook', config: { modelOverride: 'gpt-4o-mini' } }, // L215: non-LLM type — guarded
+            { id: 's4', type: 'llm_call' }, // L217: missing config
+            { id: 's5', type: 'llm_call', config: null }, // L217: non-object config
+            { id: 's6', type: 'llm_call', config: { modelOverride: 123 } }, // L218-219: non-string override
+          ],
+        },
+        publishedVersion: null,
+      },
+    ] as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(
+      makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalledWith({ where: { id: MODEL_ID } });
   });
 
   it('hard-deletes when no active agent or workflow references the model', async () => {

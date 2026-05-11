@@ -173,10 +173,10 @@ describe('ProviderModelsMatrix', () => {
     expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
   });
 
-  it('renders one badge per capability instead of a Both pill', () => {
+  it('renders one badge per capability for multi-capability rows', () => {
     // Pre-Phase-4 the matrix collapsed chat+embedding into a single
     // "Both" badge. The matrix now stores six capabilities, so the
-    // collapse loses information — render one pill per capability.
+    // collapse loses information — render one pill per stored cap.
     render(
       <ProviderModelsMatrix
         initialModels={[makeModel({ id: 'both-1', capabilities: ['chat', 'embedding'] })]}
@@ -184,9 +184,17 @@ describe('ProviderModelsMatrix', () => {
     );
 
     const dataRow = screen.getByRole('row', { name: /gpt-5/i });
-    expect(within(dataRow).getByText('Chat')).toBeInTheDocument();
-    expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
-    expect(within(dataRow).queryByText(/^both$/i)).not.toBeInTheDocument();
+    // Capability column is index 2 (Provider, Model, Capabilities, ...).
+    // Scope to that cell so the assertion counts only badges, not other
+    // occurrences of the labels in popovers or filter chips.
+    const capabilityCell = within(dataRow).getAllByRole('cell')[2];
+    expect(within(capabilityCell).getByText('Chat')).toBeInTheDocument();
+    expect(within(capabilityCell).getByText('Embedding')).toBeInTheDocument();
+    // Exact-2 lock-in: two stored capabilities ⇒ two badges in the cell,
+    // never a collapsed "Both" pill.
+    expect(
+      within(capabilityCell).getAllByText(/^(chat|reasoning|embedding|audio|image|moderation)$/i)
+    ).toHaveLength(2);
   });
 
   it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(

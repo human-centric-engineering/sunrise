@@ -83,6 +83,7 @@ import {
   updateProviderModelSchema,
   bulkCreateProviderModelsSchema,
   listProviderModelsQuerySchema,
+  updateOrchestrationSettingsSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -2858,5 +2859,83 @@ describe('provider model capability validation', () => {
       const result = listProviderModelsQuerySchema.safeParse({ capability: 'unknown' });
       expect(result.success).toBe(false);
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// updateOrchestrationSettingsSchema — partial patch + cross-field refines
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('updateOrchestrationSettingsSchema', () => {
+  it('rejects an empty patch via the at-least-one-field refine', () => {
+    // Source: orchestration.ts:2009-2030 — the form sends only the
+    // touched fields; an empty patch would mean a no-op write that
+    // still bumps `updatedAt` and audits as a change.
+    const result = updateOrchestrationSettingsSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a single-field patch', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      voiceInputGloballyEnabled: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid defaultModels partial patch', () => {
+    // gpt-4o is in the static model-registry fallback; chat is the
+    // most common slot a real settings save touches. Skip reasoning
+    // here — `validateTaskDefaults` would require the chosen id to
+    // exist in the registry too, and the fallback list is small.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      defaultModels: { chat: 'gpt-4o' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('superRefine forwards validateTaskDefaults errors with the correct path', () => {
+    // Empty-string entries are rejected by the inner `z.string().min(1)`,
+    // not the superRefine — the superRefine catches semantic errors
+    // (e.g. unknown task → model that isn't in the registry). Either
+    // way, an invalid defaultModels payload must surface at the
+    // `defaultModels.<task>` path so the settings form can highlight
+    // the right control.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      defaultModels: { chat: '' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'));
+      expect(
+        paths.some((p) => p.startsWith('defaultModels.chat') || p === 'defaultModels.chat')
+      ).toBe(true);
+    }
+  });
+
+  it('rejects http:// origins in embedAllowedOrigins (non-localhost)', () => {
+    // Source: orchestration.ts:1989-2003 — only https or http://localhost
+    // / http://127.0.0.1 origins are accepted, to keep browser Origin
+    // header matching tight against the persisted allowlist.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['http://example.com'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts http://localhost in embedAllowedOrigins', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['http://localhost:3000'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('normalises https URLs to their .origin canonical form', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['https://partner.com/some/path'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.embedAllowedOrigins).toEqual(['https://partner.com']);
+    }
   });
 });

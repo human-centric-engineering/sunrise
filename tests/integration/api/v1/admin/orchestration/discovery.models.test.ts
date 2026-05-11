@@ -281,6 +281,7 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       ]);
 
       const response = await GET(makeRequest('openai'));
+      expect(response.status).toBe(200);
       const data = await parseJson<{
         data: {
           candidates: Array<{ modelId: string; inMatrix: boolean; matrixId: string | null }>;
@@ -329,6 +330,7 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       ]);
 
       const response = await GET(makeRequest('openai'));
+      expect(response.status).toBe(200);
       const data = await parseJson<{
         data: {
           candidates: Array<{
@@ -412,6 +414,7 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       ]);
 
       const response = await GET(makeRequest('openai'));
+      expect(response.status).toBe(200);
       const data = await parseJson<{
         data: {
           candidates: Array<{
@@ -423,8 +426,14 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       }>(response);
 
       const mystery = data.data.candidates.find((c) => c.modelId === 'some-mystery-model-xyz');
-      expect(mystery?.inferredCapability).toBe('unknown');
-      expect(mystery?.suggested.capabilities).toEqual([]);
+      // Use toMatchObject so a missing candidate produces a descriptive
+      // failure ("expected undefined to match …") rather than the
+      // unhelpful chain of `.find(…)?.x === y` passing trivially when
+      // the array doesn't contain the row at all.
+      expect(mystery).toMatchObject({
+        inferredCapability: 'unknown',
+        suggested: { capabilities: [] },
+      });
     });
 
     it('sorts matrix-matched rows ahead of unmatched, then by name', async () => {

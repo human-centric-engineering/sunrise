@@ -812,10 +812,11 @@ describe('DiscoverModelsDialog', () => {
 
       const [, options] = vi.mocked(apiClient.post).mock.calls[0];
       const body = (options as { body: { models: Array<{ description: string }> } }).body;
-      // Original candidate description was 'Test description from
-      // discovery' (per makeCandidate defaults) — not the edited
-      // string we just discarded.
-      expect(body.models[0].description).not.toBe('Edited then reset');
+      // `reviewFromCandidate` (discover-models-dialog.tsx:173-187)
+      // initializes `description: ''` — discovery doesn't surface a
+      // description per candidate, so Reset returns the field to the
+      // empty string regardless of what the operator typed.
+      expect(body.models[0].description).toBe('');
     });
   });
 });
