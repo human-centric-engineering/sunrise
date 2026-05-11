@@ -317,6 +317,40 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       );
     });
 
+    it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+      'passes widened capability filter %s to prisma where clause',
+      async (capability) => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+        vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+        vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(0 as never);
+        vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+
+        await GET(makeGetRequest({ capability }));
+
+        expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              capabilities: { has: capability },
+            }),
+          })
+        );
+      }
+    );
+
+    it('rejects ?capability=unknown with 400 (catalogue-only value)', async () => {
+      // `unknown` is the inference placeholder. The matrix list endpoint
+      // must reject it so a stale catalogue link can't accidentally
+      // query the matrix for a value the matrix could never store.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await GET(makeGetRequest({ capability: 'unknown' }));
+      expect(response.status).toBe(400);
+      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(prisma.aiProviderModel.findMany).not.toHaveBeenCalled();
+    });
+
     it('passes providerSlug filter to prisma where clause', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
