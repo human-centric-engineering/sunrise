@@ -163,16 +163,90 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
           Embedding space
         </button>
       </div>
-      {view === 'embedded' && (
-        <span className="text-muted-foreground text-xs">
-          Showing only chunks with vector embeddings
-        </span>
-      )}
-      {view === 'embedding-space' && (
-        <span className="text-muted-foreground text-xs">
-          UMAP-projected chunks — clusters = semantic similarity
-        </span>
-      )}
+      {/* Per-view explainer — content swaps with the active view so the
+          user always sees a description of what they're currently looking
+          at. The toggle row caption stays terse; depth lives in the
+          FieldHelp popover. */}
+      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+        {view === 'structure' && (
+          <>
+            Every document and chunk in the knowledge base
+            <FieldHelp
+              title="Structure view"
+              ariaLabel="About the Structure view"
+              contentClassName="w-96"
+            >
+              <p>
+                Shows <strong>every document and every chunk</strong> regardless of embedding
+                status. This is the full topology of what&apos;s stored — including documents that
+                are still being processed (amber) or failed to embed (red).
+              </p>
+              <p className="mt-2">
+                Use this view to audit ingestion: a chunk visible here but missing from{' '}
+                <strong>Embedded</strong> has been split out of the source document but doesn&apos;t
+                yet have a vector, so an agent can&apos;t retrieve it via semantic search.
+              </p>
+              <p className="mt-2 text-xs">
+                Past 500 chunks, individual chunk nodes are hidden for performance and only
+                document-level nodes are drawn.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+        {view === 'embedded' && (
+          <>
+            Only chunks that have vector embeddings
+            <FieldHelp
+              title="Embedded view"
+              ariaLabel="About the Embedded view"
+              contentClassName="w-96"
+            >
+              <p>
+                Filters to chunks where the <strong>embedding vector has been computed</strong> and
+                stored. Documents with zero embedded chunks are hidden entirely.
+              </p>
+              <p className="mt-2">
+                This is what&apos;s <strong>actually searchable</strong> by your agents — every
+                chunk shown here can be retrieved via vector similarity. If a document appears in
+                Structure but not Embedded, it&apos;s been chunked but the embedding step
+                hasn&apos;t completed (or it failed).
+              </p>
+              <p className="mt-2 text-xs">
+                If this view looks identical to Structure, your knowledge base is fully embedded —
+                that&apos;s the healthy state.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+        {view === 'embedding-space' && (
+          <>
+            UMAP-projected chunks — clusters = semantic similarity
+            <FieldHelp
+              title="Embedding space view"
+              ariaLabel="About the Embedding space view"
+              contentClassName="w-96"
+            >
+              <p>
+                A different view of the same chunks: each one becomes a single{' '}
+                <strong>2D point</strong> on a scatter plot. The (x, y) position is derived from the
+                chunk&apos;s 1,536-dim embedding vector via <strong>UMAP</strong> — a
+                dimensionality-reduction algorithm that preserves local neighbour structure.
+              </p>
+              <p className="mt-2">
+                <strong>Neighbouring points are semantically similar.</strong> Visible clusters tell
+                you what topics your knowledge base actually covers; outliers are chunks that
+                don&apos;t fit any cluster. Points are coloured by source document, so you can see
+                whether documents talk about overlapping or disjoint topics.
+              </p>
+              <p className="mt-2 text-xs">
+                UMAP needs at least 10 embedded chunks to produce a meaningful layout. Past 2,000
+                points the view samples uniformly to keep the projection fast and the plot readable.
+                Hover for chunk metadata, click for the full preview.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+      </span>
     </div>
   );
 
@@ -203,13 +277,37 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       return searchable.some((v) => typeof v === 'string' && v.toLowerCase().includes(lowerFilter));
     };
 
+    // Anchor the KB node at the data-space origin and seed each
+    // document around it on a circle. Without seeding, ECharts' default
+    // force-layout places every node at random positive coordinates;
+    // the view box then auto-fits to that positive quadrant and the
+    // fixed-at-origin KB ends up at the top-left corner. Distributing
+    // documents symmetrically around (0, 0) makes the data extent
+    // centred on the KB, so the auto-fitted view box centres on it
+    // too. Chunks aren't seeded — repulsion from their parent document
+    // pushes them further out naturally.
+    const documentNodes = graphData.nodes.filter((n) => n.type === 'document');
+    const docCount = Math.max(documentNodes.length, 1);
+    const docRingRadius = 100; // arbitrary units; ECharts auto-scales the view
+    const docInitialPositions = new Map<string, { x: number; y: number }>(
+      documentNodes.map((d, i) => {
+        const angle = (i / docCount) * 2 * Math.PI - Math.PI / 2; // start at top
+        return [d.id, { x: docRingRadius * Math.cos(angle), y: docRingRadius * Math.sin(angle) }];
+      })
+    );
+
     const nodes = graphData.nodes.map((node) => {
       const matches = nodeMatches(node);
+      const isKb = node.type === 'kb';
+      const seedPos = isKb
+        ? { x: 0, y: 0, fixed: true as const }
+        : (docInitialPositions.get(node.id) ?? {});
       return {
         id: node.id,
         name: node.name,
         symbolSize: node.value,
         category: node.category,
+        ...seedPos,
         itemStyle: {
           opacity: hasFilter && !matches ? 0.1 : 1,
           borderWidth: hasFilter && matches ? 3 : 1,
@@ -217,7 +315,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         },
         label: {
           show: node.type !== 'chunk',
-          fontSize: node.type === 'kb' ? 14 : 10,
+          fontSize: isKb ? 14 : 10,
           opacity: hasFilter && !matches ? 0.1 : 1,
         },
         // Store full node data for click handler
@@ -615,79 +713,39 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         </Card>
       </div>
 
-      {/* Knowledge graph explainer */}
+      {/* Knowledge graph overview — covers the general "what is this and
+          how do I interact with it" question. Per-view depth lives in the
+          FieldHelp on the toggle row below, so a user can drill into the
+          specific view they're looking at without re-reading shared
+          intro material. */}
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium">
           Knowledge Graph{' '}
           <FieldHelp
             title="Knowledge Graph"
             ariaLabel="About the knowledge graph"
-            contentClassName="w-96 max-h-80 overflow-y-auto"
+            contentClassName="w-96"
           >
             <p>
-              This is a <strong>knowledge graph</strong> — a visual representation of how your
-              knowledge base is structured. Each element in the graph is a <strong>node</strong>,
-              and the lines connecting them are <strong>edges</strong> that show relationships.
+              A <strong>knowledge graph</strong> is a visual map of how your knowledge base is
+              structured. Each circle is a <strong>node</strong> (the Knowledge Base hub, a
+              document, or a chunk) and the lines between them are <strong>edges</strong> that
+              describe relationships — e.g. &quot;contains (12 chunks)&quot; or &quot;section:
+              Implementation&quot;.
             </p>
-            <p className="text-foreground mt-2 font-medium">Nodes</p>
-            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-              <li>
-                <strong>Knowledge Base</strong> (indigo) — the central root node representing your
-                entire knowledge base.
-              </li>
-              <li>
-                <strong>Documents</strong> (green/amber/red) — each uploaded file. Colour indicates
-                status: green for ready, amber for pending, red for failed.
-              </li>
-              <li>
-                <strong>Chunks</strong> (slate) — the individual text segments that a document was
-                split into. Each chunk has its own embedding vector for search.
-              </li>
-            </ul>
-            <p className="text-foreground mt-2 font-medium">Edges</p>
-            <p>
-              Edges represent the relationship between nodes. A{' '}
-              <strong>&quot;contains&quot;</strong> edge connects the knowledge base to each
-              document, showing how many chunks it holds (e.g. &quot;contains (12 chunks)&quot;).
-              Document-to-chunk edges describe the chunk&apos;s role — for example{' '}
-              <strong>&quot;overview&quot;</strong>,{' '}
-              <strong>&quot;section: Implementation&quot;</strong>, or{' '}
-              <strong>&quot;glossary&quot;</strong>. This means you can always trace any chunk — and
-              its embedding — back to the source document it came from.
+            <p className="mt-2">
+              <strong>Node colours:</strong> indigo = Knowledge Base, green/amber/red =
+              ready/pending/failed documents, slate = chunks.
             </p>
             <p className="text-foreground mt-2 font-medium">Interaction</p>
             <p>
-              <strong>Hover a node</strong> to highlight it and its connected edges and neighbours
-              in yellow — the rest of the graph fades so you can focus on the relationships. Edge
-              labels appear on the highlighted edges.
-            </p>
-            <p className="mt-1">
-              <strong>Hover an edge</strong> to see a summary of both connected nodes — the source
-              and target — so you can quickly understand the relationship without clicking.
-            </p>
-            <p className="mt-1">
-              <strong>Click</strong> a node to open a detail panel. You can also{' '}
-              <strong>drag</strong> nodes to rearrange the layout and <strong>scroll</strong> to
-              zoom.
-            </p>
-            <p className="text-foreground mt-2 font-medium">Views</p>
-            <p>
-              <strong>Structure</strong> shows all documents and chunks regardless of embedding
-              status. <strong>Embedded</strong> filters to only chunks that have vector embeddings —
-              useful to see what is actually searchable by your agents.
-            </p>
-            <p className="mt-1">
-              <strong>Embedding space</strong> is a different view of the same data: each chunk
-              becomes a single point on a 2D scatter plot whose position is derived from its
-              embedding vector via UMAP.{' '}
-              <strong>Neighbouring points are semantically similar</strong> — so visible clusters
-              tell you what topics your knowledge base actually covers, and outliers are chunks that
-              don&apos;t fit any cluster. Points are coloured by source document.
+              <strong>Hover</strong> a node to highlight its neighbours; hover an edge to see both
+              endpoints. <strong>Click</strong> for a detail panel. <strong>Drag</strong> nodes to
+              rearrange, <strong>scroll</strong> to zoom.
             </p>
             <p className="mt-2 text-xs">
-              When the knowledge base exceeds 500 chunks, individual chunk nodes in the Structure /
-              Embedded views are hidden for performance and the graph shows document-level nodes
-              only. The Embedding-space view samples up to 2,000 points before rendering.
+              Use the <strong>View</strong> toggle below to switch between Structure, Embedded, and
+              Embedding space. The ⓘ next to each toggle explains what that view shows.
             </p>
           </FieldHelp>
         </span>
