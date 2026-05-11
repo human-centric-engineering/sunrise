@@ -138,6 +138,8 @@ Local servers get a `'not-needed'` sentinel API key (the OpenAI SDK rejects empt
 
 The `'audio'` capability value is inferred for `whisper-*` and `tts-*` model ids by `lib/orchestration/llm/capability-inference.ts`. New audio providers seed an `AiProviderModel` row with `capabilities: ['audio']` to participate in routing.
 
+Operators can now add audio rows directly from the admin UI (`/admin/orchestration/provider-models/new` and the Discover Models dialog both surface an `Audio` capability checkbox). Pre-Phase-1 the matrix's Zod enum (`MODEL_CAPABILITIES` in `types/orchestration.ts`) rejected anything outside `['chat', 'embedding']`, so adding a Whisper row required hand-editing the DB. The 009-provider-models seed ships a default Whisper row, so a fresh checkout has voice input working as soon as an OpenAI key is set.
+
 ## Provider Manager (DB-Backed Factory)
 
 `providerManager.getProvider(slug)` is the single entry point. It:
