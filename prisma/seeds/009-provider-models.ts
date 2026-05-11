@@ -37,7 +37,7 @@ const unit: SeedUnit = {
         name: 'Claude Opus 4',
         description:
           'Anthropic flagship. Deepest reasoning, extended thinking, very large context. Best for planning and complex orchestration.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'thinking',
         reasoningDepth: 'very_high',
         latency: 'medium',
@@ -53,7 +53,7 @@ const unit: SeedUnit = {
         name: 'Claude Sonnet 4',
         description:
           'Balanced reasoning and speed. Strong tool use with good cost efficiency for worker tasks.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'fast',
@@ -69,7 +69,7 @@ const unit: SeedUnit = {
         name: 'Claude Haiku 4.5',
         description:
           'Fast and cost-efficient. Good for high-volume, latency-sensitive agent loops.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'infrastructure',
         reasoningDepth: 'medium',
         latency: 'very_fast',
@@ -89,7 +89,7 @@ const unit: SeedUnit = {
         name: 'GPT-5',
         description:
           'OpenAI flagship. Very high reasoning, strong tool use. Best for planning and complex orchestration.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'thinking',
         reasoningDepth: 'very_high',
         latency: 'medium',
@@ -105,7 +105,7 @@ const unit: SeedUnit = {
         name: 'GPT-4.1',
         description:
           'Strong reasoning with improved instruction following. Good general-purpose worker.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'fast',
@@ -120,7 +120,7 @@ const unit: SeedUnit = {
         modelId: 'gpt-4o',
         name: 'GPT-4o',
         description: 'Multimodal model with strong reasoning. Fast with good cost efficiency.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'fast',
@@ -136,7 +136,7 @@ const unit: SeedUnit = {
         name: 'GPT-4o Mini',
         description:
           'Fastest and cheapest OpenAI model. Ideal for high-volume, latency-sensitive loops.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'infrastructure',
         reasoningDepth: 'medium',
         latency: 'very_fast',
@@ -274,7 +274,7 @@ const unit: SeedUnit = {
         name: 'Gemini 2.5 Pro',
         description:
           'Google flagship. Very high reasoning with thinking mode, very large context and strong multimodal capabilities.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'thinking',
         reasoningDepth: 'very_high',
         latency: 'medium',
@@ -290,7 +290,7 @@ const unit: SeedUnit = {
         name: 'Gemini 2.5 Flash',
         description:
           'Fast, cost-efficient Gemini variant. Good for high-throughput multimodal tasks.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'infrastructure',
         reasoningDepth: 'medium',
         latency: 'very_fast',
@@ -333,7 +333,7 @@ const unit: SeedUnit = {
         name: 'Grok 3',
         description:
           'xAI flagship with real-time context awareness and strong reasoning capabilities.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'medium',
@@ -621,7 +621,7 @@ const unit: SeedUnit = {
         name: 'Claude Sonnet 4 (Bedrock)',
         description:
           'Claude Sonnet 4 through AWS Bedrock. Enterprise-grade with compliance and data residency.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'control_plane',
         reasoningDepth: 'high',
         latency: 'medium',
@@ -641,7 +641,7 @@ const unit: SeedUnit = {
         name: 'GPT-4o (Azure)',
         description:
           'GPT-4o via Azure OpenAI Service. Enterprise layer with compliance, private networking.',
-        capabilities: ['chat'],
+        capabilities: ['chat', 'vision'],
         tierRole: 'control_plane',
         reasoningDepth: 'high',
         latency: 'medium',

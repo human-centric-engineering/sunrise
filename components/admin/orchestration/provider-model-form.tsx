@@ -76,6 +76,16 @@ const CAPABILITY_META: Record<
     help: 'Content moderation (text-moderation-latest). Stored for inventory; the orchestration engine has no runtime path for moderation models.',
     runtime: 'storage',
   },
+  vision: {
+    label: 'Vision',
+    help: 'Accepts image attachments as part of a chat turn. Required for the per-agent attach-image control. Distinct from `image` (generation).',
+    runtime: 'engine',
+  },
+  documents: {
+    label: 'Documents',
+    help: 'Accepts PDF / document attachments as part of a chat turn natively (no pre-extraction). Required for the per-agent attach-PDF control.',
+    runtime: 'engine',
+  },
 };
 
 function toSlug(value: string): string {

@@ -114,6 +114,16 @@ const CAPABILITY_DISPLAY: Record<
     badgeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
     dotClass: 'bg-orange-500',
   },
+  vision: {
+    label: 'Vision',
+    badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
+    dotClass: 'bg-emerald-500',
+  },
+  documents: {
+    label: 'Documents',
+    badgeClass: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+    dotClass: 'bg-yellow-500',
+  },
 };
 
 const STORAGE_ONLY_SET = new Set<ModelCapability>(STORAGE_ONLY_CAPABILITIES);

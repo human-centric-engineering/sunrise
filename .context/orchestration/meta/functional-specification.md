@@ -372,6 +372,27 @@ Both run on Node.js runtime (`runtime = 'nodejs'`, `maxDuration = 60`), enforce 
 
 **Permissions-Policy**: the admin app's response headers ship `microphone=(self)` so `getUserMedia()` resolves on the admin domain. The embed widget mounts on the partner site via `<script>` and inherits that site's policy — the platform cannot override it. Iframe embedders need `allow="microphone"` on the iframe element for the mic to function.
 
+### 6.7 Image and document input
+
+Image (JPEG/PNG/WebP/GIF) and PDF input on both chat surfaces — admin (`AgentTestChat`) and the third-party embed widget. Attachments are uploaded inline as base64-encoded `ChatAttachment` entries on the streaming-chat POST body, passed straight to the LLM as `ContentPart[]` (image and document parts), and discarded; the agent's text response is the only output persisted. Two independent toggles per modality gate the feature:
+
+- **Per-agent**: `AiAgent.enableImageInput` and `AiAgent.enableDocumentInput` (both default `false`) — opt-in per agent.
+- **Org-wide kill switches**: `AiOrchestrationSettings.imageInputGloballyEnabled` and `AiOrchestrationSettings.documentInputGloballyEnabled` (both default `true`) — flip off to disable that modality across every agent without editing each row.
+
+The effective state for image input is `agent.enableImageInput && settings.imageInputGloballyEnabled && resolvedModel.capabilities ⊇ ['vision']`; documents follow the same shape with `'documents'`. The widget-config endpoint also requires at least one vision-capable / documents-capable provider before exposing the attach affordance.
+
+**Capability gate.** Unlike voice (which routes to a second model via `getAudioProvider`), image and document understanding happen _inline_ on the chat model. `assertModelSupportsAttachments(providerSlug, modelId, kinds)` checks the resolved model's capabilities before `getProvider().chat(...)`. Mismatch raises `CAPABILITY_NOT_SUPPORTED`, surfaced as user-facing SSE `IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED` events with copy referencing model selection. No silent drops.
+
+**Capability naming.** `'vision'` (image input) and `'documents'` (PDF input) are distinct `MODEL_CAPABILITIES` values, both engine-invoked. They are not the same as `'image'`, which means image _generation_ (DALL·E, gpt-image, Imagen) and remains storage-only. Seed assigns `'vision'` to GPT-4o family, GPT-4.1/GPT-5, Gemini 2.5 Pro/Flash, Grok 3, Azure GPT-4o, Bedrock Claude, Claude 4.x; `'documents'` to the Claude 4.x family (incl. Bedrock) only.
+
+**Validation.** `chatAttachmentSchema` accepts `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `text/csv`, `text/markdown`, `.docx`. Per-attachment cap is `MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` (~5 MB binary, Anthropic-safe); per-turn combined cap is `MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS = 37_500_000` (~25 MB). `chatAttachmentsArraySchema` enforces both caps plus the existing 10-attachments-per-turn limit.
+
+**Cost tracking** (Phase 2). A new `CostOperation = 'vision'` writes per-row to `AiCostLog`. Flat per-attachment pricing for v1 (`IMAGE_USD_PER_IMAGE = 0.001275`, `PDF_USD_PER_PDF = 0.005`); the cost row's metadata records `imageCount` and `pdfCount` for per-modality analytics. Per-tile precision is deferred — current usage volumes don't justify the complexity.
+
+**Versioning.** `enableImageInput` and `enableDocumentInput` are tracked in `VERSIONED_FIELDS` on the agent PATCH route alongside `enableVoiceInput`, so flipping either toggle is captured in the agent version snapshot/restore audit.
+
+**Storage policy.** Pass-through only — image and PDF bytes never persist beyond the in-memory request body. `AiMessage` rows store the user's text alongside `[image]` / `[pdf]` placeholders; cost rows store counts in metadata, never bytes. Mirrors the voice-input precedent.
+
 ---
 
 ## 7. Knowledge Base (RAG)

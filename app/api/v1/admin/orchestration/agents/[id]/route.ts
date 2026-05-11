@@ -172,6 +172,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'monthlyBudgetUsd',
     'metadata',
     'enableVoiceInput',
+    'enableImageInput',
+    'enableDocumentInput',
   ] as const;
 
   // Only treat a versioned field as "changed" if the new value actually

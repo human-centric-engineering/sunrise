@@ -132,6 +132,8 @@ function makeSystemSeededAgent(): AiAgent {
     deletedAt: null,
     fallbackProviders: [],
     enableVoiceInput: false,
+    enableImageInput: false,
+    enableDocumentInput: false,
     widgetConfig: null,
   } as AiAgent;
 }

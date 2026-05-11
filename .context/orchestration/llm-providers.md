@@ -147,6 +147,19 @@ The settings PATCH route validates `defaultModels.audio` against the matrix (the
 
 Operators can now add audio rows directly from the admin UI (`/admin/orchestration/provider-models/new` and the Discover Models dialog both surface an `Audio` capability checkbox). Pre-Phase-1 the matrix's Zod enum (`MODEL_CAPABILITIES` in `types/orchestration.ts`) rejected anything outside `['chat', 'embedding']`, so adding a Whisper row required hand-editing the DB. The 009-provider-models seed ships a default Whisper row, so a fresh checkout has voice input working as soon as an OpenAI key is set.
 
+### Vision and document capabilities
+
+`'vision'` and `'documents'` are engine-invoked `ModelCapability` values that gate per-agent attachment input. Unlike `'audio'`, they do not resolve to a separate model — they are intrinsic capabilities of the chat model that handles the turn. `assertModelSupportsAttachments(providerSlug, modelId, kinds)` (in `provider-manager.ts`) is called from `streaming-handler.ts` before any provider invocation: when a request carries `image/*` attachments the resolved model must carry `'vision'`; when it carries `application/pdf` the model must carry `'documents'`. Missing capability throws `CAPABILITY_NOT_SUPPORTED`, which the chat handler maps to a user-facing SSE event (`IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED`) referencing model selection.
+
+Capability truth lives on `AiProviderModel.capabilities`. The seed assigns:
+
+- **Vision** (image input): GPT-4o family, GPT-4.1, GPT-5, Claude 4.x (Opus / Sonnet / Haiku), Gemini 2.5 Pro and Flash, Grok 3, Azure GPT-4o, Bedrock Claude.
+- **Documents** (native PDF input): Claude 4.x family only (including Bedrock Claude). OpenAI Chat Completions doesn't accept native PDF parts today; PDFs to a non-`'documents'` model are rejected at the gate rather than silently dropped.
+
+Distinct from `'image'`, which is a separate `MODEL_CAPABILITIES` value meaning image _generation_ (DALL·E, gpt-image, Imagen). `'image'` is storage-only — the engine has no runtime path. The `MODEL_CAPABILITIES` constant treats `'vision'` / `'documents'` as engine-invoked and `'image'` / `'moderation'` as storage-only via `STORAGE_ONLY_CAPABILITIES`.
+
+The per-agent `enableImageInput` / `enableDocumentInput` toggles (on `AiAgent`) and the global kill switches `imageInputGloballyEnabled` / `documentInputGloballyEnabled` (on `AiOrchestrationSettings`) bound when the attach affordance is surfaced. Effective state for image input is `agent.enableImageInput && settings.imageInputGloballyEnabled && resolvedModel.capabilities ⊇ ['vision']`; documents follow the same shape with `'documents'`.
+
 ## Provider Manager (DB-Backed Factory)
 
 `providerManager.getProvider(slug)` is the single entry point. It:

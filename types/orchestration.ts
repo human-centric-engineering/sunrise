@@ -860,6 +860,20 @@ export interface OrchestrationSettings {
    * editing each agent row.
    */
   voiceInputGloballyEnabled: boolean;
+  /**
+   * Org-wide kill switch for image attachments on chat. Default `true`
+   * — agents with `enableImageInput=true` get the attach affordance.
+   * Flip to `false` to disable image input across every agent at once
+   * without editing each agent row.
+   */
+  imageInputGloballyEnabled: boolean;
+  /**
+   * Org-wide kill switch for PDF / document attachments on chat.
+   * Default `true` — agents with `enableDocumentInput=true` get the
+   * attach affordance for PDFs. Flip to `false` to disable document
+   * input across every agent at once.
+   */
+  documentInputGloballyEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1111,9 +1125,14 @@ export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
  * fetch) renders `unknown`; the curated matrix does not.
  *
  * Runtime paths exist for `chat`, `reasoning` (via `chat()`),
- * `embedding`, and `audio` (via optional `transcribe()`). `image` and
- * `moderation` are storage-only — operators can register rows so they
- * appear in audits and inventory, but the engine does not invoke them.
+ * `embedding`, `audio` (via optional `transcribe()`), `vision` (image
+ * parts in `chat()`), and `documents` (PDF parts in `chat()`). `image`
+ * (generation — DALL-E, gpt-image, Imagen) and `moderation` are
+ * storage-only — operators can register rows so they appear in audits
+ * and inventory, but the engine does not invoke them.
+ *
+ * Note: `image` means image *generation*; `vision` means image *input*
+ * to a chat model. They are distinct capabilities on different models.
  */
 export const MODEL_CAPABILITIES = [
   'chat',
@@ -1122,6 +1141,8 @@ export const MODEL_CAPABILITIES = [
   'audio',
   'image',
   'moderation',
+  'vision',
+  'documents',
 ] as const;
 export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
 

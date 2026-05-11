@@ -151,6 +151,10 @@ export const createAgentSchema = z.object({
 
   enableVoiceInput: z.boolean().default(false),
 
+  enableImageInput: z.boolean().default(false),
+
+  enableDocumentInput: z.boolean().default(false),
+
   isActive: z.boolean().default(true),
 });
 
@@ -263,6 +267,10 @@ export const updateAgentSchema = z.object({
     .optional(),
 
   enableVoiceInput: z.boolean().optional(),
+
+  enableImageInput: z.boolean().optional(),
+
+  enableDocumentInput: z.boolean().optional(),
 
   isActive: z.boolean().optional(),
 });
@@ -1555,6 +1563,24 @@ export const resumeExecutionQuerySchema = z.object({
 // Session 3.3 — Chat stream, Knowledge, Conversations
 // ============================================================================
 
+/** Max single attachment size in base64 chars (~5 MB binary).
+ *
+ * Picked at the lowest common denominator across vision-capable
+ * providers — Anthropic enforces a 5 MB hard cap on `image` source
+ * blocks; OpenAI accepts up to 20 MB. Using 5 MB everywhere means no
+ * server-side resize is needed before send and the same payload is
+ * legal on every provider we route to.
+ */
+export const MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000;
+
+/** Max combined attachment payload size in base64 chars (~25 MB binary).
+ *
+ * Caps a single chat turn's total attachment weight to keep request
+ * bodies bounded and to match the per-image cap × 5 — i.e. roughly five
+ * full-size images / PDFs per turn before the validator rejects.
+ */
+export const MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS = 37_500_000;
+
 /** Attachment validation for multimodal chat messages. */
 export const chatAttachmentSchema = z.object({
   name: z.string().min(1).max(255),
@@ -1569,8 +1595,32 @@ export const chatAttachmentSchema = z.object({
     'text/markdown',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   ]),
-  data: z.string().min(1).max(10_000_000, 'Attachment exceeds ~7.5MB file size limit'), // base64-encoded; 10M chars ≈ 7.5MB binary
+  data: z
+    .string()
+    .min(1)
+    .max(MAX_CHAT_ATTACHMENT_BASE64_CHARS, 'Attachment exceeds ~5MB file size limit'), // base64-encoded; 7.5M chars ≈ 5.6MB binary
 });
+
+/** Bounded array of chat attachments — max 10 entries, max ~25 MB combined.
+ *
+ * The combined-size cap is enforced via `.superRefine` rather than a
+ * naive `.refine` so the error message can point at the offending sum
+ * with `ctx.addIssue`. Keeps request bodies bounded even when an
+ * operator sends 10 attachments each at the per-item maximum.
+ */
+export const chatAttachmentsArraySchema = z
+  .array(chatAttachmentSchema)
+  .max(10, 'At most 10 attachments per message')
+  .superRefine((attachments, ctx) => {
+    const combined = attachments.reduce((sum, att) => sum + att.data.length, 0);
+    if (combined > MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Combined attachment size exceeds ~25MB limit (${combined} base64 chars)`,
+        path: [],
+      });
+    }
+  });
 
 /**
  * Streaming chat request body (POST /admin/orchestration/chat/stream).
@@ -1597,8 +1647,8 @@ export const chatStreamRequestSchema = z.object({
 
   entityContext: z.record(z.string().max(100), z.unknown()).optional(),
 
-  /** File attachments (images, documents) — max 10 per message. */
-  attachments: z.array(chatAttachmentSchema).max(10).optional(),
+  /** File attachments (images, documents) — max 10 per message, ~25 MB combined. */
+  attachments: chatAttachmentsArraySchema.optional(),
 });
 
 /**
@@ -1928,6 +1978,8 @@ export const updateOrchestrationSettingsSchema = z
       .optional(),
     approvalDefaultAction: z.enum(['deny', 'allow']).nullable().optional(),
     voiceInputGloballyEnabled: z.boolean().optional(),
+    imageInputGloballyEnabled: z.boolean().optional(),
+    documentInputGloballyEnabled: z.boolean().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
@@ -2023,7 +2075,9 @@ export const updateOrchestrationSettingsSchema = z
       v.maxMessagesPerConversation !== undefined ||
       v.escalationConfig !== undefined ||
       v.embedAllowedOrigins !== undefined ||
-      v.voiceInputGloballyEnabled !== undefined,
+      v.voiceInputGloballyEnabled !== undefined ||
+      v.imageInputGloballyEnabled !== undefined ||
+      v.documentInputGloballyEnabled !== undefined,
     {
       message: 'At least one field must be provided',
     }
@@ -2662,8 +2716,8 @@ export const consumerChatRequestSchema = z.object({
   /** Invite token for accessing invite_only agents */
   inviteToken: z.string().optional(),
 
-  /** File attachments (images, documents) — max 10 per message. */
-  attachments: z.array(chatAttachmentSchema).max(10).optional(),
+  /** File attachments (images, documents) — max 10 per message, ~25 MB combined. */
+  attachments: chatAttachmentsArraySchema.optional(),
 });
 
 /** Consumer conversations list query (GET /api/v1/chat/conversations). */

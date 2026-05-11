@@ -179,6 +179,8 @@ describe('AgentForm — General tab', () => {
         fallbackProviders: [],
         widgetConfig: null,
         enableVoiceInput: false,
+        enableImageInput: false,
+        enableDocumentInput: false,
       };
 
       // Act
