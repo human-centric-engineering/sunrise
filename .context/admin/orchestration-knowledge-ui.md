@@ -12,18 +12,19 @@ The server page fetches documents from `GET /api/v1/admin/orchestration/knowledg
 
 ## Components
 
-| Component               | Type   | File                                                                   | Purpose                                               |
-| ----------------------- | ------ | ---------------------------------------------------------------------- | ----------------------------------------------------- |
-| `KnowledgeView`         | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`          | Tabbed layout (Manage / Explore / Visualize / Errors) |
-| `ManageTab`             | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`              | Document table, seed/rechunk/delete, meta-tag panel   |
-| `DocumentUploadZone`    | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`    | Staged file upload with category input                |
-| `PdfPreviewModal`       | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`       | Review/correct PDF extraction before chunking         |
-| `DocumentChunksModal`   | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`   | View all chunks for a document                        |
-| `ExploreTab`            | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`             | Vector search testing interface                       |
-| `VisualizeTab`          | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`           | Interactive knowledge graph                           |
-| `ErrorsTab`             | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`              | Failed document recovery                              |
-| `CompareProvidersModal` | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx` | Embedding model comparison table with guide           |
-| `EmbeddingStatusBanner` | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx` | Warning banner when embeddings are incomplete         |
+| Component                 | Type   | File                                                                     | Purpose                                                                     |
+| ------------------------- | ------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `KnowledgeView`           | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`            | Tabbed layout (Manage / Explore / Visualize / Errors)                       |
+| `ManageTab`               | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`                | Document table, seed/rechunk/delete, meta-tag panel                         |
+| `DocumentUploadZone`      | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`      | Staged file upload with category input                                      |
+| `PdfPreviewModal`         | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`         | Review/correct PDF extraction before chunking                               |
+| `DocumentChunksModal`     | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`     | View all chunks for a document                                              |
+| `ExploreTab`              | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`               | Vector search testing interface                                             |
+| `VisualizeTab`            | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`             | Interactive knowledge graph (Structure / Embedded views) + view-toggle host |
+| `EmbeddingProjectionView` | Client | `components/admin/orchestration/knowledge/embedding-projection-view.tsx` | 2D scatter of UMAP-projected chunk embeddings (the "Embedding space" view)  |
+| `ErrorsTab`               | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`                | Failed document recovery                                                    |
+| `CompareProvidersModal`   | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx`   | Embedding model comparison table with guide                                 |
+| `EmbeddingStatusBanner`   | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx`   | Warning banner when embeddings are incomplete                               |
 
 ## Features
 
@@ -82,7 +83,7 @@ Staged upload: drop/select one or more files → files are staged (not uploaded 
 
 **PDF flow:** When a PDF is uploaded, the API returns a preview response. The upload zone calls `onPdfPreview` which opens the `PdfPreviewModal` for review.
 
-The `<FieldHelp>` popover covers: chunking/embedding pipeline, category usage, in-document metadata comment format, supported formats with per-format notes, content quality tips, and large document guidance.
+**Inline upload explainer.** Above the drop zone an `<aside>` card carries a one-paragraph summary of how upload works (parse → chunk into ~50–800-token pieces → embed into 1,536-dim vectors → graph nodes) with a **Read full guide** popover that opens the complete guide body. The same guide body is also wired to the (ⓘ) `<FieldHelp>` next to the "Upload Document" heading — hoisted into a shared `<UploadGuideBody />` component so a future edit lands in one place. The guide covers: the parse → chunk → embed pipeline; what you'll see in the graph (nodes/edges, per-document-size chunk-count examples, the 500-chunk graph-collapse threshold); category usage; in-document metadata comment format; content quality tips; large-document guidance; supported formats.
 
 ### PDF preview modal
 
@@ -115,7 +116,29 @@ When hybrid search is enabled (Settings → Knowledge search → Enable hybrid s
 
 ### Visualize tab
 
-Interactive ECharts force-directed graph. Two view modes (Structure / Embedded), stats cards, node filtering, fullscreen toggle.
+Interactive ECharts visualisation of the knowledge base with **three view modes** the operator toggles between:
+
+| View                | What it shows                                                                                                                                                                                                                                            | Data source                           |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **Structure**       | Force-directed graph: every Knowledge Base → Document → Chunk relationship. Chunk nodes drawn when total chunks ≤ 500; above that the graph collapses to KB + documents for performance and an aggregation note appears.                                 | `GET /knowledge/graph?view=structure` |
+| **Embedded**        | Same graph topology, filtered to chunks that have a stored embedding vector. Documents with zero embedded chunks are hidden entirely. Useful for auditing "what is actually searchable by my agents".                                                    | `GET /knowledge/graph?view=embedded`  |
+| **Embedding space** | 2D scatter plot — each chunk is one point. Position derived from the chunk's 1,536-dim embedding via UMAP run server-side. Neighbouring points = semantically similar text; visible clusters = topics the KB covers. Points coloured by source document. | `GET /knowledge/embeddings`           |
+
+**Per-view explainer affordance.** The toggle row carries a one-line caption next to each view that explains what it shows; a `<FieldHelp>` (ⓘ) on each gives full depth — Structure / Embedded explain the 500-chunk threshold, Embedding space explains UMAP, the 75th-percentile breakpoint heuristic, the 2,000-point sample cap, and the 10-chunk minimum below which the layout is degenerate. The shared "Knowledge Graph" FieldHelp above the toggle covers cross-view context (what nodes/edges are, interaction model: hover / drag / scroll / click).
+
+**Force-layout seeding.** ECharts' default force layout assigns random positive starting coordinates and the auto-fitted view box centres on that quadrant, which pushed the KB node into the top-left corner. The component now seeds the KB node at `(0, 0)` with `fixed: true` and distributes document nodes evenly on a circle of radius 100 around it (first doc at the top, -π/2). Chunk nodes aren't seeded — repulsion from their parent document pushes them outward naturally — and the KB ends up visually centred.
+
+**Embedding-space rendering details:**
+
+- One ECharts scatter series per source document; 12-colour palette wraps modulo for the 13th+ document. Legend is bottom-aligned and scrollable when document count exceeds the horizontal space.
+- Below 10 embedded chunks the view shows an amber sub-minimum warning explaining the layout is degenerate (all points stack at the origin), but still renders the scatter so the user sees the points exist.
+- Above 2,000 chunks the response is uniformly sampled (every `ceil(totalEmbedded / 2000)`-th by id); an amber truncation banner explains.
+- Tooltip HTML-escapes user-influenced strings (document name, chunk content preview) so a chunk containing `<script>` can't inject DOM into the tooltip (ECharts uses `innerHTML` for `formatter` return values).
+- A **Recompute** button refetches and reruns UMAP — useful after an embedding-model swap or knowledge-base mutation.
+
+**Click→detail dialog.** Clicking any chunk node (Structure / Embedded views) or any point (Embedding space view) opens a modal showing the chunk's metadata: document name, chunk type (with snake_case rendered as spaces — `pattern_section` → `pattern section`), section title, token count, embedding provider + model, and the chunk's `contentPreview` text. The dialog is the same code path across all three views.
+
+**Source:** `components/admin/orchestration/knowledge/visualize-tab.tsx` (the toggle, Structure / Embedded graph) and `components/admin/orchestration/knowledge/embedding-projection-view.tsx` (the scatter plot, called as a child when the user picks "Embedding space").
 
 ### Errors tab
 

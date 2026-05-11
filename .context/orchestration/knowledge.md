@@ -2,19 +2,20 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
 
 ## Module Layout
 
-| File                  | Exports                                                                                                                                                 | Purpose                                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                              |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                             |
-| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                           |
-| `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?)`, `parseMetadataComments`                                                                            | Markdown → chunks with type classification; optional `documentId` prefix prevents chunkKey collisions |
-| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                               | Generates embeddings for text and chunk batches                                                       |
-| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                      |
-| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md))     |
+| File                  | Exports                                                                                                                                                 | Purpose                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                                                           |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                                                          |
+| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                                                        |
+| `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?) → Promise<Chunk[]>`, `chunkCsvDocument`, `parseMetadataComments`                                     | Markdown / DOCX / EPUB / confirmed-PDF → chunks. **Async** because generic sections route through the semantic chunker (see below) |
+| `semantic-chunker.ts` | `chunkBySemanticBreakpoints(text, options?)`, `splitSentences(text)`                                                                                    | Embedding-similarity splitter for generic prose. Called by `chunker.ts` when a section has no explicit headings                    |
+| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                               | Generates embeddings for text and chunk batches                                                                                    |
+| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                                                   |
+| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md))                                  |
 
 ## Quick Start
 
@@ -112,6 +113,30 @@ When a document-level category is resolved, it propagates to any chunks that don
 - PDFs return a preview object with `requiresConfirmation: true` instead
 
 Knowledge documents are **not per-user scoped**. `uploadedBy` is stored for audit, but GET / DELETE / rechunk work on any document regardless of which admin created it.
+
+## Chunking Strategy
+
+`chunkMarkdownDocument()` routes work by the structure of the input:
+
+| Section shape                                     | Path                             | What happens                                                                                                                                                                                                                   |
+| ------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `## N. Pattern Name` (seeded design-patterns doc) | `chunkPatternSection`            | Split on `###` subheadings; the author's heading layout is authoritative. Each subsection becomes one chunk, sized to land in the 50–800 token range.                                                                          |
+| Generic with `## ` / `### ` headings              | `chunkGenericSection` structural | Split on `###` subheadings; size-normalise via the tier fallback (paragraphs → lines → sentences → char-window). Author's headings drive the boundaries.                                                                       |
+| Generic without subheadings                       | `chunkGenericSection` semantic   | Route through `chunkBySemanticBreakpoints()` from `semantic-chunker.ts`. Every sentence is embedded, adjacent-sentence cosine distances are computed, and chunk boundaries land at the 75th-percentile-largest distance jumps. |
+
+**Why two paths.** When an author has typed `## Section A`, that's an explicit semantic boundary — better than any embedding heuristic. When the content is unstructured (PDF text, raw transcripts, prose-only markdown) the embedding-based splitter avoids mid-sentence cuts that the structural tier fallback can produce.
+
+**Semantic chunker details:**
+
+- One embedding call per sentence via `embedBatch` — uses the configured embedding provider (same one used for chunk-storage embeddings; see `embedder.ts`).
+- `breakpointPercentile` defaults to **75** (matches LangChain's `SemanticChunker`). Higher = fewer breakpoints / larger chunks.
+- Size guardrails (`minTokens=50` / `maxTokens=800`) merge tiny groups into neighbours and sub-split oversized topic groups.
+- Falls back to the structural splitter when the embedder throws, when there are fewer than 4 sentences, or when sentence segmentation produces nothing. Semantic chunking is a quality upgrade, never a hard dependency — a document never fails to ingest because the embedder is unreachable.
+- Sentence segmentation is regex-based with a small abbreviation guard (`Inc.`, `e.g.`, `etc.`, …) so "Acme Inc. is a corporation" stays one sentence.
+
+**Default `chunkType`** for generic content is `'text'` — not `'pattern_section'`, which is reserved for the seeded design-patterns doc and any document the author marked up with the pattern heading convention. Heading-driven labels still apply when the heading text matches: `glossary`, `composition_recipe`, `selection_guide`, `cost_reference`, `context_engineering`, `emerging_concepts`, `ecosystem`, `pattern_overview`.
+
+**Section titles** for generic content without headings are derived from the chunk's first sentence (≤80 chars). Authored headings take precedence when present.
 
 ## Categories and Meta-Tags
 

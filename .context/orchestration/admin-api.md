@@ -61,6 +61,7 @@ Admin-only HTTP surface for managing agents, capabilities, and their relationshi
 | `/api/v1/admin/orchestration/knowledge/documents/:id/rechunk`        | POST               | Re-run chunking + embedding on an existing doc                                            |
 | `/api/v1/admin/orchestration/knowledge/documents/:id/retry`          | POST               | Retry failed document ingestion                                                           |
 | `/api/v1/admin/orchestration/knowledge/graph`                        | GET                | Knowledge graph data (nodes + links)                                                      |
+| `/api/v1/admin/orchestration/knowledge/embeddings`                   | GET                | Server-side UMAP projection of every embedded chunk → 2D coordinates                      |
 | `/api/v1/admin/orchestration/knowledge/seed`                         | POST               | Seed the canonical "Agentic Design Patterns" doc                                          |
 | `/api/v1/admin/orchestration/conversations`                          | GET                | List conversations (supports `tag` filter)                                                |
 | `/api/v1/admin/orchestration/conversations/:id`                      | GET, PATCH, DELETE | Get, update (title/tags/isActive), or delete conversation                                 |
