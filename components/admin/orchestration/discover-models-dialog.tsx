@@ -152,23 +152,39 @@ interface ReviewRow {
   bestRole: string;
 }
 
-type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
+// One bucket per inference output. Previously reasoning + moderation +
+// unknown collapsed into a single "Other" chip, which made it hard to
+// scan OpenAI's mixed catalogue — each carries distinct operational
+// meaning (reasoning → /v1/responses, moderation → /v1/moderations,
+// unknown → can't be classified) so they each get their own chip.
+type FilterBucket = Candidate['inferredCapability'];
 
 const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
   { id: 'chat', label: 'Chat' },
+  { id: 'reasoning', label: 'Reasoning' },
   { id: 'embedding', label: 'Embedding' },
   { id: 'image', label: 'Image' },
   { id: 'audio', label: 'Audio' },
-  { id: 'other', label: 'Other' },
+  { id: 'moderation', label: 'Moderation' },
+  { id: 'unknown', label: 'Unknown' },
 ];
 
 function bucketFor(cap: Candidate['inferredCapability']): FilterBucket {
-  if (cap === 'chat') return 'chat';
-  if (cap === 'embedding') return 'embedding';
-  if (cap === 'image') return 'image';
-  if (cap === 'audio') return 'audio';
-  return 'other';
+  return cap;
 }
+
+// Matrix-storable capabilities the review-card surfaces as toggles.
+// `unknown` is excluded — the matrix rejects it, so giving the
+// operator a checkbox for it would let them build an unsubmittable
+// row. Order mirrors MODEL_CAPABILITIES in types/orchestration.ts.
+const REVIEW_CAPABILITIES: Array<{ id: string; label: string }> = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'reasoning', label: 'Reasoning' },
+  { id: 'embedding', label: 'Embedding' },
+  { id: 'audio', label: 'Audio' },
+  { id: 'image', label: 'Image' },
+  { id: 'moderation', label: 'Moderation' },
+];
 
 function reviewFromCandidate(c: Candidate): ReviewRow {
   return {
@@ -848,8 +864,10 @@ function ReviewCard({
   onUpdate: (patch: Partial<ReviewRow>) => void;
   onReset: () => void;
 }): React.ReactElement {
-  const chatId = useId();
-  const embedId = useId();
+  // Stable prefix for the per-row capability checkbox ids. Using
+  // `useId()` keeps each row's ids unique even when multiple cards
+  // expand simultaneously.
+  const checkboxIdPrefix = useId();
   return (
     <div className="rounded-md border">
       <button
@@ -897,34 +915,25 @@ function ReviewCard({
 
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-medium">Capabilities:</span>
-            <label htmlFor={chatId} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                id={chatId}
-                checked={row.capabilities.includes('chat')}
-                onCheckedChange={(checked) => {
-                  const next = new Set(row.capabilities);
-                  if (checked) next.add('chat');
-                  else next.delete('chat');
-                  onUpdate({ capabilities: Array.from(next) });
-                }}
-                aria-label={`Chat capability for ${row.modelId}`}
-              />
-              Chat
-            </label>
-            <label htmlFor={embedId} className="flex items-center gap-1.5 text-sm">
-              <Checkbox
-                id={embedId}
-                checked={row.capabilities.includes('embedding')}
-                onCheckedChange={(checked) => {
-                  const next = new Set(row.capabilities);
-                  if (checked) next.add('embedding');
-                  else next.delete('embedding');
-                  onUpdate({ capabilities: Array.from(next) });
-                }}
-                aria-label={`Embedding capability for ${row.modelId}`}
-              />
-              Embedding
-            </label>
+            {REVIEW_CAPABILITIES.map((cap) => {
+              const id = `${checkboxIdPrefix}-${cap.id}`;
+              return (
+                <label key={cap.id} htmlFor={id} className="flex items-center gap-1.5 text-sm">
+                  <Checkbox
+                    id={id}
+                    checked={row.capabilities.includes(cap.id)}
+                    onCheckedChange={(checked) => {
+                      const next = new Set(row.capabilities);
+                      if (checked) next.add(cap.id);
+                      else next.delete(cap.id);
+                      onUpdate({ capabilities: Array.from(next) });
+                    }}
+                    aria-label={`${cap.label} capability for ${row.modelId}`}
+                  />
+                  {cap.label}
+                </label>
+              );
+            })}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">

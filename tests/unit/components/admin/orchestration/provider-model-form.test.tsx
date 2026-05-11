@@ -63,6 +63,8 @@ vi.mock('@/types/orchestration', () => ({
     thinking: { label: 'Thinking', description: 'High-reasoning tasks' },
     worker: { label: 'Worker', description: 'General tasks' },
   },
+  MODEL_CAPABILITIES: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+  STORAGE_ONLY_CAPABILITIES: ['image', 'moderation'],
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -183,12 +185,71 @@ describe('ProviderModelForm', () => {
 
   // ── No capability validation ──────────────────────────────────────────────
 
-  it('shows capability error when both Chat and Embedding are unchecked', async () => {
+  it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+    'renders a checkbox for widened capability %s',
+    (capability) => {
+      render(<ProviderModelForm model={makeModel()} />);
+      const checkbox = screen.getByRole('checkbox', { name: new RegExp(`^${capability}$`, 'i') });
+      expect(checkbox).toBeInTheDocument();
+      // Fixture model has only ['chat'], so the new ones should be off
+      expect(checkbox).not.toBeChecked();
+    }
+  );
+
+  it('toggles audio capability into the PATCH payload', async () => {
     const user = userEvent.setup();
     render(<ProviderModelForm model={makeModel({ capabilities: ['chat'] })} />);
 
-    // Uncheck Chat
-    const chatCheckbox = screen.getByLabelText(/^chat$/i);
+    const audioCheckbox = screen.getByRole('checkbox', { name: /^audio$/i });
+    await user.click(audioCheckbox);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({
+            capabilities: expect.arrayContaining(['chat', 'audio']),
+          }),
+        })
+      );
+    });
+  });
+
+  it('shows the storage-only note when only image is selected', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel({ capabilities: ['chat'] })} />);
+
+    // Uncheck chat, check image
+    await user.click(screen.getByRole('checkbox', { name: /^chat$/i }));
+    await user.click(screen.getByRole('checkbox', { name: /^image$/i }));
+
+    expect(screen.getByText(/storage-only/i)).toBeInTheDocument();
+  });
+
+  it('hides the storage-only note when a runtime capability is mixed in', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel({ capabilities: ['image'] })} />);
+
+    expect(screen.getByText(/storage-only/i)).toBeInTheDocument();
+
+    // Adding chat (a runtime capability) clears the note
+    await user.click(screen.getByRole('checkbox', { name: /^chat$/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/storage-only/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows capability error when every capability is unchecked', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel({ capabilities: ['chat'] })} />);
+
+    // Uncheck Chat — six checkboxes are rendered (one per matrix-valid
+    // capability). The Chat row is the only one checked by the fixture,
+    // so unchecking it leaves the array empty and the Zod refinement
+    // fires.
+    const chatCheckbox = screen.getByRole('checkbox', { name: /^chat$/i });
     await user.click(chatCheckbox);
 
     await user.click(screen.getByRole('button', { name: /save changes/i }));

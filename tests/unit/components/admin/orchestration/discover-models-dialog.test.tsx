@@ -490,13 +490,50 @@ describe('DiscoverModelsDialog', () => {
       });
       expect(screen.getByText('whisper-1')).toBeInTheDocument();
 
-      // "Other" buckets moderation/reasoning/unknown.
+      // Moderation now has its own chip — previously these were lumped
+      // into "Other" alongside reasoning + unknown, which made it hard
+      // to scan OpenAI's mixed catalogue.
       await user.click(screen.getByRole('button', { name: /^audio$/i }));
-      await user.click(screen.getByRole('button', { name: /^other$/i }));
+      await user.click(screen.getByRole('button', { name: /^moderation$/i }));
       await waitFor(() => {
         expect(screen.queryByText('whisper-1')).not.toBeInTheDocument();
       });
       expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+    });
+
+    it('Reasoning and Unknown chips filter independently (regression for the old Other lump)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [
+          makeCandidate({ modelId: 'o3-mini', inferredCapability: 'reasoning' }),
+          makeCandidate({ modelId: 'mystery-x', inferredCapability: 'unknown' }),
+          makeCandidate({ modelId: 'omni-moderation', inferredCapability: 'moderation' }),
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('o3-mini')).toBeInTheDocument();
+      });
+
+      // Reasoning chip narrows to the reasoning row only.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('mystery-x')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('o3-mini')).toBeInTheDocument();
+      expect(screen.queryByText('omni-moderation')).not.toBeInTheDocument();
+
+      // Switch to Unknown — only the unclassified row shows.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await user.click(screen.getByRole('button', { name: /^unknown$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('o3-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('mystery-x')).toBeInTheDocument();
     });
 
     it('clicking a capability chip narrows candidates by inferredCapability', async () => {
@@ -607,6 +644,64 @@ describe('DiscoverModelsDialog', () => {
       expect(body.models[0].bestRole).toBe('Custom role');
       expect(body.models[0].description).toBe('Custom description');
       expect(body.models[0].capabilities).toEqual(expect.arrayContaining(['chat', 'embedding']));
+    });
+
+    it('renders six per-row capability checkboxes (chat/reasoning/embedding/audio/image/moderation)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      // All six matrix-storable capabilities expose a checkbox per row.
+      // 'unknown' is intentionally not toggleable here — the matrix rejects it.
+      for (const cap of ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']) {
+        const re = new RegExp(`^${cap} capability for gpt-4o-mini$`, 'i');
+        expect(await screen.findByRole('checkbox', { name: re })).toBeInTheDocument();
+      }
+    });
+
+    it('toggling the audio checkbox adds "audio" to the body capabilities', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValueOnce({
+        providerSlug: 'openai',
+        candidates: [makeCandidate({ modelId: 'gpt-4o-mini' })],
+      });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        created: 1,
+        skipped: 0,
+        conflicts: [],
+      });
+
+      const user = userEvent.setup();
+      render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('checkbox', { name: /select gpt-4o-mini/i }));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await user.click(
+        await screen.findByRole('checkbox', { name: /^audio capability for gpt-4o-mini$/i })
+      );
+      await user.click(screen.getByRole('button', { name: /add 1 model/i }));
+
+      await waitFor(() => {
+        expect(apiClient.post).toHaveBeenCalled();
+      });
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+      const body = (options as { body: { models: Array<{ capabilities: string[] }> } }).body;
+      expect(body.models[0].capabilities).toEqual(expect.arrayContaining(['chat', 'audio']));
     });
 
     it('toggling the chat checkbox off removes "chat" from the body capabilities', async () => {
