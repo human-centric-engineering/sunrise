@@ -30,16 +30,24 @@ vi.mock('@/components/admin/orchestration/learn/learning-tabs', () => ({
     patterns,
     contextType,
     contextId,
+    advisorAgent,
+    quizAgent,
   }: {
     patterns: { patternNumber: number }[];
     contextType?: string;
     contextId?: string;
+    advisorAgent?: { id: string; enableVoiceInput: boolean } | null;
+    quizAgent?: { id: string; enableVoiceInput: boolean } | null;
   }) => (
     <div
       data-testid="learning-tabs"
       data-patterns-count={String(patterns.length)}
       data-context-type={contextType ?? ''}
       data-context-id={contextId ?? ''}
+      data-advisor-id={advisorAgent?.id ?? ''}
+      data-advisor-voice={advisorAgent ? String(advisorAgent.enableVoiceInput) : ''}
+      data-quiz-id={quizAgent?.id ?? ''}
+      data-quiz-voice={quizAgent ? String(quizAgent.enableVoiceInput) : ''}
     />
   ),
 }));
@@ -156,6 +164,147 @@ describe('LearnPage', () => {
       expect(tabs).toHaveAttribute('data-context-id', '1');
     });
 
+    it('forwards advisor + quiz agent metadata when the API returns matching rows', async () => {
+      // Page fires three parallel serverFetch calls: patterns,
+      // pattern-advisor agent, quiz-master agent. The first returns
+      // patterns; the next two return agent list pages we filter to
+      // the exact slug. Stubbing `mockResolvedValue` returns the same
+      // ok-response for every call — what matters is the parseApiResponse
+      // sequence, which mirrors the call order.
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [
+            { id: 'agent-advisor', slug: 'pattern-advisor', enableVoiceInput: true },
+            // Substring match noise — `pattern-advisor-old` would be
+            // returned by `?q=pattern-advisor`; the page must filter
+            // for the exact slug.
+            { id: 'agent-old', slug: 'pattern-advisor-old', enableVoiceInput: false },
+          ],
+        } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      const tabs = screen.getByTestId('learning-tabs');
+      expect(tabs).toHaveAttribute('data-advisor-id', 'agent-advisor');
+      expect(tabs).toHaveAttribute('data-advisor-voice', 'true');
+      expect(tabs).toHaveAttribute('data-quiz-id', 'agent-quiz');
+      expect(tabs).toHaveAttribute('data-quiz-voice', 'false');
+    });
+  });
+
+  describe('getAgentBySlug error branches', () => {
+    // The page hides the mic affordance when agent metadata can't be
+    // fetched. Each branch below proves the data-advisor-* attributes
+    // collapse to '' so the LearningTabs render falls back to text-
+    // only chat for the affected tab.
+
+    it('passes null advisorAgent when the agent fetch returns !res.ok', async () => {
+      // First call (patterns) ok; second call (pattern-advisor)
+      // !res.ok; third call (quiz-master) ok with a real row.
+      vi.mocked(serverFetch)
+        .mockResolvedValueOnce(okResponse())
+        .mockResolvedValueOnce(notOkResponse())
+        .mockResolvedValueOnce(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        // No parseApiResponse for the !res.ok branch — the route
+        // returns early. The quiz call still goes through.
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      const tabs = screen.getByTestId('learning-tabs');
+      expect(tabs).toHaveAttribute('data-advisor-id', '');
+      expect(tabs).toHaveAttribute('data-advisor-voice', '');
+      // Quiz still wired up — failure on one slug must not poison the
+      // other.
+      expect(tabs).toHaveAttribute('data-quiz-id', 'agent-quiz');
+    });
+
+    it('passes null advisorAgent when no row matches the exact slug', async () => {
+      // The agents list `?q=pattern-advisor` is substring, so it can
+      // return a wrong-slug match. The page filters to exact and must
+      // fall through to null when nothing matches.
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [
+            // Substring matches like `pattern-advisor-archived`
+            // but the exact `pattern-advisor` slug is not present.
+            { id: 'agent-old', slug: 'pattern-advisor-archived', enableVoiceInput: true },
+          ],
+        } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-advisor-id', '');
+    });
+
+    it('passes null and logs when the agent fetch throws', async () => {
+      const agentErr = new Error('Connection refused');
+      vi.mocked(serverFetch)
+        .mockResolvedValueOnce(okResponse())
+        .mockRejectedValueOnce(agentErr)
+        .mockResolvedValueOnce(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      // The catch in getAgentBySlug logs with the slug + err so a
+      // misconfigured deployment is visible in server logs.
+      expect(logger.error).toHaveBeenCalledWith(
+        'learn page: agent fetch failed',
+        expect.objectContaining({ slug: 'pattern-advisor' })
+      );
+      expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-advisor-id', '');
+    });
+
+    it('defaults enableVoiceInput to false when the API row omits the field', async () => {
+      // Older versions of the agents list may not surface the
+      // `enableVoiceInput` field. Treat absence as voice-off rather
+      // than throwing.
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-advisor', slug: 'pattern-advisor' }],
+        } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master' }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      const tabs = screen.getByTestId('learning-tabs');
+      expect(tabs).toHaveAttribute('data-advisor-voice', 'false');
+      expect(tabs).toHaveAttribute('data-quiz-voice', 'false');
+    });
+  });
+
+  describe('happy path (continued)', () => {
     it('renders the heading and breadcrumb back to AI Orchestration', async () => {
       vi.mocked(serverFetch).mockResolvedValue(okResponse());
       vi.mocked(parseApiResponse).mockResolvedValue({

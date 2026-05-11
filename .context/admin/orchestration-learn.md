@@ -43,6 +43,7 @@ The advisor tab embeds a `<ChatInterface>` component connected to the `pattern-a
 - **Workflow recommendations**: When the advisor outputs a `workflow-definition` code block, a "Create this workflow" button appears
 - **Builder handoff**: Clicking the button navigates to `/admin/orchestration/workflows/new?definition=<encoded>`, pre-populating the workflow builder canvas
 - **Pattern context**: When opened from a pattern detail page, `contextType` and `contextId` are forwarded to the chat stream for context-aware responses
+- **Voice input**: When the `pattern-advisor` agent has `enableVoiceInput: true` (set on the agent form's General tab), a microphone button renders between the input and Send. Transcripts are appended to whatever the operator has typed so dictation and typing can mix. The page server-fetches the agent record via `GET /agents?q=pattern-advisor&limit=10` (filtered to the exact slug) so the toggle is read fresh on every page load; a missing or fetch-failed record falls back to text-only chat
 
 ### Workflow detection
 
@@ -59,6 +60,7 @@ The quiz tab embeds a `<ChatInterface>` connected to the `quiz-master` agent for
 - **Knowledge-grounded**: Uses `search_knowledge_base` and `get_pattern_detail` to ground explanations in the actual pattern content
 - **Score badge**: A `<Badge>` above the chat displays the running score (e.g. `3/5`), parsed from the agent's responses via regex matching of "Score: X/Y" or "Score: X out of Y" patterns (requires "Score:" prefix to avoid false positives on arbitrary fractions). A `<FieldHelp>` popover explains the badge to new users
 - **Score persistence**: Quiz scores are saved to the database via `POST /api/v1/admin/orchestration/quiz-scores`. On mount, the latest persisted score is loaded via `GET` so scores survive page navigations
+- **Voice input**: Same affordance as the advisor tab — when the `quiz-master` agent has `enableVoiceInput: true`, the mic button appears so the operator can answer aloud. Server-fetched on the LearnPage in parallel with the advisor record
 
 ### Question types
 
