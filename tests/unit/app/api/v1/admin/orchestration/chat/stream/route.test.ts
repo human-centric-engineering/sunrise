@@ -41,6 +41,10 @@ vi.mock('@/lib/security/rate-limit', () => ({
   chatLimiter: {
     check: vi.fn(),
   },
+  imageLimiter: {
+    // Default to "not rate-limited" so attachment-bearing tests pass through.
+    check: vi.fn(() => ({ success: true, limit: 20, remaining: 19, reset: 0 })),
+  },
   createRateLimitResponse: vi.fn(() =>
     Response.json(
       { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' } },
@@ -160,16 +164,20 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
   });
 
   it('forwards attachments to streamChat', async () => {
+    // Phase 2 hardening: PDF attachments now go through magic-byte
+    // validation in the route before reaching streamChat. The payload
+    // must start with the `%PDF-` header (base64-encoded) to pass.
+    const validPdfBase64 = Buffer.from('%PDF-1.4\nfake').toString('base64');
     const payload = {
       ...validPayload,
-      attachments: [{ name: 'doc.pdf', mediaType: 'application/pdf', data: 'YmFzZTY0ZGF0YQ==' }],
+      attachments: [{ name: 'doc.pdf', mediaType: 'application/pdf', data: validPdfBase64 }],
     };
     const req = createMockRequest(payload);
     await POST(req);
 
     expect(streamChat).toHaveBeenCalledWith(
       expect.objectContaining({
-        attachments: [{ name: 'doc.pdf', mediaType: 'application/pdf', data: 'YmFzZTY0ZGF0YQ==' }],
+        attachments: [{ name: 'doc.pdf', mediaType: 'application/pdf', data: validPdfBase64 }],
       })
     );
   });
