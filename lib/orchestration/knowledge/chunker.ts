@@ -159,6 +159,95 @@ function splitOnHeadings(
 }
 
 /**
+ * Tiered separators tried in order when splitting oversized content. Each
+ * tier is a [regex, joiner] pair — split by the regex, then join the
+ * pieces back into chunks using the joiner. We escalate from coarsest to
+ * finest so chunks stay human-meaningful for as long as possible: try to
+ * preserve paragraph structure first, then drop to lines, then sentences,
+ * and finally a character window when the input has no structure at all
+ * (e.g. one page of a PDF that pdfjs-dist extracted as a single
+ * concatenated string).
+ *
+ * The empty regex tier triggers character-window slicing — used as a last
+ * resort so we never return an oversized chunk regardless of input shape.
+ */
+const SPLIT_TIERS: ReadonlyArray<{ regex: RegExp | null; joiner: string }> = [
+  { regex: /\n\n+/, joiner: '\n\n' }, // paragraphs
+  { regex: /\n/, joiner: '\n' }, // lines
+  { regex: /(?<=\. )/, joiner: '' }, // sentences (lookbehind keeps the period)
+  { regex: null, joiner: '' }, // char-window fallback
+];
+
+/**
+ * Slice a string into ~`maxChars`-sized pieces. Used as the final
+ * fallback when the input has no structural separators at all — a
+ * dense block of text with no spaces, line breaks, or sentence
+ * endings. Pieces land slightly under maxChars to leave a token-count
+ * safety margin against the ~4-chars/token approximation.
+ */
+function sliceByChars(text: string, maxChars: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += maxChars) {
+    out.push(text.slice(i, i + maxChars));
+  }
+  return out;
+}
+
+/**
+ * Recursively split a body so every piece fits in `maxTokens` when
+ * combined with `header` (`<header>\n\n<piece>`). Tries the
+ * separator tiers in order — paragraphs, lines, sentences, finally
+ * char-window — and stops as soon as a tier produces pieces that
+ * each fit. Returns the original `text` unchanged when it already
+ * fits, so headers / small sections short-circuit without splitting.
+ *
+ * Without this fallback chain, PDF text (which pdfjs-dist extracts
+ * with `\n` line separators but rarely `\n\n` paragraph breaks)
+ * would collapse into one oversized chunk per document.
+ */
+function splitBodyToFit(text: string, maxTokens: number, header: string): string[] {
+  const headerOverhead = header ? estimateTokens(`${header}\n\n`) : 0;
+  const effectiveMax = Math.max(maxTokens - headerOverhead, 1);
+
+  const tryTier = (input: string, tierIndex: number): string[] => {
+    if (estimateTokens(input) <= effectiveMax) return [input];
+    if (tierIndex >= SPLIT_TIERS.length) return [input]; // unreachable
+
+    const tier = SPLIT_TIERS[tierIndex];
+    const parts =
+      tier.regex === null
+        ? sliceByChars(input, effectiveMax * 4)
+        : input
+            .split(tier.regex)
+            .map((p) => p.trim())
+            .filter((p) => p.length > 0);
+
+    // If splitting didn't subdivide the input, drop to the next finer
+    // tier rather than spinning forever on the same separator.
+    if (parts.length <= 1) return tryTier(input, tierIndex + 1);
+
+    const out: string[] = [];
+    let buffer = '';
+    for (const part of parts) {
+      const test = buffer ? `${buffer}${tier.joiner}${part}` : part;
+      if (estimateTokens(test) > effectiveMax && buffer) {
+        // Flush buffer — but recurse first to catch the case where
+        // `buffer` is itself a single oversized part (e.g. one
+        // monstrous line that the line-tier returned as-is).
+        out.push(...tryTier(buffer, tierIndex + 1));
+        buffer = part;
+      } else {
+        buffer = test;
+      }
+    }
+    if (buffer) out.push(...tryTier(buffer, tierIndex + 1));
+    return out;
+  };
+
+  return tryTier(text, 0);
+}
+
+/**
  * Merge small consecutive sections to meet minimum chunk size.
  * Splits oversized sections to stay under maximum.
  */
@@ -178,23 +267,14 @@ function normalizeChunkSizes(
         result.push(buffer);
         buffer = null;
       }
-      // Split large section by paragraphs
-      const paragraphs = section.body.split(/\n\n+/);
-      let currentBody = '';
-      for (const para of paragraphs) {
-        const testBody = currentBody ? `${currentBody}\n\n${para}` : para;
-        const testContent = section.header ? `${section.header}\n\n${testBody}` : testBody;
-        if (estimateTokens(testContent) > MAX_CHUNK_TOKENS && currentBody) {
-          const content = section.header ? `${section.header}\n\n${currentBody}` : currentBody;
-          result.push({ header: section.header, body: currentBody, combinedContent: content });
-          currentBody = para;
-        } else {
-          currentBody = testBody;
-        }
-      }
-      if (currentBody) {
-        const content = section.header ? `${section.header}\n\n${currentBody}` : currentBody;
-        result.push({ header: section.header, body: currentBody, combinedContent: content });
+      // Split oversized body using the tiered separator chain. Falls
+      // back from paragraphs → lines → sentences → char-window so
+      // sources without blank-line paragraph breaks (PDFs extracted
+      // by pdfjs-dist are the canonical case) still get split.
+      const pieces = splitBodyToFit(section.body, MAX_CHUNK_TOKENS, section.header);
+      for (const piece of pieces) {
+        const content = section.header ? `${section.header}\n\n${piece}` : piece;
+        result.push({ header: section.header, body: piece, combinedContent: content });
       }
     } else if (tokens < MIN_CHUNK_TOKENS && buffer) {
       // Merge with buffer — append body only (not combinedContent which includes the header)

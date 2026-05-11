@@ -319,6 +319,43 @@ Tiny C.
     expect(chunks.length).toBeGreaterThan(1);
   });
 
+  it('falls back to line splits when the body has no blank-line paragraph breaks', () => {
+    // Regression: PDF text extracted by pdfjs-dist arrives with `\n`
+    // line separators but no `\n\n` paragraph breaks. The previous
+    // chunker would push the entire oversized body as a single chunk
+    // because `body.split(/\n\n+/)` returned a single element. The
+    // tiered fallback should drop to `\n` (lines) and produce
+    // multiple in-budget chunks instead.
+    const line = 'x'.repeat(200); // 200 chars = 50 tokens per line
+    const body = Array.from({ length: 50 }, () => line).join('\n');
+    // 50 lines × 50 tokens = ~2,500 tokens total — well over MAX (800).
+    const content = `## 1. PDF-Style Document\n\n### Body\n\n${body}`;
+
+    const chunks = chunkMarkdownDocument(content, 'doc');
+
+    // Every chunk must respect the 800-token ceiling.
+    for (const chunk of chunks) {
+      expect(chunk.estimatedTokens).toBeLessThanOrEqual(800);
+    }
+    // The single 2,500-token body should have produced multiple chunks.
+    expect(chunks.length).toBeGreaterThan(2);
+  });
+
+  it('falls back to character-window slicing when even lines are oversized', () => {
+    // Extreme case: pathological PDF with no line breaks, no sentence
+    // endings, just one huge wall of characters. The chunker must
+    // still produce in-budget chunks via the final char-window tier.
+    const wall = 'x'.repeat(20_000); // ~5,000 tokens, no separators
+    const content = `## 1. Wall\n\n### Body\n\n${wall}`;
+
+    const chunks = chunkMarkdownDocument(content, 'doc');
+
+    for (const chunk of chunks) {
+      expect(chunk.estimatedTokens).toBeLessThanOrEqual(800);
+    }
+    expect(chunks.length).toBeGreaterThan(2);
+  });
+
   it('should preserve the subsection header as prefix in each split chunk', () => {
     // The normalizer uses section.header (the ### sub-header) as the prefix in split chunks.
     // So split chunks will contain "Implementation\n\n<paragraph>".

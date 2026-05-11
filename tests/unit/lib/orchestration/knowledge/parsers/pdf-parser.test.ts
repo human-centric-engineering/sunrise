@@ -289,15 +289,19 @@ describe('parsePdf', () => {
   // ---------------------------------------------------------------------------
 
   describe('fullText', () => {
-    it('should set fullText to the trimmed raw text from PDFParse', async () => {
+    it('rebuilds fullText with blank-line page separators (not form-feed)', async () => {
+      // Pages join with `\n\n` so the downstream markdown chunker sees
+      // a paragraph boundary at every page break. pdfjs-dist's
+      // legacy-fallback path emits the raw text form-feed-joined; the
+      // parser splits that to per-page entries then rejoins on `\n\n`.
       const text = '  Page one text.\fPage two text.  ';
       mockGetText.mockResolvedValue(textResult(text));
       mockGetInfo.mockResolvedValue(infoResult(2));
 
       const result = await parsePdf(fakeBuffer(), 'rawtext.pdf');
 
-      // fullText should be the trimmed version of the raw text
-      expect(result.fullText).toBe(text.trim());
+      expect(result.fullText).toBe('Page one text.\n\nPage two text.');
+      expect(result.fullText).not.toContain('\f');
     });
   });
 

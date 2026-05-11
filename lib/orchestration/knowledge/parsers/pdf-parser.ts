@@ -260,11 +260,22 @@ export async function parsePdf(
   // Rebuild fullText from the (possibly table-augmented) page entries so the
   // preview surface shows what the chunker sees. Falls back to rawText when no
   // pages were extracted.
+  //
+  // Pages are joined with `\n\n` (blank-line) rather than `\f` (form-feed).
+  // pdfjs-dist's text extraction emits visual lines separated by `\n` but
+  // almost never produces blank-line paragraph breaks, so the markdown
+  // chunker's `body.split(/\n\n+/)` would see the entire document as one
+  // "paragraph" and emit a single oversized chunk per document. Using `\n\n`
+  // here makes each page boundary a paragraph boundary, which gives the
+  // chunker something to split on. The chunker itself also falls back
+  // through `\n` → sentence → char-window for pages that still exceed
+  // MAX_CHUNK_TOKENS, so this isn't load-bearing — it's an alignment with
+  // the chunker's separator vocabulary.
   const fullText =
     pageEntries.length > 0
       ? pageEntries
           .map((p) => p.text)
-          .join('\f')
+          .join('\n\n')
           .trim()
       : rawText;
 
