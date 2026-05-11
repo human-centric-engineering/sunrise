@@ -40,7 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
+import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
@@ -1234,13 +1234,14 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
         {/* ================= TAB 7 — TEST ================= */}
         <TabsContent value="test" className="pt-4">
           {isEdit && agent ? (
-            <AgentTestChat
+            <ChatInterface
               agentSlug={agent.slug}
               agentId={agent.id}
               voiceInputEnabled={currentVoiceInput}
               imageInputEnabled={currentImageInput}
               documentInputEnabled={currentDocumentInput}
-              minHeight="min-h-[200px]"
+              showClearButton
+              className="h-[500px]"
             />
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">

@@ -18,7 +18,7 @@
  *   - In-flight fetch is aborted via `AbortController` on unmount
  *   - Network failures trigger up to 3 reconnect attempts with exponential
  *     backoff (1 s, 2 s, 4 s). HTTP-level errors (429, 4xx, 5xx) are not
- *     retriable. Matches the pattern in `agent-test-chat.tsx`.
+ *     retriable.
  *
  * @see lib/hooks/use-typing-animation.ts
  * @see components/admin/orchestration/chat/thinking-indicator.tsx
@@ -50,6 +50,9 @@ import { MessageWithCitations } from '@/components/admin/orchestration/chat/mess
 import type { Citation, PendingApproval } from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
+import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
+import { IMAGE_ATTACHMENT_MIME, DOCUMENT_ATTACHMENT_MIME } from '@/lib/hooks/use-attachments';
+import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -79,11 +82,25 @@ export interface ChatInterfaceProps {
    * When true (and `agentId` is set), renders a mic button next to
    * the Send action that posts audio to
    * `/api/v1/admin/orchestration/chat/transcribe` and appends the
-   * resulting text to the input. Mirrors the affordance in
-   * `agent-test-chat.tsx`. Defaults to false so existing callers
-   * keep their current text-only UX until they opt in.
+   * resulting text to the input. Defaults to false so existing
+   * callers keep their text-only UX until they opt in.
    */
   voiceInputEnabled?: boolean;
+  /**
+   * When true (and the resolved chat model carries the `'vision'`
+   * capability), renders a paperclip control that accepts image
+   * attachments. The picker hooks into the chat POST body as
+   * `attachments: [{ name, mediaType, data }]`. Default false so
+   * existing callers keep their text-only UX.
+   */
+  imageInputEnabled?: boolean;
+  /**
+   * When true (and the resolved chat model carries the `'documents'`
+   * capability), the same paperclip control also accepts PDF
+   * attachments. Independent of `imageInputEnabled` — either, both,
+   * or neither can be on.
+   */
+  documentInputEnabled?: boolean;
   /** Optional context type forwarded in the chat request. */
   contextType?: string;
   /** Optional context ID forwarded in the chat request. */
@@ -116,6 +133,12 @@ interface ChatMessage {
   /** In-chat approval card payload, set on synthetic assistant messages
    * when a `run_workflow` capability paused on a `human_approval` step. */
   pendingApproval?: PendingApproval;
+  /**
+   * Number of attachments the user submitted with this turn. Rendered
+   * as a small "📎 N file(s)" chip below the bubble so attachment-only
+   * sends don't read as an empty message.
+   */
+  attachmentCount?: number;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -124,6 +147,8 @@ export function ChatInterface({
   agentSlug,
   agentId,
   voiceInputEnabled = false,
+  imageInputEnabled = false,
+  documentInputEnabled = false,
   contextType,
   contextId,
   starterPrompts,
@@ -138,6 +163,7 @@ export function ChatInterface({
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
@@ -147,6 +173,8 @@ export function ChatInterface({
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentsControlRef = useRef<{ clear: () => void } | null>(null);
+  const attachmentsEnabled = imageInputEnabled || documentInputEnabled;
   // Tracks the previous `streaming` value so we can detect the
   // true → false transition and refocus the input. Restoring focus only
   // on transition (not every render) avoids stealing focus from
@@ -197,20 +225,32 @@ export function ChatInterface({
   }, []);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentsArg?: ChatAttachment[]) => {
       const trimmed = text.trim();
-      if (!trimmed || streaming) return;
+      const submittedAttachments = attachmentsArg ?? [];
+      // Empty turn (no text and no attachments) is a no-op; standard
+      // text turns require non-empty text; attachment-only turns are
+      // allowed (vision use case: "describe this" with a photo).
+      if ((!trimmed && submittedAttachments.length === 0) || streaming) return;
 
       setError(null);
       setWarning(null);
       setStatus(null);
       setInput('');
+      setAttachments([]);
+      attachmentsControlRef.current?.clear();
       typing.reset();
 
       // Append user message and empty assistant message
       setMessages((prev) => [
         ...prev,
-        { role: 'user', content: trimmed },
+        {
+          role: 'user',
+          content: trimmed,
+          ...(submittedAttachments.length > 0
+            ? { attachmentCount: submittedAttachments.length }
+            : {}),
+        },
         { role: 'assistant', content: '' },
       ]);
       setStreaming(true);
@@ -241,6 +281,7 @@ export function ChatInterface({
               conversationId: conversationId ?? undefined,
               contextType,
               contextId,
+              ...(submittedAttachments.length > 0 ? { attachments: submittedAttachments } : {}),
             }),
           });
 
@@ -410,9 +451,9 @@ export function ChatInterface({
 
   // Wrap sendMessage to ensure streaming state is always cleaned up
   const sendMessageWrapped = useCallback(
-    async (text: string) => {
+    async (text: string, attachmentsArg?: ChatAttachment[]) => {
       try {
-        await sendMessage(text);
+        await sendMessage(text, attachmentsArg);
       } finally {
         setStreaming(false);
         setStatus(null);
@@ -468,7 +509,7 @@ export function ChatInterface({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    void sendMessageWrapped(input);
+    void sendMessageWrapped(input, attachments);
   };
 
   const showStarters = messages.length === 0 && starterPrompts && starterPrompts.length > 0;
@@ -564,7 +605,19 @@ export function ChatInterface({
                     )}
                   </>
                 ) : (
-                  <span className="whitespace-pre-wrap">{msg.content}</span>
+                  <div>
+                    {msg.content && <span className="whitespace-pre-wrap">{msg.content}</span>}
+                    {msg.attachmentCount && msg.attachmentCount > 0 && (
+                      <span
+                        className={cn(
+                          'text-muted-foreground inline-flex items-center gap-1 text-xs',
+                          msg.content ? 'ml-2' : ''
+                        )}
+                      >
+                        📎 {msg.attachmentCount} file{msg.attachmentCount === 1 ? '' : 's'} attached
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -591,48 +644,65 @@ export function ChatInterface({
       )}
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t p-3">
-        <Input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type a message..."
-          disabled={streaming}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void sendMessageWrapped(input);
-            }
-          }}
-        />
-        {voiceInputEnabled && agentId && (
-          <MicButton
-            agentId={agentId}
-            endpoint="/api/v1/admin/orchestration/chat/transcribe"
+      <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t p-3">
+        <div className="flex gap-2">
+          <Input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type a message..."
             disabled={streaming}
-            onTranscript={(text) =>
-              // Append to whatever the operator has already typed
-              // rather than replacing — same UX as the admin agent
-              // tester. Trim trailing whitespace so we don't end up
-              // with double spaces.
-              setInput((current) => (current ? `${current.trimEnd()} ${text}` : text))
-            }
-            onError={(msg) =>
-              setError({
-                title: 'Voice input failed',
-                message: msg,
-              })
-            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void sendMessageWrapped(input, attachments);
+              }
+            }}
+          />
+          {voiceInputEnabled && agentId && (
+            <MicButton
+              agentId={agentId}
+              endpoint="/api/v1/admin/orchestration/chat/transcribe"
+              disabled={streaming}
+              onTranscript={(text) =>
+                // Append to whatever the operator has already typed
+                // rather than replacing. Trim trailing whitespace so
+                // we don't end up with double spaces.
+                setInput((current) => (current ? `${current.trimEnd()} ${text}` : text))
+              }
+              onError={(msg) =>
+                setError({
+                  title: 'Voice input failed',
+                  message: msg,
+                })
+              }
+            />
+          )}
+          <Button
+            type="submit"
+            size="sm"
+            disabled={streaming || (!input.trim() && attachments.length === 0)}
+          >
+            {streaming ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Send className="h-4 w-4" aria-hidden="true" />
+            )}
+            <span className="sr-only">Send</span>
+          </Button>
+        </div>
+        {attachmentsEnabled && (
+          <AttachmentPickerButton
+            acceptMime={[
+              ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
+              ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
+            ]}
+            disabled={streaming}
+            controlsRef={attachmentsControlRef}
+            onAttachmentsChange={setAttachments}
+            onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
           />
         )}
-        <Button type="submit" size="sm" disabled={streaming || !input.trim()}>
-          {streaming ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Send className="h-4 w-4" aria-hidden="true" />
-          )}
-          <span className="sr-only">Send</span>
-        </Button>
       </form>
     </div>
   );

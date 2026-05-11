@@ -5,10 +5,11 @@
  * files as base64 via `useAttachments`, and render a thumbnail strip
  * with per-attachment remove buttons.
  *
- * Designed to sit next to `<MicButton>` in `AgentTestChat`. Image
- * thumbnails use `URL.createObjectURL` (revoked on remove / clear /
- * unmount inside the hook). PDFs and other documents render as a
- * paperclip + filename + size chip.
+ * Designed to sit next to `<MicButton>` inside `<ChatInterface>` —
+ * the same reusable chat surface used by the Learning Hub and the
+ * agent Test tab. Image thumbnails use `URL.createObjectURL` (revoked
+ * on remove / clear / unmount inside the hook). PDFs and other
+ * documents render as a paperclip + filename + size chip.
  *
  * Paste support is opt-in via the `pasteTarget` prop — pass the parent
  * textarea's ref and a `paste` listener is bound that intercepts image

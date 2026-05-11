@@ -982,4 +982,120 @@ describe('ChatInterface', () => {
       expect(screen.getByText(/microphone unavailable/i)).toBeInTheDocument();
     });
   });
+
+  describe('Attachment input', () => {
+    it('does not render the attachment picker when neither toggle is on', () => {
+      render(<ChatInterface agentSlug="my-agent" />);
+      expect(screen.queryByRole('button', { name: /attach an image/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /attach a pdf/i })).not.toBeInTheDocument();
+    });
+
+    it('renders an image-only picker when only imageInputEnabled is true', () => {
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+      expect(screen.getByRole('button', { name: /attach an image/i })).toBeInTheDocument();
+    });
+
+    it('renders a PDF-only picker when only documentInputEnabled is true', () => {
+      render(<ChatInterface agentSlug="my-agent" documentInputEnabled />);
+      expect(screen.getByRole('button', { name: /attach a pdf/i })).toBeInTheDocument();
+    });
+
+    it('threads attachments into the chat POST body and clears input + picker', async () => {
+      // Capture the request body so we can assert the attachments
+      // array reached the endpoint. The stream resolves immediately so
+      // we observe the post-send state.
+      let captured: { attachments?: Array<{ name: string }>; message: string } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+        captured = init?.body ? JSON.parse(init.body as string) : null;
+        return {
+          ok: true,
+          body: makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('ok'), doneFrame()]),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      Object.defineProperty(URL, 'createObjectURL', {
+        writable: true,
+        value: vi.fn().mockReturnValue('blob:mock'),
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', { writable: true, value: vi.fn() });
+
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+
+      // Drop an image into the hidden file input.
+      const fileInput = screen.getByTestId('attachment-picker-input');
+      if (!(fileInput instanceof HTMLInputElement)) {
+        throw new Error('Expected HTMLInputElement');
+      }
+      const file = new File(['fake-png-bytes'], 'photo.png', { type: 'image/png' });
+      await user.upload(fileInput, file);
+
+      // Wait for the picker to register the attachment.
+      await waitFor(() => {
+        expect(screen.getByTestId('attachment-thumbnail-strip')).toBeInTheDocument();
+      });
+
+      // Type a prompt and send.
+      const textInput = screen.getByPlaceholderText(/type a message/i);
+      await user.type(textInput, 'describe this');
+      await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+      // The POST body should carry the attachments array with our file.
+      await waitFor(() => {
+        expect(captured?.attachments?.[0]?.name).toBe('photo.png');
+        expect(captured?.message).toBe('describe this');
+      });
+
+      // Post-send: input cleared, thumbnail strip empty.
+      await waitFor(() => {
+        expect((textInput as HTMLInputElement).value).toBe('');
+        expect(screen.queryByTestId('attachment-thumbnail-strip')).not.toBeInTheDocument();
+      });
+    });
+
+    it('allows attachment-only sends (empty text + at least one attachment)', async () => {
+      let captured: { attachments?: unknown; message: string } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+        captured = init?.body ? JSON.parse(init.body as string) : null;
+        return {
+          ok: true,
+          body: makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('ack'), doneFrame()]),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      Object.defineProperty(URL, 'createObjectURL', {
+        writable: true,
+        value: vi.fn().mockReturnValue('blob:mock'),
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', { writable: true, value: vi.fn() });
+
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+
+      const fileInput = screen.getByTestId('attachment-picker-input');
+      if (!(fileInput instanceof HTMLInputElement)) {
+        throw new Error('Expected HTMLInputElement');
+      }
+      await user.upload(fileInput, new File(['fake-png'], 'a.png', { type: 'image/png' }));
+      await waitFor(() =>
+        expect(screen.getByTestId('attachment-thumbnail-strip')).toBeInTheDocument()
+      );
+
+      // Send without typing anything.
+      const send = screen.getByRole('button', { name: /^send$/i });
+      expect(send).not.toBeDisabled();
+      await user.click(send);
+
+      await waitFor(() => {
+        expect(captured?.message).toBe('');
+        expect(Array.isArray(captured?.attachments)).toBe(true);
+      });
+    });
+
+    it('keeps Send disabled when both text and attachments are empty', () => {
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+      const send = screen.getByRole('button', { name: /^send$/i });
+      expect(send).toBeDisabled();
+    });
+  });
 });
