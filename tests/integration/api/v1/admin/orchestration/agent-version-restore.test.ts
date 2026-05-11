@@ -185,6 +185,37 @@ describe('POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restor
     });
   });
 
+  it('restore applies enableVoiceInput from the snapshot', async () => {
+    // Regression: enableVoiceInput is in VERSIONED_FIELDS and the
+    // snapshot block, so the restore route's Zod schema and
+    // updateData assembly must mirror — otherwise restoring a
+    // version that turned voice on would silently drop the bit.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst)
+      .mockResolvedValueOnce({
+        id: VERSION_ID,
+        agentId: AGENT_ID,
+        version: 2,
+        snapshot: { ...SNAPSHOT, enableVoiceInput: true },
+      } as never)
+      .mockResolvedValueOnce({ version: 4 } as never);
+    vi.mocked(prisma.aiAgent.update).mockResolvedValue({
+      id: AGENT_ID,
+      ...SNAPSHOT,
+      enableVoiceInput: true,
+    } as never);
+    vi.mocked(prisma.aiAgentVersion.create).mockResolvedValue({} as never);
+
+    const response = await POST(makeRequest(), routeContext as never);
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgent.update).toHaveBeenCalledWith({
+      where: { id: AGENT_ID },
+      data: expect.objectContaining({ enableVoiceInput: true }),
+    });
+  });
+
   it('returns 404 for invalid version', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);

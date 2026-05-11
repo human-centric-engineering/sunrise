@@ -662,6 +662,101 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
         expect.objectContaining({ data: expect.objectContaining({ enableVoiceInput: false }) })
       );
     });
+
+    it('creates a version snapshot when enableVoiceInput changes and lists it in the summary', async () => {
+      // The user-visible bug: toggling voice on/off persisted but the
+      // version history tab showed nothing. enableVoiceInput needs to
+      // be in VERSIONED_FIELDS and the snapshot block.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ enableVoiceInput: false }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableVoiceInput: true }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { enableVoiceInput: true }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      expect(createCall.data.changeSummary).toContain('enableVoiceInput changed');
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      expect(snapshot).toHaveProperty('enableVoiceInput', false); // pre-update value
+    });
+  });
+
+  describe('Snapshot completeness — every versioned field is captured', () => {
+    // Belt-and-braces: when any versioned field changes, the snapshot
+    // must include the pre-update value of every other versioned field
+    // so a future restore round-trips cleanly. Catches the regression
+    // where a new field is added to VERSIONED_FIELDS but forgotten in
+    // the snapshot object (or vice versa).
+    it('snapshot object carries every key in VERSIONED_FIELDS', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const stored = makeAgent({
+        systemInstructions: 'sys',
+        model: 'm',
+        temperature: 0.5,
+        maxTokens: 1000,
+        topicBoundaries: ['a'],
+        brandVoiceInstructions: 'bv',
+        provider: 'anthropic',
+        fallbackProviders: ['openai'],
+        knowledgeCategories: ['docs'],
+        rateLimitRpm: 30,
+        visibility: 'internal',
+        inputGuardMode: 'log_only',
+        outputGuardMode: 'log_only',
+        citationGuardMode: 'log_only',
+        maxHistoryTokens: 4000,
+        retentionDays: 60,
+        providerConfig: { t: 1 },
+        monthlyBudgetUsd: 10,
+        metadata: { tag: 'x' },
+        enableVoiceInput: true,
+      });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(stored as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.9 }) as never);
+
+      // Trigger via any single change.
+      await PATCH(makeRequest('PATCH', { temperature: 0.9 }), makeParams(AGENT_ID));
+
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      // The exhaustive set the route should snapshot. If this list
+      // diverges from VERSIONED_FIELDS in route.ts, one of them is
+      // wrong — both must be kept in lockstep.
+      const expected = [
+        'systemInstructions',
+        'model',
+        'temperature',
+        'maxTokens',
+        'topicBoundaries',
+        'brandVoiceInstructions',
+        'provider',
+        'fallbackProviders',
+        'knowledgeCategories',
+        'rateLimitRpm',
+        'visibility',
+        'inputGuardMode',
+        'outputGuardMode',
+        'citationGuardMode',
+        'maxHistoryTokens',
+        'retentionDays',
+        'providerConfig',
+        'monthlyBudgetUsd',
+        'metadata',
+        'enableVoiceInput',
+      ];
+      for (const key of expected) {
+        expect(snapshot).toHaveProperty(key);
+      }
+      // Spot-check a few values to confirm it's the pre-update state,
+      // not an empty placeholder.
+      expect(snapshot).toHaveProperty('temperature', 0.5);
+      expect(snapshot).toHaveProperty('enableVoiceInput', true);
+      expect(snapshot).toHaveProperty('providerConfig', { t: 1 });
+    });
   });
 });
 

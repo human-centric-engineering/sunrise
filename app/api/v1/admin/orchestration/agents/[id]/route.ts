@@ -146,7 +146,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Version-triggering fields — snapshot the current config before
-  // the update if any of these are changing.
+  // the update if any of these are changing. `name`, `slug`,
+  // `description`, and `isActive` are intentionally excluded: they're
+  // metadata / operational state, not part of the agent's behavioural
+  // fingerprint. Everything the agent form exposes that affects
+  // runtime behaviour belongs here.
   const VERSIONED_FIELDS = [
     'systemInstructions',
     'model',
@@ -167,6 +171,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'providerConfig',
     'monthlyBudgetUsd',
     'metadata',
+    'enableVoiceInput',
   ] as const;
 
   // Only treat a versioned field as "changed" if the new value actually
@@ -238,6 +243,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           retentionDays: current.retentionDays,
           providerConfig: current.providerConfig,
           monthlyBudgetUsd: current.monthlyBudgetUsd,
+          enableVoiceInput: current.enableVoiceInput,
         };
 
         const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');
