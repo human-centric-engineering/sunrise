@@ -28,7 +28,12 @@ import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
-import { getProviderWithFallbacks, getProvider } from '@/lib/orchestration/llm/provider-manager';
+import {
+  assertModelSupportsAttachments,
+  getProvider,
+  getProviderWithFallbacks,
+  type AttachmentCapability,
+} from '@/lib/orchestration/llm/provider-manager';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
@@ -262,6 +267,99 @@ export class StreamingChatHandler {
         return;
       }
 
+      // Attachment gate — fail fast before persisting a user message or
+      // creating a conversation if the request carries attachments that
+      // the agent or platform cannot serve. Three orthogonal checks
+      // run before any expensive work:
+      //   1. Per-agent toggle (`enableImageInput` / `enableDocumentInput`)
+      //   2. Org-wide kill switch (`imageInputGloballyEnabled` /
+      //      `documentInputGloballyEnabled`)
+      //   3. Model capability (`'vision'` / `'documents'`)
+      //
+      // Each failure produces a discrete SSE error code so the UI can
+      // map to a precise user-facing message.
+      const attachments = request.attachments ?? [];
+      const hasImageAttachments = attachments.some((a) => a.mediaType.startsWith('image/'));
+      const hasPdfAttachments = attachments.some((a) => a.mediaType === 'application/pdf');
+      if (hasImageAttachments || hasPdfAttachments) {
+        // Settings load is cheap (singleton) — only fetched when there
+        // are attachments to gate.
+        const attachmentSettings = await prisma.aiOrchestrationSettings.findUnique({
+          where: { slug: 'global' },
+          select: { imageInputGloballyEnabled: true, documentInputGloballyEnabled: true },
+        });
+
+        if (hasImageAttachments) {
+          if (!agent.enableImageInput) {
+            yield errorEvent(
+              'IMAGE_DISABLED',
+              'Image input is not enabled for this agent. Ask an admin to turn it on.'
+            );
+            return;
+          }
+          if (attachmentSettings && attachmentSettings.imageInputGloballyEnabled === false) {
+            yield errorEvent(
+              'IMAGE_DISABLED',
+              'Image input is currently disabled platform-wide. Try again later.'
+            );
+            return;
+          }
+        }
+
+        if (hasPdfAttachments) {
+          if (!agent.enableDocumentInput) {
+            yield errorEvent(
+              'PDF_DISABLED',
+              'PDF input is not enabled for this agent. Ask an admin to turn it on.'
+            );
+            return;
+          }
+          if (attachmentSettings && attachmentSettings.documentInputGloballyEnabled === false) {
+            yield errorEvent(
+              'PDF_DISABLED',
+              'PDF input is currently disabled platform-wide. Try again later.'
+            );
+            return;
+          }
+        }
+
+        // Capability gate — the resolved chat model must carry every
+        // attachment capability the request needs. Vision and documents
+        // are intrinsic chat-model capabilities (no fallback model), so
+        // a mismatch is a configuration error the user must resolve.
+        const requiredCapabilities: AttachmentCapability[] = [];
+        if (hasImageAttachments) requiredCapabilities.push('vision');
+        if (hasPdfAttachments) requiredCapabilities.push('documents');
+        try {
+          await assertModelSupportsAttachments(
+            resolvedBinding.providerSlug,
+            resolvedModel,
+            requiredCapabilities
+          );
+        } catch (err) {
+          if (err instanceof ProviderError && err.code === 'CAPABILITY_NOT_SUPPORTED') {
+            if (hasImageAttachments && !hasPdfAttachments) {
+              yield errorEvent(
+                'IMAGE_NOT_SUPPORTED',
+                "This agent's model can't process images. Switch the model to one with vision support."
+              );
+            } else if (hasPdfAttachments && !hasImageAttachments) {
+              yield errorEvent(
+                'PDF_NOT_SUPPORTED',
+                "This agent's model can't process PDFs. Switch the model to one with document support (Claude family)."
+              );
+            } else {
+              yield errorEvent(
+                'IMAGE_NOT_SUPPORTED',
+                "This agent's model can't process all of the attached files. Switch the model or remove unsupported attachments."
+              );
+            }
+            return;
+          }
+          throw err;
+        }
+      }
+
       // Load cap settings once — used for conversation and message limits.
       const capSettings = await prisma.aiOrchestrationSettings.findUnique({
         where: { slug: 'global' },
@@ -300,6 +398,27 @@ export class StreamingChatHandler {
         role: 'user',
         content: request.message,
       });
+
+      // Log a single `vision` cost row when the turn carries
+      // attachments. Fires once per turn, regardless of how the chat
+      // call ends (success / error / tool-call iteration), because the
+      // platform overhead is per-attachment, not per-completion. Per-
+      // token chat cost still rolls up under the `chat` rows downstream.
+      if (hasImageAttachments || hasPdfAttachments) {
+        const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
+        const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
+        void logCost({
+          agentId: agent.id,
+          conversationId: conversation.id,
+          model: resolvedModel,
+          provider: resolvedBinding.providerSlug,
+          inputTokens: 0,
+          outputTokens: 0,
+          operation: CostOperation.VISION,
+          imageCount,
+          pdfCount,
+        });
+      }
 
       // Mirror to the evaluation log when this chat turn is running
       // inside an evaluation session. No-op otherwise.

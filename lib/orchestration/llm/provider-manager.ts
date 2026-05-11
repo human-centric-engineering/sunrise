@@ -387,6 +387,94 @@ export async function getAudioProvider(): Promise<AudioProviderResolution | null
   return null;
 }
 
+/**
+ * Capability kinds we gate per chat-attachment turn. `'vision'` means
+ * image input; `'documents'` means native PDF input. The union is
+ * intentionally narrower than `ModelCapability` — only attachment
+ * kinds matter here; chat / reasoning / embedding / audio are gated
+ * elsewhere by separate resolvers.
+ */
+export type AttachmentCapability = 'vision' | 'documents';
+
+/**
+ * Assert that the curated `AiProviderModel` row for the given
+ * `(providerSlug, modelId)` pair carries every required attachment
+ * capability. Throws `ProviderError({ code: 'CAPABILITY_NOT_SUPPORTED' })`
+ * when any capability is missing — the chat handler catches this and
+ * maps to a user-facing SSE error (`IMAGE_NOT_SUPPORTED` /
+ * `PDF_NOT_SUPPORTED`).
+ *
+ * Distinct from `getAudioProvider`: vision and document understanding
+ * are intrinsic capabilities of the chat model that handles the turn,
+ * not a separate model resolution step. There is no fallback path —
+ * if the selected model can't process the attachment, that's a user-
+ * facing configuration error, not a transient runtime issue.
+ */
+export async function assertModelSupportsAttachments(
+  providerSlug: string,
+  modelId: string,
+  required: AttachmentCapability[]
+): Promise<void> {
+  if (required.length === 0) return;
+
+  const row = await prisma.aiProviderModel.findFirst({
+    where: {
+      providerSlug,
+      modelId,
+      isActive: true,
+    },
+    select: { capabilities: true },
+  });
+
+  // Row absent = model isn't in the curated matrix. Be strict: if an
+  // admin selected a model the matrix doesn't know about, we have no
+  // basis to claim vision/documents support. Surface as
+  // CAPABILITY_NOT_SUPPORTED rather than passing through silently.
+  if (!row) {
+    logger.warn('Attachment capability check failed — model row not found in matrix', {
+      providerSlug,
+      modelId,
+      required,
+    });
+    throw new ProviderError(
+      `Model ${providerSlug}/${modelId} is not registered with the required capabilities (${required.join(', ')})`,
+      { code: 'CAPABILITY_NOT_SUPPORTED', retriable: false }
+    );
+  }
+
+  const missing = required.filter((cap) => !row.capabilities.includes(cap));
+  if (missing.length > 0) {
+    logger.info('Attachment capability check failed — model lacks required capability', {
+      providerSlug,
+      modelId,
+      required,
+      missing,
+      modelCapabilities: row.capabilities,
+    });
+    throw new ProviderError(
+      `Model ${providerSlug}/${modelId} does not support: ${missing.join(', ')}`,
+      { code: 'CAPABILITY_NOT_SUPPORTED', retriable: false }
+    );
+  }
+}
+
+/**
+ * Returns `true` when at least one active `AiProviderModel` row
+ * carries the given capability. Used by the widget-config resolver to
+ * decide whether to expose the attach affordance — if no vision-
+ * capable provider exists in the deployment, the paperclip stays
+ * hidden so users aren't offered a control guaranteed to error.
+ */
+export async function hasModelWithCapability(capability: string): Promise<boolean> {
+  const count = await prisma.aiProviderModel.count({
+    where: {
+      isActive: true,
+      capabilities: { has: capability },
+    },
+  });
+  return count > 0;
+}
+
 /** Evict one (or all) cached provider instances. */
 export function clearCache(slugOrName?: string): void {
   if (slugOrName) {

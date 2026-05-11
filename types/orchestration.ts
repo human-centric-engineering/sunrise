@@ -91,6 +91,13 @@ export const CostOperation = {
   EMBEDDING: 'embedding',
   EVALUATION: 'evaluation',
   TRANSCRIPTION: 'transcription',
+  /**
+   * Image / PDF attachment processing. Priced flat per attachment for
+   * v1 — actual provider billing rolls up under the chat-completion
+   * row; this operation tracks attachment-specific overhead the
+   * platform charges for serving the modality.
+   */
+  VISION: 'vision',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 

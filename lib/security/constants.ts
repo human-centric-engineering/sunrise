@@ -49,6 +49,8 @@ export const SECURITY_CONSTANTS = {
       CONSUMER_CHAT: 10,
       /** Audio transcription: 10 requests per minute per user/session */
       AUDIO: 10,
+      /** Image / PDF attachment chat turn: 20 requests per minute per user/session */
+      IMAGE: 20,
     },
   },
 

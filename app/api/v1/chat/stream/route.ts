@@ -17,6 +17,7 @@
 
 import { withAuth } from '@/lib/auth/guards';
 import { sseResponse } from '@/lib/api/sse';
+import { errorResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import {
@@ -24,6 +25,7 @@ import {
   consumerChatLimiter,
   agentChatLimiter,
   createRateLimitResponse,
+  imageLimiter,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { streamChat } from '@/lib/orchestration/chat';
@@ -31,6 +33,7 @@ import { consumerChatRequestSchema } from '@/lib/validations/orchestration';
 import { getRequestId } from '@/lib/logging/context';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError, ForbiddenError } from '@/lib/api/errors';
+import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
 
 export const POST = withAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -61,6 +64,48 @@ export const POST = withAuth(async (request, session) => {
   // Per-agent rate limit (overrides global default when configured)
   const agentLimit = agentChatLimiter.check(`${agent.id}:${session.user.id}`, agent.rateLimitRpm);
   if (!agentLimit.success) return createRateLimitResponse(agentLimit);
+
+  // Attachment-bearing turns get an extra rate-limit bucket + magic-
+  // byte validation before reaching the orchestration handler. Per-
+  // agent / global / capability gates run inside `streamChat`. The
+  // consumer rate limit is keyed by `image:user:` so it shares the
+  // bucket with the admin route — a single user cannot abuse images
+  // by switching surfaces.
+  if (body.attachments && body.attachments.length > 0) {
+    const attachmentLimit = imageLimiter.check(`image:user:${session.user.id}`);
+    if (!attachmentLimit.success) return createRateLimitResponse(attachmentLimit);
+
+    for (const attachment of body.attachments) {
+      if (attachment.mediaType.startsWith('image/')) {
+        const buffer = Buffer.from(attachment.data, 'base64');
+        const validation = validateImageMagicBytes(buffer);
+        if (!validation.valid) {
+          log.warn('Image attachment magic-byte validation failed', {
+            agentSlug: body.agentSlug,
+            mediaType: attachment.mediaType,
+            error: validation.error,
+            userId: session.user.id,
+          });
+          return errorResponse(
+            'Attachment is not a valid image file. Magic bytes do not match the declared MIME type.',
+            { code: 'IMAGE_INVALID_TYPE', status: 415 }
+          );
+        }
+      } else if (attachment.mediaType === 'application/pdf') {
+        const buffer = Buffer.from(attachment.data, 'base64');
+        if (!validatePdfMagicBytes(buffer)) {
+          log.warn('PDF attachment magic-byte validation failed', {
+            agentSlug: body.agentSlug,
+            userId: session.user.id,
+          });
+          return errorResponse('Attachment is not a valid PDF file. The %PDF- header is missing.', {
+            code: 'IMAGE_INVALID_TYPE',
+            status: 415,
+          });
+        }
+      }
+    }
+  }
 
   // For invite_only agents, verify the invite token
   if (agent.visibility === 'invite_only') {

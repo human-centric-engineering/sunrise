@@ -126,6 +126,28 @@ export function validateImageMagicBytes(buffer: Buffer): ImageValidationResult {
 }
 
 /**
+ * Validate PDF magic bytes — confirms a buffer starts with the `%PDF-`
+ * header. Used to reject forged uploads where the client claims
+ * `application/pdf` but actually sends an executable or other binary.
+ *
+ * The PDF spec mandates the `%PDF-` prefix in the first 1024 bytes,
+ * but every real-world PDF puts it at offset 0. We're strict: byte
+ * offsets 0-4 must be `25 50 44 46 2D` (`%PDF-`). Returns true on
+ * match, false otherwise. No allocations on the hot path.
+ */
+export function validatePdfMagicBytes(buffer: Buffer): boolean {
+  if (buffer.length < 5) return false;
+  // %PDF-
+  return (
+    buffer[0] === 0x25 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x44 &&
+    buffer[3] === 0x46 &&
+    buffer[4] === 0x2d
+  );
+}
+
+/**
  * Image processing options
  */
 export interface ProcessImageOptions {
