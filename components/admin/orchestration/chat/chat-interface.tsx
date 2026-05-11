@@ -507,10 +507,14 @@ export function ChatInterface({
     onConversationCleared?.();
   }, [conversationId, typing, onConversationCleared]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void sendMessageWrapped(input, attachments);
-  };
+  const handleSend = useCallback(
+    (e?: { preventDefault?: () => void; stopPropagation?: () => void }) => {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      void sendMessageWrapped(input, attachments);
+    },
+    [sendMessageWrapped, input, attachments]
+  );
 
   const showStarters = messages.length === 0 && starterPrompts && starterPrompts.length > 0;
   const isLastAssistantEmpty = (i: number, msg: ChatMessage) =>
@@ -643,8 +647,17 @@ export function ChatInterface({
         </div>
       )}
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t p-3">
+      {/*
+        Input row — intentionally a <div>, not a <form>. ChatInterface
+        is sometimes mounted inside another <form> (e.g. the agent
+        edit page's Test tab sits inside <AgentForm>'s form), and
+        nested forms are invalid HTML. The browser collapses them so a
+        type="submit" button in here would submit the outer form,
+        refreshing the page and bouncing the user off the tab.
+        Handling Enter + Send via explicit handlers makes the
+        component robust whether mounted standalone or nested.
+      */}
+      <div className="flex flex-col gap-2 border-t p-3">
         <div className="flex gap-2">
           <Input
             ref={inputRef}
@@ -655,7 +668,8 @@ export function ChatInterface({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void sendMessageWrapped(input, attachments);
+                e.stopPropagation();
+                handleSend(e);
               }
             }}
           />
@@ -679,8 +693,9 @@ export function ChatInterface({
             />
           )}
           <Button
-            type="submit"
+            type="button"
             size="sm"
+            onClick={(e) => handleSend(e)}
             disabled={streaming || (!input.trim() && attachments.length === 0)}
           >
             {streaming ? (
@@ -703,7 +718,7 @@ export function ChatInterface({
             onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
           />
         )}
-      </form>
+      </div>
     </div>
   );
 

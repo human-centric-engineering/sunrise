@@ -983,6 +983,71 @@ describe('ChatInterface', () => {
     });
   });
 
+  describe('Nested-form safety', () => {
+    it('Send button is type="button" (cannot submit a parent form)', () => {
+      // Regression: ChatInterface is mounted inside the AgentForm
+      // <form> on the agent edit page's Test tab. HTML5 collapses
+      // nested forms, so a type="submit" button here would submit the
+      // outer form — refreshing the page and bouncing the user back
+      // to the General tab. The button must be type="button".
+      render(<ChatInterface agentSlug="my-agent" />);
+      const send = screen.getByRole('button', { name: /send/i });
+      expect(send).toBeInstanceOf(HTMLButtonElement);
+      expect((send as HTMLButtonElement).type).toBe('button');
+    });
+
+    it('clicking Send inside a parent <form> does not trigger that form.onSubmit', async () => {
+      const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([startFrame('c', 'm'), contentFrame('ack'), doneFrame()]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={outerSubmit} data-testid="outer-form">
+          <ChatInterface agentSlug="my-agent" />
+        </form>
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      // Critical assertion: the outer form must NOT have been
+      // submitted (which would refresh the page in a real browser).
+      expect(outerSubmit).not.toHaveBeenCalled();
+    });
+
+    it('Enter-to-send inside a parent <form> does not trigger that form.onSubmit', async () => {
+      const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([startFrame('c', 'm'), contentFrame('ack'), doneFrame()]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={outerSubmit}>
+          <ChatInterface agentSlug="my-agent" />
+        </form>
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello{Enter}');
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      expect(outerSubmit).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Attachment input', () => {
     it('does not render the attachment picker when neither toggle is on', () => {
       render(<ChatInterface agentSlug="my-agent" />);
