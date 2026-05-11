@@ -51,6 +51,19 @@ import { Tip } from '@/components/ui/tooltip';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
+import type { TaskType } from '@/types/orchestration';
+
+// Short human labels for the four `TaskType` slots resolved via
+// `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
+// so an operator can see at a glance which models the runtime falls
+// back to when an agent has no explicit binding — distinct from the
+// agents that directly name the model.
+const TASK_TYPE_LABEL: Record<TaskType, string> = {
+  routing: 'Routing',
+  chat: 'Chat',
+  reasoning: 'Reasoning',
+  embeddings: 'Embeddings',
+};
 
 export interface ProviderModelAgentRef {
   id: string;
@@ -76,6 +89,11 @@ export interface ProviderModelInfo {
   // Active agents bound to (provider, modelId). Empty when no agent
   // currently references the model.
   agents?: ProviderModelAgentRef[];
+  // TaskType slots this model fills as the effective system default
+  // (routing/chat/reasoning/embeddings). Distinct from `agents` —
+  // tracks inheritance via the default-models settings rather than
+  // direct assignment.
+  defaultFor?: TaskType[];
 }
 
 interface ProviderModelsResponse {
@@ -439,9 +457,9 @@ export function ProviderModelsPanel({
                 onClick={() => setInUseOnly((v) => !v)}
                 aria-pressed={inUseOnly}
                 aria-label="Show only models with at least one bound agent"
-                title="Show only models that at least one active agent is using"
+                title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
               >
-                In use
+                Has agent
               </Button>
             </div>
           </div>
@@ -472,12 +490,13 @@ export function ProviderModelsPanel({
                       onSort={handleSort}
                     />
                     <SortableHead
-                      label="In use"
+                      label="Used by"
                       sortKey="inUse"
                       activeKey={sortKey}
                       dir={sortDir}
                       onSort={handleSort}
                       align="right"
+                      tooltip="Two distinct usage paths. (1) Agents — count of active agents that directly name this model in their Provider/Model fields. (2) Default — badges for any default-role slots (routing/chat/reasoning/embeddings) this model fills via the orchestration settings. Agents with no explicit binding fall back to the system defaults, so a model used as a default is implicitly in use even when no agent points at it directly."
                     />
                     <TableHead>Capabilities</TableHead>
                     <SortableHead
@@ -546,44 +565,89 @@ export function ProviderModelsPanel({
                           )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {(m.agents?.length ?? 0) === 0 ? (
-                            <span className="text-muted-foreground text-xs">0</span>
-                          ) : (
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <button
-                                  className="cursor-pointer text-xs tabular-nums hover:underline"
-                                  aria-label={`Show ${m.agents?.length} agent${m.agents?.length === 1 ? '' : 's'} using ${m.name}`}
-                                >
-                                  {m.agents?.length} →
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-64 p-0" align="end">
-                                <div className="border-b px-3 py-2">
-                                  <p className="text-sm font-medium">
-                                    {m.agents?.length} agent
-                                    {m.agents?.length === 1 ? '' : 's'} using{' '}
-                                    <span className="font-semibold">{m.name}</span>
-                                  </p>
-                                </div>
-                                <ul className="max-h-48 overflow-y-auto py-1">
-                                  {m.agents?.map((agent) => (
-                                    <li key={agent.id}>
-                                      <Link
-                                        href={`/admin/orchestration/agents/${agent.id}`}
-                                        className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                          {(() => {
+                            const agentCount = m.agents?.length ?? 0;
+                            const defaultRoles = m.defaultFor ?? [];
+                            // Empty state — render an explicit "Not in
+                            // use" so the operator gets a clear signal
+                            // rather than guessing what a bare "0"
+                            // means.
+                            if (agentCount === 0 && defaultRoles.length === 0) {
+                              return (
+                                <span className="text-muted-foreground text-xs italic">
+                                  Not in use
+                                </span>
+                              );
+                            }
+                            return (
+                              <div className="flex flex-col items-end gap-1">
+                                {agentCount > 0 ? (
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <button
+                                        className="cursor-pointer text-xs tabular-nums hover:underline"
+                                        aria-label={`Show ${agentCount} agent${agentCount === 1 ? '' : 's'} directly assigned to ${m.name}`}
                                       >
-                                        <span className="truncate">{agent.name}</span>
-                                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                          {agent.slug}
-                                        </span>
-                                      </Link>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </PopoverContent>
-                            </Popover>
-                          )}
+                                        {agentCount} agent{agentCount === 1 ? '' : 's'} →
+                                      </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-72 p-0" align="end">
+                                      <div className="border-b px-3 py-2">
+                                        <p className="text-sm font-medium">
+                                          {agentCount} agent
+                                          {agentCount === 1 ? '' : 's'} directly assigned to{' '}
+                                          <span className="font-semibold">{m.name}</span>
+                                        </p>
+                                        <p className="text-muted-foreground mt-0.5 text-xs">
+                                          These agents pinned this model in their Provider/Model
+                                          fields. Editing the agent re-points it.
+                                        </p>
+                                      </div>
+                                      <ul className="max-h-48 overflow-y-auto py-1">
+                                        {m.agents?.map((agent) => (
+                                          <li key={agent.id}>
+                                            <Link
+                                              href={`/admin/orchestration/agents/${agent.id}`}
+                                              className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                            >
+                                              <span className="truncate">{agent.name}</span>
+                                              <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                                {agent.slug}
+                                              </span>
+                                            </Link>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </PopoverContent>
+                                  </Popover>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">0 agents</span>
+                                )}
+                                {defaultRoles.length > 0 && (
+                                  <div className="flex flex-wrap justify-end gap-1">
+                                    {defaultRoles.map((task) => (
+                                      <Tip
+                                        key={task}
+                                        label={`System default for ${TASK_TYPE_LABEL[task]} tasks. Agents with no explicit Provider/Model inherit this. Edit in orchestration settings.`}
+                                      >
+                                        <Link
+                                          href="/admin/orchestration/settings"
+                                          aria-label={`Edit ${TASK_TYPE_LABEL[task]} default in orchestration settings`}
+                                        >
+                                          <Badge
+                                            variant="outline"
+                                            className="text-[10px] font-normal"
+                                          >
+                                            Default: {TASK_TYPE_LABEL[task]}
+                                          </Badge>
+                                        </Link>
+                                      </Tip>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">

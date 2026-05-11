@@ -299,7 +299,7 @@ describe('ProviderModelsMatrix', () => {
     expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
   });
 
-  it('"In use" toggle hides rows that have no bound agents', async () => {
+  it('"Has agent" toggle hides rows that have no bound agents', async () => {
     const user = userEvent.setup();
     const models = [
       makeModel({
@@ -315,10 +315,11 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    const inUseChip = screen.getByRole('button', {
+    const hasAgentChip = screen.getByRole('button', {
       name: /show only models with at least one bound agent/i,
     });
-    await user.click(inUseChip);
+    expect(hasAgentChip).toHaveTextContent(/has agent/i);
+    await user.click(hasAgentChip);
 
     expect(screen.getByText('Used Model')).toBeInTheDocument();
     expect(screen.queryByText('Unused Model')).not.toBeInTheDocument();
@@ -557,16 +558,30 @@ describe('ProviderModelsMatrix', () => {
     expect(dot?.getAttribute('title')).toMatch(/not configured/i);
   });
 
-  // ── In-use column ──────────────────────────────────────────────────────────
+  // ── Used-by column ─────────────────────────────────────────────────────────
 
-  describe('in-use column', () => {
-    it('shows 0 for rows with no bound agents', () => {
+  describe('used-by column', () => {
+    it('renames the column header from "In use" to "Used by"', () => {
       render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [] })]} />);
 
-      // Both the bare "0" cell and the "0 models" filter caption are
-      // possible matches — the cell sits inside the table body.
+      // The column was renamed so its meaning (agents + default-role
+      // slots) reads at a glance. Bare "In use" no longer appears in
+      // the header.
+      expect(screen.getByRole('columnheader', { name: /used by/i })).toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: /^in use$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows "Not in use" when a row has no agents and no default roles', () => {
+      render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [], defaultFor: [] })]} />);
+
+      // The explicit "Not in use" disambiguates the cell — a bare "0"
+      // used to leave readers wondering "0 of what?". The cell sits
+      // inside the table body, so scope the lookup there to avoid
+      // colliding with any other "Not in use" text.
       const tbodyCells = document.querySelectorAll('tbody td');
-      const inUseCell = Array.from(tbodyCells).find((td) => td.textContent?.trim() === '0');
+      const inUseCell = Array.from(tbodyCells).find(
+        (td) => td.textContent?.trim() === 'Not in use'
+      );
       expect(inUseCell).toBeDefined();
     });
 
@@ -586,7 +601,12 @@ describe('ProviderModelsMatrix', () => {
         />
       );
 
-      const trigger = screen.getByRole('button', { name: /show 2 agents using GPT-5/i });
+      // aria-label says "directly assigned to" so the trigger's
+      // meaning is unambiguous — it lists agents that explicitly
+      // pinned the model, not those inheriting via a default.
+      const trigger = screen.getByRole('button', {
+        name: /show 2 agents directly assigned to GPT-5/i,
+      });
       expect(trigger).toBeInTheDocument();
 
       await user.click(trigger);
@@ -600,6 +620,56 @@ describe('ProviderModelsMatrix', () => {
         'href',
         '/admin/orchestration/agents/agent-2'
       );
+    });
+
+    it('renders a default-role badge for each TaskType slot a model fills', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [],
+              defaultFor: ['chat', 'reasoning'],
+            }),
+          ]}
+        />
+      );
+
+      // Each TaskType slot produces a badge so the operator can spot
+      // every place the runtime falls back to this model without
+      // opening settings. Badges link to the orchestration settings
+      // page for one-click editing.
+      const dataRow = screen.getByRole('row', { name: /GPT-5/ });
+      expect(within(dataRow).getByText(/default: chat/i)).toBeInTheDocument();
+      expect(within(dataRow).getByText(/default: reasoning/i)).toBeInTheDocument();
+
+      const chatBadge = within(dataRow).getByText(/default: chat/i);
+      const settingsLink = chatBadge.closest('a');
+      expect(settingsLink).toHaveAttribute('href', '/admin/orchestration/settings');
+    });
+
+    it('shows the default-role badges even when there are no directly-assigned agents', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [],
+              defaultFor: ['embeddings'],
+            }),
+          ]}
+        />
+      );
+
+      // "Not in use" must NOT appear when a default-role slot is
+      // filled — the model is in use via inheritance even without a
+      // direct agent assignment.
+      const dataRow = screen.getByRole('row', { name: /GPT-5/ });
+      expect(within(dataRow).getByText(/default: embeddings/i)).toBeInTheDocument();
+      expect(within(dataRow).queryByText(/not in use/i)).not.toBeInTheDocument();
+      // The "0 agents" line is still shown so the operator can see
+      // there's no direct assignment alongside the default badge.
+      expect(within(dataRow).getByText(/0 agents/i)).toBeInTheDocument();
     });
   });
 

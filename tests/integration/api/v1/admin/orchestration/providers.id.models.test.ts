@@ -61,6 +61,17 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+// Default-models enrichment pulls from the settings singleton. Stub
+// it with an empty merged map by default so existing tests don't see
+// any default-role badges; the dedicated test below overrides this.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+    })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -68,6 +79,7 @@ import { prisma } from '@/lib/db/client';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -407,6 +419,43 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
           where: { provider: 'openai', isActive: true },
         })
       );
+    });
+
+    it('annotates each model with the default-role slots it currently fills', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      // chat + reasoning share gpt-4o, embeddings points at text-
+      // embedding-3-small. Routing has no override (empty string) so
+      // no row should be flagged as the routing default — the panel
+      // must not claim every row fills the empty slot.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: 'gpt-4o',
+          reasoning: 'gpt-4o',
+          embeddings: 'text-embedding-3-small',
+        },
+      } as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' }),
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'text-embedding-3-small', name: 'text-embedding-3-small' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; defaultFor: string[] }> };
+      }>(response);
+
+      const byId = new Map(data.data.models.map((m) => [m.id, m.defaultFor]));
+      expect(byId.get('gpt-4o')?.sort()).toEqual(['chat', 'reasoning']);
+      // No default points at gpt-4o-mini — empty array, not undefined.
+      expect(byId.get('gpt-4o-mini')).toEqual([]);
+      expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
     });
 
     it('matrix capabilities take precedence over inference', async () => {

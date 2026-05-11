@@ -62,11 +62,23 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
+// Default-models enrichment pulls from the settings singleton. Stub
+// it with an empty merged map by default so existing tests don't see
+// any default-role badges; the dedicated test below overrides this.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+    })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -219,6 +231,62 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       // Models with no bound agent get an empty array, not undefined,
       // so the matrix can render `0` without conditional checks.
       expect(byModelId.get('gpt-4o')).toEqual([]);
+    });
+
+    it('annotates each row with the default-role slots it currently fills', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o' }),
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }),
+        makeModel({ providerSlug: 'openai', modelId: 'text-embedding-3-small' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(3 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+      ] as never);
+      // chat + reasoning share a model (gpt-4o), routing points at
+      // gpt-4o-mini, embeddings at text-embedding-3-small. Empty-
+      // string slots — the registry's `embeddings` fallback when no
+      // override is saved — must be ignored so the matrix doesn't
+      // claim every row is the embeddings default.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: 'gpt-4o-mini',
+          chat: 'gpt-4o',
+          reasoning: 'gpt-4o',
+          embeddings: 'text-embedding-3-small',
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{
+        data: Array<{ modelId: string; defaultFor: string[] }>;
+      }>(response);
+
+      const byId = new Map(body.data.map((r) => [r.modelId, r.defaultFor]));
+      // gpt-4o fills two slots; order follows TASK_TYPES.
+      expect(byId.get('gpt-4o')?.sort()).toEqual(['chat', 'reasoning']);
+      expect(byId.get('gpt-4o-mini')).toEqual(['routing']);
+      expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
+    });
+
+    it('returns empty defaultFor when no default slot points at the row', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-3.5-turbo' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(1 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+      // All slots empty — matches the default-mock at the top of this
+      // suite, but stated explicitly here so the empty case is read-
+      // able alongside the populated case above.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{ data: Array<{ defaultFor: string[] }> }>(response);
+      expect(body.data[0].defaultFor).toEqual([]);
     });
 
     it('marks unconfigured providers correctly', async () => {

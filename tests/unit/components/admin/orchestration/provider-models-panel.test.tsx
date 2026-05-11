@@ -949,7 +949,22 @@ describe('ProviderModelsPanel', () => {
       ] satisfies ProviderModelInfo[],
     };
 
-    it('shows the agent count and renders 0 for unbound models', async () => {
+    it('renames the column header from "In use" to "Used by"', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      // The legacy "In use" header was ambiguous — it didn't say "in
+      // use by what", and it conflated direct agent assignment with
+      // default-settings inheritance. The new header makes the meaning
+      // explicit and the hover tooltip documents both paths.
+      const usedByHeader = await screen.findByRole('columnheader', { name: /used by/i });
+      expect(usedByHeader).toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: /^in use$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows the agent count and renders "Not in use" for unbound models with no default roles', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -959,14 +974,16 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      // Bound row shows the count as a popover trigger; unbound row shows a flat 0.
+      // Bound row shows the agent count as a popover trigger; the
+      // unbound row with no default role renders "Not in use" — a
+      // bare "0" used to require the operator to guess "0 of what?".
       expect(
-        screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i })
+        screen.getByRole('button', { name: /show 2 agents directly assigned to GPT-4o mini/i })
       ).toBeInTheDocument();
-      expect(screen.getByText('0')).toBeInTheDocument();
+      expect(screen.getByText(/^Not in use$/)).toBeInTheDocument();
     });
 
-    it('opens the popover and lists every bound agent with a link to its admin page', async () => {
+    it('opens the popover and lists every directly-assigned agent with a link to its admin page', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -977,7 +994,9 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i }));
+      await user.click(
+        screen.getByRole('button', { name: /show 2 agents directly assigned to GPT-4o mini/i })
+      );
 
       const triageLink = await screen.findByRole('link', { name: /Triage Bot/ });
       expect(triageLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-1');
@@ -985,9 +1004,12 @@ describe('ProviderModelsPanel', () => {
         'href',
         '/admin/orchestration/agents/agent-2'
       );
+      // Popover heading reinforces that the listed agents are
+      // directly assigned — distinct from defaults inheritance.
+      expect(screen.getByText(/directly assigned to/i)).toBeInTheDocument();
     });
 
-    it('"In use" toggle hides models that have no bound agents', async () => {
+    it('"Has agent" filter chip hides models that have no bound agents', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -1000,15 +1022,70 @@ describe('ProviderModelsPanel', () => {
       // Both rows visible by default.
       expect(screen.getByText('gpt-4o')).toBeInTheDocument();
 
-      await user.click(
-        screen.getByRole('button', { name: /show only models with at least one bound agent/i })
-      );
+      // Filter chip was renamed from the ambiguous "In use" to "Has
+      // agent" so the toggle's semantics match what it filters by —
+      // models with ≥1 direct agent assignment. The aria-label still
+      // documents the precise meaning for assistive tech.
+      const filterButton = screen.getByRole('button', {
+        name: /show only models with at least one bound agent/i,
+      });
+      expect(filterButton).toHaveTextContent(/has agent/i);
+      await user.click(filterButton);
 
       await waitFor(() => {
         expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
       });
       // Bound row stays visible.
       expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+
+    it('renders a default-role badge for every TaskType slot the model fills', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            provider: 'openai',
+            tier: 'frontier',
+            inputCostPerMillion: 5,
+            outputCostPerMillion: 15,
+            maxContext: 128000,
+            supportsTools: true,
+            inMatrix: true,
+            capabilities: ['chat'],
+            agents: [],
+            defaultFor: ['chat', 'reasoning'],
+          },
+        ] satisfies ProviderModelInfo[],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      // Each TaskType slot produces a badge so the operator can spot
+      // every place the runtime falls back to this model without
+      // opening settings. Badges link to the orchestration settings
+      // page for one-click editing.
+      const dataRow = screen.getByRole('row', { name: /gpt-4o/ });
+      expect(within(dataRow).getByText(/default: chat/i)).toBeInTheDocument();
+      expect(within(dataRow).getByText(/default: reasoning/i)).toBeInTheDocument();
+
+      const chatBadge = within(dataRow).getByText(/default: chat/i);
+      const settingsLink = chatBadge.closest('a');
+      expect(settingsLink).toHaveAttribute('href', '/admin/orchestration/settings');
+
+      // "Not in use" must NOT render — the model is in use via the
+      // default-settings inheritance path even with no direct agent.
+      expect(within(dataRow).queryByText(/not in use/i)).not.toBeInTheDocument();
+      // "0 agents" still shows so the operator can see there's no
+      // direct assignment alongside the default badges.
+      expect(within(dataRow).getByText(/0 agents/i)).toBeInTheDocument();
     });
   });
 

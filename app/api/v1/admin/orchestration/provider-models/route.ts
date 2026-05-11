@@ -20,6 +20,8 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import {
   listProviderModelsQuerySchema,
   createProviderModelSchema,
@@ -54,7 +56,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     ];
   }
 
-  const [rows, total, providerConfigs] = await Promise.all([
+  const [rows, total, providerConfigs, settings] = await Promise.all([
     prisma.aiProviderModel.findMany({
       where,
       orderBy: [{ providerSlug: 'asc' }, { name: 'asc' }],
@@ -66,6 +68,12 @@ export const GET = withAdminAuth(async (request, _session) => {
     prisma.aiProviderConfig.findMany({
       select: { slug: true, isActive: true },
     }),
+    // Resolve the effective default-models map so each row can advertise
+    // any TaskType slot it currently fills (routing/chat/reasoning/
+    // embeddings). Agents with empty provider/model fall back to these
+    // defaults at runtime, so a model serving a default is implicitly
+    // in use even when no agent directly names it.
+    getOrchestrationSettings(),
   ]);
 
   // Bound active agents per (provider, modelId) pair. Scope the query
@@ -97,6 +105,21 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
+  // Reverse index modelId → task slots it fills as the effective
+  // default. A single model can fill multiple slots (e.g. the same
+  // Sonnet model used for both `chat` and `reasoning`). Empty strings —
+  // the registry's `embeddings` fallback when no operator override
+  // exists — are dropped so the matrix doesn't claim every row is the
+  // embeddings default.
+  const defaultRolesByModelId = new Map<string, TaskType[]>();
+  for (const task of TASK_TYPES) {
+    const modelId = settings.defaultModels[task];
+    if (!modelId) continue;
+    const list = defaultRolesByModelId.get(modelId) ?? [];
+    list.push(task);
+    defaultRolesByModelId.set(modelId, list);
+  }
+
   const data = rows.map((model) => {
     const config = configBySlug.get(model.providerSlug);
     return {
@@ -104,6 +127,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       configured: !!config,
       configuredActive: config?.isActive ?? false,
       agents: agentsByKey.get(`${model.providerSlug}::${model.modelId}`) ?? [],
+      // Task slots this model serves as the effective system default
+      // (routing/chat/reasoning/embeddings). Agents with empty
+      // provider/model inherit these at runtime.
+      defaultFor: defaultRolesByModelId.get(model.modelId) ?? [],
     };
   });
 
@@ -113,6 +140,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     page,
     limit,
     modelsInUse: data.filter((m) => m.agents.length > 0).length,
+    modelsServingDefaults: data.filter((m) => m.defaultFor.length > 0).length,
   });
 
   return paginatedResponse(data, { page, limit, total });

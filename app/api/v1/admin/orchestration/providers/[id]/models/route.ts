@@ -23,6 +23,8 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -63,7 +65,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     }
 
     const provider = await getProvider(row.slug);
-    const [liveModels, matrixRows, agentRows] = await Promise.all([
+    const [liveModels, matrixRows, agentRows, settings] = await Promise.all([
       provider.listModels(),
       // LEFT JOIN — annotate live SDK output with our curated matrix.
       // Matrix rows are the source of truth for capabilities + tier
@@ -86,6 +88,13 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         select: { id: true, name: true, slug: true, model: true },
         orderBy: { name: 'asc' },
       }),
+      // Resolve effective default-models map so each row can advertise
+      // any TaskType slot it currently fills (routing/chat/reasoning/
+      // embeddings). Agents with empty provider/model fall back to
+      // these defaults — surface them in the panel so an operator can
+      // see at a glance which models the runtime relies on, separately
+      // from the agents that name the model directly.
+      getOrchestrationSettings(),
     ]);
 
     const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
@@ -95,6 +104,19 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       const list = agentsByModelId.get(a.model) ?? [];
       list.push({ id: a.id, name: a.name, slug: a.slug });
       agentsByModelId.set(a.model, list);
+    }
+
+    // Reverse index modelId → task slots it fills. Empty strings — the
+    // registry's `embeddings` fallback when no operator override is
+    // saved — are dropped so the panel doesn't claim every row is the
+    // embeddings default.
+    const defaultRolesByModelId = new Map<string, TaskType[]>();
+    for (const task of TASK_TYPES) {
+      const modelId = settings.defaultModels[task];
+      if (!modelId) continue;
+      const list = defaultRolesByModelId.get(modelId) ?? [];
+      list.push(task);
+      defaultRolesByModelId.set(modelId, list);
     }
 
     const enriched = liveModels.map((m) => {
@@ -110,6 +132,10 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         capabilities,
         tierRole: matrix?.tierRole ?? null,
         agents: agentsByModelId.get(m.id) ?? [],
+        // Task slots this model serves as the effective system
+        // default. Distinct from `agents` — the former tracks direct
+        // assignment, this tracks inheritance via the system defaults.
+        defaultFor: defaultRolesByModelId.get(m.id) ?? [],
       };
     });
 
@@ -119,6 +145,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       modelCount: enriched.length,
       matrixMatched: enriched.filter((m) => m.inMatrix).length,
       modelsInUse: enriched.filter((m) => m.agents.length > 0).length,
+      modelsServingDefaults: enriched.filter((m) => m.defaultFor.length > 0).length,
     });
     return successResponse({ providerId: id, slug: row.slug, models: enriched });
   } catch (err) {
