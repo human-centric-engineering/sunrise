@@ -41,6 +41,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
+import { formatAudioDefault } from '@/lib/orchestration/llm/audio-default';
 
 export interface ProviderSummary {
   slug: string;
@@ -281,12 +282,20 @@ export function DefaultModelsForm({
   // Audio is matrix-driven: rows come from /provider-models?capability=audio.
   // Scope to configured-active providers — listing OpenAI's whisper-1
   // when OpenAI isn't wired up would be misleading.
+  //
+  // The option `id` is the composite `${providerSlug}::${modelId}`
+  // (see `lib/orchestration/llm/audio-default.ts`) because the schema
+  // allows two providers to register the same modelId (e.g. OpenAI
+  // and Groq both have a `whisper-1`). Without the provider in the
+  // stored value, the PATCH validator and runtime resolver would pick
+  // whichever row Prisma returned first, ignoring the operator's
+  // choice. The label still shows the provider for the human reader.
   const audioOptions = React.useMemo(
     () =>
       audioModels
         .filter((m) => configuredProviderSlugs.has(m.providerSlug))
         .map((m) => ({
-          id: m.model,
+          id: formatAudioDefault(m.providerSlug, m.model),
           label: `${m.name} (${m.providerSlug})`,
         })),
     [audioModels, configuredProviderSlugs]

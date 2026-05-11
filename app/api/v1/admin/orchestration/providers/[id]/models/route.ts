@@ -24,6 +24,7 @@ import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -106,25 +107,37 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       agentsByModelId.set(a.model, list);
     }
 
-    // Reverse index modelId → task slots it fills. Empty strings — the
-    // registry's `embeddings` fallback when no operator override is
-    // saved — are dropped so the panel doesn't claim every row is the
-    // embeddings default.
-    const defaultRolesByModelId = new Map<string, TaskType[]>();
-    for (const task of TASK_TYPES) {
-      const modelId = settings.defaultModels[task];
-      if (!modelId) continue;
-      const list = defaultRolesByModelId.get(modelId) ?? [];
-      list.push(task);
-      defaultRolesByModelId.set(modelId, list);
-    }
-
+    // Per-task matching rule. The `audio` slot stores a
+    // `${providerSlug}::${modelId}` composite (see
+    // `lib/orchestration/llm/audio-default.ts`) because the schema
+    // allows two providers to share a modelId. This route is already
+    // scoped to one provider (`row.slug`), so we evaluate
+    // `parsed.providerSlug === row.slug` per audio row — a
+    // composite that names a different provider must not light up
+    // here, which is the bug the matrix-wide route was tripping on.
     const enriched = liveModels.map((m) => {
       const matrix = matrixByModelId.get(m.id);
       // Matrix capabilities take precedence; fall back to inference
       // so unmatched models still get a meaningful badge + a routed
       // Test button rather than a generic chat call that 404s.
       const capabilities = matrix?.capabilities ?? [inferCapability(row.slug, m.id)];
+      const defaultFor: TaskType[] = [];
+      for (const task of TASK_TYPES) {
+        const stored = settings.defaultModels[task];
+        if (!stored) continue;
+        if (task === 'audio') {
+          const parsed = parseAudioDefault(stored);
+          if (!parsed) continue;
+          if (
+            parsed.modelId === m.id &&
+            (parsed.providerSlug === null || parsed.providerSlug === row.slug)
+          ) {
+            defaultFor.push(task);
+          }
+        } else if (stored === m.id) {
+          defaultFor.push(task);
+        }
+      }
       return {
         ...m,
         inMatrix: Boolean(matrix),
@@ -135,7 +148,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         // Task slots this model serves as the effective system
         // default. Distinct from `agents` — the former tracks direct
         // assignment, this tracks inheritance via the system defaults.
-        defaultFor: defaultRolesByModelId.get(m.id) ?? [],
+        defaultFor,
       };
     });
 

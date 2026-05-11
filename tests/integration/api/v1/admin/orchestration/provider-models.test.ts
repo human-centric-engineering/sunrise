@@ -308,6 +308,76 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       expect(body.data[0].defaultFor).toEqual([]);
     });
 
+    it('audio defaultFor matches by composite (providerSlug, modelId) — only the right provider lights up', async () => {
+      // Regression: pre-fix, the `defaultFor` reverse-index keyed by
+      // bare `modelId`, so an `audio: 'whisper-1'` default would
+      // light up the badge on BOTH OpenAI's and Groq's `whisper-1`
+      // rows. The composite encoding scopes by provider — only the
+      // row that actually serves the runtime default gets the badge.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'whisper-1', slug: 'openai-whisper-1' }),
+        makeModel({ providerSlug: 'groq', modelId: 'whisper-1', slug: 'groq-whisper-1' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(2 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+        { slug: 'groq', isActive: true },
+      ] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          // Operator picked "Whisper (groq)" in the form.
+          audio: 'groq::whisper-1',
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{
+        data: Array<{ providerSlug: string; modelId: string; defaultFor: string[] }>;
+      }>(response);
+
+      const openai = body.data.find((r) => r.providerSlug === 'openai');
+      const groq = body.data.find((r) => r.providerSlug === 'groq');
+      expect(groq?.defaultFor).toEqual(['audio']);
+      // Critical: OpenAI's identically-named row must NOT light up
+      // even though its modelId matches the bare portion of the
+      // composite.
+      expect(openai?.defaultFor).toEqual([]);
+    });
+
+    it('audio defaultFor falls back to modelId-only match for legacy bare-modelId values', async () => {
+      // Settings rows written before the composite encoding landed
+      // are bare model ids. The matcher's legacy fallback (parser
+      // returns providerSlug=null) keeps those rendering their
+      // badge — with the historical ambiguity when two providers
+      // share an id — until the operator re-saves.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'whisper-1', slug: 'openai-whisper-1' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(1 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+      ] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-1', // legacy bare modelId
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{ data: Array<{ defaultFor: string[] }> }>(response);
+      expect(body.data[0].defaultFor).toEqual(['audio']);
+    });
+
     it('marks unconfigured providers correctly', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeModel()] as never);

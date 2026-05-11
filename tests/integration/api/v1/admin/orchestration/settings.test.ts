@@ -881,6 +881,74 @@ describe('Admin Orchestration — /settings', () => {
       expect(res.status).toBe(400);
       expect(body.error.details?.task).toBe('audio');
     });
+
+    it('scopes the audio matrix lookup by providerSlug when the value is a composite', async () => {
+      // The composite `${providerSlug}::${modelId}` encoding (see
+      // `lib/orchestration/llm/audio-default.ts`) is the contract
+      // that lets two providers register the same modelId
+      // (OpenAI `whisper-1` + Groq `whisper-1`). The PATCH validator
+      // must scope `findFirst` by BOTH fields — otherwise the
+      // validator would silently accept a composite whose
+      // (provider, model) pair has no matching matrix row.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'claude-haiku-4-5',
+            audio: 'groq::whisper-1',
+          },
+        }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({
+        id: 'cm_audio_groq',
+      } as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'groq::whisper-1' } }));
+
+      expect(res.status).toBe(200);
+      // Both modelId AND providerSlug must appear in the where
+      // clause — without the providerSlug scope, the OpenAI row
+      // would satisfy the query and the operator's "Whisper (groq)"
+      // pick would silently route to OpenAI at runtime.
+      expect(vi.mocked(prisma.aiProviderModel.findFirst)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            providerSlug: 'groq',
+            modelId: 'whisper-1',
+            isActive: true,
+            capabilities: { has: 'audio' },
+          }),
+        })
+      );
+    });
+
+    it('rejects a composite whose (provider, model) pair has no matching row', async () => {
+      // Operator picked the right shape but the row was deactivated
+      // since they last saved (or the provider slug is wrong). The
+      // (provider, model)-scoped lookup returns null and the
+      // validator surfaces a 400 — the runtime resolver's pinned-
+      // then-fallback design would otherwise silently route to a
+      // different row.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'groq::whisper-1' } }));
+      const body = await parseJson<{
+        error: { code: string; details?: { task?: string; value?: string } };
+      }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details?.task).toBe('audio');
+      expect(body.error.details?.value).toBe('groq::whisper-1');
+    });
   });
 
   describe('PATCH — embedAllowedOrigins (write-side normalisation)', () => {

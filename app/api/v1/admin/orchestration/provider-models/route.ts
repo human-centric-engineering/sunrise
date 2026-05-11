@@ -20,6 +20,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import {
@@ -105,32 +106,47 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
-  // Reverse index modelId → task slots it fills as the effective
-  // default. A single model can fill multiple slots (e.g. the same
-  // Sonnet model used for both `chat` and `reasoning`). Empty strings —
-  // the registry's `embeddings` fallback when no operator override
-  // exists — are dropped so the matrix doesn't claim every row is the
-  // embeddings default.
-  const defaultRolesByModelId = new Map<string, TaskType[]>();
-  for (const task of TASK_TYPES) {
-    const modelId = settings.defaultModels[task];
-    if (!modelId) continue;
-    const list = defaultRolesByModelId.get(modelId) ?? [];
-    list.push(task);
-    defaultRolesByModelId.set(modelId, list);
-  }
-
+  // Per-task matching rule. The `audio` slot stores a
+  // `${providerSlug}::${modelId}` composite (see
+  // `lib/orchestration/llm/audio-default.ts`) because the schema
+  // allows two providers to share a modelId. Every other slot stores
+  // a bare modelId resolved through the registry where ids are
+  // globally unique. Evaluating per-row is O(rows × TASK_TYPES) ≈
+  // O(rows × 5) — trivially fast and keeps the matching rule
+  // co-located instead of split across population + lookup.
   const data = rows.map((model) => {
     const config = configBySlug.get(model.providerSlug);
+    const defaultFor: TaskType[] = [];
+    for (const task of TASK_TYPES) {
+      const stored = settings.defaultModels[task];
+      if (!stored) continue;
+      if (task === 'audio') {
+        const parsed = parseAudioDefault(stored);
+        if (!parsed) continue;
+        // Provider-scoped match — if the stored value carries a
+        // provider, both must agree before the badge lights up.
+        // Legacy bare-modelId values fall back to the modelId-only
+        // match (the original ambiguous behaviour) until the operator
+        // re-saves.
+        if (
+          parsed.modelId === model.modelId &&
+          (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
+        ) {
+          defaultFor.push(task);
+        }
+      } else if (stored === model.modelId) {
+        defaultFor.push(task);
+      }
+    }
     return {
       ...model,
       configured: !!config,
       configuredActive: config?.isActive ?? false,
       agents: agentsByKey.get(`${model.providerSlug}::${model.modelId}`) ?? [],
       // Task slots this model serves as the effective system default
-      // (routing/chat/reasoning/embeddings). Agents with empty
+      // (routing/chat/reasoning/embeddings/audio). Agents with empty
       // provider/model inherit these at runtime.
-      defaultFor: defaultRolesByModelId.get(model.modelId) ?? [],
+      defaultFor,
     };
   });
 

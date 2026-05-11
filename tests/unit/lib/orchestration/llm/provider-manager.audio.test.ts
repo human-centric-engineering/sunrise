@@ -326,5 +326,76 @@ describe('getAudioProvider', () => {
 
       expect(result?.modelId).toBe('whisper-1');
     });
+
+    it('honours the providerSlug component of a composite default when two providers share a modelId', async () => {
+      // The bug this fixes: the schema's @@unique([providerSlug, modelId])
+      // allows OpenAI and Groq to both register a `whisper-1` row.
+      // Pre-fix, `defaultModels.audio` stored only the bare modelId,
+      // so `getAudioProvider` returned whichever row Prisma yielded
+      // first (`isDefault DESC, createdAt ASC`) — silently ignoring
+      // the operator's provider choice. The composite encoding
+      // (`${providerSlug}::${modelId}`) lets the resolver scope by
+      // BOTH fields.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        // OpenAI's whisper-1 sorts first (isDefault:true) — the bug
+        // would silently pick this one regardless of the operator's
+        // intent.
+        makeAudioModelRow({
+          providerSlug: 'openai',
+          modelId: 'whisper-1',
+          isDefault: true,
+        }),
+        makeAudioModelRow({
+          providerSlug: 'groq',
+          modelId: 'whisper-1',
+        }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          // Operator picked "Whisper (groq)" in the form — the
+          // composite carries the provider scope through to the
+          // resolver.
+          audio: 'groq::whisper-1',
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.providerSlug).toBe('groq');
+      expect(result?.modelId).toBe('whisper-1');
+    });
+
+    it('legacy bare-modelId pins still resolve via the modelId-only match', async () => {
+      // Backwards compat: rows written before the composite encoding
+      // landed will be bare model ids. Parser returns
+      // providerSlug=null and the resolver falls back to the
+      // modelId-only match (with the historical ambiguity when two
+      // providers share an id). The next operator save rewrites with
+      // the composite — the legacy path is short-lived but must not
+      // break voice input on the upgrade boundary.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeAudioModelRow({ providerSlug: 'openai', modelId: 'whisper-1' }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-1', // legacy bare modelId, no `::`
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.providerSlug).toBe('openai');
+      expect(result?.modelId).toBe('whisper-1');
+    });
   });
 });

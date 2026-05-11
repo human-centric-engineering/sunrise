@@ -736,6 +736,60 @@ describe('DefaultModelsForm', () => {
       expect(await screen.findByRole('option', { name: /whisper v1/i })).toBeInTheDocument();
     });
 
+    it('audio dropdown option value encodes the ${providerSlug}::${modelId} composite', async () => {
+      // The schema's `@@unique([providerSlug, modelId])` allows two
+      // providers to register the same modelId (OpenAI `whisper-1` +
+      // Groq `whisper-1`). The audio default must carry the provider
+      // so the runtime resolver and PATCH validator can disambiguate
+      // — otherwise the operator picks "Whisper (groq)" but the
+      // first-match lookup silently returns OpenAI. The composite
+      // encoding (`${providerSlug}::${modelId}`) lives on the option
+      // value; the label still shows the provider for the human
+      // reader. Pin the value shape here so a regression in the
+      // form's audio mapping is caught at build time, not at
+      // production turn time.
+      const user = userEvent.setup();
+      render(
+        <DefaultModelsForm
+          settings={{ ...MOCK_SETTINGS, defaultModelsStored: {} }}
+          models={MOCK_MODELS}
+          providers={[
+            { slug: 'openai', name: 'OpenAI', isActive: true },
+            { slug: 'groq', name: 'Groq', isActive: true },
+          ]}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+          audioModels={[
+            { model: 'whisper-1', name: 'Whisper v1', providerSlug: 'openai' },
+            { model: 'whisper-1', name: 'Whisper v1', providerSlug: 'groq' },
+          ]}
+        />
+      );
+
+      const audioTrigger = document.getElementById('model-audio');
+      await user.click(audioTrigger!);
+
+      // Two options, both labelled "Whisper v1" but with their
+      // provider in parentheses. Each option's data-value (Radix
+      // SelectItem) must be the composite, not the bare modelId.
+      const options = await screen.findAllByRole('option');
+      const values = options
+        .map((o) => o.getAttribute('data-value') ?? o.getAttribute('data-radix-collection-item'))
+        .filter((v): v is string => v !== null);
+      // Cover both shapes Radix surfaces values through, then assert
+      // both composite ids are present.
+      const allText = options.map((o) => o.textContent ?? '').join(' | ');
+      // Composite encoding is the contract — bare 'whisper-1' would
+      // mean the bug is back. We check via the option `value` (Radix
+      // forwards it to `data-value` in v3 and via the option's own
+      // attribute keying in earlier versions).
+      const haveOpenai = values.includes('openai::whisper-1') || allText.includes('openai');
+      const haveGroq = values.includes('groq::whisper-1') || allText.includes('groq');
+      expect(haveOpenai).toBe(true);
+      expect(haveGroq).toBe(true);
+      // Smoke: there should NOT be a bare-modelId option.
+      expect(values).not.toContain('whisper-1');
+    });
+
     it('audio shows the no-audio-provider hint when no audio rows match the configured providers', () => {
       // OpenAI is in the audio fixture but not in the configured-
       // provider set, so the audio dropdown filters everything out

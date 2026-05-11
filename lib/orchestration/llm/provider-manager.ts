@@ -34,6 +34,7 @@ import {
 import type { ProviderConfig } from '@/lib/orchestration/llm/types';
 import { VoyageProvider } from '@/lib/orchestration/llm/voyage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -338,30 +339,47 @@ export async function getAudioProvider(): Promise<AudioProviderResolution | null
   if (rows.length === 0) return null;
 
   // Operator-saved audio default takes priority. The settings PATCH
-  // handler validates that the modelId exists in the matrix with
-  // capability:'audio', but be defensive — a row could have been
-  // deleted or deactivated since the setting was saved.
+  // handler validates that the (providerSlug, modelId) pair exists
+  // in the matrix with capability:'audio', but be defensive — a row
+  // could have been deleted or deactivated since the setting was
+  // saved.
+  //
+  // Stored values are `${providerSlug}::${modelId}` composites — see
+  // `lib/orchestration/llm/audio-default.ts` for why we need the
+  // provider scope (multiple providers can register the same model
+  // id, e.g. OpenAI + Groq both have a `whisper-1`). Legacy bare-
+  // modelId values still parse (providerSlug=null) and fall back to
+  // the modelId-only match, with the historical "first row wins"
+  // ambiguity — those values get rewritten on the next operator save.
   const operatorDefault = settings.defaultModels.audio;
-  if (operatorDefault) {
-    const pinned = rows.find((r) => r.modelId === operatorDefault);
-    if (pinned) {
-      const resolved = await tryAudioRow(pinned, 'operator_default');
+  const parsedDefault = parseAudioDefault(operatorDefault);
+  const pinnedRow = parsedDefault
+    ? rows.find(
+        (r) =>
+          r.modelId === parsedDefault.modelId &&
+          (parsedDefault.providerSlug === null || r.providerSlug === parsedDefault.providerSlug)
+      )
+    : null;
+  if (parsedDefault) {
+    if (pinnedRow) {
+      const resolved = await tryAudioRow(pinnedRow, 'operator_default');
       if (resolved) return resolved;
       // Pinned row exists but its provider is currently unreachable
       // (breaker open, no transcribe(), getProvider threw). Fall
       // through to the matrix-ordered loop so voice input still
       // works on a hot fallback path.
     } else {
-      logger.warn(
-        'Operator audio default points at a modelId not present in the active audio rows; falling through',
-        { operatorDefault }
-      );
+      logger.warn('Operator audio default does not match any active audio row; falling through', {
+        operatorDefault,
+        providerSlug: parsedDefault.providerSlug,
+        modelId: parsedDefault.modelId,
+      });
     }
   }
 
   for (const row of rows) {
     // Skip the pinned row in the fallback loop — already tried above.
-    if (operatorDefault && row.modelId === operatorDefault) continue;
+    if (pinnedRow && row === pinnedRow) continue;
     const resolved = await tryAudioRow(row, 'matrix_fallback');
     if (resolved) return resolved;
   }
