@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { FileText, Hash, Maximize2, Minimize2, Network, Search, X, Puzzle } from 'lucide-react';
 
@@ -82,6 +82,39 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
   const [view, setView] = useState<'structure' | 'embedded' | 'embedding-space'>('structure');
 
   const [graphError, setGraphError] = useState<string | null>(null);
+
+  // ECharts force layout uses pixel coordinates with origin at the
+  // top-left of the chart series rect (confirmed against ECharts' own
+  // force-graph examples — node x/y are pixel values like 300, 280).
+  // To anchor the KB hub at the visual centre we must know the chart's
+  // actual pixel dimensions; we observe the chart container with a
+  // ResizeObserver and feed the measured size into the chartOption.
+  // The fallback (800×500) avoids a first-render flash at (0, 0)
+  // before the observer fires.
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartSize, setChartSize] = useState<{ width: number; height: number }>({
+    width: 800,
+    height: 500,
+  });
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      // Only update if the change is meaningful — a 1-px jitter from a
+      // scrollbar appearing shouldn't trigger a force-layout restart.
+      setChartSize((prev) =>
+        Math.abs(prev.width - width) > 4 || Math.abs(prev.height - height) > 4
+          ? { width, height }
+          : prev
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const fetchGraph = useCallback(async () => {
     // The embedding-space view fetches its own data via
@@ -277,22 +310,40 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       return searchable.some((v) => typeof v === 'string' && v.toLowerCase().includes(lowerFilter));
     };
 
-    // Anchor the KB node at the data-space origin and seed each
-    // document around it on a circle. Without seeding, ECharts' default
-    // force-layout places every node at random positive coordinates;
-    // the view box then auto-fits to that positive quadrant and the
-    // fixed-at-origin KB ends up at the top-left corner. Distributing
-    // documents symmetrically around (0, 0) makes the data extent
-    // centred on the KB, so the auto-fitted view box centres on it
-    // too. Chunks aren't seeded — repulsion from their parent document
-    // pushes them further out naturally.
+    // Anchor the KB hub at the chart's pixel centre and seed each
+    // document on a ring around it.
+    //
+    // ECharts graph force layout operates in pixel coordinates with
+    // the origin at the chart series rect's top-left — there is no
+    // data-space auto-centre (verified against ECharts' own
+    // force-graph examples, where nodes carry pixel x/y like 300/280).
+    // A previous attempt pinned the KB at (0, 0) hoping the view box
+    // would auto-fit and centre on data; it doesn't, so the KB ended
+    // up parked at the top-left of the canvas.
+    //
+    // Fix: read the actual chart pixel dimensions via a ResizeObserver
+    // on the surrounding container, then pin the KB at (width/2,
+    // height/2) and seed documents on a ring whose radius is sized to
+    // the smaller axis so the ring fits comfortably regardless of
+    // aspect ratio. Chunks remain unseeded — ECharts randomises them
+    // and force repulsion from their parent document distributes them
+    // outward naturally.
+    const centreX = chartSize.width / 2;
+    const centreY = chartSize.height / 2;
+    const docRingRadius = Math.max(60, Math.min(chartSize.width, chartSize.height) * 0.3);
+
     const documentNodes = graphData.nodes.filter((n) => n.type === 'document');
     const docCount = Math.max(documentNodes.length, 1);
-    const docRingRadius = 100; // arbitrary units; ECharts auto-scales the view
     const docInitialPositions = new Map<string, { x: number; y: number }>(
       documentNodes.map((d, i) => {
         const angle = (i / docCount) * 2 * Math.PI - Math.PI / 2; // start at top
-        return [d.id, { x: docRingRadius * Math.cos(angle), y: docRingRadius * Math.sin(angle) }];
+        return [
+          d.id,
+          {
+            x: centreX + docRingRadius * Math.cos(angle),
+            y: centreY + docRingRadius * Math.sin(angle),
+          },
+        ];
       })
     );
 
@@ -300,7 +351,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       const matches = nodeMatches(node);
       const isKb = node.type === 'kb';
       const seedPos = isKb
-        ? { x: 0, y: 0, fixed: true as const }
+        ? { x: centreX, y: centreY, fixed: true as const }
         : (docInitialPositions.get(node.id) ?? {});
       return {
         id: node.id,
@@ -513,7 +564,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         },
       ],
     };
-  }, [graphData, filterText]);
+  }, [graphData, filterText, chartSize]);
 
   const handleChartClick = useCallback((params: { data?: { value?: GraphNode } }) => {
     const node = params.data?.value;
@@ -642,8 +693,9 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         </div>
       )}
 
-      {/* Chart */}
-      <div className={fullscreen ? 'flex-1' : 'h-[500px]'}>
+      {/* Chart — ref drives the ResizeObserver feeding chartSize, which
+          in turn positions the KB hub at the chart's pixel centre. */}
+      <div ref={chartContainerRef} className={fullscreen ? 'flex-1' : 'h-[500px]'}>
         <ReactECharts
           option={chartOption}
           style={{ height: '100%', width: '100%' }}
