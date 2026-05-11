@@ -35,6 +35,17 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// Force the semantic chunker to throw so chunkMarkdownDocument falls
+// back to the structural splitter. Most of these tests predate
+// semantic chunking and assert on the structural behaviour — letting
+// the real embedder run would either fail (no provider configured in
+// the unit-test environment) or produce non-deterministic boundaries
+// driven by sentence-similarity. The semantic chunker has its own
+// dedicated test file that verifies the embedding-driven behaviour.
+vi.mock('@/lib/orchestration/knowledge/semantic-chunker', () => ({
+  chunkBySemanticBreakpoints: vi.fn().mockRejectedValue(new Error('mocked — falls through')),
+}));
+
 beforeEach(() => {
   vi.resetAllMocks();
 });
@@ -58,7 +69,7 @@ function makeWords(tokens: number): string {
 describe('chunkMarkdownDocument', () => {
   // ── Happy-path: standard pattern document ───────────────────────────────
 
-  it('should parse pattern number and name from ## N. Pattern Name header', () => {
+  it('should parse pattern number and name from ## N. Pattern Name header', async () => {
     const content = `
 ## 1. Foo Pattern
 
@@ -71,7 +82,7 @@ The problem description goes here with enough words to meet the minimum token th
 The solution description goes here with enough words to meet the minimum token threshold.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'my-doc');
+    const chunks = await chunkMarkdownDocument(content, 'my-doc');
 
     const sectionChunks = chunks.filter((c) => c.chunkType === 'pattern_section');
     expect(sectionChunks.length).toBeGreaterThan(0);
@@ -82,7 +93,7 @@ The solution description goes here with enough words to meet the minimum token t
     }
   });
 
-  it('should prefix chunk id with document slug for pattern chunks', () => {
+  it('should prefix chunk id with document slug for pattern chunks', async () => {
     const content = `
 ## 1. Foo Pattern
 
@@ -91,14 +102,14 @@ The solution description goes here with enough words to meet the minimum token t
 The problem description goes here with enough words to meet the minimum token threshold.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'my-doc');
+    const chunks = await chunkMarkdownDocument(content, 'my-doc');
 
     for (const chunk of chunks) {
       expect(chunk.id).toMatch(/^my-doc-/);
     }
   });
 
-  it('should set chunkType to pattern_section for named subsections', () => {
+  it('should set chunkType to pattern_section for named subsections', async () => {
     const content = `
 ## 1. Retry Pattern
 
@@ -107,14 +118,14 @@ The problem description goes here with enough words to meet the minimum token th
 Use this pattern when you need resilience with enough text to pass the minimum token count.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     expect(chunks.some((c) => c.chunkType === 'pattern_section')).toBe(true);
   });
 
   // ── Mermaid stripping ────────────────────────────────────────────────────
 
-  it('should strip mermaid code blocks before chunking', () => {
+  it('should strip mermaid code blocks before chunking', async () => {
     const content = `
 ## Introduction
 
@@ -129,7 +140,7 @@ graph TD
 More text after the diagram that also helps meet the minimum chunk size.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       expect(chunk.content).not.toContain('mermaid');
@@ -138,7 +149,7 @@ More text after the diagram that also helps meet the minimum chunk size.
     }
   });
 
-  it('should strip multiple mermaid blocks when present', () => {
+  it('should strip multiple mermaid blocks when present', async () => {
     const content = `
 ## Overview
 
@@ -159,7 +170,7 @@ flowchart LR
 Final text to close out the section with enough content.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       expect(chunk.content).not.toContain('sequenceDiagram');
@@ -169,7 +180,7 @@ Final text to close out the section with enough content.
 
   // ── Metadata comment propagation ─────────────────────────────────────────
 
-  it('should parse document-level metadata comments and set category on chunks', () => {
+  it('should parse document-level metadata comments and set category on chunks', async () => {
     const content = `
 <!-- metadata: category=core, keywords=retry-backoff -->
 
@@ -180,7 +191,7 @@ Final text to close out the section with enough content.
 Enough text here to satisfy the minimum token requirement for this pattern section chunk.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
@@ -189,7 +200,7 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
     }
   });
 
-  it('should preserve comma-containing values when the value is double-quoted', () => {
+  it('should preserve comma-containing values when the value is double-quoted', async () => {
     const content = `
 <!-- metadata: category=core, keywords="retry,backoff,circuit-breaker" -->
 
@@ -200,7 +211,7 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 Enough text here to satisfy the minimum token requirement for this pattern section chunk.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
@@ -211,7 +222,7 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
     }
   });
 
-  it('should preserve equals signs inside metadata values (first = is the separator)', () => {
+  it('should preserve equals signs inside metadata values (first = is the separator)', async () => {
     const content = `
 <!-- metadata: keywords=a=1 -->
 
@@ -222,14 +233,14 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 Enough text here to satisfy the minimum token requirement for this pattern section chunk.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
       expect(chunk.keywords).toBe('a=1');
     }
   });
 
-  it('should strip metadata comments from chunk content', () => {
+  it('should strip metadata comments from chunk content', async () => {
     const content = `
 <!-- metadata: category=core -->
 
@@ -240,7 +251,7 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 This section describes the pattern in enough detail to pass the minimum token threshold.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       expect(chunk.content).not.toContain('<!-- metadata:');
@@ -248,7 +259,7 @@ This section describes the pattern in enough detail to pass the minimum token th
     }
   });
 
-  it('should allow section-level metadata to override document-level metadata', () => {
+  it('should allow section-level metadata to override document-level metadata', async () => {
     const content = `
 <!-- metadata: category=global -->
 
@@ -261,7 +272,7 @@ This section describes the pattern in enough detail to pass the minimum token th
 Enough text here to satisfy the minimum token requirement for proper chunk sizing.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // Section-level metadata should override the document-level category
     const hasResilienceCategory = chunks.some((c) => c.category === 'resilience');
@@ -271,7 +282,7 @@ Enough text here to satisfy the minimum token requirement for proper chunk sizin
 
   // ── Normalize: merge tiny sections ───────────────────────────────────────
 
-  it('should merge several tiny sub-50-token sections into one chunk', () => {
+  it('should merge several tiny sub-50-token sections into one chunk', async () => {
     // Each of these subsections is well under 50 tokens; they should be merged
     const content = `
 ## Introduction
@@ -291,7 +302,7 @@ Tiny B.
 Tiny C.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // Merging means fewer output chunks than there are headers
     // At minimum the tiny ones are collapsed; there won't be 3 separate tiny chunks
@@ -300,7 +311,7 @@ Tiny C.
 
   // ── Normalize: split oversized sections ──────────────────────────────────
 
-  it('should split a section over 800 tokens on paragraph boundaries', () => {
+  it('should split a section over 800 tokens on paragraph boundaries', async () => {
     // combinedContent passed to normalizeChunkSizes:
     //   "Big Pattern — Problem\n\n<para1>\n\n<para2>"
     // Two paragraphs of 500 tokens each make the combined content ~1008 tokens → triggers split.
@@ -309,7 +320,7 @@ Tiny C.
     const body = `${para}\n\n${para}`;
 
     const content = `## 1. Big Pattern\n\n### Problem\n\n${body}`;
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // Every chunk must be at or under MAX (800 tokens)
     for (const chunk of chunks) {
@@ -319,7 +330,7 @@ Tiny C.
     expect(chunks.length).toBeGreaterThan(1);
   });
 
-  it('falls back to line splits when the body has no blank-line paragraph breaks', () => {
+  it('falls back to line splits when the body has no blank-line paragraph breaks', async () => {
     // Regression: PDF text extracted by pdfjs-dist arrives with `\n`
     // line separators but no `\n\n` paragraph breaks. The previous
     // chunker would push the entire oversized body as a single chunk
@@ -331,7 +342,7 @@ Tiny C.
     // 50 lines × 50 tokens = ~2,500 tokens total — well over MAX (800).
     const content = `## 1. PDF-Style Document\n\n### Body\n\n${body}`;
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // Every chunk must respect the 800-token ceiling.
     for (const chunk of chunks) {
@@ -341,14 +352,14 @@ Tiny C.
     expect(chunks.length).toBeGreaterThan(2);
   });
 
-  it('falls back to character-window slicing when even lines are oversized', () => {
+  it('falls back to character-window slicing when even lines are oversized', async () => {
     // Extreme case: pathological PDF with no line breaks, no sentence
     // endings, just one huge wall of characters. The chunker must
     // still produce in-budget chunks via the final char-window tier.
     const wall = 'x'.repeat(20_000); // ~5,000 tokens, no separators
     const content = `## 1. Wall\n\n### Body\n\n${wall}`;
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       expect(chunk.estimatedTokens).toBeLessThanOrEqual(800);
@@ -356,14 +367,14 @@ Tiny C.
     expect(chunks.length).toBeGreaterThan(2);
   });
 
-  it('should preserve the subsection header as prefix in each split chunk', () => {
+  it('should preserve the subsection header as prefix in each split chunk', async () => {
     // The normalizer uses section.header (the ### sub-header) as the prefix in split chunks.
     // So split chunks will contain "Implementation\n\n<paragraph>".
     const para = makeWords(500);
     const body = `${para}\n\n${para}`;
     const content = `## 1. Split Pattern\n\n### Implementation\n\n${body}`;
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // The subsection header "Implementation" should appear in each split chunk's content
     for (const chunk of chunks) {
@@ -373,7 +384,7 @@ Tiny C.
 
   // ── Critical: [big, small, small, big] buffer-flush-before-split ─────────
 
-  it('should flush buffer before splitting an oversized section in a [big, small, small, big] sequence', () => {
+  it('should flush buffer before splitting an oversized section in a [big, small, small, big] sequence', async () => {
     // Each paragraph is 500 tokens; two together (~1003 tokens) exceed MAX (800).
     // This makes each ### section exceed 800 tokens when combined with its header prefix.
     const largePara = makeWords(500);
@@ -405,7 +416,7 @@ ${smallBody}
 ${bigBody}
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // All chunks must satisfy the size constraint
     for (const chunk of chunks) {
@@ -420,7 +431,7 @@ ${bigBody}
     expect(chunks.length).toBeGreaterThan(2);
   });
 
-  it('should flush buffer when a normal-sized section follows small sections', () => {
+  it('should flush buffer when a normal-sized section follows small sections', async () => {
     // Sequence: [tiny, tiny, normal] → tiny sections go into buffer,
     // then the normal-sized section triggers the buffer flush (lines 160-164 in normalizer).
     // Use a generic document (no ## N. pattern) so subsections map directly.
@@ -435,7 +446,7 @@ Short tiny text.
 ${normalBody}
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     // The normal section should cause the buffered tiny content to appear as a chunk
     // and the normal section itself also appears — so we get at least 1 chunk total
@@ -448,101 +459,101 @@ ${normalBody}
 
   // ── Generic header type inference ─────────────────────────────────────────
 
-  it('should infer chunkType glossary for a Glossary header', () => {
+  it('should infer chunkType glossary for a Glossary header', async () => {
     const content = `
 ## Glossary
 
 Term one: definition one with enough words here to meet the minimum chunk size threshold.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'glossary')).toBe(true);
   });
 
-  it('should infer chunkType composition_recipe for a Composition Recipe header', () => {
+  it('should infer chunkType composition_recipe for a Composition Recipe header', async () => {
     const content = `
 ## Composition Recipe
 
 Recipe instructions here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'composition_recipe')).toBe(true);
   });
 
-  it('should infer chunkType selection_guide for a Selection Guide header', () => {
+  it('should infer chunkType selection_guide for a Selection Guide header', async () => {
     const content = `
 ## Pattern Selection Guide
 
 Guide content here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'selection_guide')).toBe(true);
   });
 
-  it('should infer chunkType cost_reference for a Cost & Pricing header', () => {
+  it('should infer chunkType cost_reference for a Cost & Pricing header', async () => {
     const content = `
 ## Cost and Pricing
 
 Pricing info here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'cost_reference')).toBe(true);
   });
 
-  it('should infer chunkType context_engineering for a Context Engineering header', () => {
+  it('should infer chunkType context_engineering for a Context Engineering header', async () => {
     const content = `
 ## Context Engineering
 
 Context info here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'context_engineering')).toBe(true);
   });
 
-  it('should infer chunkType emerging_concepts for an Emerging Concepts header', () => {
+  it('should infer chunkType emerging_concepts for an Emerging Concepts header', async () => {
     const content = `
 ## Emerging Patterns
 
 Frontier content here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'emerging_concepts')).toBe(true);
   });
 
-  it('should infer chunkType ecosystem for an Ecosystem & Tools header', () => {
+  it('should infer chunkType ecosystem for an Ecosystem & Tools header', async () => {
     const content = `
 ## Ecosystem Overview
 
 Ecosystem content here with enough words to satisfy the minimum token threshold for chunks.
 `.trim();
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
     expect(chunks.some((c) => c.chunkType === 'ecosystem')).toBe(true);
   });
 
   // ── Edge cases ────────────────────────────────────────────────────────────
 
-  it('should return an empty array for empty content', () => {
-    const chunks = chunkMarkdownDocument('', 'doc');
+  it('should return an empty array for empty content', async () => {
+    const chunks = await chunkMarkdownDocument('', 'doc');
     expect(chunks).toEqual([]);
   });
 
-  it('should return an empty array for whitespace-only content', () => {
-    const chunks = chunkMarkdownDocument('   \n\n\t  ', 'doc');
+  it('should return an empty array for whitespace-only content', async () => {
+    const chunks = await chunkMarkdownDocument('   \n\n\t  ', 'doc');
     expect(chunks).toEqual([]);
   });
 
-  it('should handle content with no headers (treated as generic body)', () => {
+  it('should handle content with no headers (treated as generic body)', async () => {
     const content =
       'This is a paragraph without any markdown headers. ' +
       'It contains enough text to meet the minimum token threshold for chunking.';
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     expect(chunks.length).toBeGreaterThanOrEqual(1);
     expect(chunks[0].patternNumber).toBeNull();
     expect(chunks[0].patternName).toBeNull();
   });
 
-  it('should parse 2-digit pattern numbers (## 12. X)', () => {
+  it('should parse 2-digit pattern numbers (## 12. X)', async () => {
     const content = `
 ## 12. Exception Handling & Recovery
 
@@ -551,7 +562,7 @@ Ecosystem content here with enough words to satisfy the minimum token threshold 
 Content here with enough words to satisfy the minimum token threshold for proper chunking.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     const withNumber = chunks.filter((c) => c.patternNumber !== null);
     expect(withNumber.length).toBeGreaterThan(0);
@@ -559,14 +570,14 @@ Content here with enough words to satisfy the minimum token threshold for proper
     expect(withNumber[0].patternName).toBe('Exception Handling & Recovery');
   });
 
-  it('should NOT treat ## Introduction as a pattern header', () => {
+  it('should NOT treat ## Introduction as a pattern header', async () => {
     const content = `
 ## Introduction
 
 This is general introductory content with enough words to meet the minimum token threshold.
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       expect(chunk.patternNumber).toBeNull();
@@ -576,10 +587,10 @@ This is general introductory content with enough words to meet the minimum token
 
   // ── Slug safety ───────────────────────────────────────────────────────────
 
-  it('should produce a url-safe chunk id prefix for documentName with spaces and punctuation', () => {
+  it('should produce a url-safe chunk id prefix for documentName with spaces and punctuation', async () => {
     const content =
       'Content here with enough words to satisfy the minimum token threshold for chunking.';
-    const chunks = chunkMarkdownDocument(content, 'My Document: Special & Chars!');
+    const chunks = await chunkMarkdownDocument(content, 'My Document: Special & Chars!');
 
     for (const chunk of chunks) {
       // id must not contain spaces, colons, ampersands, or exclamation marks
@@ -588,22 +599,24 @@ This is general introductory content with enough words to meet the minimum token
     }
   });
 
-  it('should cap the document slug at 60 characters in chunk ids', () => {
+  it('should cap the document slug at 60 characters in chunk ids', async () => {
     const longName = 'a'.repeat(100) + ' extra words and more characters to push past the limit';
     const content =
       'Content here with enough words to satisfy the minimum token threshold for chunking.';
-    const chunks = chunkMarkdownDocument(content, longName);
+    const chunks = await chunkMarkdownDocument(content, longName);
 
     for (const chunk of chunks) {
-      // The slug prefix should be derived from a slug capped at 60 chars
-      const slugPart = chunk.id.split('-section')[0].split('-0')[0];
-      expect(slugPart.length).toBeLessThanOrEqual(70); // slug(60) + any separator
+      // The document-slug prefix is the first hyphen-separated run of
+      // `a`s — slugify caps each component at 60 chars, so the prefix
+      // before the next slug suffix should be ≤ 60.
+      const documentSlugPart = chunk.id.match(/^[a]+/)?.[0] ?? '';
+      expect(documentSlugPart.length).toBeLessThanOrEqual(60);
     }
   });
 
   // ── estimatedTokens ───────────────────────────────────────────────────────
 
-  it('should report estimatedTokens as Math.ceil(content.length / 4)', () => {
+  it('should report estimatedTokens as Math.ceil(content.length / 4)', async () => {
     const content = `
 ## 1. Token Count Pattern
 
@@ -612,7 +625,7 @@ This is general introductory content with enough words to meet the minimum token
 ABCDEFGHIJKLMNOP
 `.trim();
 
-    const chunks = chunkMarkdownDocument(content, 'doc');
+    const chunks = await chunkMarkdownDocument(content, 'doc');
 
     for (const chunk of chunks) {
       // The chunk stores the combinedContent length estimate, not the stripped content length.
@@ -643,7 +656,7 @@ function csvParsed(rowCount: number): ParsedDocument {
 }
 
 describe('chunkCsvDocument', () => {
-  it('emits one chunk per row when row count is at or below the batch threshold', () => {
+  it('emits one chunk per row when row count is at or below the batch threshold', async () => {
     const parsed = csvParsed(50);
     const chunks = chunkCsvDocument(parsed, 'spending', 'docid1234567890');
     expect(chunks).toHaveLength(50);
@@ -652,14 +665,14 @@ describe('chunkCsvDocument', () => {
     expect(chunks[0].id).toContain('-row-1');
   });
 
-  it('preserves the per-row content verbatim from the parsed sections', () => {
+  it('preserves the per-row content verbatim from the parsed sections', async () => {
     const parsed = csvParsed(3);
     const chunks = chunkCsvDocument(parsed, 'spending');
     expect(chunks[0].content).toBe('name: Row 1 | amount: 100');
     expect(chunks[2].content).toBe('name: Row 3 | amount: 300');
   });
 
-  it('batches rows when the row count exceeds the batch threshold', () => {
+  it('batches rows when the row count exceeds the batch threshold', async () => {
     const rowCount = CSV_ROW_BATCH_THRESHOLD + CSV_ROWS_PER_BATCH * 3;
     const parsed = csvParsed(rowCount);
     const chunks = chunkCsvDocument(parsed, 'large');
@@ -670,7 +683,7 @@ describe('chunkCsvDocument', () => {
     expect(chunks[0].chunkType).toBe('csv_row');
   });
 
-  it('joins batched rows with newlines in the chunk content', () => {
+  it('joins batched rows with newlines in the chunk content', async () => {
     const parsed = csvParsed(CSV_ROW_BATCH_THRESHOLD + 5);
     const chunks = chunkCsvDocument(parsed, 'large');
     const lines = chunks[0].content.split('\n');
@@ -678,14 +691,14 @@ describe('chunkCsvDocument', () => {
     expect(lines[0]).toBe('name: Row 1 | amount: 100');
   });
 
-  it('sets category and keywords to null on every chunk', () => {
+  it('sets category and keywords to null on every chunk', async () => {
     const parsed = csvParsed(10);
     const chunks = chunkCsvDocument(parsed, 'x');
     expect(chunks.every((c) => c.category === null)).toBe(true);
     expect(chunks.every((c) => c.keywords === null)).toBe(true);
   });
 
-  it('returns no chunks for an empty CSV', () => {
+  it('returns no chunks for an empty CSV', async () => {
     const parsed: ParsedDocument = {
       title: 'empty',
       sections: [],
@@ -696,7 +709,7 @@ describe('chunkCsvDocument', () => {
     expect(chunkCsvDocument(parsed, 'empty')).toEqual([]);
   });
 
-  it('uses the array index for chunk IDs even when sections share the same order value', () => {
+  it('uses the array index for chunk IDs even when sections share the same order value', async () => {
     // Defends against a future caller that constructs ParsedDocument without
     // setting per-section `order` (or sets them all to 0). Without using the
     // array index the chunk_key UNIQUE constraint would fire on insert.

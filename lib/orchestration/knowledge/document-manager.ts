@@ -201,7 +201,7 @@ export async function uploadDocument(
 
   try {
     // Chunk the document
-    const chunks = chunkMarkdownDocument(content, name, document.id);
+    const chunks = await chunkMarkdownDocument(content, name, document.id);
 
     // If a document-level category was set, apply it to chunks that have none
     if (resolvedCategory) {
@@ -655,7 +655,7 @@ export async function confirmPreview(
   });
 
   try {
-    const chunks = chunkMarkdownDocument(content, document.name, documentId);
+    const chunks = await chunkMarkdownDocument(content, document.name, documentId);
 
     if (category) {
       for (const chunk of chunks) {
@@ -794,7 +794,7 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
           document.name,
           documentId
         )
-      : chunkMarkdownDocument(content, document.name, documentId);
+      : await chunkMarkdownDocument(content, document.name, documentId);
 
     if (chunks.length === 0) {
       await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId } });
