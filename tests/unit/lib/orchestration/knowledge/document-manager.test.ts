@@ -178,7 +178,7 @@ describe('uploadDocument', () => {
     const embedding = [0.1, 0.2, 0.3];
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([chunk]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([embedding]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -205,7 +205,7 @@ describe('uploadDocument', () => {
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 1 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -225,7 +225,7 @@ describe('uploadDocument', () => {
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 2 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue(chunks);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -241,7 +241,7 @@ describe('uploadDocument', () => {
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 2 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue(chunks);
     vi.mocked(embedBatch).mockResolvedValue(
       mockEmbedResult([
         [0.1, 0.2],
@@ -265,7 +265,7 @@ describe('uploadDocument', () => {
     const updatedDoc = makeDocument({ id: 'doc-123', status: 'ready', chunkCount: 2 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue(chunks);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -283,7 +283,7 @@ describe('uploadDocument', () => {
     const updatedDoc = makeDocument({ id: 'doc-empty', status: 'ready', chunkCount: 0 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     await uploadDocument('', 'empty.md', 'user-001');
@@ -301,7 +301,7 @@ describe('uploadDocument', () => {
     const embedError = new Error('Embedding service unavailable');
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockRejectedValue(embedError);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
 
@@ -321,7 +321,7 @@ describe('uploadDocument', () => {
     const insertError = new Error('DB constraint violation');
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue(chunks);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue(chunks);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2]]));
     // First insert succeeds, second fails
     vi.mocked(prisma.$executeRawUnsafe)
@@ -343,7 +343,7 @@ describe('uploadDocument', () => {
     const createdDoc = makeDocument({ id: 'doc-non-error', status: 'processing' });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockRejectedValue('string rejection'); // non-Error throw
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
 
@@ -388,7 +388,7 @@ describe('uploadDocument', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -438,7 +438,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue(existingDoc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 2 } as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
@@ -473,7 +473,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue(existingDoc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
@@ -517,7 +517,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue(existingDoc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
 
     const result = await rechunkDocument('doc-empty-rechunk');
 
@@ -537,7 +537,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue(existingDoc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockRejectedValue(embedError);
 
     await expect(rechunkDocument('doc-rechunk-fail')).rejects.toThrow('Embed service down');
@@ -557,7 +557,7 @@ describe('rechunkDocument', () => {
     vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue(existingDoc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 1 } as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockRejectedValue(42); // non-Error throw
 
     await expect(rechunkDocument('doc-rechunk-non-error')).rejects.toBe(42);
@@ -765,7 +765,7 @@ describe('uploadDocument with category', () => {
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     await uploadDocument(content, 'test.md', 'user-1', 'sales');
@@ -784,7 +784,7 @@ describe('uploadDocument with category', () => {
 
     vi.mocked(parseMetadataComments).mockReturnValue({ category: 'engineering' });
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     await uploadDocument(content, 'test.md', 'user-1');
@@ -803,7 +803,7 @@ describe('uploadDocument with category', () => {
 
     vi.mocked(parseMetadataComments).mockReturnValue({});
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     await uploadDocument(content, 'test.md', 'user-1');
@@ -823,7 +823,7 @@ describe('uploadDocument with category', () => {
     const chunk = makeChunk({ category: 'existing-category' });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([chunk]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -842,7 +842,7 @@ describe('uploadDocument with category', () => {
     const chunk = makeChunk({ category: null as unknown as string });
 
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([chunk]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([chunk]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
@@ -886,7 +886,7 @@ describe('uploadDocumentFromBuffer', () => {
     const createdDoc = makeDocument({ status: 'processing' });
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     const buffer = Buffer.from('# Parsed text', 'utf-8');
@@ -918,7 +918,7 @@ describe('uploadDocumentFromBuffer', () => {
     const createdDoc = makeDocument({ status: 'processing' });
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     const { logger } = await import('@/lib/logging');
@@ -945,7 +945,7 @@ describe('uploadDocumentFromBuffer', () => {
     const createdDoc = makeDocument({ status: 'processing' });
     const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
     vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
 
     const buffer = Buffer.from(rawMarkdown, 'utf-8');
@@ -1392,7 +1392,7 @@ describe('confirmPreview', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 
@@ -1418,7 +1418,7 @@ describe('confirmPreview', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
 
     await confirmPreview('doc-corrected', 'user-1', 'The corrected clean text.');
 
@@ -1440,7 +1440,7 @@ describe('confirmPreview', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockRejectedValue(new Error('Embed failed'));
 
     await expect(confirmPreview('doc-fail-confirm', 'user-1')).rejects.toThrow('Embed failed');
@@ -1463,7 +1463,7 @@ describe('confirmPreview', () => {
 
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(doc as never);
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
 
     const result = await confirmPreview('doc-empty-confirm', 'user-1');
 
@@ -1494,7 +1494,7 @@ describe('confirmPreview', () => {
     vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
       makeDocument({ id: 'doc-meta', status: 'ready', chunkCount: 1 }) as never
     );
-    vi.mocked(chunkMarkdownDocument).mockReturnValue([makeChunk()]);
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
     vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
     vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
 

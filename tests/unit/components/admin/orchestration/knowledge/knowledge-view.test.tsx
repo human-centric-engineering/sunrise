@@ -419,9 +419,13 @@ describe('KnowledgeView', () => {
         render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
       });
 
-      // Component renders fine; no status badge shown
+      // Component renders fine; no status banner shown. The banner's
+      // signature copy is "Vector search is …" so we match that
+      // specifically rather than the bare word "embedded", which now
+      // appears in the upload-zone explainer ("every chunk is
+      // embedded into a 1,536-dimension vector").
       expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
-      expect(screen.queryByText(/embedded/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Vector search is/i)).not.toBeInTheDocument();
     });
   });
 

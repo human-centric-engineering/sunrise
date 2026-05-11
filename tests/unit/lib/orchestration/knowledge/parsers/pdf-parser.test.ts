@@ -100,6 +100,41 @@ describe('parsePdf', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Sequencing — must NOT race getText and getInfo
+  // ---------------------------------------------------------------------------
+
+  it('awaits getInfo and getText sequentially, not via Promise.all', async () => {
+    // Regression: when these two calls were dispatched concurrently via
+    // Promise.all, both reached PDFParse#load() before either had cached
+    // `this.doc`. Each call then drove pdfjs.getDocument() and tried to
+    // transfer the same `data.buffer` ArrayBuffer through structuredClone;
+    // the second transfer hit a detached buffer and Node threw
+    // `DataCloneError: Cannot transfer object of unsupported type.`
+    //
+    // Pin the order: getInfo must resolve before getText is invoked, so a
+    // future refactor can't quietly reintroduce the race. We assert via
+    // call ordering on the mocks — Promise.all would interleave the two
+    // calls but sequential awaits cannot.
+    const callOrder: string[] = [];
+    mockGetInfo.mockImplementationOnce(async () => {
+      callOrder.push('getInfo:start');
+      // Yield to ensure that if getText were dispatched in parallel it
+      // would have a chance to push before getInfo resolves.
+      await new Promise((r) => setTimeout(r, 5));
+      callOrder.push('getInfo:end');
+      return infoResult();
+    });
+    mockGetText.mockImplementationOnce(async () => {
+      callOrder.push('getText:start');
+      return textResult('hello');
+    });
+
+    await parsePdf(fakeBuffer(), 'doc.pdf');
+
+    expect(callOrder).toEqual(['getInfo:start', 'getInfo:end', 'getText:start']);
+  });
+
+  // ---------------------------------------------------------------------------
   // Multi-page PDFs
   // ---------------------------------------------------------------------------
 
@@ -254,15 +289,19 @@ describe('parsePdf', () => {
   // ---------------------------------------------------------------------------
 
   describe('fullText', () => {
-    it('should set fullText to the trimmed raw text from PDFParse', async () => {
+    it('rebuilds fullText with blank-line page separators (not form-feed)', async () => {
+      // Pages join with `\n\n` so the downstream markdown chunker sees
+      // a paragraph boundary at every page break. pdfjs-dist's
+      // legacy-fallback path emits the raw text form-feed-joined; the
+      // parser splits that to per-page entries then rejoins on `\n\n`.
       const text = '  Page one text.\fPage two text.  ';
       mockGetText.mockResolvedValue(textResult(text));
       mockGetInfo.mockResolvedValue(infoResult(2));
 
       const result = await parsePdf(fakeBuffer(), 'rawtext.pdf');
 
-      // fullText should be the trimmed version of the raw text
-      expect(result.fullText).toBe(text.trim());
+      expect(result.fullText).toBe('Page one text.\n\nPage two text.');
+      expect(result.fullText).not.toContain('\f');
     });
   });
 

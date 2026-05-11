@@ -78,6 +78,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/embed`                        | POST               | Generate embeddings for unembedded chunks                                                            | 3.3     |
 | `/knowledge/documents/:id/retry`          | POST               | Retry failed document ingestion                                                                      | 5.1     |
 | `/knowledge/graph`                        | GET                | Knowledge graph data (nodes + links)                                                                 | 5.1     |
+| `/knowledge/embeddings`                   | GET                | UMAP-projected 2D coordinates for every embedded chunk (drives the Visualize tab's Embedding space)  | 9.1     |
 | `/knowledge/embedding-status`             | GET                | Embedding coverage stats + provider availability                                                     | 3.3     |
 | `/knowledge/meta-tags`                    | GET                | Distinct categories and keywords with chunk/doc counts                                               | 9.0     |
 | `/embedding-models`                       | GET                | Static registry of embedding models (filterable)                                                     | 7.0     |
@@ -674,6 +675,61 @@ Non-failed documents return `409 CONFLICT`.
 Builds a hierarchical node/link graph for the knowledge base: central KB node, document nodes, and chunk nodes (if total chunks < 500). Query: `scope=system|app` (optional), `view=structure|embedded` (default: `structure`).
 
 Response: `{ nodes, links, categories, stats: { documentCount, completedCount, chunkCount, totalTokens } }`. Each node has `id`, `name`, `type`, `value`, `category`, `metadata`. The `embedded` view filters to documents/chunks with embeddings.
+
+### `GET /knowledge/embeddings`
+
+Returns chunk metadata plus a 2D UMAP projection of each chunk's 1,536-dimension embedding vector. Drives the **Embedding space** view in the admin Visualize tab — points cluster by semantic similarity (UMAP preserves local-neighbour structure during the dimensionality reduction).
+
+**Why server-side UMAP, not client-side.** Each chunk's raw embedding is a 1,536-dim Float64; shipping 1,000 chunks would push ~12 MB of JSON to the browser. Running UMAP server-side and returning two floats per chunk drops the payload by ~99 % while still letting the browser render the scatter plot.
+
+**Stability.** UMAP is non-deterministic by default. The route passes a seeded PRNG (mulberry32) to the algorithm so successive requests against the same dataset produce the same coordinates — without that, every refresh would shuffle the cluster positions and break the user's spatial memory.
+
+**Query params:**
+
+- `scope` (optional): `system` | `app`
+- `limit` (optional, default `2000`, max `5000`): cap on returned chunks. When the embedded chunk count exceeds this, the route samples uniformly (every `ceil(totalEmbedded / limit)`-th chunk by id ordering) and sets `stats.truncated: true`.
+- `nNeighbors` (optional, default `15`): UMAP's `nNeighbors` parameter. Clamped to `(totalPoints - 1)` if too high for the dataset size.
+
+**Response:**
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "chunks": [
+      {
+        "id": "chunk-...",
+        "documentId": "doc-...",
+        "documentName": "HCE Studio Whitepaper",
+        "documentStatus": "ready",
+        "chunkType": "text",
+        "patternName": null,
+        "section": "A Human-Centric Venture Studio Entity Exploring …",
+        "estimatedTokens": 794,
+        "contentPreview": "A Human-Centric …", // first 240 chars
+        "embeddingModel": "voyage-3",
+        "embeddingProvider": "voyage",
+        "embeddedAt": "2026-05-10T22:00:00.000Z",
+        "x": 1.234, // UMAP-projected
+        "y": -0.567, // UMAP-projected
+      },
+    ],
+    "stats": {
+      "totalEmbedded": 38,
+      "returned": 38,
+      "truncated": false,
+      "droppedMalformed": 0, // rows whose pgvector text couldn't be parsed
+      "projectable": true, // false if `returned < minUsefulPoints`
+      "maxChunks": 2000,
+      "minUsefulPoints": 10, // below this, UMAP can't produce a meaningful layout
+    },
+  },
+}
+```
+
+**Edge cases.** Below `minUsefulPoints` (10) chunks, the route returns the chunks with `x: 0, y: 0` and `stats.projectable: false` — UMAP is skipped because the percentile of one or two adjacent-distance pairs is meaningless. Reads the pgvector column via raw SQL (the `Unsupported("vector(1536)")` Prisma type can't be selected via the typed client). Malformed vector rows are dropped defensively, logged with `logger.warn`, and counted in `stats.droppedMalformed` — one bad row never blocks the rest of the projection.
+
+**Auth:** `withAdminAuth` + `adminLimiter` (UMAP compute is non-trivial — a request per few seconds is fine, hammering it isn't).
 
 ### `GET /knowledge/embedding-status`
 

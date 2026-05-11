@@ -313,6 +313,58 @@ describe('VisualizeTab', () => {
     });
   });
 
+  it('exposes an Embedding space toggle that hits the embeddings endpoint instead of the graph endpoint', async () => {
+    // Default mock returns the structural graph; switch the
+    // implementation when the embeddings endpoint is requested so the
+    // test sees the projection view's loading → loaded transition.
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/knowledge/embeddings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: {
+                chunks: [],
+                stats: {
+                  totalEmbedded: 0,
+                  returned: 0,
+                  truncated: false,
+                  droppedMalformed: 0,
+                  projectable: false,
+                  maxChunks: 2000,
+                  minUsefulPoints: 10,
+                },
+              },
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: makeGraphData() }),
+      });
+    });
+
+    const user = userEvent.setup();
+    render(<VisualizeTab />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Embedding space' })).toBeInTheDocument()
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Embedding space' }));
+
+    // The embeddings endpoint is hit at least once after switching.
+    await waitFor(() => {
+      const urls = mockFetch.mock.calls.map((call) => call[0] as string);
+      expect(urls.some((u) => u.includes('/knowledge/embeddings'))).toBe(true);
+    });
+
+    // The chrome around the graph (search filter, fullscreen button)
+    // is replaced — the embedding-space view has its own affordances.
+    expect(screen.queryByPlaceholderText(/filter nodes/i)).not.toBeInTheDocument();
+  });
+
   // ── Filter input ───────────────────────────────────────────────────────────
 
   it('renders filter nodes input', async () => {

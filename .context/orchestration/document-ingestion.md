@@ -104,9 +104,15 @@ Response shape (each chunk):
 {
   "id": "cuid",
   "content": "...",
-  "chunkType": "pattern_overview" | "pattern_detail" | "section" | "...",
+  // Heading-driven for seeded patterns and authored markdown; "text"
+  // is the default for generic content (PDF prose, plain markdown
+  // without `##` headings) that goes through the semantic chunker.
+  "chunkType": "text" | "pattern_overview" | "pattern_section" | "glossary" | "composition_recipe" | "selection_guide" | "cost_reference" | "context_engineering" | "emerging_concepts" | "ecosystem",
   "patternNumber": 3,
   "patternName": "Chain of Thought",
+  // Author-supplied heading, or — for generic content without
+  // headings — the chunk's first sentence (≤80 chars) used as a
+  // human-readable title in the graph view.
   "section": "Introduction",
   "category": "sales",
   "keywords": "pricing,discounts",
@@ -235,6 +241,10 @@ interface ParsedDocument {
 ```
 
 The `fullText` field is fed into `chunkMarkdownDocument()` for splitting and embedding. Sections are informational metadata.
+
+**Page boundaries in `fullText`** are joined with `\n\n` (blank-line paragraph break), not `\f` (form-feed). pdfjs-dist emits visual lines separated by `\n` but rarely produces double-newlines between paragraphs; joining pages with `\n\n` gives the chunker an explicit paragraph boundary at every page break so its structural tier-fallback splitter has something to grip when semantic chunking falls back. Earlier versions joined with `\f` which the chunker ignored, collapsing multi-page PDFs into a single oversized chunk.
+
+`chunkMarkdownDocument()` is **async** — generic sections without explicit `###` subheadings route through the semantic chunker (`semantic-chunker.ts`), which embeds every sentence and splits at topic-coherent boundaries via 75th-percentile cosine-distance jumps. Pattern documents (`## N. Pattern Name`) stay structural. See [knowledge.md § Chunking Strategy](./knowledge.md#chunking-strategy) for the full routing rules.
 
 ## CSV Ingestion
 

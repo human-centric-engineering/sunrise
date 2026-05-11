@@ -1,13 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Globe, Loader2, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { BookOpen, FileText, Globe, Loader2, Upload, X } from 'lucide-react';
 
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { API } from '@/lib/api/endpoints';
 
 const categoriesResponseSchema = z.object({
@@ -299,175 +300,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           title="Uploading documents to the knowledge base"
           contentClassName="w-[28rem] max-h-96 overflow-y-auto"
         >
-          <p className="text-foreground font-medium">What happens when you upload</p>
-          <p>
-            Your document is <strong>split into smaller pieces</strong> the AI can search through.
-            How the split works depends on the format:
-          </p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-            <li>
-              <strong>Text files (.md / .txt) and Word / EPUB</strong> — the system splits on
-              headings (## then ###) so each piece is a few paragraphs (roughly 200–3,200
-              characters).
-            </li>
-            <li>
-              <strong>CSV / spreadsheets</strong> — each row becomes its own searchable piece, so
-              the AI can find a single line item (one supplier, one transaction, one record) rather
-              than a blurred mix of nearby rows.
-            </li>
-            <li>
-              <strong>PDFs</strong> — extracted text is shown for you to review and edit before the
-              AI ever sees it. Once confirmed, it&apos;s split the same way as a text file.
-            </li>
-          </ul>
-          <p className="mt-2">
-            Each piece is then turned into a numerical fingerprint (an <strong>embedding</strong>)
-            that captures its meaning. When someone asks a question, the system finds the pieces
-            whose meaning is closest and feeds those to the AI.
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">Category</p>
-          <p>
-            Assign a <strong>category</strong> when you upload to organise your knowledge.
-            Categories let you filter documents and — more importantly — let agents be scoped to
-            only search specific categories. For example, a sales agent can be restricted to
-            &quot;sales&quot; knowledge only.
-          </p>
-          <p className="mt-1">
-            You can also set category inside the document itself using an HTML comment:{' '}
-            <code className="text-xs">{'<!-- metadata: category=sales -->'}</code>. If you set a
-            category both here and inside the document, the one you type here takes priority.
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
-          <p>
-            <strong>Headings matter</strong> for text and Word documents. The system uses ## and ###
-            headings as natural split points, so a document with clear headings produces cleaner,
-            more targeted pieces than a wall of text. Think of each heading as a label that tells
-            the AI what that section is about.
-          </p>
-          <p className="mt-2">
-            <strong>CSVs:</strong> the first row should be your column headers (Name, Date, Amount,
-            etc.). The system reads them and prepends them to each row when storing it, so a search
-            for &quot;payments to Acme in March&quot; can match the right row even if the AI never
-            sees the spreadsheet as a whole. Comma, tab, and semicolon separators are all detected
-            automatically.
-          </p>
-          <p className="mt-2">
-            <strong>PDFs:</strong> the system extracts the text and shows it to you for review
-            before any chunking happens. You can correct OCR mistakes, delete unwanted sections, or
-            paste in cleaner text from elsewhere. If pages 4–7 of a 22-page PDF were scanned images,
-            you&apos;ll see a warning naming those exact pages so you know what to fix.
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
-          <p>
-            You can embed metadata tags anywhere in a document using HTML comments. These are
-            invisible in rendered markdown but the system reads them during chunking.
-          </p>
-          <p className="mt-1 text-xs">
-            <strong>Format:</strong>{' '}
-            <code>{'<!-- metadata: key=value, key2="value with commas" -->'}</code>
-          </p>
-          <p className="mt-1 text-xs">
-            <strong>Supported tags:</strong>
-          </p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-            <li>
-              <strong>category</strong> — groups content by topic (e.g. sales, engineering,
-              onboarding). Applied to every chunk in the section.
-            </li>
-            <li>
-              <strong>keywords</strong> — comma-separated terms that boost search relevance. Wrap in
-              quotes if the value contains commas: <code>{'keywords="retry,backoff,timeout"'}</code>
-            </li>
-          </ul>
-          <p className="mt-2 text-xs">
-            You can place metadata at the top of the document (applies globally) or before any
-            section heading (applies to that section only). Section-level tags override
-            document-level ones.
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">
-            Being free-form with meta-tags: flexibility vs. findability
-          </p>
-          <p>
-            Tags are <strong>completely free-form</strong> — there is no fixed list and you can use
-            any values you like. This is powerful but comes with a trade-off:
-          </p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-            <li>
-              <strong>Inconsistent naming hurts search.</strong> If some documents use
-              &quot;sales&quot; and others use &quot;Sales&quot;, &quot;selling&quot;, or
-              &quot;revenue&quot;, filtering by category becomes unreliable. The system treats these
-              as different values.
-            </li>
-            <li>
-              <strong>Too many unique tags = no tags.</strong> If every document has a unique
-              category, you lose the ability to meaningfully filter. Categories work best with a
-              small, consistent vocabulary (5–15 values).
-            </li>
-            <li>
-              <strong>Keywords are more forgiving.</strong> Because keyword search is additive (more
-              keywords = more ways to find the content), inconsistency there matters less than with
-              categories. Use keywords liberally.
-            </li>
-          </ul>
-          <p className="mt-2 text-xs">
-            <strong>Recommendation:</strong> agree on a short list of categories before bulk
-            uploading. Check the &quot;Meta-tags in use&quot; panel to see what values already
-            exist.
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">Content quality tips</p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-            <li>
-              <strong>Typos and grammar</strong> — minor typos won&apos;t break search because
-              embedding models understand meaning, not exact spelling. But significant errors (wrong
-              terminology, garbled sentences) will reduce quality. A quick proofread is worthwhile.
-            </li>
-            <li>
-              <strong>Video/meeting transcripts</strong> — raw transcripts are noisy (filler words,
-              repetition, speaker labels). They work, but you&apos;ll get much better results if you
-              clean them up first: remove filler, merge fragmented sentences, and add topic
-              headings. Even a rough edit makes a big difference.
-            </li>
-            <li>
-              <strong>Short snippets</strong> (a paragraph or two) — absolutely fine to upload.
-              Short documents become one or two chunks and are searchable just like larger ones.
-              Good for capturing individual ideas, policies, or decisions.
-            </li>
-          </ul>
-
-          <p className="text-foreground mt-3 font-medium">Large documents and books</p>
-          <p>
-            <strong>Chapter by chapter is better than one huge file.</strong> While a whole book
-            under 10 MB will technically upload, splitting by chapter gives you cleaner chunks (each
-            chapter gets its own heading hierarchy), easier management (you can update or remove
-            individual chapters), and better search results (the AI finds the right chapter rather
-            than a random mid-book paragraph).
-          </p>
-
-          <p className="text-foreground mt-3 font-medium">Supported formats</p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-            <li>
-              <strong>.md, .markdown, .txt</strong> — text files, chunked immediately
-            </li>
-            <li>
-              <strong>.csv</strong> — RFC 4180 with delimiter sniffing; each row becomes its own
-              chunk for row-level retrieval
-            </li>
-            <li>
-              <strong>.epub, .docx</strong> — parsed to text, then chunked automatically
-            </li>
-            <li>
-              <strong>.pdf</strong> — extracted text shown for review before chunking (OCR quality
-              varies; you can correct the text before confirming)
-            </li>
-          </ul>
-          <p className="mt-2 text-xs">Maximum size: 50 MB per file.</p>
+          <UploadGuideBody />
         </FieldHelp>
       </div>
+
+      <UploadExplainer />
 
       {stagedFiles.length === 0 ? (
         /* Drop zone — file selection */
@@ -691,7 +528,7 @@ function FetchFromUrl({
 }: {
   category: string;
   onFetchComplete: () => void;
-}): React.ReactElement {
+}): ReactElement {
   const [url, setUrl] = useState('');
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -754,5 +591,281 @@ function FetchFromUrl({
       </div>
       {fetchError && <p className="text-destructive text-xs">{fetchError}</p>}
     </div>
+  );
+}
+
+/**
+ * Inline summary above the drop zone — gives users a one-glance overview of
+ * what happens to a document on upload, with a "Read full guide" link that
+ * opens a popover containing the same body the (i) FieldHelp on the
+ * "Upload Document" header shows. Two surfaces, one source of truth.
+ */
+function UploadExplainer(): ReactElement {
+  return (
+    <div className="bg-muted/40 border-border/60 rounded-md border p-3">
+      <div className="flex items-start gap-2 text-xs leading-relaxed">
+        <BookOpen
+          className="text-muted-foreground mt-0.5 h-3.5 w-3.5 shrink-0"
+          aria-hidden="true"
+        />
+        <div className="flex-1 space-y-1.5">
+          <p>
+            <strong className="text-foreground">How upload works.</strong> Your document is parsed
+            (PDF / DOCX / EPUB / CSV / MD / TXT supported), split into <strong>chunks</strong> of
+            ~50–800 tokens each, and every chunk is embedded into a 1,536-dimension vector for
+            search. The graph view shows one node per chunk linked to its document.
+          </p>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="text-primary text-xs font-medium underline-offset-2 hover:underline"
+              >
+                Read full guide
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="text-muted-foreground max-h-96 w-[28rem] overflow-y-auto text-sm leading-relaxed"
+            >
+              <div className="text-foreground mb-1 font-semibold">
+                Uploading documents to the knowledge base
+              </div>
+              <div className="space-y-1">
+                <UploadGuideBody />
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shared body for the Upload Document explainer. Rendered inside both the
+ * (i) FieldHelp on the section header and the "Read full guide" popover
+ * triggered from the inline `<UploadExplainer />`. Keeping a single source
+ * of truth means future edits land in one place.
+ */
+function UploadGuideBody(): ReactElement {
+  return (
+    <>
+      <p className="text-foreground font-medium">What happens when you upload</p>
+      <p>
+        Your document is <strong>split into smaller pieces</strong> the AI can search through. How
+        the split works depends on the format:
+      </p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Text files (.md / .txt) and Word / EPUB</strong> — the system splits on headings
+          (## then ###) so each piece is a few paragraphs (roughly 200–3,200 characters).
+        </li>
+        <li>
+          <strong>CSV / spreadsheets</strong> — each row becomes its own searchable piece, so the AI
+          can find a single line item (one supplier, one transaction, one record) rather than a
+          blurred mix of nearby rows.
+        </li>
+        <li>
+          <strong>PDFs</strong> — extracted text is shown for you to review and edit before the AI
+          ever sees it. Once confirmed, it&apos;s split the same way as a text file.
+        </li>
+      </ul>
+      <p className="mt-2">
+        Each piece is then turned into a numerical fingerprint (an <strong>embedding</strong>) that
+        captures its meaning. When someone asks a question, the system finds the pieces whose
+        meaning is closest and feeds those to the AI.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">The full pipeline</p>
+      <ol className="mt-1 list-decimal space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Parse</strong> — format-specific parsers convert PDF / DOCX / EPUB / CSV into
+          plain text. Markdown and TXT skip this step.
+        </li>
+        <li>
+          <strong>Chunk</strong> — the text is split into pieces sized to land in the{' '}
+          <strong>50–800 token</strong> range (≈ 200–3,200 characters). Sections smaller than the
+          minimum are merged with neighbours; oversized sections are split on paragraph boundaries.
+          Code blocks and Mermaid diagrams are stripped first so they don&apos;t bloat the
+          embeddings.
+        </li>
+        <li>
+          <strong>Embed</strong> — each chunk&apos;s text is sent to your configured embedding
+          provider in batches of 100. The returned <strong>1,536-dimension vector</strong> is stored
+          alongside the text so vector search can find semantically similar chunks at query time.
+        </li>
+      </ol>
+
+      <p className="text-foreground mt-3 font-medium">What you&apos;ll see in the graph</p>
+      <p>
+        The Visualize tab renders the result as a hierarchy: one <strong>Knowledge Base</strong>{' '}
+        node, one <strong>Document</strong> node per upload (green / amber / red by status), and one{' '}
+        <strong>Chunk</strong> node per chunk row — each chunk node represents one embedding.
+      </p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Edges from KB → document</strong> are labelled{' '}
+          <code>contains (N&nbsp;chunks)</code>.
+        </li>
+        <li>
+          <strong>Edges from document → chunk</strong> describe the chunk&apos;s role —{' '}
+          <code>overview</code>, <code>section: &lt;heading&gt;</code>, <code>glossary</code>,{' '}
+          <code>csv row</code>, etc. — derived from the chunk type the chunker assigned.
+        </li>
+        <li>
+          <strong>Chunk node size</strong> reflects token count — larger chunks render slightly
+          bigger (capped at 25&nbsp;px).
+        </li>
+      </ul>
+      <p className="mt-2 text-xs">
+        Rough sizing examples: a 5-page article (~5k tokens) produces 10–20 chunks; a README-sized
+        doc 20–40; a 100-page PDF 100–200; a 500-page book 500–1,000.
+      </p>
+      <p className="mt-2 text-xs">
+        <strong>500-chunk threshold:</strong> if the total chunk count across all documents in the
+        current view crosses 500, individual chunk nodes are hidden and the graph collapses to KB +
+        documents only (for performance). The aggregation note at the bottom of the chart tells you
+        when this happens. Switch to the <strong>Embedded</strong> view to filter to chunks that
+        actually have vectors stored.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">Category</p>
+      <p>
+        Assign a <strong>category</strong> when you upload to organise your knowledge. Categories
+        let you filter documents and — more importantly — let agents be scoped to only search
+        specific categories. For example, a sales agent can be restricted to &quot;sales&quot;
+        knowledge only.
+      </p>
+      <p className="mt-1">
+        You can also set category inside the document itself using an HTML comment:{' '}
+        <code className="text-xs">{'<!-- metadata: category=sales -->'}</code>. If you set a
+        category both here and inside the document, the one you type here takes priority.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
+      <p>
+        <strong>Headings matter</strong> for text and Word documents. The system uses ## and ###
+        headings as natural split points, so a document with clear headings produces cleaner, more
+        targeted pieces than a wall of text. Think of each heading as a label that tells the AI what
+        that section is about.
+      </p>
+      <p className="mt-2">
+        <strong>CSVs:</strong> the first row should be your column headers (Name, Date, Amount,
+        etc.). The system reads them and prepends them to each row when storing it, so a search for
+        &quot;payments to Acme in March&quot; can match the right row even if the AI never sees the
+        spreadsheet as a whole. Comma, tab, and semicolon separators are all detected automatically.
+      </p>
+      <p className="mt-2">
+        <strong>PDFs:</strong> the system extracts the text and shows it to you for review before
+        any chunking happens. You can correct OCR mistakes, delete unwanted sections, or paste in
+        cleaner text from elsewhere. If pages 4–7 of a 22-page PDF were scanned images, you&apos;ll
+        see a warning naming those exact pages so you know what to fix.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
+      <p>
+        You can embed metadata tags anywhere in a document using HTML comments. These are invisible
+        in rendered markdown but the system reads them during chunking.
+      </p>
+      <p className="mt-1 text-xs">
+        <strong>Format:</strong>{' '}
+        <code>{'<!-- metadata: key=value, key2="value with commas" -->'}</code>
+      </p>
+      <p className="mt-1 text-xs">
+        <strong>Supported tags:</strong>
+      </p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>category</strong> — groups content by topic (e.g. sales, engineering, onboarding).
+          Applied to every chunk in the section.
+        </li>
+        <li>
+          <strong>keywords</strong> — comma-separated terms that boost search relevance. Wrap in
+          quotes if the value contains commas: <code>{'keywords="retry,backoff,timeout"'}</code>
+        </li>
+      </ul>
+      <p className="mt-2 text-xs">
+        You can place metadata at the top of the document (applies globally) or before any section
+        heading (applies to that section only). Section-level tags override document-level ones.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">
+        Being free-form with meta-tags: flexibility vs. findability
+      </p>
+      <p>
+        Tags are <strong>completely free-form</strong> — there is no fixed list and you can use any
+        values you like. This is powerful but comes with a trade-off:
+      </p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Inconsistent naming hurts search.</strong> If some documents use &quot;sales&quot;
+          and others use &quot;Sales&quot;, &quot;selling&quot;, or &quot;revenue&quot;, filtering
+          by category becomes unreliable. The system treats these as different values.
+        </li>
+        <li>
+          <strong>Too many unique tags = no tags.</strong> If every document has a unique category,
+          you lose the ability to meaningfully filter. Categories work best with a small, consistent
+          vocabulary (5–15 values).
+        </li>
+        <li>
+          <strong>Keywords are more forgiving.</strong> Because keyword search is additive (more
+          keywords = more ways to find the content), inconsistency there matters less than with
+          categories. Use keywords liberally.
+        </li>
+      </ul>
+      <p className="mt-2 text-xs">
+        <strong>Recommendation:</strong> agree on a short list of categories before bulk uploading.
+        Check the &quot;Meta-tags in use&quot; panel to see what values already exist.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">Content quality tips</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Typos and grammar</strong> — minor typos won&apos;t break search because embedding
+          models understand meaning, not exact spelling. But significant errors (wrong terminology,
+          garbled sentences) will reduce quality. A quick proofread is worthwhile.
+        </li>
+        <li>
+          <strong>Video/meeting transcripts</strong> — raw transcripts are noisy (filler words,
+          repetition, speaker labels). They work, but you&apos;ll get much better results if you
+          clean them up first: remove filler, merge fragmented sentences, and add topic headings.
+          Even a rough edit makes a big difference.
+        </li>
+        <li>
+          <strong>Short snippets</strong> (a paragraph or two) — absolutely fine to upload. Short
+          documents become one or two chunks and are searchable just like larger ones. Good for
+          capturing individual ideas, policies, or decisions.
+        </li>
+      </ul>
+
+      <p className="text-foreground mt-3 font-medium">Large documents and books</p>
+      <p>
+        <strong>Chapter by chapter is better than one huge file.</strong> While a whole book under
+        10 MB will technically upload, splitting by chapter gives you cleaner chunks (each chapter
+        gets its own heading hierarchy), easier management (you can update or remove individual
+        chapters), and better search results (the AI finds the right chapter rather than a random
+        mid-book paragraph).
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">Supported formats</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>.md, .markdown, .txt</strong> — text files, chunked immediately
+        </li>
+        <li>
+          <strong>.csv</strong> — RFC 4180 with delimiter sniffing; each row becomes its own chunk
+          for row-level retrieval
+        </li>
+        <li>
+          <strong>.epub, .docx</strong> — parsed to text, then chunked automatically
+        </li>
+        <li>
+          <strong>.pdf</strong> — extracted text shown for review before chunking (OCR quality
+          varies; you can correct the text before confirming)
+        </li>
+      </ul>
+      <p className="mt-2 text-xs">Maximum size: 50 MB per file.</p>
+    </>
   );
 }

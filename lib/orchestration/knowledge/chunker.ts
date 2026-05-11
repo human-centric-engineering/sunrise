@@ -15,6 +15,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { chunkBySemanticBreakpoints } from '@/lib/orchestration/knowledge/semantic-chunker';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Output chunk from the chunking process */
@@ -159,6 +160,95 @@ function splitOnHeadings(
 }
 
 /**
+ * Tiered separators tried in order when splitting oversized content. Each
+ * tier is a [regex, joiner] pair — split by the regex, then join the
+ * pieces back into chunks using the joiner. We escalate from coarsest to
+ * finest so chunks stay human-meaningful for as long as possible: try to
+ * preserve paragraph structure first, then drop to lines, then sentences,
+ * and finally a character window when the input has no structure at all
+ * (e.g. one page of a PDF that pdfjs-dist extracted as a single
+ * concatenated string).
+ *
+ * The empty regex tier triggers character-window slicing — used as a last
+ * resort so we never return an oversized chunk regardless of input shape.
+ */
+const SPLIT_TIERS: ReadonlyArray<{ regex: RegExp | null; joiner: string }> = [
+  { regex: /\n\n+/, joiner: '\n\n' }, // paragraphs
+  { regex: /\n/, joiner: '\n' }, // lines
+  { regex: /(?<=\. )/, joiner: '' }, // sentences (lookbehind keeps the period)
+  { regex: null, joiner: '' }, // char-window fallback
+];
+
+/**
+ * Slice a string into ~`maxChars`-sized pieces. Used as the final
+ * fallback when the input has no structural separators at all — a
+ * dense block of text with no spaces, line breaks, or sentence
+ * endings. Pieces land slightly under maxChars to leave a token-count
+ * safety margin against the ~4-chars/token approximation.
+ */
+function sliceByChars(text: string, maxChars: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += maxChars) {
+    out.push(text.slice(i, i + maxChars));
+  }
+  return out;
+}
+
+/**
+ * Recursively split a body so every piece fits in `maxTokens` when
+ * combined with `header` (`<header>\n\n<piece>`). Tries the
+ * separator tiers in order — paragraphs, lines, sentences, finally
+ * char-window — and stops as soon as a tier produces pieces that
+ * each fit. Returns the original `text` unchanged when it already
+ * fits, so headers / small sections short-circuit without splitting.
+ *
+ * Without this fallback chain, PDF text (which pdfjs-dist extracts
+ * with `\n` line separators but rarely `\n\n` paragraph breaks)
+ * would collapse into one oversized chunk per document.
+ */
+function splitBodyToFit(text: string, maxTokens: number, header: string): string[] {
+  const headerOverhead = header ? estimateTokens(`${header}\n\n`) : 0;
+  const effectiveMax = Math.max(maxTokens - headerOverhead, 1);
+
+  const tryTier = (input: string, tierIndex: number): string[] => {
+    if (estimateTokens(input) <= effectiveMax) return [input];
+    if (tierIndex >= SPLIT_TIERS.length) return [input]; // unreachable
+
+    const tier = SPLIT_TIERS[tierIndex];
+    const parts =
+      tier.regex === null
+        ? sliceByChars(input, effectiveMax * 4)
+        : input
+            .split(tier.regex)
+            .map((p) => p.trim())
+            .filter((p) => p.length > 0);
+
+    // If splitting didn't subdivide the input, drop to the next finer
+    // tier rather than spinning forever on the same separator.
+    if (parts.length <= 1) return tryTier(input, tierIndex + 1);
+
+    const out: string[] = [];
+    let buffer = '';
+    for (const part of parts) {
+      const test = buffer ? `${buffer}${tier.joiner}${part}` : part;
+      if (estimateTokens(test) > effectiveMax && buffer) {
+        // Flush buffer — but recurse first to catch the case where
+        // `buffer` is itself a single oversized part (e.g. one
+        // monstrous line that the line-tier returned as-is).
+        out.push(...tryTier(buffer, tierIndex + 1));
+        buffer = part;
+      } else {
+        buffer = test;
+      }
+    }
+    if (buffer) out.push(...tryTier(buffer, tierIndex + 1));
+    return out;
+  };
+
+  return tryTier(text, 0);
+}
+
+/**
  * Merge small consecutive sections to meet minimum chunk size.
  * Splits oversized sections to stay under maximum.
  */
@@ -178,23 +268,14 @@ function normalizeChunkSizes(
         result.push(buffer);
         buffer = null;
       }
-      // Split large section by paragraphs
-      const paragraphs = section.body.split(/\n\n+/);
-      let currentBody = '';
-      for (const para of paragraphs) {
-        const testBody = currentBody ? `${currentBody}\n\n${para}` : para;
-        const testContent = section.header ? `${section.header}\n\n${testBody}` : testBody;
-        if (estimateTokens(testContent) > MAX_CHUNK_TOKENS && currentBody) {
-          const content = section.header ? `${section.header}\n\n${currentBody}` : currentBody;
-          result.push({ header: section.header, body: currentBody, combinedContent: content });
-          currentBody = para;
-        } else {
-          currentBody = testBody;
-        }
-      }
-      if (currentBody) {
-        const content = section.header ? `${section.header}\n\n${currentBody}` : currentBody;
-        result.push({ header: section.header, body: currentBody, combinedContent: content });
+      // Split oversized body using the tiered separator chain. Falls
+      // back from paragraphs → lines → sentences → char-window so
+      // sources without blank-line paragraph breaks (PDFs extracted
+      // by pdfjs-dist are the canonical case) still get split.
+      const pieces = splitBodyToFit(section.body, MAX_CHUNK_TOKENS, section.header);
+      for (const piece of pieces) {
+        const content = section.header ? `${section.header}\n\n${piece}` : piece;
+        result.push({ header: section.header, body: piece, combinedContent: content });
       }
     } else if (tokens < MIN_CHUNK_TOKENS && buffer) {
       // Merge with buffer — append body only (not combinedContent which includes the header)
@@ -257,15 +338,123 @@ function chunkPatternSection(
 }
 
 /**
- * Chunk a generic (non-pattern) section into appropriately sized chunks.
+ * Pull a short title out of a chunk body — used when the chunk has no
+ * explicit heading (semantic chunking on a PDF, generic prose, etc.).
+ *
+ * Heuristic: take the first sentence (or first ~80 chars if no
+ * sentence boundary), strip surrounding whitespace, normalise inner
+ * whitespace, and cap at 80 chars with an ellipsis. This won't
+ * produce a perfectly summarised title but it gives the graph view
+ * something readable — "A Human-Centric Venture Studio Entity"
+ * beats "(no title)".
  */
-function chunkGenericSection(
+function deriveSectionTitle(body: string): string | null {
+  const text = body.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const sentenceMatch = text.match(/^.{10,120}?[.!?](?=\s|$)/);
+  const candidate = sentenceMatch ? sentenceMatch[0] : text;
+  const trimmed = candidate.length > 80 ? `${candidate.slice(0, 77)}...` : candidate;
+  return trimmed.trim() || null;
+}
+
+/**
+ * Map a header / section heading to a chunkType label. The match list
+ * preserves the original pattern-docs vocabulary so the seeded
+ * Agentic Design Patterns knowledge base keeps its specific labels;
+ * the default for everything else is `'text'`, which is what the
+ * graph view should show for arbitrary PDF / DOCX content rather
+ * than the misleading legacy `'pattern_section'`.
+ */
+function inferChunkType(headerSource: string): string {
+  const headerLower = headerSource.toLowerCase();
+  if (headerLower.includes('glossary')) return 'glossary';
+  if (headerLower.includes('recipe') || headerLower.includes('composition'))
+    return 'composition_recipe';
+  if (headerLower.includes('selection') || headerLower.includes('guide')) return 'selection_guide';
+  if (headerLower.includes('cost') || headerLower.includes('pricing')) return 'cost_reference';
+  if (headerLower.includes('context engineering')) return 'context_engineering';
+  if (headerLower.includes('emerging') || headerLower.includes('frontier'))
+    return 'emerging_concepts';
+  if (headerLower.includes('ecosystem') || headerLower.includes('tool')) return 'ecosystem';
+  if (headerLower.includes('getting started') || headerLower.includes('overview'))
+    return 'pattern_overview';
+  return 'text';
+}
+
+/**
+ * Chunk a generic (non-pattern) section into appropriately sized chunks.
+ *
+ * Routing strategy:
+ *
+ *   1. If the section has explicit `###` subheadings, use them as
+ *      structural boundaries (authors who marked up their content get
+ *      to keep that intent). Falls through to size-normalisation
+ *      across the resulting subsections.
+ *
+ *   2. If there are no subheadings AND the body is oversized,
+ *      semantic chunking takes over: every sentence is embedded, and
+ *      chunk boundaries land at the largest topic-distance jumps
+ *      (75th percentile by default). This avoids the structural
+ *      splitter's mid-sentence cuts on PDF / DOCX / transcript text.
+ *
+ *   3. On semantic-chunker failure (provider unreachable, fewer than
+ *      4 sentences, etc.) the structural fallback kicks back in via
+ *      `normalizeChunkSizes` → `splitBodyToFit`. The user still gets
+ *      chunks; semantic chunking is a quality upgrade, not a hard
+ *      requirement.
+ */
+async function chunkGenericSection(
   header: string,
   body: string,
   documentSlug: string,
   commentMetadata: Record<string, string>
-): Chunk[] {
+): Promise<Chunk[]> {
   const subsections = splitOnHeadings(body, '###');
+  const hasExplicitSubheadings = subsections.some((s) => s.header.length > 0);
+
+  // Semantic path: no author-supplied structure inside this section
+  // and the body is oversized. We embed sentences and split at topic
+  // boundaries; if that throws (no embedding provider, network error,
+  // too few sentences) we silently fall through to the structural
+  // path below.
+  if (!hasExplicitSubheadings && estimateTokens(body) > MAX_CHUNK_TOKENS) {
+    try {
+      const semanticBodies = await chunkBySemanticBreakpoints(body, {
+        minTokens: MIN_CHUNK_TOKENS,
+        maxTokens: MAX_CHUNK_TOKENS,
+      });
+      if (semanticBodies.length > 1) {
+        const chunkType = inferChunkType(header);
+        return semanticBodies.map((piece, i) => {
+          const combinedContent = header ? `${header}\n\n${piece}` : piece;
+          const derivedTitle = deriveSectionTitle(piece);
+          const sectionLabel = header || derivedTitle || `section-${i}`;
+          const sectionSlug = slugify(sectionLabel);
+          const suffix = semanticBodies.length > 1 ? `-${i}` : '';
+          return {
+            id: `${documentSlug}-${sectionSlug}${suffix}`,
+            content: stripMetadataComments(combinedContent),
+            chunkType,
+            patternNumber: null,
+            patternName: null,
+            category: commentMetadata['category'] ?? null,
+            section: header || derivedTitle,
+            keywords: commentMetadata['keywords'] ?? null,
+            estimatedTokens: estimateTokens(combinedContent),
+          };
+        });
+      }
+    } catch (err) {
+      logger.warn('Semantic chunking failed — falling back to structural splitter', {
+        error: err instanceof Error ? err.message : String(err),
+        documentSlug,
+        bodyTokens: estimateTokens(body),
+      });
+    }
+  }
+
+  // Structural path: either there are author-supplied `###`
+  // subheadings (respect them) or semantic chunking didn't apply.
   const chunks: Chunk[] = [];
 
   const prepared = subsections.map((sub) => {
@@ -281,30 +470,16 @@ function chunkGenericSection(
 
   for (let i = 0; i < normalized.length; i++) {
     const section = normalized[i];
-    const sectionSlug = section.header
-      ? slugify(section.header)
-      : header
-        ? slugify(header)
-        : `section-${i}`;
+    // Derive a section title when there's no author-supplied header.
+    // For a single-chunk no-header section we fall back to the header
+    // arg; for sub-divided no-header sections (PDF prose split by
+    // the structural fallback) we pull one from the chunk body.
+    const derivedTitle = !section.header && !header ? deriveSectionTitle(section.body) : null;
+    const sectionLabel = section.header || header || derivedTitle || `section-${i}`;
+    const sectionSlug = slugify(sectionLabel);
     const suffix = normalized.length > 1 ? `-${i}` : '';
 
-    // Infer chunk type from header content
-    let chunkType = 'pattern_section';
-    const headerLower = (header || section.header || '').toLowerCase();
-    if (headerLower.includes('glossary')) chunkType = 'glossary';
-    else if (headerLower.includes('recipe') || headerLower.includes('composition'))
-      chunkType = 'composition_recipe';
-    else if (headerLower.includes('selection') || headerLower.includes('guide'))
-      chunkType = 'selection_guide';
-    else if (headerLower.includes('cost') || headerLower.includes('pricing'))
-      chunkType = 'cost_reference';
-    else if (headerLower.includes('context engineering')) chunkType = 'context_engineering';
-    else if (headerLower.includes('emerging') || headerLower.includes('frontier'))
-      chunkType = 'emerging_concepts';
-    else if (headerLower.includes('ecosystem') || headerLower.includes('tool'))
-      chunkType = 'ecosystem';
-    else if (headerLower.includes('getting started') || headerLower.includes('overview'))
-      chunkType = 'pattern_overview';
+    const chunkType = inferChunkType(header || section.header || '');
 
     chunks.push({
       id: `${documentSlug}-${sectionSlug}${suffix}`,
@@ -313,7 +488,7 @@ function chunkGenericSection(
       patternNumber: null,
       patternName: null,
       category: commentMetadata['category'] ?? null,
-      section: section.header || header || null,
+      section: section.header || header || derivedTitle,
       keywords: commentMetadata['keywords'] ?? null,
       estimatedTokens: estimateTokens(section.combinedContent),
     });
@@ -329,16 +504,22 @@ function chunkGenericSection(
  * generic markdown documents. Strips mermaid diagrams and parses
  * HTML comment metadata.
  *
+ * Async because generic sections without explicit `###` subheadings
+ * are routed through the semantic chunker, which embeds sentences to
+ * find topic-boundary splits. Pattern sections stay on the structural
+ * path — the `## N. Name` / `### Subheading` layout already encodes
+ * semantic boundaries the author chose.
+ *
  * @param content - Raw markdown content
  * @param documentName - Name of the document (used for chunk IDs)
  * @param documentId - Unique document ID (first 8 chars used in chunk keys to prevent collisions)
  * @returns Array of structured chunks ready for embedding
  */
-export function chunkMarkdownDocument(
+export async function chunkMarkdownDocument(
   content: string,
   documentName: string,
   documentId?: string
-): Chunk[] {
+): Promise<Chunk[]> {
   const idPrefix = documentId ? documentId.slice(0, 8) : '';
   const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
   const cleaned = stripCodeBlocks(content);
@@ -366,9 +547,13 @@ export function chunkMarkdownDocument(
         )
       );
     } else if (section.body.trim()) {
-      chunks.push(
-        ...chunkGenericSection(section.header, section.body, documentSlug, sectionMetadata)
+      const generic = await chunkGenericSection(
+        section.header,
+        section.body,
+        documentSlug,
+        sectionMetadata
       );
+      chunks.push(...generic);
     }
   }
 

@@ -234,7 +234,13 @@ export const POST = withAdminAuth(async (request, session) => {
         preview: {
           extractedText: preview.extractedText,
           title: preview.title,
-          author: preview.author,
+          // DocumentPreview.author is `string | undefined`; JSON serialises
+          // `undefined` as the key being absent. The client Zod schema
+          // declares author `.nullable()` (string | null) and rejects
+          // undefined with "Invalid input: expected string, received
+          // undefined". Coerce here so the wire format matches the
+          // schema's contract.
+          author: preview.author ?? null,
           sectionCount: preview.sectionCount,
           warnings: preview.warnings,
           requiresConfirmation: true,

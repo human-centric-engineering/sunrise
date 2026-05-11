@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { FileText, Hash, Maximize2, Minimize2, Network, Search, X, Puzzle } from 'lucide-react';
 
@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { z } from 'zod';
 
 import { API } from '@/lib/api/endpoints';
+import { EmbeddingProjectionView } from '@/components/admin/orchestration/knowledge/embedding-projection-view';
 
 const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false });
 
@@ -78,11 +79,52 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
-  const [view, setView] = useState<'structure' | 'embedded'>('structure');
+  const [view, setView] = useState<'structure' | 'embedded' | 'embedding-space'>('structure');
 
   const [graphError, setGraphError] = useState<string | null>(null);
 
+  // ECharts force layout uses pixel coordinates with origin at the
+  // top-left of the chart series rect (confirmed against ECharts' own
+  // force-graph examples — node x/y are pixel values like 300, 280).
+  // To anchor the KB hub at the visual centre we must know the chart's
+  // actual pixel dimensions; we observe the chart container with a
+  // ResizeObserver and feed the measured size into the chartOption.
+  // The fallback (800×500) avoids a first-render flash at (0, 0)
+  // before the observer fires.
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartSize, setChartSize] = useState<{ width: number; height: number }>({
+    width: 800,
+    height: 500,
+  });
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      // Only update if the change is meaningful — a 1-px jitter from a
+      // scrollbar appearing shouldn't trigger a force-layout restart.
+      setChartSize((prev) =>
+        Math.abs(prev.width - width) > 4 || Math.abs(prev.height - height) > 4
+          ? { width, height }
+          : prev
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const fetchGraph = useCallback(async () => {
+    // The embedding-space view fetches its own data via
+    // EmbeddingProjectionView; no need to hit /knowledge/graph for it.
+    if (view === 'embedding-space') {
+      setLoading(false);
+      setGraphData(null);
+      setGraphError(null);
+      return;
+    }
     setLoading(true);
     setGraphData(null);
     setSelectedNode(null);
@@ -112,6 +154,135 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
     void fetchGraph();
   }, [fetchGraph]);
 
+  // Toggle is reused in two places — the embedding-space early-return
+  // (which bypasses the graph fetch entirely) and the main render path
+  // below the graph chart. Defining it here keeps the two surfaces in
+  // lockstep so a future change can't accidentally diverge them.
+  const viewToggle = (
+    <div className="flex items-center gap-3">
+      <span className="text-muted-foreground text-xs font-medium">View</span>
+      <div className="bg-muted inline-flex items-center rounded-lg p-1">
+        <button
+          type="button"
+          onClick={() => setView('structure')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'structure'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Structure
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('embedded')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'embedded'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Embedded
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('embedding-space')}
+          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+            view === 'embedding-space'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Embedding space
+        </button>
+      </div>
+      {/* Per-view explainer — content swaps with the active view so the
+          user always sees a description of what they're currently looking
+          at. The toggle row caption stays terse; depth lives in the
+          FieldHelp popover. */}
+      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+        {view === 'structure' && (
+          <>
+            Every document and chunk in the knowledge base
+            <FieldHelp
+              title="Structure view"
+              ariaLabel="About the Structure view"
+              contentClassName="w-96"
+            >
+              <p>
+                Shows <strong>every document and every chunk</strong> regardless of embedding
+                status. This is the full topology of what&apos;s stored — including documents that
+                are still being processed (amber) or failed to embed (red).
+              </p>
+              <p className="mt-2">
+                Use this view to audit ingestion: a chunk visible here but missing from{' '}
+                <strong>Embedded</strong> has been split out of the source document but doesn&apos;t
+                yet have a vector, so an agent can&apos;t retrieve it via semantic search.
+              </p>
+              <p className="mt-2 text-xs">
+                Past 500 chunks, individual chunk nodes are hidden for performance and only
+                document-level nodes are drawn.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+        {view === 'embedded' && (
+          <>
+            Only chunks that have vector embeddings
+            <FieldHelp
+              title="Embedded view"
+              ariaLabel="About the Embedded view"
+              contentClassName="w-96"
+            >
+              <p>
+                Filters to chunks where the <strong>embedding vector has been computed</strong> and
+                stored. Documents with zero embedded chunks are hidden entirely.
+              </p>
+              <p className="mt-2">
+                This is what&apos;s <strong>actually searchable</strong> by your agents — every
+                chunk shown here can be retrieved via vector similarity. If a document appears in
+                Structure but not Embedded, it&apos;s been chunked but the embedding step
+                hasn&apos;t completed (or it failed).
+              </p>
+              <p className="mt-2 text-xs">
+                If this view looks identical to Structure, your knowledge base is fully embedded —
+                that&apos;s the healthy state.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+        {view === 'embedding-space' && (
+          <>
+            UMAP-projected chunks — clusters = semantic similarity
+            <FieldHelp
+              title="Embedding space view"
+              ariaLabel="About the Embedding space view"
+              contentClassName="w-96"
+            >
+              <p>
+                A different view of the same chunks: each one becomes a single{' '}
+                <strong>2D point</strong> on a scatter plot. The (x, y) position is derived from the
+                chunk&apos;s 1,536-dim embedding vector via <strong>UMAP</strong> — a
+                dimensionality-reduction algorithm that preserves local neighbour structure.
+              </p>
+              <p className="mt-2">
+                <strong>Neighbouring points are semantically similar.</strong> Visible clusters tell
+                you what topics your knowledge base actually covers; outliers are chunks that
+                don&apos;t fit any cluster. Points are coloured by source document, so you can see
+                whether documents talk about overlapping or disjoint topics.
+              </p>
+              <p className="mt-2 text-xs">
+                UMAP needs at least 10 embedded chunks to produce a meaningful layout. Past 2,000
+                points the view samples uniformly to keep the projection fast and the plot readable.
+                Hover for chunk metadata, click for the full preview.
+              </p>
+            </FieldHelp>
+          </>
+        )}
+      </span>
+    </div>
+  );
+
   // Build ECharts option
   const chartOption = useMemo(() => {
     if (!graphData) return {};
@@ -139,13 +310,55 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
       return searchable.some((v) => typeof v === 'string' && v.toLowerCase().includes(lowerFilter));
     };
 
+    // Anchor the KB hub at the chart's pixel centre and seed each
+    // document on a ring around it.
+    //
+    // ECharts graph force layout operates in pixel coordinates with
+    // the origin at the chart series rect's top-left — there is no
+    // data-space auto-centre (verified against ECharts' own
+    // force-graph examples, where nodes carry pixel x/y like 300/280).
+    // A previous attempt pinned the KB at (0, 0) hoping the view box
+    // would auto-fit and centre on data; it doesn't, so the KB ended
+    // up parked at the top-left of the canvas.
+    //
+    // Fix: read the actual chart pixel dimensions via a ResizeObserver
+    // on the surrounding container, then pin the KB at (width/2,
+    // height/2) and seed documents on a ring whose radius is sized to
+    // the smaller axis so the ring fits comfortably regardless of
+    // aspect ratio. Chunks remain unseeded — ECharts randomises them
+    // and force repulsion from their parent document distributes them
+    // outward naturally.
+    const centreX = chartSize.width / 2;
+    const centreY = chartSize.height / 2;
+    const docRingRadius = Math.max(60, Math.min(chartSize.width, chartSize.height) * 0.3);
+
+    const documentNodes = graphData.nodes.filter((n) => n.type === 'document');
+    const docCount = Math.max(documentNodes.length, 1);
+    const docInitialPositions = new Map<string, { x: number; y: number }>(
+      documentNodes.map((d, i) => {
+        const angle = (i / docCount) * 2 * Math.PI - Math.PI / 2; // start at top
+        return [
+          d.id,
+          {
+            x: centreX + docRingRadius * Math.cos(angle),
+            y: centreY + docRingRadius * Math.sin(angle),
+          },
+        ];
+      })
+    );
+
     const nodes = graphData.nodes.map((node) => {
       const matches = nodeMatches(node);
+      const isKb = node.type === 'kb';
+      const seedPos = isKb
+        ? { x: centreX, y: centreY, fixed: true as const }
+        : (docInitialPositions.get(node.id) ?? {});
       return {
         id: node.id,
         name: node.name,
         symbolSize: node.value,
         category: node.category,
+        ...seedPos,
         itemStyle: {
           opacity: hasFilter && !matches ? 0.1 : 1,
           borderWidth: hasFilter && matches ? 3 : 1,
@@ -153,7 +366,7 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         },
         label: {
           show: node.type !== 'chunk',
-          fontSize: node.type === 'kb' ? 14 : 10,
+          fontSize: isKb ? 14 : 10,
           opacity: hasFilter && !matches ? 0.1 : 1,
         },
         // Store full node data for click handler
@@ -351,12 +564,27 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         },
       ],
     };
-  }, [graphData, filterText]);
+  }, [graphData, filterText, chartSize]);
 
   const handleChartClick = useCallback((params: { data?: { value?: GraphNode } }) => {
     const node = params.data?.value;
     if (node) setSelectedNode(node);
   }, []);
+
+  // Embedding-space view bypasses the structural graph entirely — it
+  // has its own data source (/knowledge/embeddings) and its own
+  // loading/error/empty handling, so we short-circuit before the graph
+  // chrome (stats cards, search, fullscreen) which doesn't apply.
+  // This early return must come AFTER all hook calls — React requires
+  // hooks be invoked in the same order on every render.
+  if (view === 'embedding-space') {
+    return (
+      <div className="space-y-4">
+        {viewToggle}
+        <EmbeddingProjectionView scope={scope} />
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -381,30 +609,15 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
 
   if (!graphData || graphData.stats.documentCount === 0) {
     const scopeLabel = scope === 'system' ? 'system' : scope === 'app' ? 'app-specific' : '';
-    // When the embedded view is empty but structure has data, show the toggle so users can switch back
+    // When the embedded view is empty but structure has data, the
+    // toggle lets the user jump back. Showing the full three-button
+    // toggle here keeps the UI consistent — including offering the
+    // Embedding-space view, which has its own data path and may have
+    // results even when the structural graph looks empty.
     const showToggle = view === 'embedded' && graphData !== null;
     return (
       <div className="space-y-4">
-        {showToggle && (
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-xs font-medium">View</span>
-            <div className="bg-muted inline-flex items-center rounded-lg p-1">
-              <button
-                type="button"
-                onClick={() => setView('structure')}
-                className="text-muted-foreground hover:text-foreground rounded-md px-3 py-1 text-xs font-medium transition-colors"
-              >
-                Structure
-              </button>
-              <button
-                type="button"
-                className="bg-background text-foreground rounded-md px-3 py-1 text-xs font-medium shadow-sm transition-colors"
-              >
-                Embedded
-              </button>
-            </div>
-          </div>
-        )}
+        {showToggle && viewToggle}
         <div className="text-muted-foreground rounded-lg border border-dashed p-12 text-center">
           <Network className="mx-auto mb-3 h-10 w-10 opacity-40" />
           <p className="text-sm font-medium">
@@ -480,8 +693,9 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         </div>
       )}
 
-      {/* Chart */}
-      <div className={fullscreen ? 'flex-1' : 'h-[500px]'}>
+      {/* Chart — ref drives the ResizeObserver feeding chartSize, which
+          in turn positions the KB hub at the chart's pixel centre. */}
+      <div ref={chartContainerRef} className={fullscreen ? 'flex-1' : 'h-[500px]'}>
         <ReactECharts
           option={chartOption}
           style={{ height: '100%', width: '100%' }}
@@ -551,108 +765,46 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
         </Card>
       </div>
 
-      {/* Knowledge graph explainer */}
+      {/* Knowledge graph overview — covers the general "what is this and
+          how do I interact with it" question. Per-view depth lives in the
+          FieldHelp on the toggle row below, so a user can drill into the
+          specific view they're looking at without re-reading shared
+          intro material. */}
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium">
           Knowledge Graph{' '}
           <FieldHelp
             title="Knowledge Graph"
             ariaLabel="About the knowledge graph"
-            contentClassName="w-96 max-h-80 overflow-y-auto"
+            contentClassName="w-96"
           >
             <p>
-              This is a <strong>knowledge graph</strong> — a visual representation of how your
-              knowledge base is structured. Each element in the graph is a <strong>node</strong>,
-              and the lines connecting them are <strong>edges</strong> that show relationships.
+              A <strong>knowledge graph</strong> is a visual map of how your knowledge base is
+              structured. Each circle is a <strong>node</strong> (the Knowledge Base hub, a
+              document, or a chunk) and the lines between them are <strong>edges</strong> that
+              describe relationships — e.g. &quot;contains (12 chunks)&quot; or &quot;section:
+              Implementation&quot;.
             </p>
-            <p className="text-foreground mt-2 font-medium">Nodes</p>
-            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-              <li>
-                <strong>Knowledge Base</strong> (indigo) — the central root node representing your
-                entire knowledge base.
-              </li>
-              <li>
-                <strong>Documents</strong> (green/amber/red) — each uploaded file. Colour indicates
-                status: green for ready, amber for pending, red for failed.
-              </li>
-              <li>
-                <strong>Chunks</strong> (slate) — the individual text segments that a document was
-                split into. Each chunk has its own embedding vector for search.
-              </li>
-            </ul>
-            <p className="text-foreground mt-2 font-medium">Edges</p>
-            <p>
-              Edges represent the relationship between nodes. A{' '}
-              <strong>&quot;contains&quot;</strong> edge connects the knowledge base to each
-              document, showing how many chunks it holds (e.g. &quot;contains (12 chunks)&quot;).
-              Document-to-chunk edges describe the chunk&apos;s role — for example{' '}
-              <strong>&quot;overview&quot;</strong>,{' '}
-              <strong>&quot;section: Implementation&quot;</strong>, or{' '}
-              <strong>&quot;glossary&quot;</strong>. This means you can always trace any chunk — and
-              its embedding — back to the source document it came from.
+            <p className="mt-2">
+              <strong>Node colours:</strong> indigo = Knowledge Base, green/amber/red =
+              ready/pending/failed documents, slate = chunks.
             </p>
             <p className="text-foreground mt-2 font-medium">Interaction</p>
             <p>
-              <strong>Hover a node</strong> to highlight it and its connected edges and neighbours
-              in yellow — the rest of the graph fades so you can focus on the relationships. Edge
-              labels appear on the highlighted edges.
-            </p>
-            <p className="mt-1">
-              <strong>Hover an edge</strong> to see a summary of both connected nodes — the source
-              and target — so you can quickly understand the relationship without clicking.
-            </p>
-            <p className="mt-1">
-              <strong>Click</strong> a node to open a detail panel. You can also{' '}
-              <strong>drag</strong> nodes to rearrange the layout and <strong>scroll</strong> to
-              zoom.
-            </p>
-            <p className="text-foreground mt-2 font-medium">Views</p>
-            <p>
-              <strong>Structure</strong> shows all documents and chunks regardless of embedding
-              status. <strong>Embedded</strong> filters to only chunks that have vector embeddings —
-              useful to see what is actually searchable by your agents.
+              <strong>Hover</strong> a node to highlight its neighbours; hover an edge to see both
+              endpoints. <strong>Click</strong> for a detail panel. <strong>Drag</strong> nodes to
+              rearrange, <strong>scroll</strong> to zoom.
             </p>
             <p className="mt-2 text-xs">
-              When the knowledge base exceeds 500 chunks, individual chunk nodes are hidden for
-              performance and the graph shows document-level nodes only.
+              Use the <strong>View</strong> toggle below to switch between Structure, Embedded, and
+              Embedding space. The ⓘ next to each toggle explains what that view shows.
             </p>
           </FieldHelp>
         </span>
       </div>
 
-      {/* View toggle: Structure / Embedded */}
-      <div className="flex items-center gap-3">
-        <span className="text-muted-foreground text-xs font-medium">View</span>
-        <div className="bg-muted inline-flex items-center rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setView('structure')}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              view === 'structure'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Structure
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('embedded')}
-            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-              view === 'embedded'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Embedded
-          </button>
-        </div>
-        {view === 'embedded' && (
-          <span className="text-muted-foreground text-xs">
-            Showing only chunks with vector embeddings
-          </span>
-        )}
-      </div>
+      {/* View toggle: Structure / Embedded / Embedding space */}
+      {viewToggle}
 
       {graphContent}
 
