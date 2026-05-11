@@ -14,15 +14,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { sseResponse } from '@/lib/api/sse';
 import { getClientIP } from '@/lib/security/ip';
-import { embedChatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { embedChatLimiter, createRateLimitResponse, imageLimiter } from '@/lib/security/rate-limit';
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { logger } from '@/lib/logging';
 import { cuidSchema } from '@/lib/validations/common';
+import { chatAttachmentsArraySchema } from '@/lib/validations/orchestration';
+import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
 
 const embedChatSchema = z.object({
-  message: z.string().min(1).max(10_000),
+  // Allow empty message when attachments are present — vision turns
+  // commonly send a single photo with no text body. Server-side gate
+  // continues to require non-empty input when both are empty.
+  message: z.string().max(10_000),
   conversationId: cuidSchema.optional(),
+  attachments: chatAttachmentsArraySchema.optional(),
 });
 
 function corsHeaders(origin: string | null, allowedOrigins: string[]): Record<string, string> {
@@ -105,10 +111,74 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // Require either text or at least one attachment — a turn with
+  // neither is an empty submit and gets rejected at the boundary.
+  if (!body.message.trim() && (!body.attachments || body.attachments.length === 0)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Message or attachment required' },
+      },
+      { status: 400 }
+    );
+  }
+
+  // Attachment-bearing turns get the same rate-limit bucket + magic-
+  // byte validation as the admin / consumer routes. Per-agent / global
+  // / capability gates run inside `streamChat`.
+  const corsResponseHeaders = corsHeaders(origin, ctx.allowedOrigins);
+  if (body.attachments && body.attachments.length > 0) {
+    const attachmentLimit = imageLimiter.check(`image:embed:${token}:${clientIp}`);
+    if (!attachmentLimit.success) return createRateLimitResponse(attachmentLimit);
+
+    for (const attachment of body.attachments) {
+      if (attachment.mediaType.startsWith('image/')) {
+        const buffer = Buffer.from(attachment.data, 'base64');
+        const validation = validateImageMagicBytes(buffer);
+        if (!validation.valid) {
+          logger.warn('Embed image attachment magic-byte validation failed', {
+            agentSlug: ctx.agentSlug,
+            mediaType: attachment.mediaType,
+            error: validation.error,
+          });
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: 'IMAGE_INVALID_TYPE',
+                message:
+                  'Attachment is not a valid image file. Magic bytes do not match the declared MIME type.',
+              },
+            },
+            { status: 415, headers: corsResponseHeaders }
+          );
+        }
+      } else if (attachment.mediaType === 'application/pdf') {
+        const buffer = Buffer.from(attachment.data, 'base64');
+        if (!validatePdfMagicBytes(buffer)) {
+          logger.warn('Embed PDF attachment magic-byte validation failed', {
+            agentSlug: ctx.agentSlug,
+          });
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: 'IMAGE_INVALID_TYPE',
+                message: 'Attachment is not a valid PDF file. The %PDF- header is missing.',
+              },
+            },
+            { status: 415, headers: corsResponseHeaders }
+          );
+        }
+      }
+    }
+  }
+
   logger.info('Embed chat stream started', {
     agentSlug: ctx.agentSlug,
     userId: ctx.userId,
     conversationId: body.conversationId,
+    attachmentCount: body.attachments?.length ?? 0,
   });
 
   const events = streamChat({
@@ -116,9 +186,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     agentSlug: ctx.agentSlug,
     userId: ctx.userId,
     conversationId: body.conversationId,
+    attachments: body.attachments,
     signal: request.signal,
   });
 
-  const headers = corsHeaders(origin, ctx.allowedOrigins);
-  return sseResponse(events, { signal: request.signal, headers });
+  return sseResponse(events, { signal: request.signal, headers: corsResponseHeaders });
 }

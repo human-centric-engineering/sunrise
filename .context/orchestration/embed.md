@@ -161,6 +161,20 @@ On Vercel, requests over the platform cap are rejected by the edge **before** Su
 
 A pre-parse `Content-Length` guard in the route also rejects oversized bodies on self-hosted Node before the multipart parser allocates memory — so even malformed clients can't OOM the server.
 
+### Image and document input
+
+The `/widget-config` response includes `imageInputEnabled` and `documentInputEnabled` boolean flags, each computed via the same triple-gate as voice input but against the `'vision'` and `'documents'` capabilities respectively. The widget renders a paperclip button next to the mic button when either flag is true. The hidden file input is configured with `multiple` and `capture="environment"` — iOS Safari and Android Chrome offer the rear camera alongside the photo library when the user taps the button; desktop browsers ignore `capture` and show a standard file picker.
+
+Selected files are base64-encoded client-side (via `FileReader.readAsDataURL`) and appended to the next chat POST body's `attachments` field. The widget enforces the same per-attachment cap (~5 MB), per-turn combined cap (~25 MB), and 10-attachment count limit as the schema; oversize files surface an inline error in the existing `voiceErrEl` panel and are dropped. A small badge on the paperclip shows the pending count; a chip strip below the input area lists filenames with per-entry remove buttons. The attachment list is cleared the instant a send begins so a network failure doesn't double-send.
+
+The widget does not run camera UI inline (no `getUserMedia`); the `capture="environment"` attribute is the cheap path that delegates capture to the OS. This trades fidelity for simplicity — the partner site doesn't need a camera permission grant, and the widget's bundle stays small.
+
+**Permissions-Policy caveat.** Unlike microphone access (which requires `Permissions-Policy: microphone=(self)` for `getUserMedia`), the file input + `capture` attribute does not require any explicit permission grant — browsers treat it as a standard file picker. Iframe embedders that want camera-via-capture work without `allow="camera"` set, but partners who later want a richer in-widget camera UI would need to enable it.
+
+**Mime allowlist.** `accept` is `image/jpeg,image/png,image/gif,image/webp` when only image input is enabled, and adds `application/pdf` when documents are also on. Magic-byte validation runs server-side on every uploaded image (`validateImageMagicBytes`) and PDF (`validatePdfMagicBytes`) — clients that send a JPEG body with a `.png` MIME tag get rejected with `IMAGE_INVALID_TYPE` (415).
+
+**Endpoint.** Attachments ride on the standard `POST /api/v1/embed/chat/stream` body. The route enforces (a) `imageLimiter` rate limit keyed `image:embed:${token}:${ip}` (20 req/min), (b) magic-byte validation, and (c) hands the validated body to `streamChat`. Per-agent toggles, global kill switches, and the model capability gate are enforced by `streaming-handler.ts` inside `streamChat` — SSE error events `IMAGE_DISABLED` / `IMAGE_NOT_SUPPORTED` / `PDF_DISABLED` / `PDF_NOT_SUPPORTED` surface the cause.
+
 ## Chat stream endpoint
 
 ```
