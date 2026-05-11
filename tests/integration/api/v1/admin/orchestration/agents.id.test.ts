@@ -350,6 +350,46 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       });
     });
 
+    it('PATCH persists enableImageInput and enableDocumentInput', async () => {
+      // Regression: the route used to validate these via Zod but never
+      // copy them onto the update payload, so toggling either one in
+      // the admin form silently reset to false on save. The explicit
+      // assertion on `data.enable*Input` locks the mapping in place.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(
+        makeRequest('PATCH', {
+          enableImageInput: true,
+          enableDocumentInput: true,
+        }),
+        makeParams(AGENT_ID)
+      );
+
+      const updateCall = vi.mocked(prisma.aiAgent.update).mock.calls[0][0];
+      expect(updateCall.data).toMatchObject({
+        enableImageInput: true,
+        enableDocumentInput: true,
+      });
+    });
+
+    it('PATCH leaves untouched attachment toggles out of the update', async () => {
+      // When the form posts without the toggles in the payload, the
+      // route must not zero them — the existing DB row stays as is.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(makeRequest('PATCH', { temperature: 0.3 }), makeParams(AGENT_ID));
+
+      const updateCall = vi.mocked(prisma.aiAgent.update).mock.calls[0][0];
+      expect(updateCall.data).not.toHaveProperty('enableImageInput');
+      expect(updateCall.data).not.toHaveProperty('enableDocumentInput');
+    });
+
     it('resets history to [] when stored systemInstructionsHistory is malformed', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const current = makeAgent({

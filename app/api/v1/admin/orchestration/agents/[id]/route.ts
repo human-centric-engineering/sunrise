@@ -119,6 +119,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
   if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
   if (body.enableVoiceInput !== undefined) data.enableVoiceInput = body.enableVoiceInput;
+  if (body.enableImageInput !== undefined) data.enableImageInput = body.enableImageInput;
+  if (body.enableDocumentInput !== undefined) data.enableDocumentInput = body.enableDocumentInput;
 
   // Audit: if systemInstructions actually changed, push the old value
   // onto the history column before writing the new one.

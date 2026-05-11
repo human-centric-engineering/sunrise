@@ -157,6 +157,9 @@ export const POST = withAdminAuth(async (request, session) => {
         knowledgeCategories: body.knowledgeCategories ?? [],
         topicBoundaries: body.topicBoundaries ?? [],
         brandVoiceInstructions: body.brandVoiceInstructions ?? null,
+        enableVoiceInput: body.enableVoiceInput ?? false,
+        enableImageInput: body.enableImageInput ?? false,
+        enableDocumentInput: body.enableDocumentInput ?? false,
         createdBy: session.user.id,
       },
     });
