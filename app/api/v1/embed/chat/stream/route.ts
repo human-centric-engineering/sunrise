@@ -135,10 +135,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (attachment.mediaType.startsWith('image/')) {
         const buffer = Buffer.from(attachment.data, 'base64');
         const validation = validateImageMagicBytes(buffer);
-        if (!validation.valid) {
+        if (!validation.valid || validation.detectedType !== attachment.mediaType) {
           logger.warn('Embed image attachment magic-byte validation failed', {
             agentSlug: ctx.agentSlug,
-            mediaType: attachment.mediaType,
+            declaredMediaType: attachment.mediaType,
+            detectedMediaType: validation.detectedType,
             error: validation.error,
           });
           return NextResponse.json(

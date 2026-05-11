@@ -38,7 +38,7 @@ Start or continue a streaming chat conversation with a public agent.
   "agentSlug": "string (required — must match a public, active agent)",
   "conversationId": "string (optional — CUID of existing conversation to continue)",
   "inviteToken": "string (optional — required for invite_only agents)",
-  "attachments": "[{ name, mediaType, data }] (optional — max 10, base64, 10MB per item)",
+  "attachments": "[{ name, mediaType, data }] (optional — max 10 per turn; ~5MB per item; ~25MB combined; base64-encoded)",
 }
 ```
 
@@ -58,12 +58,19 @@ Start or continue a streaming chat conversation with a public agent.
 
 **Errors:**
 
-| Code                  | Status | When                                              |
-| --------------------- | ------ | ------------------------------------------------- |
-| `NOT_FOUND`           | 404    | Agent slug doesn't match any public, active agent |
-| `RATE_LIMIT_EXCEEDED` | 429    | IP or user rate limit exceeded                    |
-| `VALIDATION_ERROR`    | 400    | Invalid request body                              |
-| `UNAUTHORIZED`        | 401    | No session                                        |
+| Code                        | Status | When                                                                        |
+| --------------------------- | ------ | --------------------------------------------------------------------------- |
+| `NOT_FOUND`                 | 404    | Agent slug doesn't match any public, active agent                           |
+| `RATE_LIMIT_EXCEEDED`       | 429    | IP, user, agent, or **image attachment** rate limit exceeded                |
+| `VALIDATION_ERROR`          | 400    | Invalid request body                                                        |
+| `UNAUTHORIZED`              | 401    | No session                                                                  |
+| `IMAGE_INVALID_TYPE`        | 415    | Image/PDF attachment magic bytes don't match the declared MIME              |
+| `IMAGE_DISABLED` (SSE)      | —      | Agent or global image-input toggle off; surfaced as an SSE `error` event    |
+| `IMAGE_NOT_SUPPORTED` (SSE) | —      | Resolved chat model lacks the `'vision'` capability                         |
+| `PDF_DISABLED` (SSE)        | —      | Agent or global document-input toggle off                                   |
+| `PDF_NOT_SUPPORTED` (SSE)   | —      | Resolved chat model lacks the `'documents'` capability (Claude family only) |
+
+**Image and PDF attachments.** The consumer route accepts up to 10 attachments per turn (~5 MB per item, ~25 MB combined), validates magic bytes against the declared MIME, and rate-limits the `image:user:${userId}` bucket at 20 req/min. Per-agent toggles (`enableImageInput`, `enableDocumentInput`) and global kill switches (`imageInputGloballyEnabled`, `documentInputGloballyEnabled`) gate the path. Attachment bytes are passed through to the LLM as multimodal parts and discarded — only the user's text is persisted as an `AiMessage`. A single `CostOperation = 'vision'` row records the attachment counts in metadata.
 
 **Key files:** `app/api/v1/chat/stream/route.ts`, `lib/orchestration/chat/streaming-handler.ts`
 

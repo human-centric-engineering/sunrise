@@ -58,10 +58,11 @@ export const POST = withAdminAuth(async (request, session) => {
       if (attachment.mediaType.startsWith('image/')) {
         const buffer = Buffer.from(attachment.data, 'base64');
         const validation = validateImageMagicBytes(buffer);
-        if (!validation.valid) {
+        if (!validation.valid || validation.detectedType !== attachment.mediaType) {
           log.warn('Image attachment magic-byte validation failed', {
             agentSlug: body.agentSlug,
-            mediaType: attachment.mediaType,
+            declaredMediaType: attachment.mediaType,
+            detectedMediaType: validation.detectedType,
             error: validation.error,
             userId: session.user.id,
           });
