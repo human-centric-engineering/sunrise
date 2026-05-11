@@ -45,6 +45,9 @@ describe('AttachmentPickerButton', () => {
   it('sets the file input accept and multiple attributes', () => {
     render(<AttachmentPickerButton />);
     const input = screen.getByTestId('attachment-picker-input');
+    if (!(input instanceof HTMLInputElement)) {
+      throw new Error('Expected HTMLInputElement');
+    }
     expect(input.type).toBe('file');
     expect(input.multiple).toBe(true);
     expect(input.accept).toContain('image/png');
