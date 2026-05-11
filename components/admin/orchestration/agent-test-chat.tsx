@@ -133,6 +133,13 @@ export function AgentTestChat({
       setError({ title: 'Missing Agent', message: 'No agent slug — save the agent first.' });
       return;
     }
+    // Snapshot the message + attachments before clearing the input so
+    // the user gets an immediately-empty box (standard chat UX) while
+    // the request body still carries what they typed. Without this
+    // capture the input stays full until streaming completes.
+    const submittedMessage = message.trim();
+    if (!submittedMessage && attachments.length === 0) return;
+    setMessage('');
     setError(null);
     setWarning(null);
     setStatus(null);
@@ -159,7 +166,7 @@ export function AgentTestChat({
         agentSlug: string;
         message: string;
         attachments?: ChatAttachment[];
-      } = { agentSlug, message: message.trim() };
+      } = { agentSlug, message: submittedMessage };
       if (attachments.length > 0) {
         requestBody.attachments = attachments;
       }

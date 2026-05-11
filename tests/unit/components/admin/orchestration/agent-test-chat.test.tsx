@@ -578,6 +578,58 @@ describe('AgentTestChat', () => {
     expect(outerSubmit).not.toHaveBeenCalled();
   });
 
+  it('clears the textarea immediately on Send (without waiting for stream completion)', async () => {
+    // Regression: previously the textarea kept its content forever
+    // because handleSend never called setMessage(''). Standard chat UX
+    // clears the input the instant the user presses Send so they can
+    // start typing the next message while the response streams.
+    // Use a stream that never closes so we can verify the textarea
+    // empties before the response arrives.
+    const stream = new ReadableStream<Uint8Array>({
+      start() {
+        // intentionally never enqueues — keeps the request open
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="describe this" />);
+
+    const textarea = screen.getByLabelText(/your message/i);
+    expect(textarea).toHaveValue('describe this');
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    // The textarea must clear synchronously on Send — before any SSE
+    // frame arrives — so the user can start typing immediately.
+    expect(textarea).toHaveValue('');
+  });
+
+  it('does not send (and does not clear) when the textarea is empty and no attachments', async () => {
+    // No-op guard: previously the empty-input path was loose and could
+    // fire a fetch with an empty body. Now it short-circuits early.
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const user = userEvent.setup();
+    render(<AgentTestChat agentSlug="my-agent" />);
+
+    // The Send button is disabled when no message and no attachments
+    // are present, so we have to call handleSend a different way.
+    // We assert the disabled state instead, which proves the same
+    // contract: empty input cannot trigger a send.
+    const send = screen.getByRole('button', { name: /^send$/i });
+    expect(send).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Force-click anyway via a non-user-event path to confirm the
+    // guard inside handleSend itself does the right thing.
+    // (Disabled buttons block user-event clicks; we test the guard
+    // logic via the Enter-on-empty path instead.)
+    await user.click(screen.getByLabelText(/your message/i));
+    await user.keyboard('{Enter}');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('shows a "Missing Agent" error when handleSend runs without an agentSlug', async () => {
     // Empty slug exercises the `if (!agentSlug)` early-return branch.
     const fetchMock = vi.fn();
