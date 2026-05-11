@@ -33,7 +33,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, Plus, RefreshCw } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  UserCheck,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -469,14 +478,21 @@ export function ProviderModelsPanel({
 
       {models && models.length > 0 && (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            {/* Search — narrowed so the filter clusters get enough
+                room to fit on one line at the dialog's 6xl width.
+                Search isn't the primary action here; the chips are. */}
             <Input
-              placeholder="Search models by id or name…"
+              placeholder="Search models…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="sm:max-w-sm"
+              className="sm:w-56"
               aria-label="Search models"
             />
+
+            {/* Capability cluster — six buckets, multi-select. Wrapped
+                in its own group so the screen-reader label and the
+                visual grouping match. */}
             <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by capability">
               {FILTER_BUCKETS.map((b) => {
                 const active = activeBuckets.has(b.id);
@@ -487,7 +503,7 @@ export function ProviderModelsPanel({
                     onClick={() => toggleBucket(b.id)}
                     aria-pressed={active}
                     className={cn(
-                      'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs transition-colors',
+                      'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors',
                       active
                         ? cn(b.activeClass, 'border-transparent shadow-sm')
                         : 'border-input bg-background text-muted-foreground hover:bg-muted'
@@ -498,6 +514,19 @@ export function ProviderModelsPanel({
                   </button>
                 );
               })}
+            </div>
+
+            {/* State-filter cluster, separated from the capability
+                buckets by a divider and labelled "Status" so it reads
+                as a different kind of filter. Currently a single
+                toggle; pinned to the right at sm+ so it never gets
+                lost in the middle of a wrapping chip row. */}
+            <div
+              className="flex items-center gap-2 sm:ml-auto"
+              role="group"
+              aria-label="Filter by usage status"
+            >
+              <span className="bg-border hidden h-5 w-px sm:inline-block" aria-hidden />
               <button
                 type="button"
                 onClick={() => setInUseOnly((v) => !v)}
@@ -505,12 +534,13 @@ export function ProviderModelsPanel({
                 aria-label="Show only models with at least one bound agent"
                 title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
                 className={cn(
-                  'inline-flex h-6 items-center rounded-full border px-2 text-xs transition-colors',
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors',
                   inUseOnly
-                    ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
-                    : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                    ? 'border-transparent bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400'
+                    : 'border-input bg-background text-foreground hover:bg-muted'
                 )}
               >
+                <UserCheck className="h-3.5 w-3.5" aria-hidden />
                 Has agent
               </button>
             </div>
