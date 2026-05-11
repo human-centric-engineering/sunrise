@@ -273,24 +273,7 @@ export function EmbeddingProjectionView({ scope }: EmbeddingProjectionViewProps)
     );
   }
 
-  if (stats && !stats.projectable) {
-    // We have *some* points but fewer than the minimum useful for
-    // UMAP. Render the points anyway so the user sees they're there,
-    // but explain why the layout is essentially random.
-    return (
-      <div className="space-y-3">
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <div>
-            UMAP needs at least <strong>{stats.minUsefulPoints}</strong> embedded chunks to produce
-            a meaningful 2D layout. With {stats.returned}{' '}
-            {stats.returned === 1 ? 'chunk' : 'chunks'}, the points below are placed at the origin —
-            upload more documents to see real semantic clusters.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const subMinimum = stats !== null && !stats.projectable;
 
   return (
     <div className="space-y-3">
@@ -306,11 +289,23 @@ export function EmbeddingProjectionView({ scope }: EmbeddingProjectionViewProps)
         </div>
       )}
 
+      {subMinimum && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <div>
+            UMAP needs at least <strong>{stats?.minUsefulPoints}</strong> embedded chunks to produce
+            a meaningful 2D layout. With {stats?.returned}{' '}
+            {stats?.returned === 1 ? 'chunk' : 'chunks'}, the points below are placed at the origin
+            — upload more documents to see real semantic clusters.
+          </div>
+        </div>
+      )}
+
       <div className="text-muted-foreground flex items-center justify-between text-xs">
         <span>
           {stats?.returned.toLocaleString()} points · {seriesByDocument.length}{' '}
-          {seriesByDocument.length === 1 ? 'document' : 'documents'} · neighbouring points are
-          semantically similar
+          {seriesByDocument.length === 1 ? 'document' : 'documents'}
+          {!subMinimum && ' · neighbouring points are semantically similar'}
         </span>
         <Button variant="ghost" size="sm" onClick={() => void fetchProjection()}>
           Recompute

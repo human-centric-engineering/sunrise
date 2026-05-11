@@ -113,18 +113,35 @@ describe('EmbeddingProjectionView', () => {
     expect(await screen.findByText(/no embedded chunks to project/i)).toBeInTheDocument();
   });
 
-  it('shows the sub-minimum warning when fewer than 10 chunks are embedded', async () => {
+  it('shows the sub-minimum warning AND renders the chart when fewer than 10 chunks are embedded', async () => {
     const chunks = Array.from({ length: 5 }, (_, i) =>
       makeChunk(`c-${i}`, 'doc-1', 'Test Doc', 0, 0)
     );
     mockProjectionResponse(chunks, { projectable: false });
     render(<EmbeddingProjectionView />);
+
     // The threshold copy is split across text nodes by the inline
     // <strong>10</strong> highlight, so match a phrase that lives in
     // a single text node — "to produce a meaningful 2D layout".
     expect(
       await screen.findByText(/produce a meaningful 2D layout/i, { exact: false })
     ).toBeInTheDocument();
+
+    // The chart must still render — the warning explains WHY the
+    // layout is degenerate (all points stacked at origin) but the user
+    // should still see the points exist. This is the regression we
+    // fixed: previously the sub-minimum branch returned early with
+    // just the warning, no scatter chart at all.
+    expect(screen.getByTestId('mock-echarts')).toBeInTheDocument();
+
+    const option = lastChartOption.current as ChartOption;
+    expect(option.series).toHaveLength(1);
+    expect(option.series[0].data).toHaveLength(5);
+
+    // The misleading "neighbouring points are semantically similar"
+    // caption must be suppressed — at the origin, neighbours are an
+    // artefact of the degenerate layout, not semantics.
+    expect(screen.queryByText(/neighbouring points are semantically similar/i)).toBeNull();
   });
 
   it('renders the scatter chart when the projection is projectable', async () => {

@@ -183,7 +183,7 @@ export const GET = withAdminAuth(async (request) => {
            "patternName", section, "estimatedTokens", content,
            "embeddingModel", "embeddingProvider", "embeddedAt", "embeddingText"
       FROM numbered
-     WHERE rn % ${stride}::bigint = 1
+     WHERE (rn - 1) % ${stride}::bigint = 0
      ORDER BY rn
      LIMIT ${limit}::int
   `;
