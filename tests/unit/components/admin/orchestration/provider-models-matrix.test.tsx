@@ -59,6 +59,8 @@ vi.mock('@/types/orchestration', () => ({
     thinking: { label: 'Thinking', description: 'High-reasoning' },
     worker: { label: 'Worker', description: 'General tasks' },
   },
+  MODEL_CAPABILITIES: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+  STORAGE_ONLY_CAPABILITIES: ['image', 'moderation'],
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -138,7 +140,12 @@ describe('ProviderModelsMatrix', () => {
   it('shows "Chat" badge for chat-only models', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel({ capabilities: ['chat'] })]} />);
 
-    expect(screen.getByText('Chat')).toBeInTheDocument();
+    // The "Chat" string also appears on the capability filter chip and in
+    // the decision heuristic table at the bottom of the page. Scope to
+    // the data row by the model's display name so we assert on the
+    // badge specifically.
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText('Chat')).toBeInTheDocument();
   });
 
   it('shows "Embedding" badge for embedding-only models', () => {
@@ -162,14 +169,54 @@ describe('ProviderModelsMatrix', () => {
     expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
   });
 
-  it('shows "Both" badge for models with chat and embedding capabilities', () => {
+  it('renders one badge per capability instead of a Both pill', () => {
+    // Pre-Phase-4 the matrix collapsed chat+embedding into a single
+    // "Both" badge. The matrix now stores six capabilities, so the
+    // collapse loses information — render one pill per capability.
     render(
       <ProviderModelsMatrix
         initialModels={[makeModel({ id: 'both-1', capabilities: ['chat', 'embedding'] })]}
       />
     );
 
-    expect(screen.getByText('Both')).toBeInTheDocument();
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText('Chat')).toBeInTheDocument();
+    expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
+    expect(within(dataRow).queryByText(/^both$/i)).not.toBeInTheDocument();
+  });
+
+  it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+    'shows the %s badge when the matrix stores that capability',
+    (cap) => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[makeModel({ id: `m-${cap}`, name: `Cap-${cap}`, capabilities: [cap] })]}
+        />
+      );
+      const dataRow = screen.getByRole('row', { name: new RegExp(`cap-${cap}`, 'i') });
+      const expectedLabel = cap.charAt(0).toUpperCase() + cap.slice(1);
+      expect(within(dataRow).getByText(expectedLabel)).toBeInTheDocument();
+    }
+  );
+
+  it('renders the Storage-only indicator for rows with only image/moderation capabilities', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ id: 'img-only', capabilities: ['image'] })]}
+      />
+    );
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText(/storage-only/i)).toBeInTheDocument();
+  });
+
+  it('does not render the Storage-only indicator when a runtime capability is present', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ id: 'mixed', capabilities: ['chat', 'image'] })]}
+      />
+    );
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).queryByText(/storage-only/i)).not.toBeInTheDocument();
   });
 
   // ── Provider filter ────────────────────────────────────────────────────────
@@ -196,7 +243,7 @@ describe('ProviderModelsMatrix', () => {
 
   // ── Capability filter ──────────────────────────────────────────────────────
 
-  it('filtering by capability shows only matching models', async () => {
+  it('filtering by capability chip shows only matching models', async () => {
     const user = userEvent.setup();
     const models = [
       makeModel({ id: 'm1', name: 'Chat Model', capabilities: ['chat'] }),
@@ -204,15 +251,77 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Third combobox is the capability/type filter
-    const capabilityTrigger = screen.getAllByRole('combobox')[2];
-    await user.click(capabilityTrigger);
-
-    const option = await screen.findByRole('option', { name: /embedding/i });
-    await user.click(option);
+    // Phase 4: capability dropdown was replaced by chip multi-select
+    // mirroring the catalogue panel. Toggle the Embedding chip via its
+    // pressable button role.
+    const embeddingChip = screen.getByRole('button', { name: /^embedding$/i });
+    await user.click(embeddingChip);
 
     expect(screen.getByText('Embed Model')).toBeInTheDocument();
     expect(screen.queryByText('Chat Model')).not.toBeInTheDocument();
+  });
+
+  it('chip filter uses OR semantics — selecting Chat and Audio shows both', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({ id: 'm1', name: 'Chat Model', capabilities: ['chat'] }),
+      makeModel({ id: 'm2', name: 'Audio Model', capabilities: ['audio'] }),
+      makeModel({ id: 'm3', name: 'Embed Model', capabilities: ['embedding'] }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    await user.click(screen.getByRole('button', { name: /^chat$/i }));
+    await user.click(screen.getByRole('button', { name: /^audio$/i }));
+
+    expect(screen.getByText('Chat Model')).toBeInTheDocument();
+    expect(screen.getByText('Audio Model')).toBeInTheDocument();
+    expect(screen.queryByText('Embed Model')).not.toBeInTheDocument();
+  });
+
+  it('search input narrows by name / modelId / slug / bestRole', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({ id: 'm1', name: 'GPT-5', modelId: 'gpt-5', bestRole: 'Planner' }),
+      makeModel({
+        id: 'm2',
+        name: 'Whisper 1',
+        modelId: 'whisper-1',
+        capabilities: ['audio'],
+        bestRole: 'Speech-to-text',
+      }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    const search = screen.getByPlaceholderText(/search/i);
+    await user.type(search, 'whisper');
+
+    expect(screen.getByText('Whisper 1')).toBeInTheDocument();
+    expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+  });
+
+  it('"In use" toggle hides rows that have no bound agents', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({
+        id: 'm1',
+        name: 'Unused Model',
+        agents: [],
+      }),
+      makeModel({
+        id: 'm2',
+        name: 'Used Model',
+        agents: [{ id: 'a1', name: 'Agent 1', slug: 'agent-1' }],
+      }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    const inUseChip = screen.getByRole('button', {
+      name: /show only models with at least one bound agent/i,
+    });
+    await user.click(inUseChip);
+
+    expect(screen.getByText('Used Model')).toBeInTheDocument();
+    expect(screen.queryByText('Unused Model')).not.toBeInTheDocument();
   });
 
   // ── Model count text ───────────────────────────────────────────────────────
@@ -235,18 +344,12 @@ describe('ProviderModelsMatrix', () => {
 
   it('model count updates to 0 after all models are filtered out', async () => {
     const user = userEvent.setup();
-    // Our only model is chat-only; filtering by "embedding" capability → 0 results
+    // Our only model is chat-only; toggling the Embedding chip yields zero matches.
     const models = [makeModel({ id: 'm1', name: 'Only Chat', capabilities: ['chat'] })];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Open the capability filter (third combobox at index 2)
-    const capabilityTrigger = screen.getAllByRole('combobox')[2];
-    await user.click(capabilityTrigger);
+    await user.click(screen.getByRole('button', { name: /^embedding$/i }));
 
-    const embeddingOption = await screen.findByRole('option', { name: /^embedding$/i });
-    await user.click(embeddingOption);
-
-    // Chat-only model does not match embedding filter → 0 models shown
     expect(screen.getByText(/0 models/)).toBeInTheDocument();
   });
 

@@ -46,7 +46,47 @@ import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
+import { Input } from '@/components/ui/input';
+import {
+  MODEL_CAPABILITIES,
+  STORAGE_ONLY_CAPABILITIES,
+  TIER_ROLE_META,
+  type ModelCapability,
+  type TierRole,
+} from '@/types/orchestration';
+
+// Stable label + colour mapping for the per-capability badges and the
+// filter chips. Order here drives both. Kept locally rather than
+// hoisted to types/ because the colours are presentational and may
+// drift independently of the canonical capability set.
+const CAPABILITY_DISPLAY: Record<ModelCapability, { label: string; className: string }> = {
+  chat: {
+    label: 'Chat',
+    className: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+  },
+  reasoning: {
+    label: 'Reasoning',
+    className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+  },
+  embedding: {
+    label: 'Embedding',
+    className: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+  },
+  audio: {
+    label: 'Audio',
+    className: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+  },
+  image: {
+    label: 'Image',
+    className: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+  },
+  moderation: {
+    label: 'Moderation',
+    className: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+  },
+};
+
+const STORAGE_ONLY_SET = new Set<ModelCapability>(STORAGE_ONLY_CAPABILITIES);
 
 export interface ModelRowAgentRef {
   id: string;
@@ -140,47 +180,37 @@ function ratingBadge(value: string) {
   );
 }
 
-function capabilityBadge(capabilities: string[]) {
-  const hasChat = capabilities.includes('chat');
-  const hasEmbedding = capabilities.includes('embedding');
-
-  if (hasChat && hasEmbedding) {
+function capabilityBadges(capabilities: string[]): React.ReactElement {
+  // Render one small pill per capability. Previously this collapsed
+  // chat+embedding into "Both" and dropped everything else; with the
+  // matrix now storing reasoning/audio/image/moderation we render the
+  // full set instead.
+  if (capabilities.length === 0) {
     return (
       <Badge
         variant="outline"
-        className="bg-violet-100 text-xs text-violet-800 dark:bg-violet-900 dark:text-violet-200"
+        className="bg-red-100 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
       >
-        Both
+        None
       </Badge>
     );
   }
-  if (hasEmbedding) {
-    return (
-      <Badge
-        variant="outline"
-        className="bg-amber-100 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-      >
-        Embedding
-      </Badge>
-    );
-  }
-  if (hasChat) {
-    return (
-      <Badge
-        variant="outline"
-        className="bg-sky-100 text-xs text-sky-800 dark:bg-sky-900 dark:text-sky-200"
-      >
-        Chat
-      </Badge>
-    );
-  }
+  // Render in canonical order from MODEL_CAPABILITIES regardless of
+  // input order, so two rows with the same capabilities render
+  // identically.
+  const ordered = MODEL_CAPABILITIES.filter((c) => capabilities.includes(c));
   return (
-    <Badge
-      variant="outline"
-      className="bg-red-100 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
-    >
-      None
-    </Badge>
+    <div className="flex flex-wrap items-center gap-1">
+      {ordered.map((cap) => (
+        <Badge
+          key={cap}
+          variant="outline"
+          className={cn('text-xs', CAPABILITY_DISPLAY[cap].className)}
+        >
+          {CAPABILITY_DISPLAY[cap].label}
+        </Badge>
+      ))}
+    </div>
   );
 }
 
@@ -226,7 +256,13 @@ export function ProviderModelsMatrix({
   const router = useRouter();
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [tierFilter, setTierFilter] = useState<string>('all');
-  const [capabilityFilter, setCapabilityFilter] = useState<string>('all');
+  // Chip multi-select: each capability the operator toggles is added
+  // to the set. Empty set = no capability filter (show all). This is
+  // the same shape used by the catalogue panel (provider-models-panel.tsx)
+  // so the matrix mirrors the catalogue's UX.
+  const [activeCapabilities, setActiveCapabilities] = useState<Set<ModelCapability>>(new Set());
+  const [search, setSearch] = useState<string>('');
+  const [inUseOnly, setInUseOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<SortKey>('providerSlug');
   const [auditOpen, setAuditOpen] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -296,8 +332,25 @@ export function ProviderModelsMatrix({
     let rows = initialModels.filter((m) => m.isActive);
     if (providerFilter !== 'all') rows = rows.filter((m) => m.providerSlug === providerFilter);
     if (tierFilter !== 'all') rows = rows.filter((m) => m.tierRole === tierFilter);
-    if (capabilityFilter !== 'all')
-      rows = rows.filter((m) => m.capabilities.includes(capabilityFilter));
+    if (activeCapabilities.size > 0) {
+      // Union (OR) semantics: a row matches when it carries any of the
+      // selected capabilities. Mirrors the catalogue panel; the In-use
+      // toggle handles the "narrow further" case.
+      rows = rows.filter((m) =>
+        m.capabilities.some((c) => activeCapabilities.has(c as ModelCapability))
+      );
+    }
+    if (inUseOnly) {
+      rows = rows.filter((m) => (m.agents?.length ?? 0) > 0);
+    }
+    const term = search.trim().toLowerCase();
+    if (term.length > 0) {
+      rows = rows.filter((m) =>
+        [m.name, m.modelId, m.slug, m.bestRole]
+          .filter(Boolean)
+          .some((v) => v.toLowerCase().includes(term))
+      );
+    }
 
     rows.sort((a, b) => {
       const av = a[sortKey];
@@ -309,7 +362,25 @@ export function ProviderModelsMatrix({
     });
 
     return rows;
-  }, [initialModels, providerFilter, tierFilter, capabilityFilter, sortKey, sortAsc]);
+  }, [
+    initialModels,
+    providerFilter,
+    tierFilter,
+    activeCapabilities,
+    inUseOnly,
+    search,
+    sortKey,
+    sortAsc,
+  ]);
+
+  const toggleCapability = useCallback((cap: ModelCapability) => {
+    setActiveCapabilities((prev) => {
+      const next = new Set(prev);
+      if (next.has(cap)) next.delete(cap);
+      else next.add(cap);
+      return next;
+    });
+  }, []);
 
   const toggleSort = useCallback(
     (key: SortKey) => {
@@ -355,16 +426,44 @@ export function ProviderModelsMatrix({
           </SelectContent>
         </Select>
 
-        <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="chat">Chat</SelectItem>
-            <SelectItem value="embedding">Embedding</SelectItem>
-          </SelectContent>
-        </Select>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name, model id, slug…"
+          aria-label="Search models"
+          className="w-[240px]"
+        />
+
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by capability">
+          {MODEL_CAPABILITIES.map((cap) => {
+            const active = activeCapabilities.has(cap);
+            return (
+              <Button
+                key={cap}
+                type="button"
+                variant={active ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => toggleCapability(cap)}
+                aria-pressed={active}
+              >
+                {CAPABILITY_DISPLAY[cap].label}
+              </Button>
+            );
+          })}
+          <Button
+            type="button"
+            variant={inUseOnly ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setInUseOnly((v) => !v)}
+            aria-pressed={inUseOnly}
+            aria-label="Show only models with at least one bound agent"
+            title="Show only models that at least one active agent is using"
+          >
+            In use
+          </Button>
+        </div>
 
         <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-sm">
@@ -497,7 +596,21 @@ export function ProviderModelsMatrix({
                       {model.name}
                     </Link>
                   </TableCell>
-                  <TableCell>{capabilityBadge(model.capabilities)}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col items-start gap-1">
+                      {capabilityBadges(model.capabilities)}
+                      {model.capabilities.length > 0 &&
+                        model.capabilities.every((c) =>
+                          STORAGE_ONLY_SET.has(c as ModelCapability)
+                        ) && (
+                          <Tip label="The orchestration engine has no runtime path for image or moderation models yet — this row is informational/inventory only.">
+                            <span className="text-muted-foreground cursor-help text-[10px] uppercase">
+                              Storage-only
+                            </span>
+                          </Tip>
+                        )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-xs">
                       {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
