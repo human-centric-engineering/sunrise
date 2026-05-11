@@ -101,9 +101,12 @@ export interface ProviderModelsPanelProps {
   apiKeyPresent?: boolean;
 }
 
-// Filter chip buckets — "Other" lumps together reasoning / moderation
-// / unknown so the chips stay readable even on OpenAI's catalogue.
-type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
+// Filter chip buckets — one per inference output. Previously
+// reasoning + moderation + unknown collapsed into a single "Other"
+// chip, which lost information on OpenAI's mixed catalogue. Each now
+// has its own chip; `unknown` is catalogue-only and stays here (the
+// matrix rejects it).
+type FilterBucket = Capability;
 
 // Columns the operator can sort on. `name` covers the Model column
 // (sorts on canonical model id, which is what the cell displays);
@@ -114,10 +117,12 @@ type SortDir = 'asc' | 'desc';
 
 const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
   { id: 'chat', label: 'Chat' },
+  { id: 'reasoning', label: 'Reasoning' },
   { id: 'embedding', label: 'Embedding' },
   { id: 'image', label: 'Image' },
   { id: 'audio', label: 'Audio' },
-  { id: 'other', label: 'Other' },
+  { id: 'moderation', label: 'Moderation' },
+  { id: 'unknown', label: 'Unknown' },
 ];
 
 const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding'];
@@ -181,11 +186,9 @@ function primaryCapability(model: ProviderModelInfo): Capability {
 }
 
 function bucketFor(cap: Capability): FilterBucket {
-  if (cap === 'chat') return 'chat';
-  if (cap === 'embedding') return 'embedding';
-  if (cap === 'image') return 'image';
-  if (cap === 'audio') return 'audio';
-  return 'other';
+  // Each capability maps to its own chip — no more lazy collapse into
+  // "Other" for reasoning / moderation / unknown.
+  return cap;
 }
 
 export function ProviderModelsPanel({

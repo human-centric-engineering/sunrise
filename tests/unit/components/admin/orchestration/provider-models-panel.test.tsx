@@ -587,12 +587,124 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByRole('group', { name: /filter by capability/i })).toBeInTheDocument();
       });
 
-      // Chat / Embedding / Image / Audio / Other
-      expect(screen.getByRole('button', { name: /^chat$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^embedding$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^image$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^audio$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^other$/i })).toBeInTheDocument();
+      // Phase 5: one chip per inference output. Previously reasoning +
+      // moderation + unknown collapsed into a single "Other" chip,
+      // which lost information on OpenAI's mixed catalogue.
+      for (const label of [
+        'chat',
+        'reasoning',
+        'embedding',
+        'image',
+        'audio',
+        'moderation',
+        'unknown',
+      ]) {
+        expect(
+          screen.getByRole('button', { name: new RegExp(`^${label}$`, 'i') })
+        ).toBeInTheDocument();
+      }
+      // "Other" chip is no longer rendered.
+      expect(screen.queryByRole('button', { name: /^other$/i })).not.toBeInTheDocument();
+    });
+
+    it('Reasoning and Moderation chips filter independently (regression for old Other lump)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'o3-mini',
+            name: 'o3-mini',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 128_000,
+            supportsTools: false,
+            capabilities: ['reasoning'],
+          },
+          {
+            id: 'omni-moderation',
+            name: 'omni-moderation',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['moderation'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('o3-mini')).toBeInTheDocument();
+      });
+      expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+
+      // Reasoning chip narrows to the reasoning row only.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('omni-moderation')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('o3-mini')).toBeInTheDocument();
+
+      // Switch to Moderation chip — only the moderation row remains.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await user.click(screen.getByRole('button', { name: /^moderation$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('o3-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+    });
+
+    it('Unknown chip filters to capability=unknown rows (catalogue-only chip)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            provider: 'openai',
+            tier: 'frontier',
+            inputCostPerMillion: 5,
+            outputCostPerMillion: 15,
+            maxContext: 128_000,
+            supportsTools: true,
+            capabilities: ['chat'],
+          },
+          {
+            id: 'mystery-x',
+            name: 'mystery-x',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['unknown'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /^unknown$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('mystery-x')).toBeInTheDocument();
     });
 
     it('clicking the Embedding filter chip narrows rows to embedding models', async () => {
