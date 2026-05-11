@@ -746,7 +746,7 @@ export interface AgentCostSummary {
 // ============================================================================
 
 /** Task categories that resolve to a default model via the settings singleton. */
-export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
+export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings', 'audio'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 /**
@@ -1104,9 +1104,39 @@ export type LatencyLevel = (typeof LATENCY_LEVELS)[number];
 export const TOOL_USE_LEVELS = ['strong', 'moderate', 'none'] as const;
 export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
 
-/** Model capability types. */
-export const MODEL_CAPABILITIES = ['chat', 'embedding'] as const;
+/** Model capability types storable in the matrix.
+ *
+ * Excludes `unknown`, which is a discovery-only placeholder for models
+ * whose role can't be inferred from id. The catalogue (live `/v1/models`
+ * fetch) renders `unknown`; the curated matrix does not.
+ *
+ * Runtime paths exist for `chat`, `reasoning` (via `chat()`),
+ * `embedding`, and `audio` (via optional `transcribe()`). `image` and
+ * `moderation` are storage-only — operators can register rows so they
+ * appear in audits and inventory, but the engine does not invoke them.
+ */
+export const MODEL_CAPABILITIES = [
+  'chat',
+  'reasoning',
+  'embedding',
+  'audio',
+  'image',
+  'moderation',
+] as const;
 export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+
+/** Capabilities the orchestration engine does not invoke at runtime.
+ *
+ * The form and matrix surface a "storage-only" note on rows whose
+ * capability set is a subset of this list. If an engine path is ever
+ * added for one of these capabilities, update both this constant and
+ * the UI notes in lockstep.
+ */
+export const STORAGE_ONLY_CAPABILITIES = [
+  'image',
+  'moderation',
+] as const satisfies readonly ModelCapability[];
+export type StorageOnlyCapability = (typeof STORAGE_ONLY_CAPABILITIES)[number];
 
 /** Embedding quality levels. */
 export const EMBEDDING_QUALITY_LEVELS = ['high', 'medium', 'budget'] as const;

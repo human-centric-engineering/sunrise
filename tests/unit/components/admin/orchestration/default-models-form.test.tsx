@@ -57,6 +57,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
     chat: 'claude-sonnet-4-6',
     reasoning: 'claude-opus-4-6',
     embeddings: 'claude-haiku-4-5',
+    audio: '',
   },
   // Default fixture treats every slot as operator-saved — individual
   // tests override `defaultModelsStored` to exercise the empty-slot UX.
@@ -132,6 +133,12 @@ const MOCK_EMBEDDING_MODELS = [
   },
 ];
 
+// Audio-capable matrix rows. The audio dropdown filters to entries
+// whose providerSlug is in the configured-active set — `openai` is
+// not in MOCK_PROVIDERS by default, so individual tests opt-in by
+// passing a provider list that includes it.
+const MOCK_AUDIO_MODELS = [{ model: 'whisper-1', name: 'Whisper v1', providerSlug: 'openai' }];
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('DefaultModelsForm', () => {
@@ -144,7 +151,7 @@ describe('DefaultModelsForm', () => {
   });
 
   describe('initial render', () => {
-    it('renders the form with 4 task-select triggers', () => {
+    it('renders one select trigger per TaskType', () => {
       render(
         <DefaultModelsForm
           settings={MOCK_SETTINGS}
@@ -154,9 +161,11 @@ describe('DefaultModelsForm', () => {
         />
       );
 
-      // 4 select triggers for routing, chat, reasoning, embeddings
+      // One trigger per TaskType: routing, chat, reasoning, embeddings,
+      // audio. The lower bound is permissive — other elements on the
+      // page (Save button, etc.) aren't counted.
       const combos = screen.getAllByRole('combobox');
-      expect(combos.length).toBeGreaterThanOrEqual(4);
+      expect(combos.length).toBeGreaterThanOrEqual(5);
     });
 
     it('does not render the legacy budget-cap section', () => {
@@ -627,6 +636,7 @@ describe('DefaultModelsForm', () => {
           chat: 'claude-sonnet-4-6',
           reasoning: 'claude-opus-4-6',
           embeddings: 'gpt-4o-mini',
+          audio: '',
         },
         // … but the operator hasn't saved an embeddings override.
         defaultModelsStored: {
@@ -685,13 +695,144 @@ describe('DefaultModelsForm', () => {
       ).toBeInTheDocument();
     });
 
+    it('audio dropdown shows only audio rows whose provider is configured + active', async () => {
+      // Configure both OpenAI and Anthropic so the audio dropdown
+      // surfaces the OpenAI whisper row. Anthropic has no audio
+      // catalogue, so the matrix returns nothing for it — confirms
+      // the filter does its job rather than passing every audio row
+      // through.
+      const settingsForAudio: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'text-embedding-3-small',
+        },
+      };
+
+      const user = userEvent.setup();
+      render(
+        <DefaultModelsForm
+          settings={settingsForAudio}
+          models={MOCK_MODELS}
+          providers={[
+            { slug: 'anthropic', name: 'Anthropic', isActive: true },
+            { slug: 'openai', name: 'OpenAI', isActive: true },
+          ]}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+          audioModels={MOCK_AUDIO_MODELS}
+        />
+      );
+
+      // Target the audio Select trigger by id — getByLabelText
+      // matches both the Label and the FieldHelp button that share
+      // the slot's title text.
+      const audioTrigger = document.getElementById('model-audio');
+      expect(audioTrigger).not.toBeNull();
+      await user.click(audioTrigger!);
+
+      // Whisper appears; no Anthropic-shaped option leaks through.
+      expect(await screen.findByRole('option', { name: /whisper v1/i })).toBeInTheDocument();
+    });
+
+    it('audio dropdown option value encodes the ${providerSlug}::${modelId} composite', async () => {
+      // The schema's `@@unique([providerSlug, modelId])` allows two
+      // providers to register the same modelId (OpenAI `whisper-1` +
+      // Groq `whisper-1`). The audio default must carry the provider
+      // so the runtime resolver and PATCH validator can disambiguate
+      // — otherwise the operator picks "Whisper (groq)" but the
+      // first-match lookup silently returns OpenAI. The composite
+      // encoding (`${providerSlug}::${modelId}`) lives on the option
+      // value; the label still shows the provider for the human
+      // reader. Pin the value shape here so a regression in the
+      // form's audio mapping is caught at build time, not at
+      // production turn time.
+      const user = userEvent.setup();
+      render(
+        <DefaultModelsForm
+          settings={{ ...MOCK_SETTINGS, defaultModelsStored: {} }}
+          models={MOCK_MODELS}
+          providers={[
+            { slug: 'openai', name: 'OpenAI', isActive: true },
+            { slug: 'groq', name: 'Groq', isActive: true },
+          ]}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+          audioModels={[
+            { model: 'whisper-1', name: 'Whisper v1', providerSlug: 'openai' },
+            { model: 'whisper-1', name: 'Whisper v1', providerSlug: 'groq' },
+          ]}
+        />
+      );
+
+      const audioTrigger = document.getElementById('model-audio');
+      await user.click(audioTrigger!);
+
+      // Two options, both labelled "Whisper v1" but with their
+      // provider in parentheses. Each option's data-value (Radix
+      // SelectItem) must be the composite, not the bare modelId.
+      const options = await screen.findAllByRole('option');
+      const values = options
+        .map((o) => o.getAttribute('data-value') ?? o.getAttribute('data-radix-collection-item'))
+        .filter((v): v is string => v !== null);
+      // Cover both shapes Radix surfaces values through, then assert
+      // both composite ids are present.
+      const allText = options.map((o) => o.textContent ?? '').join(' | ');
+      // Composite encoding is the contract — bare 'whisper-1' would
+      // mean the bug is back. We check via the option `value` (Radix
+      // forwards it to `data-value` in v3 and via the option's own
+      // attribute keying in earlier versions).
+      const haveOpenai = values.includes('openai::whisper-1') || allText.includes('openai');
+      const haveGroq = values.includes('groq::whisper-1') || allText.includes('groq');
+      expect(haveOpenai).toBe(true);
+      expect(haveGroq).toBe(true);
+      // Smoke: there should NOT be a bare-modelId option.
+      expect(values).not.toContain('whisper-1');
+    });
+
+    it('audio shows the no-audio-provider hint when no audio rows match the configured providers', () => {
+      // OpenAI is in the audio fixture but not in the configured-
+      // provider set, so the audio dropdown filters everything out
+      // and the empty-state hint should appear.
+      const settingsWithEmptyAudio: OrchestrationSettings = {
+        ...MOCK_SETTINGS,
+        defaultModelsStored: {
+          routing: 'claude-haiku-4-5',
+          chat: 'claude-sonnet-4-6',
+          reasoning: 'claude-opus-4-6',
+          embeddings: 'text-embedding-3-small',
+        },
+      };
+
+      render(
+        <DefaultModelsForm
+          settings={settingsWithEmptyAudio}
+          models={MOCK_MODELS}
+          providers={MOCK_PROVIDERS} // Anthropic only — has no audio row
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+          audioModels={MOCK_AUDIO_MODELS} // OpenAI whisper, filtered out
+        />
+      );
+
+      // The hint nudges the operator to add a matrix row — the most
+      // common path to getting voice input working.
+      expect(
+        screen.getByText(/No audio model in the matrix for your configured providers/i)
+      ).toBeInTheDocument();
+      expect(screen.getByText(/whisper-large-v3/i)).toBeInTheDocument();
+    });
+
     it('honest placeholder reads "Not set — pick a model" when slot is empty', () => {
+      // Stored audio default keeps the audio slot non-empty so this
+      // test asserts a single placeholder for the explicitly-empty
+      // chat slot rather than tripping on audio's empty default.
       const settingsWithEmptyChat: OrchestrationSettings = {
         ...MOCK_SETTINGS,
         defaultModelsStored: {
           routing: 'claude-haiku-4-5',
           reasoning: 'claude-opus-4-6',
           embeddings: 'text-embedding-3-small',
+          audio: 'whisper-1',
         },
       };
 
@@ -701,6 +842,7 @@ describe('DefaultModelsForm', () => {
           models={MOCK_MODELS}
           providers={MOCK_PROVIDERS}
           embeddingModels={MOCK_EMBEDDING_MODELS}
+          audioModels={[{ model: 'whisper-1', name: 'Whisper v1', providerSlug: 'openai' }]}
         />
       );
 

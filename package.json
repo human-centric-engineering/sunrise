@@ -31,6 +31,7 @@
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "smoke:hybrid-search": "tsx --env-file=.env.local scripts/smoke/knowledge-hybrid-search.ts",
+    "smoke:transcribe": "tsx --env-file=.env.local scripts/smoke/transcribe.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },

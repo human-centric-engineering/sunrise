@@ -61,6 +61,17 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+// Default-models enrichment pulls from the settings singleton. Stub
+// it with an empty merged map by default so existing tests don't see
+// any default-role badges; the dedicated test below overrides this.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+    })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -68,6 +79,7 @@ import { prisma } from '@/lib/db/client';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -409,6 +421,105 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       );
     });
 
+    it('annotates each model with the default-role slots it currently fills', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      // chat + reasoning share gpt-4o, embeddings points at text-
+      // embedding-3-small. Routing has no override (empty string) so
+      // no row should be flagged as the routing default — the panel
+      // must not claim every row fills the empty slot.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: 'gpt-4o',
+          reasoning: 'gpt-4o',
+          embeddings: 'text-embedding-3-small',
+        },
+      } as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' }),
+        makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
+        makeModelInfo({ id: 'text-embedding-3-small', name: 'text-embedding-3-small' }),
+      ]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; defaultFor: string[] }> };
+      }>(response);
+
+      const byId = new Map(data.data.models.map((m) => [m.id, m.defaultFor]));
+      expect(byId.get('gpt-4o')?.sort()).toEqual(['chat', 'reasoning']);
+      // No default points at gpt-4o-mini — empty array, not undefined.
+      expect(byId.get('gpt-4o-mini')).toEqual([]);
+      expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
+    });
+
+    it('audio defaultFor honours the providerSlug component of a composite default', async () => {
+      // The route is provider-scoped (`row.slug` = openai for this
+      // call). A composite `groq::whisper-1` audio default must NOT
+      // light up the panel's whisper-1 row even though the modelId
+      // matches — the provider in the composite is `groq`, not
+      // `openai`. Pre-fix this leaked through because the lookup
+      // keyed by bare modelId.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          // Operator picked Groq's whisper-1 — this OpenAI catalogue
+          // panel must not claim its own whisper-1 is the default.
+          audio: 'groq::whisper-1',
+        },
+      } as never);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'whisper-1', name: 'Whisper v1' })]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; defaultFor: string[] }> };
+      }>(response);
+
+      // OpenAI's whisper-1 row: modelId matches, providerSlug does
+      // not — defaultFor must NOT include 'audio'.
+      expect(data.data.models[0].defaultFor).toEqual([]);
+    });
+
+    it('audio defaultFor matches when the composite providerSlug aligns with this provider', async () => {
+      // Same provider as the composite — badge lights up. Sanity
+      // pair for the negative test above.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'openai::whisper-1',
+        },
+      } as never);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'whisper-1', name: 'Whisper v1' })]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; defaultFor: string[] }> };
+      }>(response);
+
+      expect(data.data.models[0].defaultFor).toEqual(['audio']);
+    });
+
     it('matrix capabilities take precedence over inference', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
@@ -418,9 +529,9 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
         {
           id: 'matrix-1',
           modelId: 'text-embedding-3-small',
-          // Suppose the matrix has a custom capability list — it must
-          // win over the inference fallback.
-          capabilities: ['embedding', 'rerank'],
+          // Suppose the matrix carries a multi-capability list — the
+          // route must echo it verbatim and not fall back to inference.
+          capabilities: ['embedding', 'audio'],
           tierRole: 'embedding',
         },
       ] as never);
@@ -429,11 +540,18 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       ]);
 
       const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      expect(response.status).toBe(200);
       const data = await parseJson<{
         data: { models: Array<{ id: string; capabilities: string[]; tierRole: string | null }> };
       }>(response);
 
-      expect(data.data.models[0].capabilities).toEqual(['embedding', 'rerank']);
+      // Use a fully-valid widened capability ('audio') instead of the
+      // non-enum 'rerank' — Phase 1 widened the matrix to six capabilities
+      // and 'rerank' has never been part of capabilitySchema, so storing
+      // it would never round-trip in production. The contract under test
+      // is "matrix capabilities override the inferred default", not
+      // "arbitrary strings pass through".
+      expect(data.data.models[0].capabilities).toEqual(['embedding', 'audio']);
       expect(data.data.models[0].tierRole).toBe('embedding');
     });
   });

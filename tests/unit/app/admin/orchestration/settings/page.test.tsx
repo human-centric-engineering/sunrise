@@ -143,12 +143,13 @@ describe('OrchestrationSettingsPage', () => {
     expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
   });
 
-  // 6. serverFetch throws: logger.error called for ALL four helpers and
+  // 6. serverFetch throws: logger.error called for ALL five helpers and
   // defaults passed to SettingsForm. Each helper has its own try/catch
   // with a distinct message — toHaveBeenCalledWith is a partial check,
-  // so a regression that broke any one of the chat/providers/embeddings
-  // error branches would have been invisible without this coverage.
-  it('calls logger.error for each of the four helpers and passes defaults when serverFetch throws', async () => {
+  // so a regression that broke any one of the chat/providers/
+  // embeddings/audio error branches would have been invisible without
+  // this coverage.
+  it('calls logger.error for each of the five helpers and passes defaults when serverFetch throws', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
@@ -156,7 +157,7 @@ describe('OrchestrationSettingsPage', () => {
 
     const form = screen.getByTestId('settings-form');
     expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
-    expect(logger.error).toHaveBeenCalledTimes(4);
+    expect(logger.error).toHaveBeenCalledTimes(5);
     expect(logger.error).toHaveBeenCalledWith('settings page: fetch failed', fetchError);
     expect(logger.error).toHaveBeenCalledWith(
       'settings page: chat models fetch failed',
@@ -165,6 +166,10 @@ describe('OrchestrationSettingsPage', () => {
     expect(logger.error).toHaveBeenCalledWith('settings page: providers fetch failed', fetchError);
     expect(logger.error).toHaveBeenCalledWith(
       'settings page: embedding models fetch failed',
+      fetchError
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'settings page: audio models fetch failed',
       fetchError
     );
   });

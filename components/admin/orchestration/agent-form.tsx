@@ -772,10 +772,32 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 <FieldHelp title="Speech-to-text">
                   When on, users see a microphone control in this agent&apos;s chat surfaces (admin
                   test panel and any embed widgets) and can record audio that&apos;s transcribed
-                  before sending. Audio is forwarded to the configured speech-to-text provider (e.g.
-                  OpenAI Whisper) and discarded after transcription — only the transcript is stored
-                  as a normal user message. Voice input also requires the platform-wide switch in{' '}
-                  <strong>Settings → Orchestration</strong> to be on. Default: off.
+                  before sending. Audio is forwarded to the configured speech-to-text provider and
+                  discarded after transcription — only the transcript is stored as a normal user
+                  message. Default: off.
+                  <br />
+                  <br />
+                  <strong>Requirements:</strong>
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      The platform-wide switch at{' '}
+                      <strong>
+                        Admin → Orchestration → Settings → Voice input globally enabled
+                      </strong>{' '}
+                      must be on.
+                    </li>
+                    <li>
+                      An audio-capable model row in the provider-models matrix (
+                      <code>capability: audio</code>) — Whisper-1 ships in the default seed.
+                    </li>
+                    <li>
+                      The audio default model under{' '}
+                      <strong>Admin → Orchestration → Settings → Default models → Audio</strong>{' '}
+                      pins which row <code>getAudioProvider()</code> selects at runtime. If unset,
+                      the matrix falls back to the first audio-capable row by <code>isDefault</code>{' '}
+                      /<code>createdAt</code>.
+                    </li>
+                  </ul>
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-sm">

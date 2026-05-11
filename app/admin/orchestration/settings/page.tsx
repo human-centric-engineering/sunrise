@@ -152,12 +152,46 @@ async function getEmbeddingModels(): Promise<EmbeddingModel[]> {
   }
 }
 
+interface AudioMatrixRowApi {
+  modelId: string;
+  name: string;
+  providerSlug: string;
+}
+
+async function getAudioModels(): Promise<
+  Array<{ model: string; name: string; providerSlug: string }>
+> {
+  // Audio dropdown is matrix-driven: rows with `capability: audio`.
+  // Separate from the chat/registry path because audio support is
+  // declared per-row in AiProviderModel, not in the static chat model
+  // registry. Mirrors the chat-models fetch above for consistency.
+  // The API returns `modelId` but the form's AudioModelSummary uses
+  // `model` (matching EmbeddingModelSummary's shape), so reshape here.
+  try {
+    const res = await serverFetch(
+      `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=audio&isActive=true&limit=100`
+    );
+    if (!res.ok) return [];
+    const body = await parseApiResponse<AudioMatrixRowApi[]>(res);
+    if (!body.success) return [];
+    return body.data.map((row) => ({
+      model: row.modelId,
+      name: row.name,
+      providerSlug: row.providerSlug,
+    }));
+  } catch (err) {
+    logger.error('settings page: audio models fetch failed', err);
+    return [];
+  }
+}
+
 export default async function OrchestrationSettingsPage() {
-  const [fullSettings, models, providers, embeddingModels] = await Promise.all([
+  const [fullSettings, models, providers, embeddingModels, audioModels] = await Promise.all([
     getSettings(),
     getChatModels(),
     getProviders(),
     getEmbeddingModels(),
+    getAudioModels(),
   ]);
 
   // The narrow `OrchestrationSettings` shape that `SettingsForm` accepts
@@ -196,6 +230,7 @@ export default async function OrchestrationSettingsPage() {
         models={models}
         providers={providers}
         embeddingModels={embeddingModels}
+        audioModels={audioModels}
       />
 
       <SettingsForm initialSettings={formSettings} />

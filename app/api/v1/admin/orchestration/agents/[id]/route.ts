@@ -118,6 +118,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.citationGuardMode !== undefined) data.citationGuardMode = body.citationGuardMode;
   if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
   if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
+  if (body.enableVoiceInput !== undefined) data.enableVoiceInput = body.enableVoiceInput;
 
   // Audit: if systemInstructions actually changed, push the old value
   // onto the history column before writing the new one.
@@ -145,7 +146,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Version-triggering fields — snapshot the current config before
-  // the update if any of these are changing.
+  // the update if any of these are changing. `name`, `slug`,
+  // `description`, and `isActive` are intentionally excluded: they're
+  // metadata / operational state, not part of the agent's behavioural
+  // fingerprint. Everything the agent form exposes that affects
+  // runtime behaviour belongs here.
   const VERSIONED_FIELDS = [
     'systemInstructions',
     'model',
@@ -166,9 +171,42 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'providerConfig',
     'monthlyBudgetUsd',
     'metadata',
+    'enableVoiceInput',
   ] as const;
 
-  const changedVersionedFields = VERSIONED_FIELDS.filter((f) => data[f] !== undefined);
+  // Only treat a versioned field as "changed" if the new value actually
+  // differs from the stored value. Previously this filtered on
+  // `data[f] !== undefined` alone — but the form sends back its full
+  // state on every save, so every versioned field was always in `data`
+  // and every save bumped the version with a misleading "X changed"
+  // summary. Now we compare against `current`:
+  //   - Primitive equality for scalars
+  //   - Shallow elementwise for string[] (fallbackProviders,
+  //     knowledgeCategories, topicBoundaries — all string arrays)
+  //   - JSON-stringify for the Prisma `Json` columns (providerConfig,
+  //     metadata) which round-trip as plain values
+  const isFieldChanged = (newValue: unknown, currentValue: unknown): boolean => {
+    if (Array.isArray(newValue) && Array.isArray(currentValue)) {
+      if (newValue.length !== currentValue.length) return true;
+      for (let i = 0; i < newValue.length; i++) {
+        if (newValue[i] !== currentValue[i]) return true;
+      }
+      return false;
+    }
+    if (
+      (newValue !== null && typeof newValue === 'object') ||
+      (currentValue !== null && typeof currentValue === 'object')
+    ) {
+      return JSON.stringify(newValue ?? null) !== JSON.stringify(currentValue ?? null);
+    }
+    return newValue !== currentValue;
+  };
+
+  const changedVersionedFields = VERSIONED_FIELDS.filter(
+    (f) =>
+      data[f] !== undefined &&
+      isFieldChanged(data[f], (current as unknown as Record<string, unknown>)[f])
+  );
 
   try {
     // Auto-create version snapshot if versioned fields changed.
@@ -205,6 +243,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           retentionDays: current.retentionDays,
           providerConfig: current.providerConfig,
           monthlyBudgetUsd: current.monthlyBudgetUsd,
+          enableVoiceInput: current.enableVoiceInput,
         };
 
         const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');

@@ -20,6 +20,9 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import {
   listProviderModelsQuerySchema,
   createProviderModelSchema,
@@ -54,7 +57,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     ];
   }
 
-  const [rows, total, providerConfigs] = await Promise.all([
+  const [rows, total, providerConfigs, settings] = await Promise.all([
     prisma.aiProviderModel.findMany({
       where,
       orderBy: [{ providerSlug: 'asc' }, { name: 'asc' }],
@@ -66,6 +69,12 @@ export const GET = withAdminAuth(async (request, _session) => {
     prisma.aiProviderConfig.findMany({
       select: { slug: true, isActive: true },
     }),
+    // Resolve the effective default-models map so each row can advertise
+    // any TaskType slot it currently fills (routing/chat/reasoning/
+    // embeddings). Agents with empty provider/model fall back to these
+    // defaults at runtime, so a model serving a default is implicitly
+    // in use even when no agent directly names it.
+    getOrchestrationSettings(),
   ]);
 
   // Bound active agents per (provider, modelId) pair. Scope the query
@@ -97,13 +106,47 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
+  // Per-task matching rule. The `audio` slot stores a
+  // `${providerSlug}::${modelId}` composite (see
+  // `lib/orchestration/llm/audio-default.ts`) because the schema
+  // allows two providers to share a modelId. Every other slot stores
+  // a bare modelId resolved through the registry where ids are
+  // globally unique. Evaluating per-row is O(rows × TASK_TYPES) ≈
+  // O(rows × 5) — trivially fast and keeps the matching rule
+  // co-located instead of split across population + lookup.
   const data = rows.map((model) => {
     const config = configBySlug.get(model.providerSlug);
+    const defaultFor: TaskType[] = [];
+    for (const task of TASK_TYPES) {
+      const stored = settings.defaultModels[task];
+      if (!stored) continue;
+      if (task === 'audio') {
+        const parsed = parseAudioDefault(stored);
+        if (!parsed) continue;
+        // Provider-scoped match — if the stored value carries a
+        // provider, both must agree before the badge lights up.
+        // Legacy bare-modelId values fall back to the modelId-only
+        // match (the original ambiguous behaviour) until the operator
+        // re-saves.
+        if (
+          parsed.modelId === model.modelId &&
+          (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
+        ) {
+          defaultFor.push(task);
+        }
+      } else if (stored === model.modelId) {
+        defaultFor.push(task);
+      }
+    }
     return {
       ...model,
       configured: !!config,
       configuredActive: config?.isActive ?? false,
       agents: agentsByKey.get(`${model.providerSlug}::${model.modelId}`) ?? [],
+      // Task slots this model serves as the effective system default
+      // (routing/chat/reasoning/embeddings/audio). Agents with empty
+      // provider/model inherit these at runtime.
+      defaultFor,
     };
   });
 
@@ -113,6 +156,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     page,
     limit,
     modelsInUse: data.filter((m) => m.agents.length > 0).length,
+    modelsServingDefaults: data.filter((m) => m.defaultFor.length > 0).length,
   });
 
   return paginatedResponse(data, { page, limit, total });

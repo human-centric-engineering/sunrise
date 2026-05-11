@@ -41,6 +41,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
+import { formatAudioDefault } from '@/lib/orchestration/llm/audio-default';
 
 export interface ProviderSummary {
   slug: string;
@@ -58,6 +59,21 @@ export interface EmbeddingModelSummary {
   model: string;
 }
 
+/**
+ * Audio-capable matrix rows used to populate the Audio default dropdown.
+ * Sourced from `GET /provider-models?capability=audio&isActive=true` —
+ * audio support is matrix-driven (per-row `capabilities: ['audio']`),
+ * not part of the static chat model registry.
+ */
+export interface AudioModelSummary {
+  /** Bare model id sent to provider.transcribe() (e.g. "whisper-1"). */
+  model: string;
+  /** Display name of the matrix row (e.g. "Whisper v1"). */
+  name: string;
+  /** Provider slug — matched against `providers` to scope the dropdown. */
+  providerSlug: string;
+}
+
 export interface DefaultModelsFormProps {
   settings: OrchestrationSettings | null;
   /** Chat-capable models from the registry (chat / routing / reasoning). */
@@ -66,6 +82,8 @@ export interface DefaultModelsFormProps {
   providers?: ProviderSummary[];
   /** Embedding-capable models, sourced from /embedding-models. */
   embeddingModels?: EmbeddingModelSummary[];
+  /** Audio-capable matrix rows, sourced from /provider-models?capability=audio. */
+  audioModels?: AudioModelSummary[];
 }
 
 // Narrower client-side schema — the server re-validates every model id
@@ -78,6 +96,7 @@ const settingsFormSchema = z.object({
   chat: z.string(),
   reasoning: z.string(),
   embeddings: z.string(),
+  audio: z.string(),
 });
 
 type SettingsFormData = z.input<typeof settingsFormSchema>;
@@ -145,6 +164,30 @@ const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = 
       </>
     ),
   },
+  audio: {
+    label: 'Audio (speech-to-text) model',
+    help: (
+      <>
+        <p>
+          Used by <code>/admin/orchestration/chat/transcribe</code> and{' '}
+          <code>/embed/speech-to-text</code> when an operator records voice in an agent that has{' '}
+          <code>enableVoiceInput</code> set. Picks which row <code>getAudioProvider()</code> returns
+          at runtime — without an override, the runtime falls back to matrix order (
+          <code>isDefault DESC, createdAt ASC</code>).
+        </p>
+        <p>
+          Currently supports OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks) via
+          the shared <code>transcribe()</code> implementation. Providers that don&apos;t expose an
+          OpenAI-compatible <code>/v1/audio/transcriptions</code> endpoint require a dedicated
+          provider class.
+        </p>
+        <p>
+          Options come from the model matrix — any row with <code>capability: audio</code>. Add one
+          in the matrix if the dropdown is empty.
+        </p>
+      </>
+    ),
+  },
 };
 
 export function DefaultModelsForm({
@@ -152,6 +195,7 @@ export function DefaultModelsForm({
   models,
   providers = [],
   embeddingModels = [],
+  audioModels = [],
 }: DefaultModelsFormProps) {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -171,6 +215,7 @@ export function DefaultModelsForm({
       chat: stored.chat ?? '',
       reasoning: stored.reasoning ?? '',
       embeddings: stored.embeddings ?? '',
+      audio: stored.audio ?? '',
     }),
     // `stored` is rebuilt every render from `settings`; depend on the
     // parent's identity to avoid the useMemo running every render.
@@ -232,6 +277,28 @@ export function DefaultModelsForm({
           label: `${m.name} (${m.provider})`,
         })),
     [embeddingModels, providers]
+  );
+
+  // Audio is matrix-driven: rows come from /provider-models?capability=audio.
+  // Scope to configured-active providers — listing OpenAI's whisper-1
+  // when OpenAI isn't wired up would be misleading.
+  //
+  // The option `id` is the composite `${providerSlug}::${modelId}`
+  // (see `lib/orchestration/llm/audio-default.ts`) because the schema
+  // allows two providers to register the same modelId (e.g. OpenAI
+  // and Groq both have a `whisper-1`). Without the provider in the
+  // stored value, the PATCH validator and runtime resolver would pick
+  // whichever row Prisma returned first, ignoring the operator's
+  // choice. The label still shows the provider for the human reader.
+  const audioOptions = React.useMemo(
+    () =>
+      audioModels
+        .filter((m) => configuredProviderSlugs.has(m.providerSlug))
+        .map((m) => ({
+          id: formatAudioDefault(m.providerSlug, m.model),
+          label: `${m.name} (${m.providerSlug})`,
+        })),
+    [audioModels, configuredProviderSlugs]
   );
 
   const onSubmit = async (data: SettingsFormData) => {
@@ -328,12 +395,15 @@ export function DefaultModelsForm({
               <div className="grid gap-4 sm:grid-cols-2">
                 {TASK_TYPES.map((task) => {
                   const isEmbeddings = task === 'embeddings';
+                  const isAudio = task === 'audio';
                   const optionsForTask = isEmbeddings
                     ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
-                    : chatLikeOptions.map((m) => ({
-                        id: m.id,
-                        label: `${m.name} (${m.tier})`,
-                      }));
+                    : isAudio
+                      ? audioOptions
+                      : chatLikeOptions.map((m) => ({
+                          id: m.id,
+                          label: `${m.name} (${m.tier})`,
+                        }));
                   // Drop suggestions that aren't actually in the dropdown for
                   // this slot — e.g. a chat-tier model proposed for embeddings.
                   // Showing "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in
@@ -392,6 +462,8 @@ export function DefaultModelsForm({
                               {!isStored && optionsForTask.length === 0 ? (
                                 isEmbeddings ? (
                                   <NoEmbeddingProviderHint />
+                                ) : isAudio ? (
+                                  <NoAudioProviderHint />
                                 ) : (
                                   <NoOptionsHint task={task} />
                                 )
@@ -550,6 +622,27 @@ function NoEmbeddingProviderHint(): React.ReactElement {
       <span>
         None of your configured providers offer embeddings. Add Voyage AI, OpenAI, Google, Mistral,
         or local Ollama before saving an embeddings default.
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Inline footer for the audio dropdown when no audio-capable matrix
+ * rows exist for the configured providers. Audio support is matrix-
+ * driven — the operator has to seed a row with `capability: audio` in
+ * the provider-models matrix before the dropdown can offer anything.
+ * Most common reason in practice: voice input enabled but no Whisper-
+ * style row added for OpenAI / Groq yet.
+ */
+function NoAudioProviderHint(): React.ReactElement {
+  return (
+    <div className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+      <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+      <span>
+        No audio model in the matrix for your configured providers. Add a row with{' '}
+        <code>capability: audio</code> (e.g. OpenAI <code>whisper-1</code> or Groq{' '}
+        <code>whisper-large-v3</code>) in the model matrix before enabling voice input on agents.
       </span>
     </div>
   );

@@ -28,6 +28,16 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// getAudioProvider() now consults the orchestration settings to honour
+// an operator-pinned audio default. Stub it with no default so the
+// existing tests exercise the matrix-fallback path unchanged; the new
+// operator-default tests override per case.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(async () => ({
+    defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '', audio: '' },
+  })),
+}));
+
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages = { create: vi.fn() };
@@ -54,6 +64,7 @@ import {
   registerProviderInstance,
 } from '@/lib/orchestration/llm/provider-manager';
 import { getBreaker, resetAllBreakers } from '@/lib/orchestration/llm/circuit-breaker';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -224,5 +235,167 @@ describe('getAudioProvider', () => {
     const result = await getAudioProvider();
 
     expect(result?.providerSlug).toBe('openai');
+  });
+
+  describe('operator-saved audio default', () => {
+    it('returns the operator-pinned row even when it is not first in matrix order', async () => {
+      // Two audio-capable rows; the matrix-ordered loop would pick
+      // `whisper-1` first (isDefault:true), but the operator pinned
+      // `whisper-large-v3` in settings. Selection must honour the pin.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeAudioModelRow({
+          providerSlug: 'openai',
+          modelId: 'whisper-1',
+          isDefault: true,
+        }),
+        makeAudioModelRow({
+          providerSlug: 'openai',
+          modelId: 'whisper-large-v3',
+        }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-large-v3',
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.modelId).toBe('whisper-large-v3');
+    });
+
+    it('falls through to the matrix loop when the pinned row has an open breaker', async () => {
+      // The operator's pin still wins selection, but the breaker
+      // guard sends it to the back of the queue. Voice input must
+      // keep working off the next-best matrix row.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeAudioModelRow({
+          providerSlug: 'broken',
+          modelId: 'whisper-large-v3',
+        }),
+        makeAudioModelRow({
+          providerSlug: 'openai',
+          modelId: 'whisper-1',
+        }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-large-v3',
+        },
+      } as never);
+
+      const breaker = getBreaker('broken');
+      for (let i = 0; i < 10; i++) breaker.recordFailure();
+
+      const result = await getAudioProvider();
+
+      expect(result?.providerSlug).toBe('openai');
+      expect(result?.modelId).toBe('whisper-1');
+    });
+
+    it('falls through to the matrix loop when the pinned modelId is not in the active rows', async () => {
+      // Edge case: operator saved a pin, then deactivated the matrix
+      // row (or it was deleted). The settings PATCH guard would have
+      // caught this at write time, but rows can be deactivated AFTER
+      // save. Defensive fallback keeps voice input alive.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeAudioModelRow({ providerSlug: 'openai', modelId: 'whisper-1' }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-deleted',
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.modelId).toBe('whisper-1');
+    });
+
+    it('honours the providerSlug component of a composite default when two providers share a modelId', async () => {
+      // The bug this fixes: the schema's @@unique([providerSlug, modelId])
+      // allows OpenAI and Groq to both register a `whisper-1` row.
+      // Pre-fix, `defaultModels.audio` stored only the bare modelId,
+      // so `getAudioProvider` returned whichever row Prisma yielded
+      // first (`isDefault DESC, createdAt ASC`) — silently ignoring
+      // the operator's provider choice. The composite encoding
+      // (`${providerSlug}::${modelId}`) lets the resolver scope by
+      // BOTH fields.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        // OpenAI's whisper-1 sorts first (isDefault:true) — the bug
+        // would silently pick this one regardless of the operator's
+        // intent.
+        makeAudioModelRow({
+          providerSlug: 'openai',
+          modelId: 'whisper-1',
+          isDefault: true,
+        }),
+        makeAudioModelRow({
+          providerSlug: 'groq',
+          modelId: 'whisper-1',
+        }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          // Operator picked "Whisper (groq)" in the form — the
+          // composite carries the provider scope through to the
+          // resolver.
+          audio: 'groq::whisper-1',
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.providerSlug).toBe('groq');
+      expect(result?.modelId).toBe('whisper-1');
+    });
+
+    it('legacy bare-modelId pins still resolve via the modelId-only match', async () => {
+      // Backwards compat: rows written before the composite encoding
+      // landed will be bare model ids. Parser returns
+      // providerSlug=null and the resolver falls back to the
+      // modelId-only match (with the historical ambiguity when two
+      // providers share an id). The next operator save rewrites with
+      // the composite — the legacy path is short-lived but must not
+      // break voice input on the upgrade boundary.
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeAudioModelRow({ providerSlug: 'openai', modelId: 'whisper-1' }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+      vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-1', // legacy bare modelId, no `::`
+        },
+      } as never);
+
+      const result = await getAudioProvider();
+
+      expect(result?.providerSlug).toBe('openai');
+      expect(result?.modelId).toBe('whisper-1');
+    });
   });
 });

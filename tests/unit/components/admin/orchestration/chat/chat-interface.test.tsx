@@ -17,6 +17,46 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+// Mock MicButton with a stub that preserves the real button's
+// accessible name (so existing rendering tests still pass) and adds
+// two hidden control buttons (`fire-transcript`, `fire-error`) that
+// invoke the `onTranscript` / `onError` callbacks. This is the only
+// reliable way to exercise those callbacks without driving the real
+// MediaRecorder + fetch pipeline through jsdom.
+vi.mock('@/components/admin/orchestration/chat/mic-button', () => ({
+  MicButton: ({
+    onTranscript,
+    onError,
+    disabled,
+  }: {
+    agentId: string;
+    endpoint: string;
+    disabled?: boolean;
+    onTranscript: (text: string) => void;
+    onError: (message: string) => void;
+  }) => (
+    <>
+      <button type="button" aria-label="Start voice input" disabled={disabled}>
+        mic
+      </button>
+      <button
+        type="button"
+        data-testid="fire-transcript"
+        onClick={() => onTranscript('hello from the mic')}
+      >
+        fire-transcript
+      </button>
+      <button
+        type="button"
+        data-testid="fire-error"
+        onClick={() => onError('Microphone unavailable')}
+      >
+        fire-error
+      </button>
+    </>
+  ),
+}));
+
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -862,5 +902,84 @@ describe('ChatInterface', () => {
     expect(screen.getByRole('button', { name: /reject action/i })).toBeInTheDocument();
     // Streaming text from the same turn is also visible
     expect(screen.getByText(/Starting refund\./)).toBeInTheDocument();
+  });
+
+  // ── Mic / voice-input affordance ─────────────────────────────────────────
+
+  describe('voice input', () => {
+    // The mic affordance is opt-in via `voiceInputEnabled` + `agentId`.
+    // Callers without an agent record (e.g. embedded contexts that
+    // only know the slug) keep the current text-only UX; callers
+    // that wire both props through get a mic next to Send. Mirrors
+    // the gate used by `agent-test-chat.tsx`.
+
+    it('renders the MicButton when voiceInputEnabled and agentId are both set', () => {
+      render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
+
+      expect(screen.getByRole('button', { name: /start voice input/i })).toBeInTheDocument();
+    });
+
+    it('does not render the MicButton when voiceInputEnabled is false', () => {
+      render(
+        <ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled={false} />
+      );
+
+      expect(screen.queryByRole('button', { name: /start voice input/i })).not.toBeInTheDocument();
+    });
+
+    it('does not render the MicButton when agentId is missing', () => {
+      // Defensive: voiceInputEnabled alone isn't enough — the
+      // transcribe endpoint needs an agentId to resolve the row's
+      // `enableVoiceInput` field. Rendering the mic without an id
+      // would let the operator click into a 4xx.
+      render(<ChatInterface agentSlug="pattern-advisor" voiceInputEnabled />);
+
+      expect(screen.queryByRole('button', { name: /start voice input/i })).not.toBeInTheDocument();
+    });
+
+    it('appends mic transcripts to the existing input value', async () => {
+      // The mic transcript should accumulate onto whatever the
+      // operator has already typed — same UX as agent-test-chat. The
+      // mock above fires "hello from the mic" when `fire-transcript`
+      // is clicked; assert the input ends up with both halves.
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'tell me about');
+      await user.click(screen.getByTestId('fire-transcript'));
+
+      // Trim happens on the join; expect the two halves separated by
+      // exactly one space. `getByPlaceholderText` types as the
+      // umbrella `HTMLElement` — narrow at the call site so `.value`
+      // is reachable without prettier unwrapping a free-floating
+      // cast.
+      expect((input as HTMLInputElement).value).toBe('tell me about hello from the mic');
+    });
+
+    it('uses the transcript as the input value when nothing has been typed yet', async () => {
+      // Empty input path — the conditional in the callback writes the
+      // raw transcript without a leading space.
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.click(screen.getByTestId('fire-transcript'));
+
+      expect((input as HTMLInputElement).value).toBe('hello from the mic');
+    });
+
+    it('surfaces mic errors through the standard error banner', async () => {
+      // The onError arrow promotes the message to the same
+      // `UserFacingError` channel that SSE failures use. Confirms the
+      // banner reads "Voice input failed" with the upstream message.
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
+
+      await user.click(screen.getByTestId('fire-error'));
+
+      expect(screen.getByText(/voice input failed/i)).toBeInTheDocument();
+      expect(screen.getByText(/microphone unavailable/i)).toBeInTheDocument();
+    });
   });
 });

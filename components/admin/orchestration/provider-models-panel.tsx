@@ -33,7 +33,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Play, Plus, RefreshCw } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  UserCheck,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,9 +57,24 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tip } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
+import type { TaskType } from '@/types/orchestration';
+
+// Short human labels for the four `TaskType` slots resolved via
+// `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
+// so an operator can see at a glance which models the runtime falls
+// back to when an agent has no explicit binding — distinct from the
+// agents that directly name the model.
+const TASK_TYPE_LABEL: Record<TaskType, string> = {
+  routing: 'Routing',
+  chat: 'Chat',
+  reasoning: 'Reasoning',
+  embeddings: 'Embeddings',
+  audio: 'Audio',
+};
 
 export interface ProviderModelAgentRef {
   id: string;
@@ -76,6 +100,11 @@ export interface ProviderModelInfo {
   // Active agents bound to (provider, modelId). Empty when no agent
   // currently references the model.
   agents?: ProviderModelAgentRef[];
+  // TaskType slots this model fills as the effective system default
+  // (routing/chat/reasoning/embeddings). Distinct from `agents` —
+  // tracks inheritance via the default-models settings rather than
+  // direct assignment.
+  defaultFor?: TaskType[];
 }
 
 interface ProviderModelsResponse {
@@ -101,9 +130,12 @@ export interface ProviderModelsPanelProps {
   apiKeyPresent?: boolean;
 }
 
-// Filter chip buckets — "Other" lumps together reasoning / moderation
-// / unknown so the chips stay readable even on OpenAI's catalogue.
-type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
+// Filter chip buckets — one per inference output. Previously
+// reasoning + moderation + unknown collapsed into a single "Other"
+// chip, which lost information on OpenAI's mixed catalogue. Each now
+// has its own chip; `unknown` is catalogue-only and stays here (the
+// matrix rejects it).
+type FilterBucket = Capability;
 
 // Columns the operator can sort on. `name` covers the Model column
 // (sorts on canonical model id, which is what the cell displays);
@@ -112,15 +144,61 @@ type FilterBucket = 'chat' | 'embedding' | 'image' | 'audio' | 'other';
 type SortKey = 'name' | 'inMatrix' | 'inUse' | 'tier' | 'context' | 'input' | 'output';
 type SortDir = 'asc' | 'desc';
 
-const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'embedding', label: 'Embedding' },
-  { id: 'image', label: 'Image' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'other', label: 'Other' },
+// Same hues as the matrix's capability badges so the chip row reads
+// as a key for the table colours below. `unknown` and the moderation
+// bucket only exist here (catalogue-only); the matrix lacks them but
+// otherwise the palette is identical.
+const FILTER_BUCKETS: Array<{
+  id: FilterBucket;
+  label: string;
+  activeClass: string;
+  dotClass: string;
+}> = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    activeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+    dotClass: 'bg-sky-500',
+  },
+  {
+    id: 'reasoning',
+    label: 'Reasoning',
+    activeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    dotClass: 'bg-purple-500',
+  },
+  {
+    id: 'embedding',
+    label: 'Embedding',
+    activeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    dotClass: 'bg-amber-500',
+  },
+  {
+    id: 'image',
+    label: 'Image',
+    activeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    dotClass: 'bg-rose-500',
+  },
+  {
+    id: 'audio',
+    label: 'Audio',
+    activeClass: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    dotClass: 'bg-teal-500',
+  },
+  {
+    id: 'moderation',
+    label: 'Moderation',
+    activeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    dotClass: 'bg-orange-500',
+  },
+  {
+    id: 'unknown',
+    label: 'Unknown',
+    activeClass: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200',
+    dotClass: 'bg-slate-400',
+  },
 ];
 
-const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding'];
+const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding', 'audio'];
 
 // Per-capability reason for a disabled test button. Shown in the Tip
 // label so the operator understands why the button isn't actionable
@@ -129,7 +207,6 @@ const UNTESTABLE_REASON: Partial<Record<Capability, string>> = {
   reasoning:
     'Reasoning models use the /v1/responses API — testing through this panel is not supported yet.',
   image: "Image generation models can't be tested through this panel.",
-  audio: "Audio models (transcription / synthesis) can't be tested through this panel.",
   moderation: "Moderation models can't be tested through this panel.",
   unknown: "Unknown model type — we don't have a test surface for this capability.",
 };
@@ -141,6 +218,8 @@ const TESTABLE_ACTION: Partial<Record<Capability, string>> = {
   chat: "Sends a small 'Say hello.' prompt (max 10 tokens) and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
   embedding:
     "Embeds the string 'hello' and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
+  audio:
+    'Posts a tiny silent WAV (1 second of 16 kHz mono PCM, ~32 kB) to the provider’s transcription endpoint and reports round-trip latency. Verifies the API key, base URL, and model are reachable. The transcript will usually be empty — that’s expected.',
 };
 
 // Reason text shown on the per-cell tooltip when context / pricing is
@@ -181,11 +260,9 @@ function primaryCapability(model: ProviderModelInfo): Capability {
 }
 
 function bucketFor(cap: Capability): FilterBucket {
-  if (cap === 'chat') return 'chat';
-  if (cap === 'embedding') return 'embedding';
-  if (cap === 'image') return 'image';
-  if (cap === 'audio') return 'audio';
-  return 'other';
+  // Each capability maps to its own chip — no more lazy collapse into
+  // "Other" for reasoning / moderation / unknown.
+  return cap;
 }
 
 export function ProviderModelsPanel({
@@ -403,43 +480,71 @@ export function ProviderModelsPanel({
 
       {models && models.length > 0 && (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            {/* Search — narrowed so the filter clusters get enough
+                room to fit on one line at the dialog's 6xl width.
+                Search isn't the primary action here; the chips are. */}
             <Input
-              placeholder="Search models by id or name…"
+              placeholder="Search models…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="sm:max-w-sm"
+              className="sm:w-56"
               aria-label="Search models"
             />
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by capability">
+
+            {/* Capability cluster — six buckets, multi-select. Wrapped
+                in its own group so the screen-reader label and the
+                visual grouping match. */}
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by capability">
               {FILTER_BUCKETS.map((b) => {
                 const active = activeBuckets.has(b.id);
                 return (
-                  <Button
+                  <button
                     key={b.id}
                     type="button"
-                    variant={active ? 'default' : 'outline'}
-                    size="sm"
-                    className="h-7 px-2 text-xs"
                     onClick={() => toggleBucket(b.id)}
                     aria-pressed={active}
+                    className={cn(
+                      'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors',
+                      active
+                        ? cn(b.activeClass, 'border-transparent shadow-sm')
+                        : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                    )}
                   >
+                    <span className={cn('h-1.5 w-1.5 rounded-full', b.dotClass)} aria-hidden />
                     {b.label}
-                  </Button>
+                  </button>
                 );
               })}
-              <Button
+            </div>
+
+            {/* State-filter cluster, separated from the capability
+                buckets by a divider and labelled "Status" so it reads
+                as a different kind of filter. Currently a single
+                toggle; pinned to the right at sm+ so it never gets
+                lost in the middle of a wrapping chip row. */}
+            <div
+              className="flex items-center gap-2 sm:ml-auto"
+              role="group"
+              aria-label="Filter by usage status"
+            >
+              <span className="bg-border hidden h-5 w-px sm:inline-block" aria-hidden />
+              <button
                 type="button"
-                variant={inUseOnly ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 px-2 text-xs"
                 onClick={() => setInUseOnly((v) => !v)}
                 aria-pressed={inUseOnly}
                 aria-label="Show only models with at least one bound agent"
-                title="Show only models that at least one active agent is using"
+                title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors',
+                  inUseOnly
+                    ? 'border-transparent bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-400'
+                    : 'border-input bg-background text-foreground hover:bg-muted'
+                )}
               >
-                In use
-              </Button>
+                <UserCheck className="h-3.5 w-3.5" aria-hidden />
+                Has agent
+              </button>
             </div>
           </div>
 
@@ -469,12 +574,13 @@ export function ProviderModelsPanel({
                       onSort={handleSort}
                     />
                     <SortableHead
-                      label="In use"
+                      label="Used by"
                       sortKey="inUse"
                       activeKey={sortKey}
                       dir={sortDir}
                       onSort={handleSort}
                       align="right"
+                      tooltip="Two distinct usage paths. (1) Agents — count of active agents that directly name this model in their Provider/Model fields. (2) Default — badges for any default-role slots (routing/chat/reasoning/embeddings) this model fills via the orchestration settings. Agents with no explicit binding fall back to the system defaults, so a model used as a default is implicitly in use even when no agent points at it directly."
                     />
                     <TableHead>Capabilities</TableHead>
                     <SortableHead
@@ -543,44 +649,89 @@ export function ProviderModelsPanel({
                           )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {(m.agents?.length ?? 0) === 0 ? (
-                            <span className="text-muted-foreground text-xs">0</span>
-                          ) : (
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <button
-                                  className="cursor-pointer text-xs tabular-nums hover:underline"
-                                  aria-label={`Show ${m.agents?.length} agent${m.agents?.length === 1 ? '' : 's'} using ${m.name}`}
-                                >
-                                  {m.agents?.length} →
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-64 p-0" align="end">
-                                <div className="border-b px-3 py-2">
-                                  <p className="text-sm font-medium">
-                                    {m.agents?.length} agent
-                                    {m.agents?.length === 1 ? '' : 's'} using{' '}
-                                    <span className="font-semibold">{m.name}</span>
-                                  </p>
-                                </div>
-                                <ul className="max-h-48 overflow-y-auto py-1">
-                                  {m.agents?.map((agent) => (
-                                    <li key={agent.id}>
-                                      <Link
-                                        href={`/admin/orchestration/agents/${agent.id}`}
-                                        className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                          {(() => {
+                            const agentCount = m.agents?.length ?? 0;
+                            const defaultRoles = m.defaultFor ?? [];
+                            // Empty state — render an explicit "Not in
+                            // use" so the operator gets a clear signal
+                            // rather than guessing what a bare "0"
+                            // means.
+                            if (agentCount === 0 && defaultRoles.length === 0) {
+                              return (
+                                <span className="text-muted-foreground text-xs italic">
+                                  Not in use
+                                </span>
+                              );
+                            }
+                            return (
+                              <div className="flex flex-col items-end gap-1">
+                                {agentCount > 0 ? (
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <button
+                                        className="cursor-pointer text-xs tabular-nums hover:underline"
+                                        aria-label={`Show ${agentCount} agent${agentCount === 1 ? '' : 's'} directly assigned to ${m.name}`}
                                       >
-                                        <span className="truncate">{agent.name}</span>
-                                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                          {agent.slug}
-                                        </span>
-                                      </Link>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </PopoverContent>
-                            </Popover>
-                          )}
+                                        {agentCount} agent{agentCount === 1 ? '' : 's'} →
+                                      </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-72 p-0" align="end">
+                                      <div className="border-b px-3 py-2">
+                                        <p className="text-sm font-medium">
+                                          {agentCount} agent
+                                          {agentCount === 1 ? '' : 's'} directly assigned to{' '}
+                                          <span className="font-semibold">{m.name}</span>
+                                        </p>
+                                        <p className="text-muted-foreground mt-0.5 text-xs">
+                                          These agents pinned this model in their Provider/Model
+                                          fields. Editing the agent re-points it.
+                                        </p>
+                                      </div>
+                                      <ul className="max-h-48 overflow-y-auto py-1">
+                                        {m.agents?.map((agent) => (
+                                          <li key={agent.id}>
+                                            <Link
+                                              href={`/admin/orchestration/agents/${agent.id}`}
+                                              className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                            >
+                                              <span className="truncate">{agent.name}</span>
+                                              <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                                {agent.slug}
+                                              </span>
+                                            </Link>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </PopoverContent>
+                                  </Popover>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">0 agents</span>
+                                )}
+                                {defaultRoles.length > 0 && (
+                                  <div className="flex flex-wrap justify-end gap-1">
+                                    {defaultRoles.map((task) => (
+                                      <Tip
+                                        key={task}
+                                        label={`System default for ${TASK_TYPE_LABEL[task]} tasks. Agents with no explicit Provider/Model inherit this. Edit in orchestration settings.`}
+                                      >
+                                        <Link
+                                          href="/admin/orchestration/settings"
+                                          aria-label={`Edit ${TASK_TYPE_LABEL[task]} default in orchestration settings`}
+                                        >
+                                          <Badge
+                                            variant="outline"
+                                            className="text-[10px] font-normal"
+                                          >
+                                            Default: {TASK_TYPE_LABEL[task]}
+                                          </Badge>
+                                        </Link>
+                                      </Tip>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">

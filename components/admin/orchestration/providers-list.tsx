@@ -826,7 +826,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
           if (!open) setModelsDialogFor(null);
         }}
       >
-        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4">
+        <DialogContent className="flex max-h-[85vh] max-w-6xl flex-col gap-4">
           <DialogHeader>
             <DialogTitle>
               {modelsDialogFor ? `Model catalogue — ${modelsDialogFor.name}` : 'Model catalogue'}

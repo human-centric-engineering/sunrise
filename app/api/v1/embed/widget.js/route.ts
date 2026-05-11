@@ -250,6 +250,33 @@ export function GET(request: NextRequest): Response {
         }
         .mic-btn[data-state="recording"] { background: #ef4444; color: #fff; border-color: #ef4444; }
         .mic-btn[data-state="transcribing"] { opacity: 0.6; cursor: wait; }
+        .voice-indicator {
+          /* Sits above the input row whenever the user is recording. Lives
+             outside .input-area so it doesn't fight the row's flex layout,
+             and inside .panel so it gets the same surface treatment. The
+             panel's flex:1 .messages absorbs the height difference, so the
+             input row never jumps when this appears/disappears. */
+          padding: 8px 12px; border-top: 1px solid var(--sw-border);
+          background: var(--sw-surface);
+          display: flex; flex-direction: column; gap: 6px;
+        }
+        .voice-indicator-hint {
+          font-size: 12px; font-weight: 500; color: var(--sw-text);
+        }
+        .voice-indicator-row { display: flex; align-items: center; gap: 10px; }
+        .voice-meter {
+          display: flex; align-items: center; gap: 3px; height: 20px;
+        }
+        .voice-meter span {
+          display: inline-block; width: 3px; height: 100%;
+          background: var(--sw-primary); border-radius: 2px;
+          transform: scaleY(0.15); transform-origin: center;
+          transition: transform 80ms linear;
+        }
+        .voice-elapsed {
+          font-size: 12px; color: var(--sw-status); font-variant-numeric: tabular-nums;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
         .voice-error {
           padding: 4px 12px; font-size: 12px; color: #b91c1c;
           background: var(--sw-surface-muted); border-top: 1px solid var(--sw-border);
@@ -271,6 +298,15 @@ export function GET(request: NextRequest): Response {
         <div class="messages"></div>
         <div class="status" style="display:none;"></div>
         <div class="starters" style="display:none;"></div>
+        <div class="voice-indicator" style="display:none;" role="status" aria-live="polite">
+          <div class="voice-indicator-hint" style="display:none;">Speak now — tap to stop</div>
+          <div class="voice-indicator-row">
+            <div class="voice-meter" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <span class="voice-elapsed">0:00</span>
+          </div>
+        </div>
         <div class="input-area">
           <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
           <input type="text" />
@@ -299,6 +335,10 @@ export function GET(request: NextRequest): Response {
     var sendBtn = shadow.querySelector('.send-btn');
     var micBtn = shadow.querySelector('.mic-btn');
     var voiceErrEl = shadow.querySelector('.voice-error');
+    var voiceIndicatorEl = shadow.querySelector('.voice-indicator');
+    var voiceIndicatorHintEl = shadow.querySelector('.voice-indicator-hint');
+    var voiceMeterBars = shadow.querySelectorAll('.voice-meter span');
+    var voiceElapsedEl = shadow.querySelector('.voice-elapsed');
     var statusEl = shadow.querySelector('.status');
     var startersEl = shadow.querySelector('.starters');
     var footerEl = shadow.querySelector('.footer');
@@ -368,6 +408,32 @@ export function GET(request: NextRequest): Response {
     var voiceChunks = [];
     var voiceStartedAt = 0;
     var voiceAutoStop = null;
+    // Live-feedback state (level meter + elapsed timer).
+    // Lives outside the recorder lifecycle so teardownVoice can null them
+    // out regardless of how recording ended.
+    var voiceAudioCtx = null;
+    var voiceAnalyser = null;
+    var voiceAnalyserSource = null;
+    var voiceRafId = 0;
+    var voiceElapsedTick = null;
+    // One-time hint: "Speak now — tap to stop". Mirrors the React MicButton's
+    // key (sunrise.voice-input.hint-dismissed.v1). Stored on the parent
+    // origin (widget runs in the embedding page's window) so each site that
+    // embeds the widget remembers dismissal independently.
+    var VOICE_HINT_KEY = 'sunrise.voice-input.hint-dismissed.v1';
+    function voiceHintDismissed() {
+      try { return window.localStorage.getItem(VOICE_HINT_KEY) === 'true'; }
+      catch (e) { return true; /* private mode / disabled storage → skip hint */ }
+    }
+    function setVoiceHintDismissed() {
+      try { window.localStorage.setItem(VOICE_HINT_KEY, 'true'); } catch (e) { /* noop */ }
+    }
+    function formatElapsed(ms) {
+      var s = Math.floor(ms / 1000);
+      var m = Math.floor(s / 60);
+      var sec = s % 60;
+      return m + ':' + (sec < 10 ? '0' + sec : String(sec));
+    }
 
     function isSecureForMic() {
       try {
@@ -419,8 +485,90 @@ export function GET(request: NextRequest): Response {
       return '';
     }
 
+    function startVoiceVisualizer(stream) {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return; // Older browsers — silently skip the meter
+      try {
+        voiceAudioCtx = new Ctx();
+        voiceAnalyserSource = voiceAudioCtx.createMediaStreamSource(stream);
+        voiceAnalyser = voiceAudioCtx.createAnalyser();
+        voiceAnalyser.fftSize = 64;
+        voiceAnalyser.smoothingTimeConstant = 0.7;
+        voiceAnalyserSource.connect(voiceAnalyser);
+      } catch (e) {
+        // Whatever blew up (missing audio tracks, suspended context),
+        // bail without animation; recording itself is unaffected.
+        try { if (voiceAudioCtx) voiceAudioCtx.close(); } catch (e2) { /* noop */ }
+        voiceAudioCtx = null; voiceAnalyser = null; voiceAnalyserSource = null;
+        return;
+      }
+
+      var binCount = voiceAnalyser.frequencyBinCount;
+      var freqData = new Uint8Array(binCount);
+      var bars = voiceMeterBars.length;
+      // Same shaping as the React MicLevelMeter: speech energy lives in the
+      // bottom ~3/4 of the spectrum, so we slice that range across N bars.
+      var usable = Math.floor(binCount * 0.75);
+      var sliceSize = Math.max(1, Math.floor(usable / bars));
+
+      function tick() {
+        if (!voiceAnalyser) return;
+        voiceAnalyser.getByteFrequencyData(freqData);
+        for (var i = 0; i < bars; i++) {
+          var start = i * sliceSize;
+          var end = Math.min(start + sliceSize, usable);
+          var sum = 0;
+          for (var j = start; j < end; j++) sum += freqData[j];
+          var avg = sum / (end - start || 1);
+          // Floor at 0.08 so bars never visually collapse — a flat row reads
+          // as "broken", a tiny minimum reads as "idle but live".
+          var level = Math.max(0.08, avg / 255);
+          var bar = voiceMeterBars[i];
+          if (bar) bar.style.transform = 'scaleY(' + level.toFixed(3) + ')';
+        }
+        voiceRafId = window.requestAnimationFrame(tick);
+      }
+      voiceRafId = window.requestAnimationFrame(tick);
+    }
+
+    function stopVoiceVisualizer() {
+      if (voiceRafId) { window.cancelAnimationFrame(voiceRafId); voiceRafId = 0; }
+      try { if (voiceAnalyserSource) voiceAnalyserSource.disconnect(); } catch (e) { /* noop */ }
+      try { if (voiceAnalyser) voiceAnalyser.disconnect(); } catch (e) { /* noop */ }
+      if (voiceAudioCtx) {
+        try { voiceAudioCtx.close(); } catch (e) { /* noop */ }
+      }
+      voiceAnalyser = null; voiceAnalyserSource = null; voiceAudioCtx = null;
+      // Reset bars to idle (in case the indicator is shown again later).
+      for (var i = 0; i < voiceMeterBars.length; i++) {
+        voiceMeterBars[i].style.transform = 'scaleY(0.15)';
+      }
+    }
+
+    function showVoiceIndicator() {
+      if (!voiceHintDismissed()) {
+        voiceIndicatorHintEl.style.display = '';
+      } else {
+        voiceIndicatorHintEl.style.display = 'none';
+      }
+      voiceElapsedEl.textContent = '0:00';
+      voiceIndicatorEl.style.display = '';
+      if (voiceElapsedTick) clearInterval(voiceElapsedTick);
+      voiceElapsedTick = setInterval(function () {
+        voiceElapsedEl.textContent = formatElapsed(Date.now() - voiceStartedAt);
+      }, 200);
+    }
+
+    function hideVoiceIndicator() {
+      voiceIndicatorEl.style.display = 'none';
+      voiceIndicatorHintEl.style.display = 'none';
+      if (voiceElapsedTick) { clearInterval(voiceElapsedTick); voiceElapsedTick = null; }
+    }
+
     function teardownVoice() {
       if (voiceAutoStop) { clearTimeout(voiceAutoStop); voiceAutoStop = null; }
+      stopVoiceVisualizer();
+      hideVoiceIndicator();
       if (voiceStream) {
         try { voiceStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* ignore */ }
         voiceStream = null;
@@ -460,6 +608,12 @@ export function GET(request: NextRequest): Response {
           voiceStartedAt = Date.now();
           voiceRecorder.start();
           setVoiceState('recording');
+          // Once the user has reached the recording state, they've seen the
+          // hint (if it was going to show). Flip the dismissed flag so the
+          // next session goes straight to the meter-only layout.
+          showVoiceIndicator();
+          if (!voiceHintDismissed()) setVoiceHintDismissed();
+          startVoiceVisualizer(stream);
           voiceAutoStop = setTimeout(function () { stopVoiceRecording(); }, MAX_VOICE_MS);
         })
         .catch(function (err) {

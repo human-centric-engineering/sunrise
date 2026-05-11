@@ -26,6 +26,7 @@ import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
@@ -81,6 +82,53 @@ export const PATCH = withAdminAuth(async (request, session) => {
           value: body.defaultModels.embeddings,
         },
       });
+    }
+  }
+
+  // Audio is matrix-driven: the slot must point at an active
+  // AiProviderModel row whose capabilities include 'audio'. The
+  // hardcoded model-registry can't validate this (audio support is
+  // declared per row, not in the registry), and Zod refinements are
+  // sync, so the check runs here. Without it an admin could PATCH any
+  // string and the failure would only surface when a voice request
+  // hits the runtime and getAudioProvider() returns null.
+  //
+  // Stored values are `${providerSlug}::${modelId}` composites — see
+  // `lib/orchestration/llm/audio-default.ts` for why. Legacy bare-
+  // model-id values are accepted defensively (parser returns
+  // providerSlug=null) so a row written before the composite landed
+  // still validates against any matching audio matrix entry; the
+  // next operator save rewrites with the composite.
+  if (body.defaultModels?.audio) {
+    const parsed = parseAudioDefault(body.defaultModels.audio);
+    if (!parsed) {
+      return errorResponse(
+        'Audio default must be a non-empty `${providerSlug}::${modelId}` string',
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { task: 'audio', value: body.defaultModels.audio },
+        }
+      );
+    }
+    const where: Prisma.AiProviderModelWhereInput = {
+      modelId: parsed.modelId,
+      isActive: true,
+      capabilities: { has: 'audio' },
+    };
+    if (parsed.providerSlug) {
+      where.providerSlug = parsed.providerSlug;
+    }
+    const match = await prisma.aiProviderModel.findFirst({ where, select: { id: true } });
+    if (!match) {
+      return errorResponse(
+        'Unknown audio model — add a row to the model matrix with capability:"audio" for this provider first',
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { task: 'audio', value: body.defaultModels.audio },
+        }
+      );
     }
   }
 

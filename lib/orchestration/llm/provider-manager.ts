@@ -33,6 +33,8 @@ import {
 } from '@/lib/orchestration/llm/provider';
 import type { ProviderConfig } from '@/lib/orchestration/llm/types';
 import { VoyageProvider } from '@/lib/orchestration/llm/voyage';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -245,13 +247,77 @@ export interface AudioProviderResolution {
 }
 
 /**
+ * Try a single matrix row as an audio provider. Returns the resolved
+ * provider + model id if every guard (breaker closed, provider
+ * loads, transcribe() exists) passes, or `null` so the caller can
+ * fall through. Logs each rejection at the same level the old inline
+ * loop used.
+ */
+async function tryAudioRow(
+  row: { providerSlug: string; modelId: string },
+  source: 'operator_default' | 'matrix_fallback'
+): Promise<AudioProviderResolution | null> {
+  const breaker = getBreaker(row.providerSlug);
+  if (!breaker.canAttempt()) {
+    logger.info('Skipping audio provider — circuit breaker open', {
+      providerSlug: row.providerSlug,
+      modelId: row.modelId,
+      source,
+    });
+    return null;
+  }
+
+  let provider: LlmProvider;
+  try {
+    provider = await getProvider(row.providerSlug);
+  } catch (err) {
+    logger.warn('Audio provider resolution failed, trying next', {
+      providerSlug: row.providerSlug,
+      error: err instanceof Error ? err.message : String(err),
+      source,
+    });
+    return null;
+  }
+
+  if (typeof provider.transcribe !== 'function') {
+    logger.warn(
+      'Provider seeded with audio capability but does not implement transcribe(); skipping',
+      {
+        providerSlug: row.providerSlug,
+        modelId: row.modelId,
+        source,
+      }
+    );
+    return null;
+  }
+
+  logger.info('Audio provider resolved', {
+    providerSlug: row.providerSlug,
+    modelId: row.modelId,
+    source,
+  });
+  return {
+    provider: provider as AudioProviderResolution['provider'],
+    modelId: row.modelId,
+    providerSlug: row.providerSlug,
+  };
+}
+
+/**
  * Resolve a provider + model for speech-to-text.
  *
- * Walks active `AiProviderModel` rows whose `capabilities` array
- * includes `'audio'`, in registry order, and returns the first one
- * whose backing provider:
- *   - has a closed circuit breaker, and
- *   - exposes a `transcribe()` method.
+ * Selection order:
+ *   1. **Operator default** — `OrchestrationSettings.defaultModels.audio`.
+ *      When set, the matching `(providerSlug, modelId)` matrix row is
+ *      tried first. Failing the breaker / transcribe() guard falls
+ *      through to the matrix-ordered loop rather than erroring,
+ *      keeping voice input working even if the operator's pin is
+ *      temporarily unreachable.
+ *   2. **Matrix fallback** — every other active `AiProviderModel` row
+ *      whose `capabilities` array includes `'audio'`, in registry
+ *      order (`isDefault DESC, createdAt ASC`). First row whose
+ *      backing provider has a closed breaker and a `transcribe()`
+ *      method wins.
  *
  * Returns `null` when no audio-capable model is configured. Callers
  * map this to a `NO_AUDIO_PROVIDER` user-facing error rather than a
@@ -259,53 +325,63 @@ export interface AudioProviderResolution {
  * deployment state, not an error.
  */
 export async function getAudioProvider(): Promise<AudioProviderResolution | null> {
-  const rows = await prisma.aiProviderModel.findMany({
-    where: {
-      isActive: true,
-      capabilities: { has: 'audio' },
-    },
-    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-  });
+  const [settings, rows] = await Promise.all([
+    getOrchestrationSettings(),
+    prisma.aiProviderModel.findMany({
+      where: {
+        isActive: true,
+        capabilities: { has: 'audio' },
+      },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    }),
+  ]);
 
   if (rows.length === 0) return null;
 
+  // Operator-saved audio default takes priority. The settings PATCH
+  // handler validates that the (providerSlug, modelId) pair exists
+  // in the matrix with capability:'audio', but be defensive — a row
+  // could have been deleted or deactivated since the setting was
+  // saved.
+  //
+  // Stored values are `${providerSlug}::${modelId}` composites — see
+  // `lib/orchestration/llm/audio-default.ts` for why we need the
+  // provider scope (multiple providers can register the same model
+  // id, e.g. OpenAI + Groq both have a `whisper-1`). Legacy bare-
+  // modelId values still parse (providerSlug=null) and fall back to
+  // the modelId-only match, with the historical "first row wins"
+  // ambiguity — those values get rewritten on the next operator save.
+  const operatorDefault = settings.defaultModels.audio;
+  const parsedDefault = parseAudioDefault(operatorDefault);
+  const pinnedRow = parsedDefault
+    ? rows.find(
+        (r) =>
+          r.modelId === parsedDefault.modelId &&
+          (parsedDefault.providerSlug === null || r.providerSlug === parsedDefault.providerSlug)
+      )
+    : null;
+  if (parsedDefault) {
+    if (pinnedRow) {
+      const resolved = await tryAudioRow(pinnedRow, 'operator_default');
+      if (resolved) return resolved;
+      // Pinned row exists but its provider is currently unreachable
+      // (breaker open, no transcribe(), getProvider threw). Fall
+      // through to the matrix-ordered loop so voice input still
+      // works on a hot fallback path.
+    } else {
+      logger.warn('Operator audio default does not match any active audio row; falling through', {
+        operatorDefault,
+        providerSlug: parsedDefault.providerSlug,
+        modelId: parsedDefault.modelId,
+      });
+    }
+  }
+
   for (const row of rows) {
-    const breaker = getBreaker(row.providerSlug);
-    if (!breaker.canAttempt()) {
-      logger.info('Skipping audio provider — circuit breaker open', {
-        providerSlug: row.providerSlug,
-        modelId: row.modelId,
-      });
-      continue;
-    }
-
-    let provider: LlmProvider;
-    try {
-      provider = await getProvider(row.providerSlug);
-    } catch (err) {
-      logger.warn('Audio provider resolution failed, trying next', {
-        providerSlug: row.providerSlug,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-
-    if (typeof provider.transcribe !== 'function') {
-      logger.warn(
-        'Provider seeded with audio capability but does not implement transcribe(); skipping',
-        {
-          providerSlug: row.providerSlug,
-          modelId: row.modelId,
-        }
-      );
-      continue;
-    }
-
-    return {
-      provider: provider as AudioProviderResolution['provider'],
-      modelId: row.modelId,
-      providerSlug: row.providerSlug,
-    };
+    // Skip the pinned row in the fallback loop — already tried above.
+    if (pinnedRow && row === pinnedRow) continue;
+    const resolved = await tryAudioRow(row, 'matrix_fallback');
+    if (resolved) return resolved;
   }
 
   return null;

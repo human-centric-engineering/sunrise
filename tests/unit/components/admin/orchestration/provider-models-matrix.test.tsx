@@ -59,6 +59,8 @@ vi.mock('@/types/orchestration', () => ({
     thinking: { label: 'Thinking', description: 'High-reasoning' },
     worker: { label: 'Worker', description: 'General tasks' },
   },
+  MODEL_CAPABILITIES: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+  STORAGE_ONLY_CAPABILITIES: ['image', 'moderation'],
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -105,7 +107,11 @@ describe('ProviderModelsMatrix', () => {
   it('renders provider slug in table rows', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
 
-    expect(screen.getByText('openai')).toBeInTheDocument();
+    // The provider strip above the filter bar also renders "openai" as
+    // a filter chip, so scope to the table body to assert specifically
+    // on the row's provider column.
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText('openai')).toBeInTheDocument();
   });
 
   // ── isActive filter ────────────────────────────────────────────────────────
@@ -138,7 +144,12 @@ describe('ProviderModelsMatrix', () => {
   it('shows "Chat" badge for chat-only models', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel({ capabilities: ['chat'] })]} />);
 
-    expect(screen.getByText('Chat')).toBeInTheDocument();
+    // The "Chat" string also appears on the capability filter chip and in
+    // the decision heuristic table at the bottom of the page. Scope to
+    // the data row by the model's display name so we assert on the
+    // badge specifically.
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText('Chat')).toBeInTheDocument();
   });
 
   it('shows "Embedding" badge for embedding-only models', () => {
@@ -162,19 +173,67 @@ describe('ProviderModelsMatrix', () => {
     expect(within(dataRow).getByText('Embedding')).toBeInTheDocument();
   });
 
-  it('shows "Both" badge for models with chat and embedding capabilities', () => {
+  it('renders one badge per capability for multi-capability rows', () => {
+    // Pre-Phase-4 the matrix collapsed chat+embedding into a single
+    // "Both" badge. The matrix now stores six capabilities, so the
+    // collapse loses information — render one pill per stored cap.
     render(
       <ProviderModelsMatrix
         initialModels={[makeModel({ id: 'both-1', capabilities: ['chat', 'embedding'] })]}
       />
     );
 
-    expect(screen.getByText('Both')).toBeInTheDocument();
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    // Capability column is index 2 (Provider, Model, Capabilities, ...).
+    // Scope to that cell so the assertion counts only badges, not other
+    // occurrences of the labels in popovers or filter chips.
+    const capabilityCell = within(dataRow).getAllByRole('cell')[2];
+    expect(within(capabilityCell).getByText('Chat')).toBeInTheDocument();
+    expect(within(capabilityCell).getByText('Embedding')).toBeInTheDocument();
+    // Exact-2 lock-in: two stored capabilities ⇒ two badges in the cell,
+    // never a collapsed "Both" pill.
+    expect(
+      within(capabilityCell).getAllByText(/^(chat|reasoning|embedding|audio|image|moderation)$/i)
+    ).toHaveLength(2);
+  });
+
+  it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+    'shows the %s badge when the matrix stores that capability',
+    (cap) => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[makeModel({ id: `m-${cap}`, name: `Cap-${cap}`, capabilities: [cap] })]}
+        />
+      );
+      const dataRow = screen.getByRole('row', { name: new RegExp(`cap-${cap}`, 'i') });
+      const expectedLabel = cap.charAt(0).toUpperCase() + cap.slice(1);
+      expect(within(dataRow).getByText(expectedLabel)).toBeInTheDocument();
+    }
+  );
+
+  it('renders the Storage-only indicator for rows with only image/moderation capabilities', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ id: 'img-only', capabilities: ['image'] })]}
+      />
+    );
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText(/storage-only/i)).toBeInTheDocument();
+  });
+
+  it('does not render the Storage-only indicator when a runtime capability is present', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ id: 'mixed', capabilities: ['chat', 'image'] })]}
+      />
+    );
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).queryByText(/storage-only/i)).not.toBeInTheDocument();
   });
 
   // ── Provider filter ────────────────────────────────────────────────────────
 
-  it('filtering by provider shows only matching models', async () => {
+  it('filtering by provider chip shows only matching models', async () => {
     const user = userEvent.setup();
     const models = [
       makeModel({ id: 'm1', name: 'GPT-5', providerSlug: 'openai' }),
@@ -182,13 +241,15 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Open the provider Select (first combobox)
-    const providerTrigger = screen.getAllByRole('combobox')[0];
-    await user.click(providerTrigger);
-
-    // Select "anthropic" option
-    const option = await screen.findByRole('option', { name: /anthropic/i });
-    await user.click(option);
+    // The Provider <Select> dropdown was replaced by chips in the
+    // provider strip above the filter bar so an operator can see
+    // configured-vs-not at a glance. Locate the anthropic chip via
+    // its aria-label (the chip text alone collides with the provider
+    // column inside the table body).
+    const anthropicChip = screen.getByRole('button', {
+      name: /filter to anthropic models/i,
+    });
+    await user.click(anthropicChip);
 
     expect(screen.getByText('Claude-4')).toBeInTheDocument();
     expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
@@ -196,7 +257,7 @@ describe('ProviderModelsMatrix', () => {
 
   // ── Capability filter ──────────────────────────────────────────────────────
 
-  it('filtering by capability shows only matching models', async () => {
+  it('filtering by capability chip shows only matching models', async () => {
     const user = userEvent.setup();
     const models = [
       makeModel({ id: 'm1', name: 'Chat Model', capabilities: ['chat'] }),
@@ -204,15 +265,78 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Third combobox is the capability/type filter
-    const capabilityTrigger = screen.getAllByRole('combobox')[2];
-    await user.click(capabilityTrigger);
-
-    const option = await screen.findByRole('option', { name: /embedding/i });
-    await user.click(option);
+    // Phase 4: capability dropdown was replaced by chip multi-select
+    // mirroring the catalogue panel. Toggle the Embedding chip via its
+    // pressable button role.
+    const embeddingChip = screen.getByRole('button', { name: /^embedding$/i });
+    await user.click(embeddingChip);
 
     expect(screen.getByText('Embed Model')).toBeInTheDocument();
     expect(screen.queryByText('Chat Model')).not.toBeInTheDocument();
+  });
+
+  it('chip filter uses OR semantics — selecting Chat and Audio shows both', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({ id: 'm1', name: 'Chat Model', capabilities: ['chat'] }),
+      makeModel({ id: 'm2', name: 'Audio Model', capabilities: ['audio'] }),
+      makeModel({ id: 'm3', name: 'Embed Model', capabilities: ['embedding'] }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    await user.click(screen.getByRole('button', { name: /^chat$/i }));
+    await user.click(screen.getByRole('button', { name: /^audio$/i }));
+
+    expect(screen.getByText('Chat Model')).toBeInTheDocument();
+    expect(screen.getByText('Audio Model')).toBeInTheDocument();
+    expect(screen.queryByText('Embed Model')).not.toBeInTheDocument();
+  });
+
+  it('search input narrows by name / modelId / slug / bestRole', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({ id: 'm1', name: 'GPT-5', modelId: 'gpt-5', bestRole: 'Planner' }),
+      makeModel({
+        id: 'm2',
+        name: 'Whisper 1',
+        modelId: 'whisper-1',
+        capabilities: ['audio'],
+        bestRole: 'Speech-to-text',
+      }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    const search = screen.getByPlaceholderText(/search/i);
+    await user.type(search, 'whisper');
+
+    expect(screen.getByText('Whisper 1')).toBeInTheDocument();
+    expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+  });
+
+  it('"Has agent" toggle hides rows that have no bound agents', async () => {
+    const user = userEvent.setup();
+    const models = [
+      makeModel({
+        id: 'm1',
+        name: 'Unused Model',
+        agents: [],
+      }),
+      makeModel({
+        id: 'm2',
+        name: 'Used Model',
+        agents: [{ id: 'a1', name: 'Agent 1', slug: 'agent-1' }],
+      }),
+    ];
+    render(<ProviderModelsMatrix initialModels={models} />);
+
+    const hasAgentChip = screen.getByRole('button', {
+      name: /show only models with at least one bound agent/i,
+    });
+    expect(hasAgentChip).toHaveTextContent(/has agent/i);
+    await user.click(hasAgentChip);
+
+    expect(screen.getByText('Used Model')).toBeInTheDocument();
+    expect(screen.queryByText('Unused Model')).not.toBeInTheDocument();
   });
 
   // ── Model count text ───────────────────────────────────────────────────────
@@ -235,18 +359,12 @@ describe('ProviderModelsMatrix', () => {
 
   it('model count updates to 0 after all models are filtered out', async () => {
     const user = userEvent.setup();
-    // Our only model is chat-only; filtering by "embedding" capability → 0 results
+    // Our only model is chat-only; toggling the Embedding chip yields zero matches.
     const models = [makeModel({ id: 'm1', name: 'Only Chat', capabilities: ['chat'] })];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Open the capability filter (third combobox at index 2)
-    const capabilityTrigger = screen.getAllByRole('combobox')[2];
-    await user.click(capabilityTrigger);
+    await user.click(screen.getByRole('button', { name: /^embedding$/i }));
 
-    const embeddingOption = await screen.findByRole('option', { name: /^embedding$/i });
-    await user.click(embeddingOption);
-
-    // Chat-only model does not match embedding filter → 0 models shown
     expect(screen.getByText(/0 models/)).toBeInTheDocument();
   });
 
@@ -351,8 +469,10 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Second combobox is the tier filter
-    const tierTrigger = screen.getAllByRole('combobox')[1];
+    // Tier is now the only combobox left in the filter bar — the
+    // legacy Provider <Select> was replaced by chips when the provider
+    // strip landed, so the tier dropdown sits at index 0.
+    const tierTrigger = screen.getAllByRole('combobox')[0];
     await user.click(tierTrigger);
 
     const option = await screen.findByRole('option', { name: /worker/i });
@@ -454,16 +574,242 @@ describe('ProviderModelsMatrix', () => {
     expect(dot?.getAttribute('title')).toMatch(/not configured/i);
   });
 
-  // ── In-use column ──────────────────────────────────────────────────────────
+  // ── Provider strip + Configured-only toggle ───────────────────────────────
 
-  describe('in-use column', () => {
-    it('shows 0 for rows with no bound agents', () => {
+  describe('provider strip', () => {
+    it('renders one chip per distinct provider with its model count', () => {
+      const models = [
+        makeModel({ id: 'a1', name: 'A1', providerSlug: 'anthropic' }),
+        makeModel({ id: 'a2', name: 'A2', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'O1', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Chip aria-label includes the slug so we can locate it
+      // unambiguously alongside the table's per-row provider column.
+      const anthropicChip = screen.getByRole('button', {
+        name: /filter to anthropic models/i,
+      });
+      const openaiChip = screen.getByRole('button', {
+        name: /filter to openai models/i,
+      });
+
+      // Each chip shows its model count alongside the slug so the
+      // operator gets a quick "how many models per provider" read.
+      expect(anthropicChip).toHaveTextContent('2');
+      expect(openaiChip).toHaveTextContent('1');
+    });
+
+    it('summary text reports active + total provider counts', () => {
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Summary lives in the provider strip header — anchors the
+      // operator with "1 of 3 providers are wired up" at a glance.
+      expect(screen.getByText(/1 active · 3 total/i)).toBeInTheDocument();
+    });
+
+    it('chip status dot reflects the provider config: green active, yellow inactive, gray missing', () => {
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Locate each chip via aria-label and inspect its inline dot.
+      // The chip is the closest button; its dot is the first <span>
+      // child with a rounded-full class.
+      const anthropicDot = screen
+        .getByRole('button', { name: /filter to anthropic models/i })
+        .querySelector('span.rounded-full');
+      const openaiDot = screen
+        .getByRole('button', { name: /filter to openai models/i })
+        .querySelector('span.rounded-full');
+      const togetherDot = screen
+        .getByRole('button', { name: /filter to together models/i })
+        .querySelector('span.rounded-full');
+
+      expect(anthropicDot?.className).toContain('bg-green-500');
+      expect(openaiDot?.className).toContain('bg-yellow-500');
+      expect(togetherDot?.className).toContain('bg-gray-300');
+    });
+
+    it('clicking a provider chip filters the matrix to that provider', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({ id: 'a1', name: 'Claude-4', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'GPT-5', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      await user.click(screen.getByRole('button', { name: /filter to anthropic models/i }));
+
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+    });
+
+    it('clicking the active chip again clears the provider filter', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({ id: 'a1', name: 'Claude-4', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'GPT-5', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      const anthropicChip = screen.getByRole('button', {
+        name: /filter to anthropic models/i,
+      });
+      // First click selects.
+      await user.click(anthropicChip);
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+      // Second click on the same chip toggles back to all-providers
+      // — matches the standard chip-toggle pattern used elsewhere.
+      await user.click(anthropicChip);
+      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+    });
+
+    it('"Configured only" toggle hides rows from unconfigured providers', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({
+          id: 'a1',
+          name: 'Claude-4',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          name: 'GPT-5',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          name: 'Together-Model',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Baseline — all three rows visible.
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByText('Together-Model')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /configured only/i }));
+
+      // Only configured + active stays visible.
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      // The inactive-but-configured row drops too — the toggle's
+      // purpose is "show what's actually going to work right now",
+      // and an inactive provider config won't serve requests.
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+      expect(screen.queryByText('Together-Model')).not.toBeInTheDocument();
+    });
+
+    it('"Configured only" toggle drops the chips for non-configured providers', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Baseline — both chips visible.
+      expect(
+        screen.getByRole('button', { name: /filter to anthropic models/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /filter to together models/i })
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /configured only/i }));
+
+      // The unconfigured chip is dropped — keeping it around when its
+      // rows are filtered out would be confusing noise.
+      expect(
+        screen.getByRole('button', { name: /filter to anthropic models/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /filter to together models/i })
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Used-by column ─────────────────────────────────────────────────────────
+
+  describe('used-by column', () => {
+    it('renames the column header from "In use" to "Used by"', () => {
       render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [] })]} />);
 
-      // Both the bare "0" cell and the "0 models" filter caption are
-      // possible matches — the cell sits inside the table body.
+      // The column was renamed so its meaning (agents + default-role
+      // slots) reads at a glance. Bare "In use" no longer appears in
+      // the header.
+      expect(screen.getByRole('columnheader', { name: /used by/i })).toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: /^in use$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows "Not in use" when a row has no agents and no default roles', () => {
+      render(<ProviderModelsMatrix initialModels={[makeModel({ agents: [], defaultFor: [] })]} />);
+
+      // The explicit "Not in use" disambiguates the cell — a bare "0"
+      // used to leave readers wondering "0 of what?". The cell sits
+      // inside the table body, so scope the lookup there to avoid
+      // colliding with any other "Not in use" text.
       const tbodyCells = document.querySelectorAll('tbody td');
-      const inUseCell = Array.from(tbodyCells).find((td) => td.textContent?.trim() === '0');
+      const inUseCell = Array.from(tbodyCells).find(
+        (td) => td.textContent?.trim() === 'Not in use'
+      );
       expect(inUseCell).toBeDefined();
     });
 
@@ -483,7 +829,12 @@ describe('ProviderModelsMatrix', () => {
         />
       );
 
-      const trigger = screen.getByRole('button', { name: /show 2 agents using GPT-5/i });
+      // aria-label says "directly assigned to" so the trigger's
+      // meaning is unambiguous — it lists agents that explicitly
+      // pinned the model, not those inheriting via a default.
+      const trigger = screen.getByRole('button', {
+        name: /show 2 agents directly assigned to GPT-5/i,
+      });
       expect(trigger).toBeInTheDocument();
 
       await user.click(trigger);
@@ -497,6 +848,56 @@ describe('ProviderModelsMatrix', () => {
         'href',
         '/admin/orchestration/agents/agent-2'
       );
+    });
+
+    it('renders a default-role badge for each TaskType slot a model fills', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [],
+              defaultFor: ['chat', 'reasoning'],
+            }),
+          ]}
+        />
+      );
+
+      // Each TaskType slot produces a badge so the operator can spot
+      // every place the runtime falls back to this model without
+      // opening settings. Badges link to the orchestration settings
+      // page for one-click editing.
+      const dataRow = screen.getByRole('row', { name: /GPT-5/ });
+      expect(within(dataRow).getByText(/default: chat/i)).toBeInTheDocument();
+      expect(within(dataRow).getByText(/default: reasoning/i)).toBeInTheDocument();
+
+      const chatBadge = within(dataRow).getByText(/default: chat/i);
+      const settingsLink = chatBadge.closest('a');
+      expect(settingsLink).toHaveAttribute('href', '/admin/orchestration/settings');
+    });
+
+    it('shows the default-role badges even when there are no directly-assigned agents', () => {
+      render(
+        <ProviderModelsMatrix
+          initialModels={[
+            makeModel({
+              name: 'GPT-5',
+              agents: [],
+              defaultFor: ['embeddings'],
+            }),
+          ]}
+        />
+      );
+
+      // "Not in use" must NOT appear when a default-role slot is
+      // filled — the model is in use via inheritance even without a
+      // direct agent assignment.
+      const dataRow = screen.getByRole('row', { name: /GPT-5/ });
+      expect(within(dataRow).getByText(/default: embeddings/i)).toBeInTheDocument();
+      expect(within(dataRow).queryByText(/not in use/i)).not.toBeInTheDocument();
+      // The "0 agents" line is still shown so the operator can see
+      // there's no direct assignment alongside the default badge.
+      expect(within(dataRow).getByText(/0 agents/i)).toBeInTheDocument();
     });
   });
 

@@ -85,7 +85,7 @@ function makeNewModel(
     providerSlug: string;
     modelId: string;
     description: string;
-    capabilities: ('chat' | 'embedding')[];
+    capabilities: ('chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation')[];
     tierRole: TierRole;
     bestRole: string;
     reasoningDepth: RatingLevel;
@@ -104,7 +104,14 @@ function makeNewModel(
     providerSlug: 'openai' as string,
     modelId: 'gpt-5' as string,
     description: 'Next-generation reasoning model from OpenAI.' as string,
-    capabilities: ['chat'] as ('chat' | 'embedding')[],
+    capabilities: ['chat'] as (
+      | 'chat'
+      | 'reasoning'
+      | 'embedding'
+      | 'audio'
+      | 'image'
+      | 'moderation'
+    )[],
     tierRole: 'thinking' as TierRole,
     bestRole: 'Complex multi-step reasoning and analysis' as string,
     reasoningDepth: 'very_high' as RatingLevel,
@@ -205,6 +212,49 @@ describe('AddProviderModelsCapability', () => {
         cap.validate({ newModels: [makeNewModel({ tierRole: 'invalid-tier' as TierRole })] })
       ).toThrow(CapabilityValidationError);
     });
+
+    it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+      'accepts widened capability %s',
+      (capability) => {
+        const cap = new AddProviderModelsCapability();
+        const result = cap.validate({
+          newModels: [makeNewModel({ capabilities: [capability] })],
+        });
+        expect(result.newModels[0].capabilities).toEqual([capability]);
+      }
+    );
+
+    it('rejects unknown as a matrix capability', () => {
+      const cap = new AddProviderModelsCapability();
+      expect(() =>
+        cap.validate({
+          newModels: [
+            makeNewModel({
+              // 'unknown' is catalogue-only — see capabilitySchema in lib/validations/orchestration.ts
+              capabilities: ['unknown' as 'chat'],
+            }),
+          ],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+  });
+
+  describe('execute() — empty newModels', () => {
+    it('short-circuits with zero counts and never touches Prisma or the cache', async () => {
+      // Source: add-provider-models.ts:165-170 — when the approval
+      // payload had no new models, execute() returns
+      // { created: 0, skipped: 0, invalid: 0 } with skipFollowup: true.
+      // The schema test above (`accepts empty newModels array`) only
+      // proves validate() admits the input; this proves execute() takes
+      // the early-return branch and doesn't fall through to the loop.
+      const cap = new AddProviderModelsCapability();
+      const result = await cap.execute({ newModels: [] }, context);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ created: 0, skipped: 0, invalid: 0, models: [] });
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockInvalidateModelCache).not.toHaveBeenCalled();
+    });
   });
 
   describe('execute() — happy path', () => {
@@ -263,7 +313,13 @@ describe('AddProviderModelsCapability', () => {
             metadata: expect.objectContaining({
               addedByAudit: expect.objectContaining({
                 agentId: 'a1',
-                timestamp: expect.any(String),
+                // Lock in ISO-8601 — a regression to a Unix string,
+                // relative time, or vendor-specific format would slip
+                // past `expect.any(String)` and silently break any
+                // downstream consumer that parses this field.
+                timestamp: expect.stringMatching(
+                  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+                ),
               }),
             }),
           }),

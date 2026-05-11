@@ -41,6 +41,13 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    aiProviderModel: {
+      // Audio default validation: PATCH checks the chosen modelId
+      // exists in the matrix with capabilities including 'audio'.
+      // Default: every audio-shaped id matches; specific tests
+      // override per case.
+      findFirst: vi.fn(async () => ({ id: 'cm_audio_001' })),
+    },
   },
 }));
 
@@ -63,6 +70,10 @@ vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      // Computed audio default is intentionally empty — audio support
+      // is matrix-driven, the operator picks from active rows with
+      // capabilities:['audio']. Mocking it as '' mirrors production.
+      audio: '',
     })),
     validateTaskDefaults: vi.fn((defaults: Record<string, string>) => {
       const errors: Array<{ task: string; message: string }> = [];
@@ -288,12 +299,14 @@ describe('Admin Orchestration — /settings', () => {
 
       expect(res.status).toBe(200);
       const body = await parseJson<{ data: { defaultModels: Record<string, string> } }>(res);
-      // All four task keys fall back to the computeDefaultModelMap mock
+      // All five task keys fall back to the computeDefaultModelMap mock.
+      // `audio` is intentionally '' — matrix-driven, no registry suggestion.
       expect(body.data.defaultModels).toEqual({
         routing: 'claude-haiku-4-5',
         chat: 'claude-haiku-4-5',
         reasoning: 'claude-opus-4-6',
         embeddings: 'claude-haiku-4-5',
+        audio: '',
       });
     });
   });
@@ -787,6 +800,154 @@ describe('Admin Orchestration — /settings', () => {
       const res = await PATCH(makePatch({ defaultModels: {} }));
 
       expect(res.status).toBe(200);
+    });
+
+    it('accepts a valid audio model id that exists in the matrix with capability:audio', async () => {
+      // The audio guard runs a matrix existence check (unlike chat/
+      // reasoning which use the in-memory registry). Mock the lookup
+      // to return a row, simulating an operator who's already curated
+      // a Whisper entry.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'claude-haiku-4-5',
+            audio: 'whisper-1',
+          },
+        }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({
+        id: 'cm_audio_001',
+      } as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'whisper-1' } }));
+
+      expect(res.status).toBe(200);
+      // Sanity: the matrix lookup ran with the right where clause —
+      // capabilities must include 'audio' so a misconfigured chat
+      // model can't slip through.
+      expect(vi.mocked(prisma.aiProviderModel.findFirst)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            modelId: 'whisper-1',
+            isActive: true,
+            capabilities: { has: 'audio' },
+          }),
+        })
+      );
+    });
+
+    it('rejects an audio model id with no matching matrix row', async () => {
+      // Operator typo or bogus PATCH — the matrix has no row that
+      // would satisfy getAudioProvider(), so the runtime would fail
+      // mysteriously. Guard returns 400 instead.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'not-a-real-whisper' } }));
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; details?: { task?: string; value?: string } };
+      }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details?.task).toBe('audio');
+      expect(body.error.details?.value).toBe('not-a-real-whisper');
+      // Upsert must NOT run — guard rejects before persistence.
+      expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).not.toHaveBeenCalled();
+    });
+
+    it('rejects a chat-only model id submitted as the audio default', async () => {
+      // The guard's `capabilities: { has: 'audio' }` filter is what
+      // stops this — gpt-4o exists in the matrix but doesn't have
+      // audio capability. findFirst returns null, route returns 400.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'gpt-4o' } }));
+      const body = await parseJson<{ error: { details?: { task?: string } } }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.error.details?.task).toBe('audio');
+    });
+
+    it('scopes the audio matrix lookup by providerSlug when the value is a composite', async () => {
+      // The composite `${providerSlug}::${modelId}` encoding (see
+      // `lib/orchestration/llm/audio-default.ts`) is the contract
+      // that lets two providers register the same modelId
+      // (OpenAI `whisper-1` + Groq `whisper-1`). The PATCH validator
+      // must scope `findFirst` by BOTH fields — otherwise the
+      // validator would silently accept a composite whose
+      // (provider, model) pair has no matching matrix row.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({
+          defaultModels: {
+            routing: 'claude-haiku-4-5',
+            chat: 'claude-haiku-4-5',
+            reasoning: 'claude-opus-4-6',
+            embeddings: 'claude-haiku-4-5',
+            audio: 'groq::whisper-1',
+          },
+        }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({
+        id: 'cm_audio_groq',
+      } as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'groq::whisper-1' } }));
+
+      expect(res.status).toBe(200);
+      // Both modelId AND providerSlug must appear in the where
+      // clause — without the providerSlug scope, the OpenAI row
+      // would satisfy the query and the operator's "Whisper (groq)"
+      // pick would silently route to OpenAI at runtime.
+      expect(vi.mocked(prisma.aiProviderModel.findFirst)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            providerSlug: 'groq',
+            modelId: 'whisper-1',
+            isActive: true,
+            capabilities: { has: 'audio' },
+          }),
+        })
+      );
+    });
+
+    it('rejects a composite whose (provider, model) pair has no matching row', async () => {
+      // Operator picked the right shape but the row was deactivated
+      // since they last saved (or the provider slug is wrong). The
+      // (provider, model)-scoped lookup returns null and the
+      // validator surfaces a 400 — the runtime resolver's pinned-
+      // then-fallback design would otherwise silently route to a
+      // different row.
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null as never);
+
+      const res = await PATCH(makePatch({ defaultModels: { audio: 'groq::whisper-1' } }));
+      const body = await parseJson<{
+        error: { code: string; details?: { task?: string; value?: string } };
+      }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details?.task).toBe('audio');
+      expect(body.error.details?.value).toBe('groq::whisper-1');
     });
   });
 

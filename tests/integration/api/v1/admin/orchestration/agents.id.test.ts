@@ -497,6 +497,266 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
     });
+
+    it('does NOT create a version when a versioned field is sent with the same value (no-op save)', async () => {
+      // Regression for the false "X changed" entries: the form sends
+      // back its full state on every save, so every versioned field is
+      // present in `data`. Pre-fix, this triggered a version with a
+      // change summary like "model changed, temperature changed, …"
+      // for a no-op save. Post-fix, the route compares each field
+      // against the stored row and only counts genuine changes.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const stored = makeAgent({
+        model: 'claude-sonnet-4-6',
+        temperature: 0.7,
+        maxTokens: 4096,
+        provider: 'anthropic',
+        visibility: 'internal',
+        inputGuardMode: 'log_only',
+        outputGuardMode: null,
+        citationGuardMode: null,
+        maxHistoryTokens: 8000,
+        retentionDays: 30,
+        fallbackProviders: ['openai'],
+        knowledgeCategories: ['docs'],
+        topicBoundaries: ['orders'],
+        brandVoiceInstructions: 'Be concise.',
+        providerConfig: { timeout: 2000 },
+        monthlyBudgetUsd: 25,
+        rateLimitRpm: 60,
+        metadata: { foo: 'bar' },
+      });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(stored as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(stored as never);
+
+      // Form-shaped PATCH echoing every versioned field at its current value.
+      await PATCH(
+        makeRequest('PATCH', {
+          model: 'claude-sonnet-4-6',
+          temperature: 0.7,
+          maxTokens: 4096,
+          provider: 'anthropic',
+          visibility: 'internal',
+          inputGuardMode: 'log_only',
+          outputGuardMode: null,
+          citationGuardMode: null,
+          maxHistoryTokens: 8000,
+          retentionDays: 30,
+          fallbackProviders: ['openai'],
+          knowledgeCategories: ['docs'],
+          topicBoundaries: ['orders'],
+          brandVoiceInstructions: 'Be concise.',
+          providerConfig: { timeout: 2000 },
+          monthlyBudgetUsd: 25,
+          rateLimitRpm: 60,
+          metadata: { foo: 'bar' },
+        }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a version only for fields that actually changed (mixed payload)', async () => {
+      // Mixed payload: 4 versioned fields supplied, 3 unchanged and 1
+      // genuinely different. The change summary must list only the
+      // differing one, not all four.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({
+          model: 'claude-sonnet-4-6',
+          temperature: 0.7,
+          maxTokens: 4096,
+          visibility: 'internal',
+        }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ visibility: 'public' }) as never
+      );
+
+      await PATCH(
+        makeRequest('PATCH', {
+          model: 'claude-sonnet-4-6', // unchanged
+          temperature: 0.7, // unchanged
+          maxTokens: 4096, // unchanged
+          visibility: 'public', // changed
+        }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      expect(createCall.data.changeSummary).toBe('visibility changed');
+    });
+
+    it('treats string[] order-equal arrays as unchanged (fallbackProviders)', async () => {
+      // Form sends arrays back as arrays; if the elements and order
+      // match, this counts as no-op even though the reference identity
+      // differs.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai', 'groq'] }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(
+        makeRequest('PATCH', { fallbackProviders: ['openai', 'groq'] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('detects array reorder as a change (fallbackProviders priority matters)', async () => {
+      // For fallbackProviders specifically, order is the priority list,
+      // so swapping ['openai','groq'] → ['groq','openai'] IS a change.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai', 'groq'] }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(
+        makeRequest('PATCH', { fallbackProviders: ['groq', 'openai'] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('enableVoiceInput field', () => {
+    it('persists enableVoiceInput=true via PATCH', async () => {
+      // Regression: pre-fix the PATCH route had no `if
+      // (body.enableVoiceInput !== undefined)` branch, so toggling the
+      // switch on the agent form silently dropped on the floor. The
+      // Zod schema and form both honoured the field — only the route
+      // ignored it.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ enableVoiceInput: false }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableVoiceInput: true }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { enableVoiceInput: true }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgent.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ enableVoiceInput: true }) })
+      );
+    });
+
+    it('persists enableVoiceInput=false (turn voice off)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ enableVoiceInput: true }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableVoiceInput: false }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { enableVoiceInput: false }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgent.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ enableVoiceInput: false }) })
+      );
+    });
+
+    it('creates a version snapshot when enableVoiceInput changes and lists it in the summary', async () => {
+      // The user-visible bug: toggling voice on/off persisted but the
+      // version history tab showed nothing. enableVoiceInput needs to
+      // be in VERSIONED_FIELDS and the snapshot block.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ enableVoiceInput: false }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableVoiceInput: true }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { enableVoiceInput: true }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      expect(createCall.data.changeSummary).toContain('enableVoiceInput changed');
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      expect(snapshot).toHaveProperty('enableVoiceInput', false); // pre-update value
+    });
+  });
+
+  describe('Snapshot completeness — every versioned field is captured', () => {
+    // Belt-and-braces: when any versioned field changes, the snapshot
+    // must include the pre-update value of every other versioned field
+    // so a future restore round-trips cleanly. Catches the regression
+    // where a new field is added to VERSIONED_FIELDS but forgotten in
+    // the snapshot object (or vice versa).
+    it('snapshot object carries every key in VERSIONED_FIELDS', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const stored = makeAgent({
+        systemInstructions: 'sys',
+        model: 'm',
+        temperature: 0.5,
+        maxTokens: 1000,
+        topicBoundaries: ['a'],
+        brandVoiceInstructions: 'bv',
+        provider: 'anthropic',
+        fallbackProviders: ['openai'],
+        knowledgeCategories: ['docs'],
+        rateLimitRpm: 30,
+        visibility: 'internal',
+        inputGuardMode: 'log_only',
+        outputGuardMode: 'log_only',
+        citationGuardMode: 'log_only',
+        maxHistoryTokens: 4000,
+        retentionDays: 60,
+        providerConfig: { t: 1 },
+        monthlyBudgetUsd: 10,
+        metadata: { tag: 'x' },
+        enableVoiceInput: true,
+      });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(stored as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.9 }) as never);
+
+      // Trigger via any single change.
+      await PATCH(makeRequest('PATCH', { temperature: 0.9 }), makeParams(AGENT_ID));
+
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      // The exhaustive set the route should snapshot. If this list
+      // diverges from VERSIONED_FIELDS in route.ts, one of them is
+      // wrong — both must be kept in lockstep.
+      const expected = [
+        'systemInstructions',
+        'model',
+        'temperature',
+        'maxTokens',
+        'topicBoundaries',
+        'brandVoiceInstructions',
+        'provider',
+        'fallbackProviders',
+        'knowledgeCategories',
+        'rateLimitRpm',
+        'visibility',
+        'inputGuardMode',
+        'outputGuardMode',
+        'citationGuardMode',
+        'maxHistoryTokens',
+        'retentionDays',
+        'providerConfig',
+        'monthlyBudgetUsd',
+        'metadata',
+        'enableVoiceInput',
+      ];
+      for (const key of expected) {
+        expect(snapshot).toHaveProperty(key);
+      }
+      // Spot-check a few values to confirm it's the pre-update state,
+      // not an empty placeholder.
+      expect(snapshot).toHaveProperty('temperature', 0.5);
+      expect(snapshot).toHaveProperty('enableVoiceInput', true);
+      expect(snapshot).toHaveProperty('providerConfig', { t: 1 });
+    });
   });
 });
 

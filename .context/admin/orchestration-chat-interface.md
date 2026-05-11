@@ -4,20 +4,22 @@ Reusable SSE streaming chat component for embedding in admin panels. Lives at `c
 
 ## Props
 
-| Prop                     | Type                                          | Required | Default | Purpose                                            |
-| ------------------------ | --------------------------------------------- | -------- | ------- | -------------------------------------------------- |
-| `agentSlug`              | `string`                                      | Yes      | —       | Agent to call via `POST /chat/stream`              |
-| `contextType`            | `string`                                      | No       | —       | Context type forwarded in chat request             |
-| `contextId`              | `string`                                      | No       | —       | Context ID forwarded in chat request               |
-| `starterPrompts`         | `string[]`                                    | No       | —       | Buttons shown when no messages exist               |
-| `className`              | `string`                                      | No       | —       | Additional classes for the outer container         |
-| `embedded`               | `boolean`                                     | No       | `false` | Compact mode (no card wrapper, `h-full flex-col`)  |
-| `onCapabilityResult`     | `(slug: string, result: unknown) => void`     | No       | —       | Fires on `capability_result` SSE events            |
-| `onStreamComplete`       | `(fullText: string) => void`                  | No       | —       | Fires with complete assistant text on `done` event |
-| `enableTypingAnimation`  | `boolean`                                     | No       | `false` | Token-by-token typing animation via rAF            |
-| `typingAnimationOptions` | `{ chunkSize?: number; intervalMs?: number }` | No       | —       | Typing animation speed config                      |
-| `showClearButton`        | `boolean`                                     | No       | `false` | Show trash icon to clear/reset conversation        |
-| `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                |
+| Prop                     | Type                                          | Required | Default | Purpose                                                                                                          |
+| ------------------------ | --------------------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `agentSlug`              | `string`                                      | Yes      | —       | Agent to call via `POST /chat/stream`                                                                            |
+| `agentId`                | `string`                                      | No       | —       | Agent row id — required alongside `voiceInputEnabled` to render the mic. Sent to `/chat/transcribe` for routing. |
+| `voiceInputEnabled`      | `boolean`                                     | No       | `false` | Opt-in flag for the mic affordance. See [Voice input](#voice-input) below.                                       |
+| `contextType`            | `string`                                      | No       | —       | Context type forwarded in chat request                                                                           |
+| `contextId`              | `string`                                      | No       | —       | Context ID forwarded in chat request                                                                             |
+| `starterPrompts`         | `string[]`                                    | No       | —       | Buttons shown when no messages exist                                                                             |
+| `className`              | `string`                                      | No       | —       | Additional classes for the outer container                                                                       |
+| `embedded`               | `boolean`                                     | No       | `false` | Compact mode (no card wrapper, `h-full flex-col`)                                                                |
+| `onCapabilityResult`     | `(slug: string, result: unknown) => void`     | No       | —       | Fires on `capability_result` SSE events                                                                          |
+| `onStreamComplete`       | `(fullText: string) => void`                  | No       | —       | Fires with complete assistant text on `done` event                                                               |
+| `enableTypingAnimation`  | `boolean`                                     | No       | `false` | Token-by-token typing animation via rAF                                                                          |
+| `typingAnimationOptions` | `{ chunkSize?: number; intervalMs?: number }` | No       | —       | Typing animation speed config                                                                                    |
+| `showClearButton`        | `boolean`                                     | No       | `false` | Show trash icon to clear/reset conversation                                                                      |
+| `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                                                                              |
 
 ## Modes
 
@@ -54,6 +56,16 @@ When `showClearButton` is true, a trash icon appears in the top-right of the mes
 - Sends `DELETE` to the conversation endpoint (if a `conversationId` exists)
 - Resets all local state (messages, error, status, warning)
 - Fires `onConversationCleared` callback
+
+### Voice input
+
+When both `voiceInputEnabled` and `agentId` are truthy, a `<MicButton>` (`components/admin/orchestration/chat/mic-button.tsx`) renders between the text input and the Send button. Same gate as `AgentTestChat`, which is the canonical reference for the affordance.
+
+- Audio is uploaded to `/api/v1/admin/orchestration/chat/transcribe` with the `agentId` so the route can resolve the agent's `enableVoiceInput` and `voiceInputGloballyEnabled` settings.
+- Returned transcripts are **appended** to whatever the operator has already typed (`'currentText hello from the mic'`), not replaced — operators can mix typing and dictation in a single turn. An empty input writes the transcript verbatim with no leading space.
+- Mic errors (microphone access denied, transcription failed, etc.) surface through the same error banner the SSE path uses: title "Voice input failed", body = the upstream message.
+
+Callers without an agent row (e.g. legacy callers that only know the slug) keep their text-only UX — defaults are off so the affordance is strictly opt-in. The Learning Hub server-fetches both agent records (`pattern-advisor`, `quiz-master`) and threads them through `LearningTabs` → `ChatInterface` so each tab respects its agent's voice toggle independently.
 
 ## SSE Contract
 

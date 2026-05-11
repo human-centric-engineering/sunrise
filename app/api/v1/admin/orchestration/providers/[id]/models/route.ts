@@ -23,6 +23,9 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -63,7 +66,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     }
 
     const provider = await getProvider(row.slug);
-    const [liveModels, matrixRows, agentRows] = await Promise.all([
+    const [liveModels, matrixRows, agentRows, settings] = await Promise.all([
       provider.listModels(),
       // LEFT JOIN — annotate live SDK output with our curated matrix.
       // Matrix rows are the source of truth for capabilities + tier
@@ -86,6 +89,13 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         select: { id: true, name: true, slug: true, model: true },
         orderBy: { name: 'asc' },
       }),
+      // Resolve effective default-models map so each row can advertise
+      // any TaskType slot it currently fills (routing/chat/reasoning/
+      // embeddings). Agents with empty provider/model fall back to
+      // these defaults — surface them in the panel so an operator can
+      // see at a glance which models the runtime relies on, separately
+      // from the agents that name the model directly.
+      getOrchestrationSettings(),
     ]);
 
     const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
@@ -97,12 +107,37 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       agentsByModelId.set(a.model, list);
     }
 
+    // Per-task matching rule. The `audio` slot stores a
+    // `${providerSlug}::${modelId}` composite (see
+    // `lib/orchestration/llm/audio-default.ts`) because the schema
+    // allows two providers to share a modelId. This route is already
+    // scoped to one provider (`row.slug`), so we evaluate
+    // `parsed.providerSlug === row.slug` per audio row — a
+    // composite that names a different provider must not light up
+    // here, which is the bug the matrix-wide route was tripping on.
     const enriched = liveModels.map((m) => {
       const matrix = matrixByModelId.get(m.id);
       // Matrix capabilities take precedence; fall back to inference
       // so unmatched models still get a meaningful badge + a routed
       // Test button rather than a generic chat call that 404s.
       const capabilities = matrix?.capabilities ?? [inferCapability(row.slug, m.id)];
+      const defaultFor: TaskType[] = [];
+      for (const task of TASK_TYPES) {
+        const stored = settings.defaultModels[task];
+        if (!stored) continue;
+        if (task === 'audio') {
+          const parsed = parseAudioDefault(stored);
+          if (!parsed) continue;
+          if (
+            parsed.modelId === m.id &&
+            (parsed.providerSlug === null || parsed.providerSlug === row.slug)
+          ) {
+            defaultFor.push(task);
+          }
+        } else if (stored === m.id) {
+          defaultFor.push(task);
+        }
+      }
       return {
         ...m,
         inMatrix: Boolean(matrix),
@@ -110,6 +145,10 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         capabilities,
         tierRole: matrix?.tierRole ?? null,
         agents: agentsByModelId.get(m.id) ?? [],
+        // Task slots this model serves as the effective system
+        // default. Distinct from `agents` — the former tracks direct
+        // assignment, this tracks inheritance via the system defaults.
+        defaultFor,
       };
     });
 
@@ -119,6 +158,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       modelCount: enriched.length,
       matrixMatched: enriched.filter((m) => m.inMatrix).length,
       modelsInUse: enriched.filter((m) => m.agents.length > 0).length,
+      modelsServingDefaults: enriched.filter((m) => m.defaultFor.length > 0).length,
     });
     return successResponse({ providerId: id, slug: row.slug, models: enriched });
   } catch (err) {

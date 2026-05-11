@@ -68,6 +68,12 @@ export interface UseVoiceRecordingResult {
   error: VoiceRecordingError | null;
   /** Whether the runtime supports `MediaRecorder` + `getUserMedia`. */
   supported: boolean;
+  /**
+   * Live `MediaStream` while recording (null otherwise). Exposed so a
+   * visualizer can attach a Web Audio `AnalyserNode` for level/waveform
+   * rendering without the hook owning the rAF loop.
+   */
+  stream: MediaStream | null;
   /** Begin a recording. Resolves when the browser confirms capture has started. */
   start: () => Promise<void>;
   /** Stop the current recording. Resolves with the captured blob, or null on failure. */
@@ -110,6 +116,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<VoiceRecordingError | null>(null);
   const [supported] = useState<boolean>(() => isSupported());
+  // Mirror of `streamRef.current` for consumers (visualizers). Set when
+  // recording starts, cleared on teardown. Kept as state so React re-renders
+  // when capture begins/ends; the hook does not re-render on every audio frame.
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -130,6 +140,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
   const teardownStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    setStream(null);
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
@@ -216,6 +227,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     }
 
     streamRef.current = stream;
+    setStream(stream);
     const mimeType = pickSupportedMime();
     let recorder: MediaRecorder;
     try {
@@ -305,6 +317,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     elapsedMs,
     error,
     supported,
+    stream,
     start,
     stop,
     cancel,

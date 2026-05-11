@@ -30,7 +30,53 @@ import {
 } from '@/components/ui/select';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
+import {
+  MODEL_CAPABILITIES,
+  STORAGE_ONLY_CAPABILITIES,
+  TIER_ROLE_META,
+  type ModelCapability,
+  type TierRole,
+} from '@/types/orchestration';
+
+// Display metadata for each capability checkbox. Order here matches
+// render order in the UI. FieldHelp copy mirrors the test-model route's
+// disabled-button messages so the same vocabulary is used in both
+// places.
+const CAPABILITY_META: Record<
+  ModelCapability,
+  { label: string; help: string; runtime: 'engine' | 'storage' }
+> = {
+  chat: {
+    label: 'Chat',
+    help: 'Text generation via /v1/chat/completions — the workhorse capability for most agents.',
+    runtime: 'engine',
+  },
+  reasoning: {
+    label: 'Reasoning',
+    help: 'Frontier reasoning models (o1, o3, o4). Today they still run through chat(); the badge distinguishes cost/latency tier from plain chat.',
+    runtime: 'engine',
+  },
+  embedding: {
+    label: 'Embedding',
+    help: 'Produces vector embeddings for semantic search. Pairs with the dimensions / quality fields below.',
+    runtime: 'engine',
+  },
+  audio: {
+    label: 'Audio',
+    help: 'Speech-to-text (Whisper) or text-to-speech. Resolved by getAudioProvider() for mic input in the streaming chat.',
+    runtime: 'engine',
+  },
+  image: {
+    label: 'Image',
+    help: 'Image generation (DALL·E, gpt-image). Stored for inventory; the orchestration engine has no runtime path for image models.',
+    runtime: 'storage',
+  },
+  moderation: {
+    label: 'Moderation',
+    help: 'Content moderation (text-moderation-latest). Stored for inventory; the orchestration engine has no runtime path for moderation models.',
+    runtime: 'storage',
+  },
+};
 
 function toSlug(value: string): string {
   return value
@@ -53,8 +99,7 @@ const modelFormSchema = z.object({
   providerSlug: z.string().min(1, 'Provider slug is required').max(50),
   modelId: z.string().min(1, 'Model ID is required').max(100),
   description: z.string().min(1, 'Description is required').max(2000),
-  capChat: z.boolean(),
-  capEmbedding: z.boolean(),
+  capabilities: z.array(z.enum(MODEL_CAPABILITIES)).min(1, 'At least one capability is required'),
   tierRole: z.enum([
     'thinking',
     'worker',
@@ -151,8 +196,16 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       providerSlug: model?.providerSlug ?? '',
       modelId: model?.modelId ?? '',
       description: model?.description ?? '',
-      capChat: model?.capabilities?.includes('chat') ?? true,
-      capEmbedding: model?.capabilities?.includes('embedding') ?? false,
+      capabilities: ((): ModelCapability[] => {
+        // Pre-fill from the saved row, intersected with the current
+        // valid set so a row carrying a deprecated capability doesn't
+        // wedge the form. Default to ['chat'] in create mode.
+        const incoming = model?.capabilities ?? [];
+        const valid = incoming.filter((c): c is ModelCapability =>
+          (MODEL_CAPABILITIES as readonly string[]).includes(c)
+        );
+        return valid.length > 0 ? valid : model ? [] : ['chat'];
+      })(),
       tierRole: (model?.tierRole as ModelFormData['tierRole']) ?? 'thinking',
       reasoningDepth: (model?.reasoningDepth as ModelFormData['reasoningDepth']) ?? 'medium',
       latency: (model?.latency as ModelFormData['latency']) ?? 'medium',
@@ -175,7 +228,23 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
   const isActive = watch('isActive');
   const currentName = watch('name');
   const providerSlug = watch('providerSlug');
-  const hasEmbedding = watch('capEmbedding');
+  const capabilities = watch('capabilities');
+  const hasEmbedding = capabilities.includes('embedding');
+  // Subset check: when the selection is non-empty and contains only
+  // storage-only capabilities, render a clarifying note so operators
+  // know the engine won't invoke this row at runtime.
+  const storageOnlySet = new Set<ModelCapability>(STORAGE_ONLY_CAPABILITIES);
+  const isStorageOnly = capabilities.length > 0 && capabilities.every((c) => storageOnlySet.has(c));
+
+  function toggleCapability(cap: ModelCapability, checked: boolean): void {
+    const next = new Set<ModelCapability>(capabilities);
+    if (checked) next.add(cap);
+    else next.delete(cap);
+    setValue('capabilities', Array.from(next), {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+  }
 
   // Auto-fill slug from providerSlug + name in create mode
   useEffect(() => {
@@ -189,22 +258,16 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
     setError(null);
     setSaved(false);
 
-    const capabilities: string[] = [];
-    if (data.capChat) capabilities.push('chat');
-    if (data.capEmbedding) capabilities.push('embedding');
-    if (capabilities.length === 0) {
-      setError('At least one capability (Chat or Embedding) is required');
-      setSubmitting(false);
-      return;
-    }
-
+    // Zod's `.min(1)` already enforces "at least one capability"; the
+    // Zod resolver surfaces it via `errors.capabilities` before
+    // onSubmit ever runs. No second check needed here.
     const payload: Record<string, unknown> = {
       name: data.name,
       slug: data.slug,
       providerSlug: data.providerSlug,
       modelId: data.modelId,
       description: data.description,
-      capabilities,
+      capabilities: data.capabilities,
       tierRole: data.tierRole,
       reasoningDepth: data.reasoningDepth,
       latency: data.latency,
@@ -217,7 +280,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
     };
 
     // Include embedding fields when embedding capability is set
-    if (data.capEmbedding) {
+    if (data.capabilities.includes('embedding')) {
       if (data.dimensions) payload.dimensions = parseInt(data.dimensions, 10);
       payload.schemaCompatible = data.schemaCompatible;
       if (data.costPerMillionTokens)
@@ -351,28 +414,44 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
           <Label>
             Capabilities{' '}
             <FieldHelp title="Capabilities">
-              Select whether this model is used for chat (text generation), embedding (vector
-              creation), or both.
+              Select every capability this model serves. Most rows are single-capability; some
+              models support both chat and embedding. Image and moderation are stored as inventory —
+              the orchestration engine does not invoke these capabilities at runtime.
             </FieldHelp>
           </Label>
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 text-sm">
-              <Checkbox
-                id="capChat"
-                checked={watch('capChat')}
-                onCheckedChange={(v) => setValue('capChat', !!v)}
-              />
-              <label htmlFor="capChat">Chat</label>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Checkbox
-                id="capEmbedding"
-                checked={hasEmbedding}
-                onCheckedChange={(v) => setValue('capEmbedding', !!v)}
-              />
-              <label htmlFor="capEmbedding">Embedding</label>
-            </div>
+          <div
+            className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3"
+            role="group"
+            aria-label="Model capabilities"
+          >
+            {MODEL_CAPABILITIES.map((cap) => {
+              const meta = CAPABILITY_META[cap];
+              const id = `cap-${cap}`;
+              return (
+                <div key={cap} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    id={id}
+                    checked={capabilities.includes(cap)}
+                    onCheckedChange={(v) => toggleCapability(cap, !!v)}
+                  />
+                  <label htmlFor={id} className="flex items-center gap-1">
+                    {meta.label}
+                    <FieldHelp title={meta.label}>{meta.help}</FieldHelp>
+                  </label>
+                </div>
+              );
+            })}
           </div>
+          {errors.capabilities && (
+            <p className="text-destructive text-xs">{errors.capabilities.message}</p>
+          )}
+          {isStorageOnly && (
+            <p className="text-muted-foreground text-xs">
+              Storage-only — the orchestration engine does not currently invoke image or moderation
+              models from chat or workflow runs. The row appears in audits and inventory but cannot
+              be bound to an agent as a runtime model.
+            </p>
+          )}
         </div>
 
         {/* Tier Role */}

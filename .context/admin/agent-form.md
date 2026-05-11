@@ -74,7 +74,13 @@ Optional number input. Per-agent rate limit in requests per minute. When set, ov
 
 ### Enable voice input
 
-Switch toggle (`AiAgent.enableVoiceInput`, default off). When on, the chat surfaces tied to this agent — `AgentTestChat` here in the form's Test tab and any embed widgets — render a microphone button in the input area. Recorded audio is streamed to the configured speech-to-text provider (e.g. OpenAI Whisper) and discarded; only the transcript becomes part of the conversation. Effective state also depends on the org-wide kill switch in **Settings → Orchestration**, which defaults to on.
+Switch toggle (`AiAgent.enableVoiceInput`, default off). When on, every chat surface tied to this agent renders a microphone button in the input area:
+
+- `AgentTestChat` in the form's Test tab
+- The Learning Hub chat tabs (`/admin/orchestration/learn` — Pattern Advisor and Quiz Master) when this agent backs the tab
+- Any embed widget bound to this agent
+
+Recorded audio is streamed to the configured speech-to-text provider (e.g. OpenAI Whisper) and discarded; only the transcript becomes part of the conversation. Effective state also depends on the org-wide kill switch in **Settings → Orchestration**, which defaults to on.
 
 The form sends `enableVoiceInput: boolean` on the standard PATCH update. The toggle is unconditional in the UI — there's no gating against "no audio provider configured" because the same agent can be moved between deployments and the right surface for that signal is the embed widget's `/widget-config` (which hides the mic button when no provider exists).
 
@@ -211,7 +217,7 @@ All rows except the latest version show a **Restore** button. Clicking opens an 
 
 ### Help copy
 
-- **Version history** — "When you save changes to configuration fields (model, instructions, temperature, guard modes, etc.), a snapshot of the full configuration is stored. Changes to name or description alone do not create a version. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
+- **Version history** — "When you save changes to configuration fields (model, instructions, temperature, guard modes, `enableVoiceInput`, etc.), a snapshot of the full configuration is stored. Changes to name or description alone do not create a version. You can view what changed and restore any previous version. Restoring creates a new version entry so the action is auditable."
 
 ## Tab 7 — Test
 

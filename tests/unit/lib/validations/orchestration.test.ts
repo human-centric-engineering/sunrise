@@ -79,6 +79,11 @@ import {
   turnEntriesSchema,
   chatAttachmentSchema,
   searchConfigSchema,
+  createProviderModelSchema,
+  updateProviderModelSchema,
+  bulkCreateProviderModelsSchema,
+  listProviderModelsQuerySchema,
+  updateOrchestrationSettingsSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -2711,6 +2716,226 @@ describe('turnEntrySchema', () => {
       expect(data.tokensUsed).toBe(250);
       expect(data.costUsd).toBe(0.025);
       expect(data.turns).toBeUndefined();
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Provider model capability validation
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('provider model capability validation', () => {
+  function baseModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name: 'Whisper 1',
+      slug: 'openai-whisper-1',
+      providerSlug: 'openai',
+      modelId: 'whisper-1',
+      description: 'OpenAI speech-to-text transcription model.',
+      capabilities: ['audio'],
+      tierRole: 'infrastructure',
+      reasoningDepth: 'none',
+      latency: 'fast',
+      costEfficiency: 'high',
+      contextLength: 'n_a',
+      toolUse: 'none',
+      bestRole: 'Speech-to-text',
+      ...overrides,
+    };
+  }
+
+  describe('createProviderModelSchema.capabilities', () => {
+    it.each(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'] as const)(
+      'accepts %s as a matrix capability',
+      (capability) => {
+        const result = createProviderModelSchema.safeParse(
+          baseModel({ capabilities: [capability] })
+        );
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.capabilities).toEqual([capability]);
+        }
+      }
+    );
+
+    it("rejects 'unknown' — catalogue-only placeholder", () => {
+      // 'unknown' is returned by inferCapability when a model id can't
+      // be classified; it must never reach the matrix.
+      const result = createProviderModelSchema.safeParse(baseModel({ capabilities: ['unknown'] }));
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects garbage capability values', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseModel({ capabilities: ['not-a-capability'] })
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty capabilities array', () => {
+      const result = createProviderModelSchema.safeParse(baseModel({ capabilities: [] }));
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts multi-capability rows (chat + reasoning)', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseModel({ capabilities: ['chat', 'reasoning'] })
+      );
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('updateProviderModelSchema.capabilities', () => {
+    it('accepts a widened capability on PATCH', () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: ['reasoning'] });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects 'unknown' on PATCH", () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: ['unknown'] });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty capabilities array on PATCH (when supplied)', () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: [] });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('bulkCreateProviderModelsSchema.capabilities', () => {
+    it('accepts a bulk row with audio capability', () => {
+      const result = bulkCreateProviderModelsSchema.safeParse({
+        providerSlug: 'openai',
+        models: [
+          {
+            modelId: 'whisper-1',
+            name: 'Whisper',
+            capabilities: ['audio'],
+            tierRole: 'infrastructure',
+            reasoningDepth: 'none',
+            latency: 'fast',
+            costEfficiency: 'high',
+            contextLength: 'n_a',
+            toolUse: 'none',
+            bestRole: 'Speech-to-text',
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a bulk row with 'unknown' capability", () => {
+      const result = bulkCreateProviderModelsSchema.safeParse({
+        providerSlug: 'openai',
+        models: [
+          {
+            modelId: 'mystery',
+            name: 'Mystery',
+            capabilities: ['unknown'],
+            tierRole: 'worker',
+            reasoningDepth: 'none',
+            latency: 'medium',
+            costEfficiency: 'medium',
+            contextLength: 'medium',
+            toolUse: 'none',
+            bestRole: '—',
+          },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('listProviderModelsQuerySchema.capability', () => {
+    it.each(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'] as const)(
+      'accepts ?capability=%s',
+      (capability) => {
+        const result = listProviderModelsQuerySchema.safeParse({ capability });
+        expect(result.success).toBe(true);
+      }
+    );
+
+    it('rejects ?capability=unknown', () => {
+      const result = listProviderModelsQuerySchema.safeParse({ capability: 'unknown' });
+      expect(result.success).toBe(false);
+    });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// updateOrchestrationSettingsSchema — partial patch + cross-field refines
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('updateOrchestrationSettingsSchema', () => {
+  it('rejects an empty patch via the at-least-one-field refine', () => {
+    // Source: orchestration.ts:2009-2030 — the form sends only the
+    // touched fields; an empty patch would mean a no-op write that
+    // still bumps `updatedAt` and audits as a change.
+    const result = updateOrchestrationSettingsSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a single-field patch', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      voiceInputGloballyEnabled: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a valid defaultModels partial patch', () => {
+    // gpt-4o is in the static model-registry fallback; chat is the
+    // most common slot a real settings save touches. Skip reasoning
+    // here — `validateTaskDefaults` would require the chosen id to
+    // exist in the registry too, and the fallback list is small.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      defaultModels: { chat: 'gpt-4o' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('superRefine forwards validateTaskDefaults errors with the correct path', () => {
+    // Empty-string entries are rejected by the inner `z.string().min(1)`,
+    // not the superRefine — the superRefine catches semantic errors
+    // (e.g. unknown task → model that isn't in the registry). Either
+    // way, an invalid defaultModels payload must surface at the
+    // `defaultModels.<task>` path so the settings form can highlight
+    // the right control.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      defaultModels: { chat: '' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'));
+      expect(
+        paths.some((p) => p.startsWith('defaultModels.chat') || p === 'defaultModels.chat')
+      ).toBe(true);
+    }
+  });
+
+  it('rejects http:// origins in embedAllowedOrigins (non-localhost)', () => {
+    // Source: orchestration.ts:1989-2003 — only https or http://localhost
+    // / http://127.0.0.1 origins are accepted, to keep browser Origin
+    // header matching tight against the persisted allowlist.
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['http://example.com'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts http://localhost in embedAllowedOrigins', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['http://localhost:3000'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('normalises https URLs to their .origin canonical form', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      embedAllowedOrigins: ['https://partner.com/some/path'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.embedAllowedOrigins).toEqual(['https://partner.com']);
     }
   });
 });

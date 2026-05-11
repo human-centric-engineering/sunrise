@@ -95,18 +95,16 @@ function makeProvider() {
 }
 
 function makeRequest(body: Record<string, unknown> = { model: MODEL }): NextRequest {
-  const bodyStr = JSON.stringify(body);
-  const base = {
+  // Use the real NextRequest class — pre-Phase-7 a hand-rolled partial
+  // mock here implemented only the methods the route called today.
+  // The real class catches accidental reliance on other Request APIs
+  // (e.g. `request.cookies`, `request.formData`) without needing the
+  // mock to grow per regression.
+  return new NextRequest(BASE_URL, {
     method: 'POST',
-    headers: new Headers({ 'Content-Type': 'application/json' }),
-    json: () => Promise.resolve(body),
-    text: () => Promise.resolve(bodyStr),
-    url: BASE_URL,
-  };
-  return {
-    ...base,
-    clone: () => ({ ...base }),
-  } as unknown as NextRequest;
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 function makeParams(id: string = PROVIDER_ID) {
@@ -115,6 +113,38 @@ function makeParams(id: string = PROVIDER_ID) {
 
 async function parseJson<T>(response: Response): Promise<T> {
   return JSON.parse(await response.text()) as T;
+}
+
+/**
+ * Produce a mock `LlmProvider` carrying every method the real
+ * interface declares (see `lib/orchestration/llm/provider.ts`).
+ * Tests can spread overrides to swap in specific behaviour (typically
+ * `chat` or `embed`); the rest stay as `vi.fn()` stubs so the route
+ * touching any other method surfaces immediately rather than failing
+ * later in production with `provider.X is not a function`.
+ */
+function makeMockProvider(
+  overrides: Partial<{
+    name: string;
+    isLocal: boolean;
+    chat: ReturnType<typeof vi.fn>;
+    chatStream: ReturnType<typeof vi.fn>;
+    embed: ReturnType<typeof vi.fn>;
+    listModels: ReturnType<typeof vi.fn>;
+    testConnection: ReturnType<typeof vi.fn>;
+    transcribe: ReturnType<typeof vi.fn>;
+  }> = {}
+) {
+  return {
+    name: 'mock',
+    isLocal: false,
+    chat: vi.fn(),
+    chatStream: vi.fn(),
+    embed: vi.fn(),
+    listModels: vi.fn(),
+    testConnection: vi.fn(),
+    ...overrides,
+  };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -203,9 +233,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
     it('returns 200 with ok=true and latencyMs when model responds', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: vi.fn().mockResolvedValue({ content: 'Hello!' }),
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(
+        makeMockProvider({ chat: vi.fn().mockResolvedValue({ content: 'Hello!' }) }) as never
+      );
 
       const response = await POST(makeRequest(), makeParams());
 
@@ -225,9 +255,11 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
     it('returns 200 with ok=false and latencyMs=null when provider throws', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: vi.fn().mockRejectedValue(new Error('Connection refused')),
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(
+        makeMockProvider({
+          chat: vi.fn().mockRejectedValue(new Error('Connection refused')),
+        }) as never
+      );
 
       const response = await POST(makeRequest(), makeParams());
 
@@ -264,10 +296,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
       const chatMock = vi.fn();
       const embedMock = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: chatMock,
-        embed: embedMock,
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(
+        makeMockProvider({ chat: chatMock, embed: embedMock }) as never
+      );
 
       const response = await POST(
         makeRequest({ model: 'text-embedding-3-small', capability: 'embedding' }),
@@ -290,10 +321,9 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
       const chatMock = vi.fn();
       const embedMock = vi.fn();
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: chatMock,
-        embed: embedMock,
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(
+        makeMockProvider({ chat: chatMock, embed: embedMock }) as never
+      );
 
       const response = await POST(
         makeRequest({ model: 'o3-pro', capability: 'reasoning' }),
@@ -314,15 +344,15 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(embedMock).not.toHaveBeenCalled();
     });
 
-    it('returns the unsupported response for image / audio / moderation / unknown', async () => {
+    it('returns the unsupported response for image / moderation / unknown', async () => {
+      // Audio used to live in this set, but is now testable via the
+      // silent-WAV transcribe roundtrip — see the Audio capability
+      // describe block below for its happy + failure paths.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: vi.fn(),
-        embed: vi.fn(),
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(makeMockProvider() as never);
 
-      for (const capability of ['image', 'audio', 'moderation', 'unknown'] as const) {
+      for (const capability of ['image', 'moderation', 'unknown'] as const) {
         const response = await POST(makeRequest({ model: 'whatever', capability }), makeParams());
         expect(response.status).toBe(200);
         const data = await parseJson<{
@@ -338,10 +368,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
       const chatMock = vi.fn().mockResolvedValue({ content: 'Hello' });
-      vi.mocked(getProvider).mockResolvedValue({
-        chat: chatMock,
-        embed: vi.fn(),
-      } as never);
+      vi.mocked(getProvider).mockResolvedValue(makeMockProvider({ chat: chatMock }) as never);
 
       // No capability in body — pre-Phase B callers (wizard smoke
       // test, agent-form test card) keep working.

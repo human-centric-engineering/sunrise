@@ -188,13 +188,16 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
       });
 
-      const initialCallCount = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
+      // Clear the mount-time fetch from the history so the refresh
+      // assertion is exact ("clicking the button fired one fetch"),
+      // not a snapshot-then-compare ("more than before"). The latter
+      // is fragile against incidental calls between snapshot and click.
+      vi.mocked(apiClient.get).mockClear();
 
       await user.click(screen.getByRole('button', { name: /refresh models/i }));
 
       await waitFor(() => {
-        const calls = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
-        expect(calls).toBeGreaterThan(initialCallCount);
+        expect(apiClient.get).toHaveBeenCalledTimes(1);
       });
     });
   });
@@ -513,7 +516,7 @@ describe('ProviderModelsPanel', () => {
       expect(matches.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('clicking "In matrix" twice reverts to the default name-asc sort', async () => {
+    it('clicking "In matrix" twice falls back to alphabetical row order (id-asc)', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(ENRICHED_RESPONSE);
 
@@ -587,12 +590,124 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByRole('group', { name: /filter by capability/i })).toBeInTheDocument();
       });
 
-      // Chat / Embedding / Image / Audio / Other
-      expect(screen.getByRole('button', { name: /^chat$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^embedding$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^image$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^audio$/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^other$/i })).toBeInTheDocument();
+      // Phase 5: one chip per inference output. Previously reasoning +
+      // moderation + unknown collapsed into a single "Other" chip,
+      // which lost information on OpenAI's mixed catalogue.
+      for (const label of [
+        'chat',
+        'reasoning',
+        'embedding',
+        'image',
+        'audio',
+        'moderation',
+        'unknown',
+      ]) {
+        expect(
+          screen.getByRole('button', { name: new RegExp(`^${label}$`, 'i') })
+        ).toBeInTheDocument();
+      }
+      // "Other" chip is no longer rendered.
+      expect(screen.queryByRole('button', { name: /^other$/i })).not.toBeInTheDocument();
+    });
+
+    it('Reasoning and Moderation chips filter independently (regression for old Other lump)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'o3-mini',
+            name: 'o3-mini',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 128_000,
+            supportsTools: false,
+            capabilities: ['reasoning'],
+          },
+          {
+            id: 'omni-moderation',
+            name: 'omni-moderation',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['moderation'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('o3-mini')).toBeInTheDocument();
+      });
+      expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+
+      // Reasoning chip narrows to the reasoning row only.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('omni-moderation')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('o3-mini')).toBeInTheDocument();
+
+      // Switch to Moderation chip — only the moderation row remains.
+      await user.click(screen.getByRole('button', { name: /^reasoning$/i }));
+      await user.click(screen.getByRole('button', { name: /^moderation$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('o3-mini')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('omni-moderation')).toBeInTheDocument();
+    });
+
+    it('Unknown chip filters to capability=unknown rows (catalogue-only chip)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            provider: 'openai',
+            tier: 'frontier',
+            inputCostPerMillion: 5,
+            outputCostPerMillion: 15,
+            maxContext: 128_000,
+            supportsTools: true,
+            capabilities: ['chat'],
+          },
+          {
+            id: 'mystery-x',
+            name: 'mystery-x',
+            provider: 'openai',
+            tier: 'mid',
+            inputCostPerMillion: 0,
+            outputCostPerMillion: 0,
+            maxContext: 0,
+            supportsTools: false,
+            capabilities: ['unknown'],
+          },
+        ],
+      });
+
+      const user = userEvent.setup();
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /^unknown$/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('mystery-x')).toBeInTheDocument();
     });
 
     it('clicking the Embedding filter chip narrows rows to embedding models', async () => {
@@ -837,7 +952,22 @@ describe('ProviderModelsPanel', () => {
       ] satisfies ProviderModelInfo[],
     };
 
-    it('shows the agent count and renders 0 for unbound models', async () => {
+    it('renames the column header from "In use" to "Used by"', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      // The legacy "In use" header was ambiguous — it didn't say "in
+      // use by what", and it conflated direct agent assignment with
+      // default-settings inheritance. The new header makes the meaning
+      // explicit and the hover tooltip documents both paths.
+      const usedByHeader = await screen.findByRole('columnheader', { name: /used by/i });
+      expect(usedByHeader).toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: /^in use$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows the agent count and renders "Not in use" for unbound models with no default roles', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -847,14 +977,16 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      // Bound row shows the count as a popover trigger; unbound row shows a flat 0.
+      // Bound row shows the agent count as a popover trigger; the
+      // unbound row with no default role renders "Not in use" — a
+      // bare "0" used to require the operator to guess "0 of what?".
       expect(
-        screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i })
+        screen.getByRole('button', { name: /show 2 agents directly assigned to GPT-4o mini/i })
       ).toBeInTheDocument();
-      expect(screen.getByText('0')).toBeInTheDocument();
+      expect(screen.getByText(/^Not in use$/)).toBeInTheDocument();
     });
 
-    it('opens the popover and lists every bound agent with a link to its admin page', async () => {
+    it('opens the popover and lists every directly-assigned agent with a link to its admin page', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -865,7 +997,9 @@ describe('ProviderModelsPanel', () => {
         expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /show 2 agents using GPT-4o mini/i }));
+      await user.click(
+        screen.getByRole('button', { name: /show 2 agents directly assigned to GPT-4o mini/i })
+      );
 
       const triageLink = await screen.findByRole('link', { name: /Triage Bot/ });
       expect(triageLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-1');
@@ -873,9 +1007,12 @@ describe('ProviderModelsPanel', () => {
         'href',
         '/admin/orchestration/agents/agent-2'
       );
+      // Popover heading reinforces that the listed agents are
+      // directly assigned — distinct from defaults inheritance.
+      expect(screen.getByText(/directly assigned to/i)).toBeInTheDocument();
     });
 
-    it('"In use" toggle hides models that have no bound agents', async () => {
+    it('"Has agent" filter chip hides models that have no bound agents', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue(IN_USE_RESPONSE);
 
@@ -888,15 +1025,70 @@ describe('ProviderModelsPanel', () => {
       // Both rows visible by default.
       expect(screen.getByText('gpt-4o')).toBeInTheDocument();
 
-      await user.click(
-        screen.getByRole('button', { name: /show only models with at least one bound agent/i })
-      );
+      // Filter chip was renamed from the ambiguous "In use" to "Has
+      // agent" so the toggle's semantics match what it filters by —
+      // models with ≥1 direct agent assignment. The aria-label still
+      // documents the precise meaning for assistive tech.
+      const filterButton = screen.getByRole('button', {
+        name: /show only models with at least one bound agent/i,
+      });
+      expect(filterButton).toHaveTextContent(/has agent/i);
+      await user.click(filterButton);
 
       await waitFor(() => {
         expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
       });
       // Bound row stays visible.
       expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+
+    it('renders a default-role badge for every TaskType slot the model fills', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue({
+        providerId: 'prov-2',
+        slug: 'openai',
+        models: [
+          {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            provider: 'openai',
+            tier: 'frontier',
+            inputCostPerMillion: 5,
+            outputCostPerMillion: 15,
+            maxContext: 128000,
+            supportsTools: true,
+            inMatrix: true,
+            capabilities: ['chat'],
+            agents: [],
+            defaultFor: ['chat', 'reasoning'],
+          },
+        ] satisfies ProviderModelInfo[],
+      });
+
+      render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+      });
+
+      // Each TaskType slot produces a badge so the operator can spot
+      // every place the runtime falls back to this model without
+      // opening settings. Badges link to the orchestration settings
+      // page for one-click editing.
+      const dataRow = screen.getByRole('row', { name: /gpt-4o/ });
+      expect(within(dataRow).getByText(/default: chat/i)).toBeInTheDocument();
+      expect(within(dataRow).getByText(/default: reasoning/i)).toBeInTheDocument();
+
+      const chatBadge = within(dataRow).getByText(/default: chat/i);
+      const settingsLink = chatBadge.closest('a');
+      expect(settingsLink).toHaveAttribute('href', '/admin/orchestration/settings');
+
+      // "Not in use" must NOT render — the model is in use via the
+      // default-settings inheritance path even with no direct agent.
+      expect(within(dataRow).queryByText(/not in use/i)).not.toBeInTheDocument();
+      // "0 agents" still shows so the operator can see there's no
+      // direct assignment alongside the default badges.
+      expect(within(dataRow).getByText(/0 agents/i)).toBeInTheDocument();
     });
   });
 

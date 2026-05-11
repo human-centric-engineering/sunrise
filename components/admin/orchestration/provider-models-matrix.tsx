@@ -46,7 +46,77 @@ import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
+import { Input } from '@/components/ui/input';
+import {
+  MODEL_CAPABILITIES,
+  STORAGE_ONLY_CAPABILITIES,
+  TIER_ROLE_META,
+  type ModelCapability,
+  type TaskType,
+  type TierRole,
+} from '@/types/orchestration';
+
+// Short human labels for the four `TaskType` slots resolved via
+// `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
+// so an operator can see at a glance which models the runtime falls
+// back to when an agent has no explicit binding — distinct from the
+// agents that directly name the model.
+const TASK_TYPE_LABEL: Record<TaskType, string> = {
+  routing: 'Routing',
+  chat: 'Chat',
+  reasoning: 'Reasoning',
+  embeddings: 'Embeddings',
+  audio: 'Audio',
+};
+
+// Stable label + colour mapping shared by the per-capability badges
+// in the table cells and the filter chips at the top. Same hue in
+// both surfaces so the operator's eye stitches "chip → badge → row"
+// without having to re-read the label. Kept locally rather than
+// hoisted to types/ because the colours are presentational and may
+// drift independently of the canonical capability set.
+//
+// `badgeClass` is the tinted style used by the cell badges.
+// `dotClass` is the solid swatch used on the inactive filter chips
+// — gives every chip a colour cue even when not pressed, so the
+// chip row reads as a key for the table colours below.
+const CAPABILITY_DISPLAY: Record<
+  ModelCapability,
+  { label: string; badgeClass: string; dotClass: string }
+> = {
+  chat: {
+    label: 'Chat',
+    badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+    dotClass: 'bg-sky-500',
+  },
+  reasoning: {
+    label: 'Reasoning',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    dotClass: 'bg-purple-500',
+  },
+  embedding: {
+    label: 'Embedding',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    dotClass: 'bg-amber-500',
+  },
+  audio: {
+    label: 'Audio',
+    badgeClass: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    dotClass: 'bg-teal-500',
+  },
+  image: {
+    label: 'Image',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    dotClass: 'bg-rose-500',
+  },
+  moderation: {
+    label: 'Moderation',
+    badgeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    dotClass: 'bg-orange-500',
+  },
+};
+
+const STORAGE_ONLY_SET = new Set<ModelCapability>(STORAGE_ONLY_CAPABILITIES);
 
 export interface ModelRowAgentRef {
   id: string;
@@ -86,6 +156,11 @@ export interface ModelRow {
   // currently references the row. Source: GET /provider-models LEFT
   // JOIN against AiAgent on the (provider, model) string pair.
   agents?: ModelRowAgentRef[];
+  // TaskType slots this model fills as the effective system default
+  // (routing/chat/reasoning/embeddings). Distinct from `agents` —
+  // tracks inheritance via the default-models settings rather than
+  // direct assignment.
+  defaultFor?: TaskType[];
   metadata?: {
     lastAudit?: {
       timestamp: string;
@@ -140,47 +215,37 @@ function ratingBadge(value: string) {
   );
 }
 
-function capabilityBadge(capabilities: string[]) {
-  const hasChat = capabilities.includes('chat');
-  const hasEmbedding = capabilities.includes('embedding');
-
-  if (hasChat && hasEmbedding) {
+function capabilityBadges(capabilities: string[]): React.ReactElement {
+  // Render one small pill per capability. Previously this collapsed
+  // chat+embedding into "Both" and dropped everything else; with the
+  // matrix now storing reasoning/audio/image/moderation we render the
+  // full set instead.
+  if (capabilities.length === 0) {
     return (
       <Badge
         variant="outline"
-        className="bg-violet-100 text-xs text-violet-800 dark:bg-violet-900 dark:text-violet-200"
+        className="bg-red-100 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
       >
-        Both
+        None
       </Badge>
     );
   }
-  if (hasEmbedding) {
-    return (
-      <Badge
-        variant="outline"
-        className="bg-amber-100 text-xs text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-      >
-        Embedding
-      </Badge>
-    );
-  }
-  if (hasChat) {
-    return (
-      <Badge
-        variant="outline"
-        className="bg-sky-100 text-xs text-sky-800 dark:bg-sky-900 dark:text-sky-200"
-      >
-        Chat
-      </Badge>
-    );
-  }
+  // Render in canonical order from MODEL_CAPABILITIES regardless of
+  // input order, so two rows with the same capabilities render
+  // identically.
+  const ordered = MODEL_CAPABILITIES.filter((c) => capabilities.includes(c));
   return (
-    <Badge
-      variant="outline"
-      className="bg-red-100 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
-    >
-      None
-    </Badge>
+    <div className="flex flex-wrap items-center gap-1">
+      {ordered.map((cap) => (
+        <Badge
+          key={cap}
+          variant="outline"
+          className={cn('text-xs', CAPABILITY_DISPLAY[cap].badgeClass)}
+        >
+          {CAPABILITY_DISPLAY[cap].label}
+        </Badge>
+      ))}
+    </div>
   );
 }
 
@@ -225,8 +290,21 @@ export function ProviderModelsMatrix({
 }: ProviderModelsMatrixProps): React.ReactElement {
   const router = useRouter();
   const [providerFilter, setProviderFilter] = useState<string>('all');
+  // Master "narrow to configured providers" toggle. When true, every
+  // row from a provider with no AiProviderConfig (or one that's
+  // inactive) is hidden. Distinct from `providerFilter` — that's a
+  // drill-down to a single slug; this is the broad "only show what
+  // I've actually wired up" filter the operator wants by default once
+  // they've completed setup.
+  const [configuredOnly, setConfiguredOnly] = useState<boolean>(false);
   const [tierFilter, setTierFilter] = useState<string>('all');
-  const [capabilityFilter, setCapabilityFilter] = useState<string>('all');
+  // Chip multi-select: each capability the operator toggles is added
+  // to the set. Empty set = no capability filter (show all). This is
+  // the same shape used by the catalogue panel (provider-models-panel.tsx)
+  // so the matrix mirrors the catalogue's UX.
+  const [activeCapabilities, setActiveCapabilities] = useState<Set<ModelCapability>>(new Set());
+  const [search, setSearch] = useState<string>('');
+  const [inUseOnly, setInUseOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<SortKey>('providerSlug');
   const [auditOpen, setAuditOpen] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -282,9 +360,45 @@ export function ProviderModelsMatrix({
 
   const deleteBlocked = deleteBlockedAgents.length + deleteBlockedWorkflows.length > 0;
 
-  const providers = useMemo(
-    () => [...new Set(initialModels.map((m) => m.providerSlug))].sort(),
-    [initialModels]
+  // Aggregate per-provider state for the strip above the filter bar.
+  // `configured` and `configuredActive` come from the row's enrichment
+  // (LEFT JOIN against AiProviderConfig in the GET /provider-models
+  // route); both ride per-row but apply to the whole provider, so we
+  // collapse them here. Counts are over the unfiltered active model
+  // set so the strip stays stable as other filters change — the
+  // operator wants "Anthropic has 12 models in your matrix", not
+  // "Anthropic has 3 models matching your current filters".
+  const providerMeta = useMemo(() => {
+    const bySlug = new Map<
+      string,
+      { slug: string; configured: boolean; configuredActive: boolean; modelCount: number }
+    >();
+    for (const m of initialModels) {
+      if (!m.isActive) continue;
+      const existing = bySlug.get(m.providerSlug);
+      if (existing) {
+        existing.modelCount += 1;
+        // Promote to the most-configured state across rows. In
+        // practice every row for the same slug agrees, but be
+        // defensive — an inconsistent backend shouldn't downgrade the
+        // chip's status dot.
+        if (m.configured) existing.configured = true;
+        if (m.configuredActive) existing.configuredActive = true;
+      } else {
+        bySlug.set(m.providerSlug, {
+          slug: m.providerSlug,
+          configured: m.configured,
+          configuredActive: m.configuredActive,
+          modelCount: 1,
+        });
+      }
+    }
+    return [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+  }, [initialModels]);
+
+  const configuredActiveCount = useMemo(
+    () => providerMeta.filter((p) => p.configuredActive).length,
+    [providerMeta]
   );
 
   const tiers = useMemo(
@@ -294,10 +408,33 @@ export function ProviderModelsMatrix({
 
   const filtered = useMemo(() => {
     let rows = initialModels.filter((m) => m.isActive);
+    // Configured-only is broader than the per-provider drill-down. It
+    // strips every row whose provider has no AiProviderConfig row OR
+    // whose config row is inactive — i.e. "things that aren't going
+    // to work right now". Applied first so the per-provider chip below
+    // can still narrow within the configured set.
+    if (configuredOnly) rows = rows.filter((m) => m.configured && m.configuredActive);
     if (providerFilter !== 'all') rows = rows.filter((m) => m.providerSlug === providerFilter);
     if (tierFilter !== 'all') rows = rows.filter((m) => m.tierRole === tierFilter);
-    if (capabilityFilter !== 'all')
-      rows = rows.filter((m) => m.capabilities.includes(capabilityFilter));
+    if (activeCapabilities.size > 0) {
+      // Union (OR) semantics: a row matches when it carries any of the
+      // selected capabilities. Mirrors the catalogue panel; the In-use
+      // toggle handles the "narrow further" case.
+      rows = rows.filter((m) =>
+        m.capabilities.some((c) => activeCapabilities.has(c as ModelCapability))
+      );
+    }
+    if (inUseOnly) {
+      rows = rows.filter((m) => (m.agents?.length ?? 0) > 0);
+    }
+    const term = search.trim().toLowerCase();
+    if (term.length > 0) {
+      rows = rows.filter((m) =>
+        [m.name, m.modelId, m.slug, m.bestRole]
+          .filter(Boolean)
+          .some((v) => v.toLowerCase().includes(term))
+      );
+    }
 
     rows.sort((a, b) => {
       const av = a[sortKey];
@@ -309,7 +446,26 @@ export function ProviderModelsMatrix({
     });
 
     return rows;
-  }, [initialModels, providerFilter, tierFilter, capabilityFilter, sortKey, sortAsc]);
+  }, [
+    initialModels,
+    configuredOnly,
+    providerFilter,
+    tierFilter,
+    activeCapabilities,
+    inUseOnly,
+    search,
+    sortKey,
+    sortAsc,
+  ]);
+
+  const toggleCapability = useCallback((cap: ModelCapability) => {
+    setActiveCapabilities((prev) => {
+      const next = new Set(prev);
+      if (next.has(cap)) next.delete(cap);
+      else next.add(cap);
+      return next;
+    });
+  }, []);
 
   const toggleSort = useCallback(
     (key: SortKey) => {
@@ -325,22 +481,115 @@ export function ProviderModelsMatrix({
 
   return (
     <div className="space-y-4">
+      {/* Provider strip — one chip per provider with a status dot,
+          plus the master "Configured only" toggle. Replaces the old
+          Provider <Select> dropdown so the configured-vs-not state is
+          legible at a glance (the dropdown only listed slugs, with no
+          status indicator). */}
+      <div
+        className="bg-muted/30 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2"
+        role="group"
+        aria-label="Provider filter"
+      >
+        <span className="text-muted-foreground text-xs font-medium">Providers</span>
+        <span className="text-muted-foreground/70 text-xs">
+          {configuredActiveCount} active · {providerMeta.length} total
+        </span>
+
+        <button
+          type="button"
+          onClick={() => setConfiguredOnly((v) => !v)}
+          aria-pressed={configuredOnly}
+          title="Hide rows from providers without an active AiProviderConfig — i.e. providers you haven't wired up yet, or have intentionally deactivated."
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors',
+            configuredOnly
+              ? 'border-transparent bg-emerald-600 text-white shadow-sm dark:bg-emerald-500'
+              : 'border-input bg-background text-muted-foreground hover:bg-muted'
+          )}
+        >
+          <span
+            className={cn(
+              'h-1.5 w-1.5 rounded-full',
+              configuredOnly ? 'bg-white' : 'bg-emerald-500'
+            )}
+            aria-hidden
+          />
+          Configured only
+        </button>
+
+        <div className="bg-border h-5 w-px" aria-hidden />
+
+        {/* All-providers chip — clears the per-provider drill-down. */}
+        <button
+          type="button"
+          onClick={() => setProviderFilter('all')}
+          aria-pressed={providerFilter === 'all'}
+          className={cn(
+            'inline-flex h-7 items-center rounded-full border px-2.5 text-xs transition-colors',
+            providerFilter === 'all'
+              ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+              : 'border-input bg-background text-muted-foreground hover:bg-muted'
+          )}
+        >
+          All
+        </button>
+
+        {providerMeta
+          // When the master toggle is on, the chips for un-configured
+          // providers are dropped from the strip too — they can't
+          // match anything in the filtered matrix, so keeping them
+          // around would be pure noise.
+          .filter((p) => !configuredOnly || (p.configured && p.configuredActive))
+          .map((p) => {
+            const isActive = providerFilter === p.slug;
+            const dotClass =
+              p.configured && p.configuredActive
+                ? 'bg-green-500'
+                : p.configured
+                  ? 'bg-yellow-500'
+                  : 'bg-gray-300';
+            const dotTitle =
+              p.configured && p.configuredActive
+                ? 'Provider configured and active'
+                : p.configured
+                  ? 'Provider configured but inactive'
+                  : 'Provider not configured';
+            return (
+              <button
+                key={p.slug}
+                type="button"
+                onClick={() => setProviderFilter(isActive ? 'all' : p.slug)}
+                aria-pressed={isActive}
+                aria-label={`Filter to ${p.slug} models — ${dotTitle.toLowerCase()}`}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs capitalize transition-colors',
+                  isActive
+                    ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+                    : 'border-input bg-background hover:bg-muted'
+                )}
+              >
+                <span
+                  className={cn('h-2 w-2 shrink-0 rounded-full', dotClass)}
+                  title={dotTitle}
+                  aria-hidden
+                />
+                {p.slug}
+                <span
+                  className={cn(
+                    'tabular-nums',
+                    isActive ? 'text-white/80 dark:text-slate-700' : 'text-muted-foreground/70'
+                  )}
+                >
+                  {p.modelCount}
+                </span>
+              </button>
+            );
+          })}
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <Select value={providerFilter} onValueChange={setProviderFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Provider" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All providers</SelectItem>
-            {providers.map((p) => (
-              <SelectItem key={p} value={p} className="capitalize">
-                {p}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
         <Select value={tierFilter} onValueChange={setTierFilter}>
           <SelectTrigger className="w-[180px]">
             <SelectValue placeholder="Tier" />
@@ -355,16 +604,52 @@ export function ProviderModelsMatrix({
           </SelectContent>
         </Select>
 
-        <Select value={capabilityFilter} onValueChange={setCapabilityFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="chat">Chat</SelectItem>
-            <SelectItem value="embedding">Embedding</SelectItem>
-          </SelectContent>
-        </Select>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name, model id, slug…"
+          aria-label="Search models"
+          className="w-[240px]"
+        />
+
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by capability">
+          {MODEL_CAPABILITIES.map((cap) => {
+            const active = activeCapabilities.has(cap);
+            const display = CAPABILITY_DISPLAY[cap];
+            return (
+              <button
+                key={cap}
+                type="button"
+                onClick={() => toggleCapability(cap)}
+                aria-pressed={active}
+                className={cn(
+                  'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs transition-colors',
+                  active
+                    ? cn(display.badgeClass, 'border-transparent shadow-sm')
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full', display.dotClass)} aria-hidden />
+                {display.label}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setInUseOnly((v) => !v)}
+            aria-pressed={inUseOnly}
+            aria-label="Show only models with at least one bound agent"
+            title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
+            className={cn(
+              'inline-flex h-6 items-center rounded-full border px-2 text-xs transition-colors',
+              inUseOnly
+                ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+                : 'border-input bg-background text-muted-foreground hover:bg-muted'
+            )}
+          >
+            Has agent
+          </button>
+        </div>
 
         <div className="ml-auto flex items-center gap-3">
           <p className="text-muted-foreground text-sm">
@@ -451,7 +736,23 @@ export function ProviderModelsMatrix({
                 onToggle={toggleSort}
               />
               <TableHead>Best For</TableHead>
-              <TableHead className="text-right">In use</TableHead>
+              <TableHead className="text-right">
+                <span className="inline-flex items-center gap-1">
+                  Used by
+                  <FieldHelp title="Used by">
+                    Two distinct usage paths:
+                    <br />
+                    <strong>Agents</strong> — active agents that directly name this model in their
+                    Provider/Model fields. Click the count to list them.
+                    <br />
+                    <strong>Default badges</strong> — system default-role slots
+                    (routing/chat/reasoning/embeddings) this model currently fills via orchestration
+                    settings. Agents with no explicit binding inherit these defaults at runtime, so
+                    a model used as a default is implicitly in use even when no agent points at it
+                    directly.
+                  </FieldHelp>
+                </span>
+              </TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -497,7 +798,21 @@ export function ProviderModelsMatrix({
                       {model.name}
                     </Link>
                   </TableCell>
-                  <TableCell>{capabilityBadge(model.capabilities)}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col items-start gap-1">
+                      {capabilityBadges(model.capabilities)}
+                      {model.capabilities.length > 0 &&
+                        model.capabilities.every((c) =>
+                          STORAGE_ONLY_SET.has(c as ModelCapability)
+                        ) && (
+                          <Tip label="The orchestration engine does not invoke image or moderation models — this row is informational/inventory only.">
+                            <span className="text-muted-foreground cursor-help text-[10px] uppercase">
+                              Storage-only
+                            </span>
+                          </Tip>
+                        )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-xs">
                       {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
@@ -517,46 +832,85 @@ export function ProviderModelsMatrix({
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {(model.agents?.length ?? 0) === 0 ? (
-                      <span className="text-muted-foreground text-xs">0</span>
-                    ) : (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button
-                            className="cursor-pointer text-xs tabular-nums hover:underline"
-                            aria-label={`Show ${model.agents?.length} agent${
-                              model.agents?.length === 1 ? '' : 's'
-                            } using ${model.name}`}
-                          >
-                            {model.agents?.length} →
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-64 p-0" align="end">
-                          <div className="border-b px-3 py-2">
-                            <p className="text-sm font-medium">
-                              {model.agents?.length} agent
-                              {model.agents?.length === 1 ? '' : 's'} using{' '}
-                              <span className="font-semibold">{model.name}</span>
-                            </p>
-                          </div>
-                          <ul className="max-h-48 overflow-y-auto py-1">
-                            {model.agents?.map((agent) => (
-                              <li key={agent.id}>
-                                <Link
-                                  href={`/admin/orchestration/agents/${agent.id}`}
-                                  className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                    {(() => {
+                      const agentCount = model.agents?.length ?? 0;
+                      const defaultRoles = model.defaultFor ?? [];
+                      // Empty state — render an explicit "Not in use"
+                      // so the operator gets a clear signal rather
+                      // than guessing what a bare "0" means.
+                      if (agentCount === 0 && defaultRoles.length === 0) {
+                        return (
+                          <span className="text-muted-foreground text-xs italic">Not in use</span>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-col items-end gap-1">
+                          {agentCount > 0 ? (
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  className="cursor-pointer text-xs tabular-nums hover:underline"
+                                  aria-label={`Show ${agentCount} agent${
+                                    agentCount === 1 ? '' : 's'
+                                  } directly assigned to ${model.name}`}
                                 >
-                                  <span className="truncate">{agent.name}</span>
-                                  <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                    {agent.slug}
-                                  </span>
-                                </Link>
-                              </li>
-                            ))}
-                          </ul>
-                        </PopoverContent>
-                      </Popover>
-                    )}
+                                  {agentCount} agent{agentCount === 1 ? '' : 's'} →
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-72 p-0" align="end">
+                                <div className="border-b px-3 py-2">
+                                  <p className="text-sm font-medium">
+                                    {agentCount} agent
+                                    {agentCount === 1 ? '' : 's'} directly assigned to{' '}
+                                    <span className="font-semibold">{model.name}</span>
+                                  </p>
+                                  <p className="text-muted-foreground mt-0.5 text-xs">
+                                    These agents pinned this model in their Provider/Model fields.
+                                    Editing the agent re-points it.
+                                  </p>
+                                </div>
+                                <ul className="max-h-48 overflow-y-auto py-1">
+                                  {model.agents?.map((agent) => (
+                                    <li key={agent.id}>
+                                      <Link
+                                        href={`/admin/orchestration/agents/${agent.id}`}
+                                        className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                      >
+                                        <span className="truncate">{agent.name}</span>
+                                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                          {agent.slug}
+                                        </span>
+                                      </Link>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </PopoverContent>
+                            </Popover>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">0 agents</span>
+                          )}
+                          {defaultRoles.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-1">
+                              {defaultRoles.map((task) => (
+                                <Tip
+                                  key={task}
+                                  label={`System default for ${TASK_TYPE_LABEL[task]} tasks. Agents with no explicit Provider/Model inherit this. Edit in orchestration settings.`}
+                                >
+                                  <Link
+                                    href="/admin/orchestration/settings"
+                                    aria-label={`Edit ${TASK_TYPE_LABEL[task]} default in orchestration settings`}
+                                  >
+                                    <Badge variant="outline" className="text-[10px] font-normal">
+                                      Default: {TASK_TYPE_LABEL[task]}
+                                    </Badge>
+                                  </Link>
+                                </Tip>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-right">
                     {(model.agents?.length ?? 0) > 0 ? (

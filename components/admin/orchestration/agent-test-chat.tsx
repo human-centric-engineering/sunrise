@@ -61,8 +61,7 @@ export interface AgentTestChatProps {
   initialMessage?: string;
 }
 
-const DEFAULT_PLACEHOLDER =
-  'Try a question your users would ask, e.g. "Summarise last week\'s tickets"';
+const DEFAULT_PLACEHOLDER = 'Type a message…';
 
 /** Minimum time the "Streaming…" state stays visible before showing errors. */
 const MIN_THINKING_MS = 1500;

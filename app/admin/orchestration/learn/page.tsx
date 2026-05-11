@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { LearningTabs } from '@/components/admin/orchestration/learn/learning-tabs';
+import {
+  LearningTabs,
+  type LearningTabsAgent,
+} from '@/components/admin/orchestration/learn/learning-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -26,12 +29,55 @@ async function getPatterns(): Promise<PatternSummary[]> {
   }
 }
 
+/**
+ * Locate a built-in agent by slug from the `/agents` list endpoint and
+ * project it to the small `{ id, enableVoiceInput }` shape the chat
+ * tabs need to render the mic affordance.
+ *
+ * We use the `q` substring search rather than a slug-exact route
+ * because the agents list endpoint already exists and we'd rather not
+ * add a new route for a one-off lookup. The `?q=<slug>` shape can
+ * return multiple matches (substring), so we filter for the exact
+ * slug match in the caller before reading metadata. Returns `null`
+ * when the agent row hasn't been seeded yet or the lookup failed —
+ * callers fall back to text-only chat.
+ */
+async function getAgentBySlug(slug: string): Promise<LearningTabsAgent | null> {
+  try {
+    const url = `${API.ADMIN.ORCHESTRATION.AGENTS}?q=${encodeURIComponent(slug)}&limit=10`;
+    const res = await serverFetch(url);
+    if (!res.ok) return null;
+    const body =
+      await parseApiResponse<Array<{ id: string; slug: string; enableVoiceInput?: boolean }>>(res);
+    if (!body.success) return null;
+    const match = body.data.find((a) => a.slug === slug);
+    if (!match) return null;
+    return {
+      id: match.id,
+      // Defensive default — older list responses may not carry the
+      // field; treat absence as voice-off rather than throwing.
+      enableVoiceInput: match.enableVoiceInput ?? false,
+    };
+  } catch (err) {
+    logger.error('learn page: agent fetch failed', { slug, err });
+    return null;
+  }
+}
+
 interface PageProps {
   searchParams: Promise<{ contextType?: string; contextId?: string }>;
 }
 
 export default async function LearnPage({ searchParams }: PageProps) {
-  const [patterns, params] = await Promise.all([getPatterns(), searchParams]);
+  const [patterns, params, advisorAgent, quizAgent] = await Promise.all([
+    getPatterns(),
+    searchParams,
+    // Each chat tab needs `id` + `enableVoiceInput` to decide whether
+    // to surface the mic. Fetched in parallel with the patterns query
+    // so we don't bottleneck render on serial lookups.
+    getAgentBySlug('pattern-advisor'),
+    getAgentBySlug('quiz-master'),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -77,6 +123,8 @@ export default async function LearnPage({ searchParams }: PageProps) {
         patterns={patterns}
         contextType={params.contextType}
         contextId={params.contextId}
+        advisorAgent={advisorAgent}
+        quizAgent={quizAgent}
       />
     </div>
   );

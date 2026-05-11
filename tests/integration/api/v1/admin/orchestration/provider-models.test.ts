@@ -62,11 +62,23 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
+// Default-models enrichment pulls from the settings singleton. Stub
+// it with an empty merged map by default so existing tests don't see
+// any default-role badges; the dedicated test below overrides this.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+    })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { adminLimiter } from '@/lib/security/rate-limit';
+import { adminLimiter, apiLimiter } from '@/lib/security/rate-limit';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -100,8 +112,11 @@ function makeModel(overrides: Record<string, unknown> = {}) {
     isActive: true,
     metadata: null,
     createdBy: ADMIN_ID,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    // Fixed timestamps so the fixture is deterministic — `new Date()`
+    // here would surface as a non-deterministic difference the moment a
+    // test asserts on the row's date fields.
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
 }
@@ -130,7 +145,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/provider-models', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+    // GET uses the broader apiLimiter (source route.ts:32). POST uses
+    // adminLimiter. Mocking the wrong limiter here means a future
+    // refactor that drops the limiter call would not be caught.
+    vi.mocked(apiLimiter.check).mockReturnValue({ success: true } as never);
   });
 
   describe('Authentication & Authorization', () => {
@@ -144,6 +162,19 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
       const response = await GET(makeGetRequest());
       expect(response.status).toBe(403);
+    });
+
+    it('returns 429 when apiLimiter trips on GET', async () => {
+      // GET calls apiLimiter.check (source route.ts:32); a refactor
+      // that no-ops the limiter call would otherwise let infinite
+      // anonymous polling slip past. POST has its own 429 test at
+      // line 502; this is its GET counterpart.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(apiLimiter.check).mockReturnValueOnce({ success: false } as never);
+
+      const response = await GET(makeGetRequest());
+      expect(response.status).toBe(429);
+      expect(prisma.aiProviderModel.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -221,6 +252,132 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       expect(byModelId.get('gpt-4o')).toEqual([]);
     });
 
+    it('annotates each row with the default-role slots it currently fills', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o' }),
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-4o-mini' }),
+        makeModel({ providerSlug: 'openai', modelId: 'text-embedding-3-small' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(3 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+      ] as never);
+      // chat + reasoning share a model (gpt-4o), routing points at
+      // gpt-4o-mini, embeddings at text-embedding-3-small. Empty-
+      // string slots — the registry's `embeddings` fallback when no
+      // override is saved — must be ignored so the matrix doesn't
+      // claim every row is the embeddings default.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: 'gpt-4o-mini',
+          chat: 'gpt-4o',
+          reasoning: 'gpt-4o',
+          embeddings: 'text-embedding-3-small',
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{
+        data: Array<{ modelId: string; defaultFor: string[] }>;
+      }>(response);
+
+      const byId = new Map(body.data.map((r) => [r.modelId, r.defaultFor]));
+      // gpt-4o fills two slots; order follows TASK_TYPES.
+      expect(byId.get('gpt-4o')?.sort()).toEqual(['chat', 'reasoning']);
+      expect(byId.get('gpt-4o-mini')).toEqual(['routing']);
+      expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
+    });
+
+    it('returns empty defaultFor when no default slot points at the row', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'gpt-3.5-turbo' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(1 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+      // All slots empty — matches the default-mock at the top of this
+      // suite, but stated explicitly here so the empty case is read-
+      // able alongside the populated case above.
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{ data: Array<{ defaultFor: string[] }> }>(response);
+      expect(body.data[0].defaultFor).toEqual([]);
+    });
+
+    it('audio defaultFor matches by composite (providerSlug, modelId) — only the right provider lights up', async () => {
+      // Regression: pre-fix, the `defaultFor` reverse-index keyed by
+      // bare `modelId`, so an `audio: 'whisper-1'` default would
+      // light up the badge on BOTH OpenAI's and Groq's `whisper-1`
+      // rows. The composite encoding scopes by provider — only the
+      // row that actually serves the runtime default gets the badge.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'whisper-1', slug: 'openai-whisper-1' }),
+        makeModel({ providerSlug: 'groq', modelId: 'whisper-1', slug: 'groq-whisper-1' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(2 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+        { slug: 'groq', isActive: true },
+      ] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          // Operator picked "Whisper (groq)" in the form.
+          audio: 'groq::whisper-1',
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{
+        data: Array<{ providerSlug: string; modelId: string; defaultFor: string[] }>;
+      }>(response);
+
+      const openai = body.data.find((r) => r.providerSlug === 'openai');
+      const groq = body.data.find((r) => r.providerSlug === 'groq');
+      expect(groq?.defaultFor).toEqual(['audio']);
+      // Critical: OpenAI's identically-named row must NOT light up
+      // even though its modelId matches the bare portion of the
+      // composite.
+      expect(openai?.defaultFor).toEqual([]);
+    });
+
+    it('audio defaultFor falls back to modelId-only match for legacy bare-modelId values', async () => {
+      // Settings rows written before the composite encoding landed
+      // are bare model ids. The matcher's legacy fallback (parser
+      // returns providerSlug=null) keeps those rendering their
+      // badge — with the historical ambiguity when two providers
+      // share an id — until the operator re-saves.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ providerSlug: 'openai', modelId: 'whisper-1', slug: 'openai-whisper-1' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(1 as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        { slug: 'openai', isActive: true },
+      ] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: '',
+          chat: '',
+          reasoning: '',
+          embeddings: '',
+          audio: 'whisper-1', // legacy bare modelId
+        },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{ data: Array<{ defaultFor: string[] }> }>(response);
+      expect(body.data[0].defaultFor).toEqual(['audio']);
+    });
+
     it('marks unconfigured providers correctly', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeModel()] as never);
@@ -247,6 +404,40 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
           }),
         })
       );
+    });
+
+    it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+      'passes widened capability filter %s to prisma where clause',
+      async (capability) => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+        vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+        vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(0 as never);
+        vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+
+        await GET(makeGetRequest({ capability }));
+
+        expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              capabilities: { has: capability },
+            }),
+          })
+        );
+      }
+    );
+
+    it('rejects ?capability=unknown with 400 (catalogue-only value)', async () => {
+      // `unknown` is the inference placeholder. The matrix list endpoint
+      // must reject it so a stale catalogue link can't accidentally
+      // query the matrix for a value the matrix could never store.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await GET(makeGetRequest({ capability: 'unknown' }));
+      expect(response.status).toBe(400);
+      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(prisma.aiProviderModel.findMany).not.toHaveBeenCalled();
     });
 
     it('passes providerSlug filter to prisma where clause', async () => {

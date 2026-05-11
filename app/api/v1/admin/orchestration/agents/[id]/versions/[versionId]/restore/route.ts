@@ -47,6 +47,7 @@ const versionSnapshotSchema = z.object({
   retentionDays: z.number().int().nullable().optional(),
   providerConfig: z.unknown().optional(),
   monthlyBudgetUsd: z.number().nullable().optional(),
+  enableVoiceInput: z.boolean().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(
@@ -148,6 +149,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.providerConfig = snapshot.providerConfig as Prisma.InputJsonValue;
     if (snapshot.monthlyBudgetUsd !== undefined)
       updateData.monthlyBudgetUsd = snapshot.monthlyBudgetUsd;
+    if (snapshot.enableVoiceInput !== undefined)
+      updateData.enableVoiceInput = snapshot.enableVoiceInput;
 
     // Wrap in a transaction to prevent race conditions on version numbering
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {

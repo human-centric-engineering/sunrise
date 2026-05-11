@@ -32,7 +32,7 @@ const newModelSchema = z.object({
   modelId: z.string().min(1).max(100).trim(),
   description: z.string().min(1).max(2000).trim(),
   capabilities: z
-    .array(z.enum(['chat', 'embedding']))
+    .array(z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']))
     .min(1)
     .default(['chat']),
   tierRole: z.enum([
@@ -102,7 +102,10 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
               description: { type: 'string', description: 'Brief model description.' },
               capabilities: {
                 type: 'array',
-                items: { type: 'string', enum: ['chat', 'embedding'] },
+                items: {
+                  type: 'string',
+                  enum: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+                },
                 description: 'Model capabilities.',
               },
               tierRole: {

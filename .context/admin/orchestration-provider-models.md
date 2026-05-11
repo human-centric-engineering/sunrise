@@ -14,6 +14,22 @@ The list surface lives as the **Models tab** on the Providers page (`app/admin/o
 
 Creation now goes through the discovery dialog (see "Adding models" below); the legacy `/provider-models/new` page just redirects to the matrix tab so stale bookmarks bounce to the new entry point. The **[id]** sub-route is still a standalone server shell that mounts `<ProviderModelForm />` for editing.
 
+## Capability surface
+
+The matrix and the live catalogue (View Models panel) speak slightly different capability vocabularies. Knowing which is which avoids surprise when a model that's clearly listed in the catalogue refuses to land in the matrix.
+
+| Capability   | Matrix?          | Catalogue? | Engine path                                                                                                                   |
+| ------------ | ---------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `chat`       | ✓                | ✓          | `provider.chat()` — workhorse                                                                                                 |
+| `reasoning`  | ✓                | ✓          | `provider.chat()` (badge distinguishes cost/latency tier). `/v1/responses` reasoning models still run through `chat()` today. |
+| `embedding`  | ✓                | ✓          | `provider.embed()`                                                                                                            |
+| `audio`      | ✓                | ✓          | `provider.transcribe?()` resolved via `getAudioProvider()` in `lib/orchestration/llm/provider-manager.ts`                     |
+| `image`      | ✓ (storage-only) | ✓          | None — UI surfaces "Storage-only" indicator                                                                                   |
+| `moderation` | ✓ (storage-only) | ✓          | None — UI surfaces "Storage-only" indicator                                                                                   |
+| `unknown`    | ✗                | ✓          | None — discovery-only placeholder; matrix Zod schema rejects it                                                               |
+
+Canonical definitions live in `types/orchestration.ts` (`MODEL_CAPABILITIES`, `STORAGE_ONLY_CAPABILITIES`). The catalogue's `Capability` union is the strict superset (adds `unknown`).
+
 ## Matrix view
 
 `components/admin/orchestration/provider-models-matrix.tsx` — the client island rendered inside the Models tab.
@@ -22,18 +38,21 @@ Creation now goes through the discovery dialog (see "Adding models" below); the 
 
 - **Provider** — Radix `<Select>` seeded with distinct `providerSlug` values from the result set, plus "All providers".
 - **Tier** — all 6 `TIER_ROLE_META` entries (Thinking, Worker, Infrastructure, Control Plane, Local/Sovereign, Embedding).
-- **Capability** — `All types` · `Chat` · `Embedding`.
+- **Search** — substring match across `name`, `modelId`, `slug`, `bestRole`.
+- **Capability chips** — multi-select chips, one per matrix-storable capability: `Chat` · `Reasoning` · `Embedding` · `Audio` · `Image` · `Moderation`. OR semantics across chips. `Unknown` is **not** offered here — it's catalogue-only.
+- **Has agent** — toggle chip that hides rows with no directly-assigned agents (filters by `agents?.length > 0`). Rows that serve only as a default-settings fallback are also hidden — the filter matches the column it shares semantics with.
 
 ### Columns
 
-| Column                                       | Source                                   | Notes                                                                                   |
-| -------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| Provider                                     | `model.providerSlug`                     | Sortable header                                                                         |
-| Name                                         | `model.name`                             | Sortable; links to edit page. `Custom` badge when `!isDefault`                          |
-| Tier Role                                    | `model.tierRole`                         | Sortable; rendered via `TIER_ROLE_META[tierRole].label`                                 |
-| Capabilities                                 | `model.capabilities[]`                   | Badges: `Chat`, `Embedding`, or `Both`                                                  |
-| Reasoning / Latency / Cost / Context / Tools | 5 rating columns                         | All sortable, display enum labels                                                       |
-| Configured                                   | derived from matching `AiProviderConfig` | Dot: green = configured + active, yellow = configured + inactive, grey = not configured |
+| Column                                       | Source                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provider                                     | `model.providerSlug`                     | Sortable header                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Name                                         | `model.name`                             | Sortable; links to edit page. `Custom` badge when `!isDefault`                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Tier Role                                    | `model.tierRole`                         | Sortable; rendered via `TIER_ROLE_META[tierRole].label`                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Capabilities                                 | `model.capabilities[]`                   | One pill per stored capability (`Chat` / `Reasoning` / `Embedding` / `Audio` / `Image` / `Moderation`). Rows whose only capabilities are image/moderation render a muted `Storage-only` indicator — the orchestration engine does not invoke those capabilities at runtime.                                                                                                                                                                                              |
+| Reasoning / Latency / Cost / Context / Tools | 5 rating columns                         | All sortable, display enum labels                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Configured                                   | derived from matching `AiProviderConfig` | Dot: green = configured + active, yellow = configured + inactive, grey = not configured                                                                                                                                                                                                                                                                                                                                                                                  |
+| Used by                                      | `model.agents[]` + `model.defaultFor[]`  | Two paths surfaced in one cell: (1) count of agents that directly named this model in their Provider/Model fields (click → popover with names + links); (2) `Default: {TaskType}` badges for any routing/chat/reasoning/embeddings/audio slot this model fills via `AiOrchestrationSettings.defaultModels`. Empty state renders `Not in use` italic so the cell never reads as a bare `0`. Default badges link to `/admin/orchestration/settings` for one-click editing. |
 
 ### Sort
 
@@ -87,7 +106,7 @@ Each candidate is annotated:
 | `inferredCapability` | From `lib/orchestration/llm/capability-inference.ts` — `chat` / `reasoning` / `embedding` / `image` / `audio` / `moderation` / `unknown`                                                                       |
 | `suggested`          | Heuristic-derived defaults for every matrix field (see "Heuristics" below)                                                                                                                                     |
 
-Filter chips and search match the View Models panel's pattern — `Chat / Embedding / Image / Audio / Other` with substring search on id + name.
+Filter chips and search match the View Models panel's pattern — one chip per `Capability` value (`Chat`, `Reasoning`, `Embedding`, `Image`, `Audio`, `Moderation`, `Unknown`) with substring search on id + name. Pre-Phase-5 the dialog and panel collapsed reasoning + moderation + unknown into a single `Other` chip; each now has its own.
 
 ### Step 3 — Review
 
@@ -143,26 +162,26 @@ Any PATCH flips `isDefault` to `false` server-side so re-seeds leave the row alo
 
 ### Fields
 
-| Field           | Rule                                                                                                                                                |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider Slug   | Required; matches `AiProviderConfig.slug` for the configured-status dot to light up                                                                 |
-| Model ID        | Required; the API identifier sent to the provider (e.g. `gpt-5`)                                                                                    |
-| Display Name    | Required, ≤ 100 chars                                                                                                                               |
-| Slug            | Required, lowercased with hyphens; disabled in edit mode. Auto-derived from `providerSlug + name` in create mode unless the admin types it manually |
-| Description     | Required, ≤ 2000 chars                                                                                                                              |
-| Capabilities    | Two checkboxes: Chat · Embedding. At least one required (enforced client-side before POST)                                                          |
-| Tier Role       | Radix `<Select>` populated from `TIER_ROLE_META`; label shows `{label} — {description}`                                                             |
-| Reasoning Depth | `very_high` · `high` · `medium` · `none`                                                                                                            |
-| Latency         | `very_fast` · `fast` · `medium`                                                                                                                     |
-| Cost Efficiency | `very_high` · `high` · `medium` · `none`                                                                                                            |
-| Context Length  | `very_high` · `high` · `medium` · `n_a`                                                                                                             |
-| Tool Use        | `strong` · `moderate` · `none`                                                                                                                      |
-| Best Role       | Free-text one-liner (e.g. "Planner / orchestrator")                                                                                                 |
-| Active          | `<Switch>`. Inactive models are hidden from the matrix and `recommend` endpoint                                                                     |
+| Field           | Rule                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provider Slug   | Required; matches `AiProviderConfig.slug` for the configured-status dot to light up                                                                                                                                                                                                                                                                                                        |
+| Model ID        | Required; the API identifier sent to the provider (e.g. `gpt-5`)                                                                                                                                                                                                                                                                                                                           |
+| Display Name    | Required, ≤ 100 chars                                                                                                                                                                                                                                                                                                                                                                      |
+| Slug            | Required, lowercased with hyphens; disabled in edit mode. Auto-derived from `providerSlug + name` in create mode unless the admin types it manually                                                                                                                                                                                                                                        |
+| Description     | Required, ≤ 2000 chars                                                                                                                                                                                                                                                                                                                                                                     |
+| Capabilities    | Six checkboxes: Chat · Reasoning · Embedding · Audio · Image · Moderation. At least one required (Zod refinement). Each checkbox has a `FieldHelp`. Selecting only `Image` and/or `Moderation` surfaces a muted "Storage-only" note — the orchestration engine does not invoke those capabilities at runtime, so the row appears in audits/inventory but cannot serve an agent at runtime. |
+| Tier Role       | Radix `<Select>` populated from `TIER_ROLE_META`; label shows `{label} — {description}`                                                                                                                                                                                                                                                                                                    |
+| Reasoning Depth | `very_high` · `high` · `medium` · `none`                                                                                                                                                                                                                                                                                                                                                   |
+| Latency         | `very_fast` · `fast` · `medium`                                                                                                                                                                                                                                                                                                                                                            |
+| Cost Efficiency | `very_high` · `high` · `medium` · `none`                                                                                                                                                                                                                                                                                                                                                   |
+| Context Length  | `very_high` · `high` · `medium` · `n_a`                                                                                                                                                                                                                                                                                                                                                    |
+| Tool Use        | `strong` · `moderate` · `none`                                                                                                                                                                                                                                                                                                                                                             |
+| Best Role       | Free-text one-liner (e.g. "Planner / orchestrator")                                                                                                                                                                                                                                                                                                                                        |
+| Active          | `<Switch>`. Inactive models are hidden from the matrix and `recommend` endpoint                                                                                                                                                                                                                                                                                                            |
 
 ### Embedding-only fields
 
-Rendered in a bordered "Embedding Details" block that only appears when `capEmbedding` is checked:
+Rendered in a bordered "Embedding Details" block that only appears when the Embedding capability is checked (the form watches `capabilities.includes('embedding')`):
 
 | Field               | Notes                                                                       |
 | ------------------- | --------------------------------------------------------------------------- |
@@ -180,7 +199,7 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 ### Submit behaviour
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
-- The submit handler assembles `capabilities[]` from the two checkboxes and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `capEmbedding` is off. In edit mode, unchecking `capEmbedding` explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
+- The submit handler sends `capabilities[]` directly from the checkbox state and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `embedding` is not in the array. In edit mode, removing `embedding` from the array explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
 - Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
