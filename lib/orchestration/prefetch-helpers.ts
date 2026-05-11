@@ -9,6 +9,9 @@
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
+import { prisma } from '@/lib/db/client';
 import type { AiProviderConfig } from '@/types/prisma';
 
 export interface ModelOption {
@@ -34,6 +37,77 @@ export async function getProviders(): Promise<AiProviderConfig[] | null> {
     logger.error('prefetch: provider fetch failed', err);
     return null;
   }
+}
+
+/**
+ * Effective provider/model an agent will use at runtime.
+ *
+ * System-seeded agents (pattern-advisor, quiz-master, mcp-system,
+ * model-auditor) ship with empty `provider` / `model` strings — the
+ * chat runtime fills them in from the operator's first active provider
+ * and the `AiOrchestrationSettings.defaultModels.chat` slot. The agent
+ * form needs the same resolution to render a sensible initial selection
+ * instead of an empty Select that falls back to a free-text input.
+ *
+ * Mirrors `resolveAgentProviderAndModel` but never throws:
+ *  - if both are explicitly set, returns them as-is
+ *  - if either is empty, looks up the first reachable provider /
+ *    configured default model and returns whatever it finds (null on
+ *    failure rather than throwing)
+ *
+ * The two `inheritedProvider` / `inheritedModel` flags let the form
+ * mark the field as "currently inherited" so the user can see why the
+ * value differs from the underlying DB row.
+ */
+export interface EffectiveAgentDefaults {
+  provider: string;
+  model: string;
+  inheritedProvider: boolean;
+  inheritedModel: boolean;
+}
+
+export async function getEffectiveAgentDefaults(agent: {
+  provider: string;
+  model: string;
+}): Promise<EffectiveAgentDefaults> {
+  const providerSet = agent.provider.length > 0;
+  const modelSet = agent.model.length > 0;
+
+  let provider = agent.provider;
+  let model = agent.model;
+
+  if (!providerSet) {
+    try {
+      const rows = await prisma.aiProviderConfig.findMany({
+        where: { isActive: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      const candidate = rows.find((r) => r.isLocal || isApiKeyEnvVarSet(r.apiKeyEnvVar));
+      if (candidate) provider = candidate.slug;
+    } catch (err) {
+      logger.warn('prefetch: effective provider lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (!modelSet) {
+    try {
+      const defaultModel = await getDefaultModelForTaskOrNull('chat');
+      if (defaultModel) model = defaultModel;
+    } catch (err) {
+      logger.warn('prefetch: effective model lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return {
+    provider,
+    model,
+    inheritedProvider: !providerSet,
+    inheritedModel: !modelSet,
+  };
 }
 
 export async function getModels(): Promise<ModelOption[] | null> {
