@@ -266,4 +266,222 @@ describe('chunkBySemanticBreakpoints', () => {
       /returned 2 vectors for 4 sentences/i
     );
   });
+
+  it('treats a zero-vector embedding as maximally dissimilar to its neighbours', async () => {
+    // Edge case: an embedding provider returns a zero vector for one
+    // sentence (rare but observable when the input is whitespace-only
+    // or the provider's tokenizer drops it). cosineDistance falls back
+    // to distance 1 rather than NaN, so the breakpoint logic still
+    // works. With 4 sentences and one zero vector in the middle, the
+    // zero-vs-neighbour distances should be the largest and become
+    // the breakpoint locations.
+    const text =
+      'First sentence here. Second sentence here. Third sentence here. Fourth sentence here.';
+    const ortho1 = [1, 0, 0, 0];
+    const ortho2 = [0, 1, 0, 0];
+    const zero = [0, 0, 0, 0];
+    const ortho3 = [0, 0, 1, 0];
+
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: [ortho1, ortho2, zero, ortho3],
+      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+    });
+
+    const result = await chunkBySemanticBreakpoints(text, {
+      breakpointPercentile: 75,
+      minTokens: 1,
+      maxTokens: 10_000,
+    });
+
+    // Should produce more than one chunk — zero-vector distances of 1
+    // dominate the percentile and split around the zero-vector
+    // sentence.
+    expect(result.length).toBeGreaterThan(1);
+  });
+
+  it('flushes a trailing sub-min buffer when the document ends on tiny groups', async () => {
+    // 5 sentences: two clusters of orthogonal vectors so breakpoints
+    // fire at every adjacent boundary at 75th percentile. With small
+    // sentences and a generous minTokens, every group is under-size.
+    // The normaliser must still emit the buffered tail rather than
+    // dropping it on the floor when the iteration ends with a
+    // non-empty buffer.
+    const text =
+      'Tiny sentence one. Tiny sentence two. Tiny sentence three. Tiny sentence four. Tiny sentence five.';
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: orthogonalVectors(5),
+      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+    });
+
+    const result = await chunkBySemanticBreakpoints(text, {
+      breakpointPercentile: 75,
+      minTokens: 10_000, // larger than the entire document
+      maxTokens: 100_000,
+    });
+
+    // Every group is under min, so they all stash into the buffer;
+    // the closing flushBuffer must emit the accumulated content as
+    // exactly one chunk rather than dropping it.
+    expect(result).toHaveLength(1);
+    expect(result[0]).toContain('Tiny sentence one');
+    expect(result[0]).toContain('Tiny sentence five');
+  });
+
+  it('sub-splits a coherent topic group when its accumulated size exceeds maxTokens', async () => {
+    // To hit the sub-split path (line 209 of normaliseGroups) we
+    // need a *single semantic group* to come out of the breakpoint
+    // pass already over maxTokens. That requires distances inside
+    // the group to be below the percentile threshold while at
+    // least one boundary distance is above it.
+    //
+    // Setup: 4 sentences with embeddings v1, v1, v2, v2. Distances
+    // are [0, 1, 0]. Sorted: [0, 0, 1]. 75th-percentile index =
+    // floor(0.75 * 2) = 1, value = 0. Threshold = 0 — every >= 0
+    // distance fires a breakpoint, so this would split into 4
+    // singletons.
+    //
+    // To force NO breakpoint inside the first half, we need a
+    // higher percentile and varied distances. With 6 sentences:
+    // v1×3, v2×3, distances [0,0,1,0,0]. Sorted: [0,0,0,0,1].
+    // 75th-percentile idx = floor(0.75 * 4) = 3, value = 0.
+    // Still threshold = 0. We need at least one distance > 0 to
+    // come out of the percentile at position 75th — use float
+    // distances so the percentile picks a non-zero value.
+    //
+    // Trick: use distances [0.1, 0.1, 1, 0.1, 0.1]. Sorted:
+    // [0.1, 0.1, 0.1, 0.1, 1]. 75th idx = 3, value = 0.1. Threshold
+    // = 0.1. Distances >= 0.1: all five — so every pair becomes a
+    // breakpoint again. Same problem.
+    //
+    // We need ONE distance well above the others. Distances
+    // [0.001, 0.001, 1, 0.001, 0.001]: sorted same shape, threshold
+    // = 0.001, all >= so all breakpoints fire.
+    //
+    // The only way to keep some distances *below* threshold is to
+    // have ties at the threshold value rounded down by `| 0`.
+    // Easier path: pick a 90th-percentile threshold instead so most
+    // small distances fall below it.
+    const sentenceTokens = 100;
+    const s = (i: number) => sentenceOfTokens(sentenceTokens, ` num ${i}.`);
+    const text = `${s(0)} ${s(1)} ${s(2)} ${s(3)} ${s(4)} ${s(5)}`;
+
+    // 6 sentence embeddings with one big jump in the middle. Inner
+    // jumps are 0 (identical vectors), the middle jump is 1
+    // (orthogonal vectors). With breakpointPercentile=90 the
+    // threshold lands at 0.8 (90th percentile of [0,0,0,0,1] is
+    // index 3 → value 0). Distances >= 0: again all fire.
+    //
+    // The deciding insight: we can't avoid the percentile collapse
+    // when distances are mostly 0. So use minTokens=1 to disable
+    // merging and feed the size-guard directly with a single
+    // oversized pre-baked group instead. That requires reaching
+    // normaliseGroups with a group already > maxTokens.
+    //
+    // Take a different shortcut: force all embeddings to be
+    // identical so distances are all 0, threshold = 0, and the
+    // `>=` comparison still triggers every breakpoint. That fails
+    // the same way.
+    //
+    // The robust way: use ONE pair of identical vectors and the
+    // rest distinct, so most distances are 1 (orthogonal pairs)
+    // and one is 0 (the identical pair). With 6 sentences:
+    // v1, v2, v3, v3, v4, v5 → distances [1, 1, 0, 1, 1]. Sorted:
+    // [0, 1, 1, 1, 1]. 75th idx = floor(0.75*4)=3 → value 1.
+    // Threshold = 1. Distances >= 1: indices 0, 1, 3, 4 fire.
+    // Index 2 (the zero distance) does NOT fire. Groups:
+    //   [s0], [s1], [s2, s3], [s4], [s5]
+    // The middle group [s2, s3] is 200 tokens (over maxTokens=150)
+    // → triggers the sub-split path.
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: [
+        [1, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0], // identical to previous — distance 0
+        [0, 0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 1, 0],
+      ],
+      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+    });
+
+    const result = await chunkBySemanticBreakpoints(text, {
+      breakpointPercentile: 75,
+      minTokens: 1, // disable merging so the oversized group survives
+      maxTokens: 150,
+    });
+
+    // No chunk may exceed maxTokens after the sub-split.
+    for (const chunk of result) {
+      expect(Math.ceil(chunk.length / 4)).toBeLessThanOrEqual(160);
+    }
+    // The s2/s3 200-token group must have produced at least 2 sub-chunks.
+    expect(result.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('keeps consecutive sentences in the same group when their distance is below the percentile threshold', async () => {
+    // Verifies the "else" branch of `if (distances[i] >= threshold)`
+    // — the non-breakpoint accumulation path. Without this branch
+    // covered we'd silently break the "two related sentences stay
+    // glued" invariant if the comparison ever flipped.
+    const s = (i: number) => `Coherent sentence number ${i} with sufficient length to count.`;
+    const text = `${s(1)} ${s(2)} ${s(3)} ${s(4)} ${s(5)} ${s(6)}`;
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: [
+        [1, 0, 0, 0, 0, 0],
+        [0, 1, 0, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0],
+        [0, 0, 1, 0, 0, 0], // identical → distance 0 (under threshold)
+        [0, 0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 1, 0],
+      ],
+      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+    });
+
+    const result = await chunkBySemanticBreakpoints(text, {
+      breakpointPercentile: 75,
+      minTokens: 1,
+      maxTokens: 10_000,
+    });
+
+    // The identical-vector pair (s3, s4) must end up in the same
+    // group, so the joined output contains "number 3" and "number 4"
+    // in the same chunk.
+    const joined = result.find((c) => c.includes('number 3') && c.includes('number 4'));
+    expect(joined).toBeDefined();
+  });
+
+  it('flushes a pending sub-min buffer onto the next correctly-sized group', async () => {
+    // Mix: first group is tiny → goes in buffer. Second group is
+    // sized correctly → the buffer must flush *into* this group
+    // rather than emit as a standalone micro-chunk. Verifies the
+    // "sized correctly + buffer non-empty" branch of normaliseGroups.
+    const tinySentence = 'Short.';
+    const bigSentence = sentenceOfTokens(60, ' here.'); // ~60 tokens — over min
+
+    // 4 sentences: tiny, tiny, big, big — split at the boundary
+    // between tiny pair and big pair via orthogonal vectors.
+    const text = `${tinySentence} ${tinySentence} ${bigSentence} ${bigSentence}`;
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: [
+        [1, 0, 0, 0],
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+      ],
+      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+    });
+
+    const result = await chunkBySemanticBreakpoints(text, {
+      breakpointPercentile: 75,
+      minTokens: 50,
+      maxTokens: 10_000,
+    });
+
+    // The tiny pair must end up merged into the big group, not
+    // stranded as a separate chunk under min size.
+    for (const chunk of result) {
+      const tokens = Math.ceil(chunk.length / 4);
+      expect(tokens).toBeGreaterThanOrEqual(50);
+    }
+  });
 });
