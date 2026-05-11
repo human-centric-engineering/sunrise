@@ -107,7 +107,11 @@ describe('ProviderModelsMatrix', () => {
   it('renders provider slug in table rows', () => {
     render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
 
-    expect(screen.getByText('openai')).toBeInTheDocument();
+    // The provider strip above the filter bar also renders "openai" as
+    // a filter chip, so scope to the table body to assert specifically
+    // on the row's provider column.
+    const dataRow = screen.getByRole('row', { name: /gpt-5/i });
+    expect(within(dataRow).getByText('openai')).toBeInTheDocument();
   });
 
   // ── isActive filter ────────────────────────────────────────────────────────
@@ -221,7 +225,7 @@ describe('ProviderModelsMatrix', () => {
 
   // ── Provider filter ────────────────────────────────────────────────────────
 
-  it('filtering by provider shows only matching models', async () => {
+  it('filtering by provider chip shows only matching models', async () => {
     const user = userEvent.setup();
     const models = [
       makeModel({ id: 'm1', name: 'GPT-5', providerSlug: 'openai' }),
@@ -229,13 +233,15 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Open the provider Select (first combobox)
-    const providerTrigger = screen.getAllByRole('combobox')[0];
-    await user.click(providerTrigger);
-
-    // Select "anthropic" option
-    const option = await screen.findByRole('option', { name: /anthropic/i });
-    await user.click(option);
+    // The Provider <Select> dropdown was replaced by chips in the
+    // provider strip above the filter bar so an operator can see
+    // configured-vs-not at a glance. Locate the anthropic chip via
+    // its aria-label (the chip text alone collides with the provider
+    // column inside the table body).
+    const anthropicChip = screen.getByRole('button', {
+      name: /filter to anthropic models/i,
+    });
+    await user.click(anthropicChip);
 
     expect(screen.getByText('Claude-4')).toBeInTheDocument();
     expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
@@ -455,8 +461,10 @@ describe('ProviderModelsMatrix', () => {
     ];
     render(<ProviderModelsMatrix initialModels={models} />);
 
-    // Second combobox is the tier filter
-    const tierTrigger = screen.getAllByRole('combobox')[1];
+    // Tier is now the only combobox left in the filter bar — the
+    // legacy Provider <Select> was replaced by chips when the provider
+    // strip landed, so the tier dropdown sits at index 0.
+    const tierTrigger = screen.getAllByRole('combobox')[0];
     await user.click(tierTrigger);
 
     const option = await screen.findByRole('option', { name: /worker/i });
@@ -556,6 +564,218 @@ describe('ProviderModelsMatrix', () => {
     const dot = document.querySelector('span.bg-gray-300');
     expect(dot).not.toBeNull();
     expect(dot?.getAttribute('title')).toMatch(/not configured/i);
+  });
+
+  // ── Provider strip + Configured-only toggle ───────────────────────────────
+
+  describe('provider strip', () => {
+    it('renders one chip per distinct provider with its model count', () => {
+      const models = [
+        makeModel({ id: 'a1', name: 'A1', providerSlug: 'anthropic' }),
+        makeModel({ id: 'a2', name: 'A2', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'O1', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Chip aria-label includes the slug so we can locate it
+      // unambiguously alongside the table's per-row provider column.
+      const anthropicChip = screen.getByRole('button', {
+        name: /filter to anthropic models/i,
+      });
+      const openaiChip = screen.getByRole('button', {
+        name: /filter to openai models/i,
+      });
+
+      // Each chip shows its model count alongside the slug so the
+      // operator gets a quick "how many models per provider" read.
+      expect(anthropicChip).toHaveTextContent('2');
+      expect(openaiChip).toHaveTextContent('1');
+    });
+
+    it('summary text reports active + total provider counts', () => {
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Summary lives in the provider strip header — anchors the
+      // operator with "1 of 3 providers are wired up" at a glance.
+      expect(screen.getByText(/1 active · 3 total/i)).toBeInTheDocument();
+    });
+
+    it('chip status dot reflects the provider config: green active, yellow inactive, gray missing', () => {
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Locate each chip via aria-label and inspect its inline dot.
+      // The chip is the closest button; its dot is the first <span>
+      // child with a rounded-full class.
+      const anthropicDot = screen
+        .getByRole('button', { name: /filter to anthropic models/i })
+        .querySelector('span.rounded-full');
+      const openaiDot = screen
+        .getByRole('button', { name: /filter to openai models/i })
+        .querySelector('span.rounded-full');
+      const togetherDot = screen
+        .getByRole('button', { name: /filter to together models/i })
+        .querySelector('span.rounded-full');
+
+      expect(anthropicDot?.className).toContain('bg-green-500');
+      expect(openaiDot?.className).toContain('bg-yellow-500');
+      expect(togetherDot?.className).toContain('bg-gray-300');
+    });
+
+    it('clicking a provider chip filters the matrix to that provider', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({ id: 'a1', name: 'Claude-4', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'GPT-5', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      await user.click(screen.getByRole('button', { name: /filter to anthropic models/i }));
+
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+    });
+
+    it('clicking the active chip again clears the provider filter', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({ id: 'a1', name: 'Claude-4', providerSlug: 'anthropic' }),
+        makeModel({ id: 'o1', name: 'GPT-5', providerSlug: 'openai' }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      const anthropicChip = screen.getByRole('button', {
+        name: /filter to anthropic models/i,
+      });
+      // First click selects.
+      await user.click(anthropicChip);
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+      // Second click on the same chip toggles back to all-providers
+      // — matches the standard chip-toggle pattern used elsewhere.
+      await user.click(anthropicChip);
+      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+    });
+
+    it('"Configured only" toggle hides rows from unconfigured providers', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({
+          id: 'a1',
+          name: 'Claude-4',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 'o1',
+          name: 'GPT-5',
+          providerSlug: 'openai',
+          configured: true,
+          configuredActive: false,
+        }),
+        makeModel({
+          id: 't1',
+          name: 'Together-Model',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Baseline — all three rows visible.
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      expect(screen.getByText('GPT-5')).toBeInTheDocument();
+      expect(screen.getByText('Together-Model')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /configured only/i }));
+
+      // Only configured + active stays visible.
+      expect(screen.getByText('Claude-4')).toBeInTheDocument();
+      // The inactive-but-configured row drops too — the toggle's
+      // purpose is "show what's actually going to work right now",
+      // and an inactive provider config won't serve requests.
+      expect(screen.queryByText('GPT-5')).not.toBeInTheDocument();
+      expect(screen.queryByText('Together-Model')).not.toBeInTheDocument();
+    });
+
+    it('"Configured only" toggle drops the chips for non-configured providers', async () => {
+      const user = userEvent.setup();
+      const models = [
+        makeModel({
+          id: 'a1',
+          providerSlug: 'anthropic',
+          configured: true,
+          configuredActive: true,
+        }),
+        makeModel({
+          id: 't1',
+          providerSlug: 'together',
+          configured: false,
+          configuredActive: false,
+        }),
+      ];
+      render(<ProviderModelsMatrix initialModels={models} />);
+
+      // Baseline — both chips visible.
+      expect(
+        screen.getByRole('button', { name: /filter to anthropic models/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /filter to together models/i })
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /configured only/i }));
+
+      // The unconfigured chip is dropped — keeping it around when its
+      // rows are filtered out would be confusing noise.
+      expect(
+        screen.getByRole('button', { name: /filter to anthropic models/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /filter to together models/i })
+      ).not.toBeInTheDocument();
+    });
   });
 
   // ── Used-by column ─────────────────────────────────────────────────────────

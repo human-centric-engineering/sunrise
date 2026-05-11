@@ -289,6 +289,13 @@ export function ProviderModelsMatrix({
 }: ProviderModelsMatrixProps): React.ReactElement {
   const router = useRouter();
   const [providerFilter, setProviderFilter] = useState<string>('all');
+  // Master "narrow to configured providers" toggle. When true, every
+  // row from a provider with no AiProviderConfig (or one that's
+  // inactive) is hidden. Distinct from `providerFilter` — that's a
+  // drill-down to a single slug; this is the broad "only show what
+  // I've actually wired up" filter the operator wants by default once
+  // they've completed setup.
+  const [configuredOnly, setConfiguredOnly] = useState<boolean>(false);
   const [tierFilter, setTierFilter] = useState<string>('all');
   // Chip multi-select: each capability the operator toggles is added
   // to the set. Empty set = no capability filter (show all). This is
@@ -352,9 +359,45 @@ export function ProviderModelsMatrix({
 
   const deleteBlocked = deleteBlockedAgents.length + deleteBlockedWorkflows.length > 0;
 
-  const providers = useMemo(
-    () => [...new Set(initialModels.map((m) => m.providerSlug))].sort(),
-    [initialModels]
+  // Aggregate per-provider state for the strip above the filter bar.
+  // `configured` and `configuredActive` come from the row's enrichment
+  // (LEFT JOIN against AiProviderConfig in the GET /provider-models
+  // route); both ride per-row but apply to the whole provider, so we
+  // collapse them here. Counts are over the unfiltered active model
+  // set so the strip stays stable as other filters change — the
+  // operator wants "Anthropic has 12 models in your matrix", not
+  // "Anthropic has 3 models matching your current filters".
+  const providerMeta = useMemo(() => {
+    const bySlug = new Map<
+      string,
+      { slug: string; configured: boolean; configuredActive: boolean; modelCount: number }
+    >();
+    for (const m of initialModels) {
+      if (!m.isActive) continue;
+      const existing = bySlug.get(m.providerSlug);
+      if (existing) {
+        existing.modelCount += 1;
+        // Promote to the most-configured state across rows. In
+        // practice every row for the same slug agrees, but be
+        // defensive — an inconsistent backend shouldn't downgrade the
+        // chip's status dot.
+        if (m.configured) existing.configured = true;
+        if (m.configuredActive) existing.configuredActive = true;
+      } else {
+        bySlug.set(m.providerSlug, {
+          slug: m.providerSlug,
+          configured: m.configured,
+          configuredActive: m.configuredActive,
+          modelCount: 1,
+        });
+      }
+    }
+    return [...bySlug.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+  }, [initialModels]);
+
+  const configuredActiveCount = useMemo(
+    () => providerMeta.filter((p) => p.configuredActive).length,
+    [providerMeta]
   );
 
   const tiers = useMemo(
@@ -364,6 +407,12 @@ export function ProviderModelsMatrix({
 
   const filtered = useMemo(() => {
     let rows = initialModels.filter((m) => m.isActive);
+    // Configured-only is broader than the per-provider drill-down. It
+    // strips every row whose provider has no AiProviderConfig row OR
+    // whose config row is inactive — i.e. "things that aren't going
+    // to work right now". Applied first so the per-provider chip below
+    // can still narrow within the configured set.
+    if (configuredOnly) rows = rows.filter((m) => m.configured && m.configuredActive);
     if (providerFilter !== 'all') rows = rows.filter((m) => m.providerSlug === providerFilter);
     if (tierFilter !== 'all') rows = rows.filter((m) => m.tierRole === tierFilter);
     if (activeCapabilities.size > 0) {
@@ -398,6 +447,7 @@ export function ProviderModelsMatrix({
     return rows;
   }, [
     initialModels,
+    configuredOnly,
     providerFilter,
     tierFilter,
     activeCapabilities,
@@ -430,22 +480,115 @@ export function ProviderModelsMatrix({
 
   return (
     <div className="space-y-4">
+      {/* Provider strip — one chip per provider with a status dot,
+          plus the master "Configured only" toggle. Replaces the old
+          Provider <Select> dropdown so the configured-vs-not state is
+          legible at a glance (the dropdown only listed slugs, with no
+          status indicator). */}
+      <div
+        className="bg-muted/30 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2"
+        role="group"
+        aria-label="Provider filter"
+      >
+        <span className="text-muted-foreground text-xs font-medium">Providers</span>
+        <span className="text-muted-foreground/70 text-xs">
+          {configuredActiveCount} active · {providerMeta.length} total
+        </span>
+
+        <button
+          type="button"
+          onClick={() => setConfiguredOnly((v) => !v)}
+          aria-pressed={configuredOnly}
+          title="Hide rows from providers without an active AiProviderConfig — i.e. providers you haven't wired up yet, or have intentionally deactivated."
+          className={cn(
+            'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors',
+            configuredOnly
+              ? 'border-transparent bg-emerald-600 text-white shadow-sm dark:bg-emerald-500'
+              : 'border-input bg-background text-muted-foreground hover:bg-muted'
+          )}
+        >
+          <span
+            className={cn(
+              'h-1.5 w-1.5 rounded-full',
+              configuredOnly ? 'bg-white' : 'bg-emerald-500'
+            )}
+            aria-hidden
+          />
+          Configured only
+        </button>
+
+        <div className="bg-border h-5 w-px" aria-hidden />
+
+        {/* All-providers chip — clears the per-provider drill-down. */}
+        <button
+          type="button"
+          onClick={() => setProviderFilter('all')}
+          aria-pressed={providerFilter === 'all'}
+          className={cn(
+            'inline-flex h-7 items-center rounded-full border px-2.5 text-xs transition-colors',
+            providerFilter === 'all'
+              ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+              : 'border-input bg-background text-muted-foreground hover:bg-muted'
+          )}
+        >
+          All
+        </button>
+
+        {providerMeta
+          // When the master toggle is on, the chips for un-configured
+          // providers are dropped from the strip too — they can't
+          // match anything in the filtered matrix, so keeping them
+          // around would be pure noise.
+          .filter((p) => !configuredOnly || (p.configured && p.configuredActive))
+          .map((p) => {
+            const isActive = providerFilter === p.slug;
+            const dotClass =
+              p.configured && p.configuredActive
+                ? 'bg-green-500'
+                : p.configured
+                  ? 'bg-yellow-500'
+                  : 'bg-gray-300';
+            const dotTitle =
+              p.configured && p.configuredActive
+                ? 'Provider configured and active'
+                : p.configured
+                  ? 'Provider configured but inactive'
+                  : 'Provider not configured';
+            return (
+              <button
+                key={p.slug}
+                type="button"
+                onClick={() => setProviderFilter(isActive ? 'all' : p.slug)}
+                aria-pressed={isActive}
+                aria-label={`Filter to ${p.slug} models — ${dotTitle.toLowerCase()}`}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs capitalize transition-colors',
+                  isActive
+                    ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+                    : 'border-input bg-background hover:bg-muted'
+                )}
+              >
+                <span
+                  className={cn('h-2 w-2 shrink-0 rounded-full', dotClass)}
+                  title={dotTitle}
+                  aria-hidden
+                />
+                {p.slug}
+                <span
+                  className={cn(
+                    'tabular-nums',
+                    isActive ? 'text-white/80 dark:text-slate-700' : 'text-muted-foreground/70'
+                  )}
+                >
+                  {p.modelCount}
+                </span>
+              </button>
+            );
+          })}
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <Select value={providerFilter} onValueChange={setProviderFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Provider" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All providers</SelectItem>
-            {providers.map((p) => (
-              <SelectItem key={p} value={p} className="capitalize">
-                {p}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
         <Select value={tierFilter} onValueChange={setTierFilter}>
           <SelectTrigger className="w-[180px]">
             <SelectValue placeholder="Tier" />
