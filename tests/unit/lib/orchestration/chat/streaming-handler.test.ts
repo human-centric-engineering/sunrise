@@ -47,6 +47,7 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(),
   getProviderWithFallbacks: vi.fn(),
+  assertModelSupportsAttachments: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/llm/circuit-breaker', () => ({
@@ -130,7 +131,7 @@ vi.mock('@/lib/orchestration/chat/summarizer', () => ({
 
 const { prisma } = await import('@/lib/db/client');
 const { logger } = await import('@/lib/logging');
-const { getProviderWithFallbacks, getProvider } =
+const { getProviderWithFallbacks, getProvider, assertModelSupportsAttachments } =
   await import('@/lib/orchestration/llm/provider-manager');
 const { checkBudget, logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
@@ -3744,5 +3745,187 @@ describe('evaluation log mirroring', () => {
     // But four eval log rows were written (user_input, call, result,
     // ai_response).
     expect(prisma.aiEvaluationLog.create).toHaveBeenCalledTimes(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Attachment gate (Phase 2 image/PDF input)
+// ---------------------------------------------------------------------------
+
+describe('attachment gate', () => {
+  const PNG_BASE64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+  function imageAttachment() {
+    return { name: 'photo.png', mediaType: 'image/png', data: PNG_BASE64 };
+  }
+
+  function pdfAttachment() {
+    return {
+      name: 'doc.pdf',
+      mediaType: 'application/pdf',
+      data: Buffer.from('%PDF-1.4\nfake').toString('base64'),
+    };
+  }
+
+  it('returns SSE IMAGE_DISABLED when the per-agent toggle is off', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableImageInput: false })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [imageAttachment()] }));
+
+    const errorEvent = events.find((e) => (e as { type: string }).type === 'error');
+    expect(errorEvent).toMatchObject({ type: 'error', code: 'IMAGE_DISABLED' });
+    // Gate fires before any provider work, so the chat call never happens.
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
+    // And the capability assert is never reached because the toggle gate fires first.
+    expect(assertModelSupportsAttachments).not.toHaveBeenCalled();
+  });
+
+  it('returns SSE IMAGE_DISABLED when the global kill switch is off', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableImageInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: false,
+      documentInputGloballyEnabled: true,
+    });
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [imageAttachment()] }));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'IMAGE_DISABLED',
+    });
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
+  });
+
+  it('returns SSE PDF_DISABLED when the per-agent document toggle is off', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableDocumentInput: false })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [pdfAttachment()] }));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'PDF_DISABLED',
+    });
+    expect(assertModelSupportsAttachments).not.toHaveBeenCalled();
+  });
+
+  it('returns SSE PDF_DISABLED when the global document kill switch is off', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableDocumentInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: false,
+    });
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [pdfAttachment()] }));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'PDF_DISABLED',
+    });
+  });
+
+  it('returns SSE IMAGE_NOT_SUPPORTED when the model lacks the vision capability', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableImageInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+    const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+    (assertModelSupportsAttachments as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ProviderError('Model lacks vision', {
+        code: 'CAPABILITY_NOT_SUPPORTED',
+        retriable: false,
+      })
+    );
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [imageAttachment()] }));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'IMAGE_NOT_SUPPORTED',
+    });
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
+  });
+
+  it('returns SSE PDF_NOT_SUPPORTED when only PDFs are attached and the model lacks documents', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableDocumentInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+    const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+    (assertModelSupportsAttachments as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ProviderError('Model lacks documents', {
+        code: 'CAPABILITY_NOT_SUPPORTED',
+        retriable: false,
+      })
+    );
+
+    const events = await collect(streamChat({ ...baseRequest, attachments: [pdfAttachment()] }));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'PDF_NOT_SUPPORTED',
+    });
+  });
+
+  it('falls back to the generic IMAGE_NOT_SUPPORTED when both attachment kinds fail', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableImageInput: true, enableDocumentInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+    const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+    (assertModelSupportsAttachments as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ProviderError('Model lacks both', {
+        code: 'CAPABILITY_NOT_SUPPORTED',
+        retriable: false,
+      })
+    );
+
+    const events = await collect(
+      streamChat({
+        ...baseRequest,
+        attachments: [imageAttachment(), pdfAttachment()],
+      })
+    );
+
+    // Mixed mode collapses to IMAGE_NOT_SUPPORTED with a "all of the
+    // attached files" copy; assert the code, not the message.
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'IMAGE_NOT_SUPPORTED',
+    });
+  });
+
+  it('does not run the gate when there are no attachments', async () => {
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(makeAgent());
+    // Even without a settings mock, the no-attachment path should
+    // skip the gate completely. We don't run the full stream here —
+    // just assert the gate calls never fired before downstream
+    // dependencies are exercised.
+    const provider = mockProvider([[{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 } }]]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    await collect(streamChat(baseRequest));
+    expect(assertModelSupportsAttachments).not.toHaveBeenCalled();
   });
 });

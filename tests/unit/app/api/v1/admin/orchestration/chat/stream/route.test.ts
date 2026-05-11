@@ -75,7 +75,12 @@ vi.mock('@/lib/logging/context', () => ({
 
 // Import mocked modules
 import { auth } from '@/lib/auth/config';
-import { adminLimiter, chatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import {
+  adminLimiter,
+  chatLimiter,
+  createRateLimitResponse,
+  imageLimiter,
+} from '@/lib/security/rate-limit';
 import { streamChat } from '@/lib/orchestration/chat';
 import { sseResponse } from '@/lib/api/sse';
 
@@ -270,5 +275,101 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
     const call = vi.mocked(sseResponse).mock.calls[0];
     expect(call).toBeDefined();
     expect(call[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  describe('Attachment gate', () => {
+    // Base64-encoded payloads with realistic magic bytes so the route's
+    // `validateImageMagicBytes` / `validatePdfMagicBytes` calls see the
+    // bytes they expect (or don't, when we deliberately mismatch).
+    const TINY_PNG_BASE64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    // Real JPEG SOI (FF D8 FF E0 ...) — used to forge "JPEG bytes,
+    // image/png MIME tag" and assert the strict detected-type check.
+    const TINY_JPEG_BASE64 =
+      '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKigD//Z';
+    const TINY_PDF_BASE64 = Buffer.from('%PDF-1.4\nfake').toString('base64');
+
+    it('checks imageLimiter for attachment-bearing requests (admin user key)', async () => {
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'a.png', mediaType: 'image/png', data: TINY_PNG_BASE64 }],
+      });
+      await POST(req);
+      expect(vi.mocked(imageLimiter.check)).toHaveBeenCalledOnce();
+      expect(vi.mocked(imageLimiter.check)).toHaveBeenCalledWith(
+        `image:user:${createAdminSession().user.id}`
+      );
+    });
+
+    it('returns 429 when imageLimiter rejects', async () => {
+      vi.mocked(imageLimiter.check).mockReturnValueOnce(makeRateLimitResult(false, 0));
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'a.png', mediaType: 'image/png', data: TINY_PNG_BASE64 }],
+      });
+      const response = await POST(req);
+      expect(response.status).toBe(429);
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call imageLimiter for text-only requests', async () => {
+      const req = createMockRequest(validPayload);
+      await POST(req);
+      expect(vi.mocked(imageLimiter.check)).not.toHaveBeenCalled();
+    });
+
+    it('rejects a JPEG body tagged as image/png with 415 IMAGE_INVALID_TYPE', async () => {
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'forged.png', mediaType: 'image/png', data: TINY_JPEG_BASE64 }],
+      });
+      const response = await POST(req);
+      expect(response.status).toBe(415);
+      const body = await parseResponse<ErrorResponseBody>(response);
+      expect(body.error.code).toBe('IMAGE_INVALID_TYPE');
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-PDF body tagged as application/pdf with 415', async () => {
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'fake.pdf', mediaType: 'application/pdf', data: TINY_PNG_BASE64 }],
+      });
+      const response = await POST(req);
+      expect(response.status).toBe(415);
+      const body = await parseResponse<ErrorResponseBody>(response);
+      expect(body.error.code).toBe('IMAGE_INVALID_TYPE');
+      expect(streamChat).not.toHaveBeenCalled();
+    });
+
+    it('passes a valid PNG attachment through to streamChat', async () => {
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'photo.png', mediaType: 'image/png', data: TINY_PNG_BASE64 }],
+      });
+      await POST(req);
+      expect(streamChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachments: expect.arrayContaining([
+            expect.objectContaining({ name: 'photo.png', mediaType: 'image/png' }),
+          ]),
+        })
+      );
+    });
+
+    it('passes a valid PDF attachment through to streamChat', async () => {
+      const req = createMockRequest({
+        ...validPayload,
+        attachments: [{ name: 'doc.pdf', mediaType: 'application/pdf', data: TINY_PDF_BASE64 }],
+      });
+      await POST(req);
+      expect(streamChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachments: expect.arrayContaining([
+            expect.objectContaining({ name: 'doc.pdf', mediaType: 'application/pdf' }),
+          ]),
+        })
+      );
+    });
   });
 });

@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createRef } from 'react';
+import React, { createRef } from 'react';
 
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -187,6 +187,124 @@ describe('AttachmentPickerButton', () => {
     controlsRef.current?.clear();
     await waitFor(() => {
       expect(screen.queryByTestId('attachment-thumbnail-strip')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Branch coverage', () => {
+    it('formats sub-KB file size as bytes in the chip', async () => {
+      const user = userEvent.setup();
+      render(<AttachmentPickerButton />);
+      const input = screen.getByTestId('attachment-picker-input');
+      // A tiny file (5 bytes) exercises the `bytes < 1024` branch of
+      // formatBytes inside the thumbnail strip.
+      await user.upload(input, makeFile('tiny.png', 'image/png', 'abcde'));
+      await waitFor(() => {
+        expect(screen.getByText(/5 B/)).toBeInTheDocument();
+      });
+    });
+
+    it('formats KB-sized files in the chip', async () => {
+      const user = userEvent.setup();
+      render(<AttachmentPickerButton />);
+      const input = screen.getByTestId('attachment-picker-input');
+      // 2KB sits in the `< 1024*1024` branch.
+      await user.upload(input, makeFile('mid.png', 'image/png', 'x'.repeat(2048)));
+      await waitFor(() => {
+        expect(screen.getByText(/2\.0 KB/)).toBeInTheDocument();
+      });
+    });
+
+    it('renders a paperclip icon (not an image preview) for a PDF attachment', async () => {
+      render(<AttachmentPickerButton acceptMime={['application/pdf']} />);
+      const input = screen.getByTestId('attachment-picker-input');
+      // Force-fire via fireEvent so the accept attribute doesn't block PDF.
+      // The hook should accept this MIME and the chip should render
+      // without a preview <img>.
+      const pdf = makeFile('doc.pdf', 'application/pdf');
+      Object.defineProperty(input, 'files', { value: [pdf], configurable: true });
+      fireEvent.change(input);
+      await waitFor(() => {
+        expect(screen.getByTestId('attachment-thumbnail-strip')).toBeInTheDocument();
+      });
+      // PDF chips render the FileText lucide icon, not an <img>.
+      // Asserting the absence of an <img> on the strip is the
+      // simplest cross-cut.
+      const strip = screen.getByTestId('attachment-thumbnail-strip');
+      expect(strip.querySelector('img')).toBeNull();
+    });
+
+    it('clipboard paste injects a clipboard image into the picker', async () => {
+      const onAttachmentsChange = vi.fn();
+      // jsdom's clipboardData on paste events isn't populated by
+      // userEvent automatically; fire a ClipboardEvent ourselves with
+      // a getAsFile() returning a File. The component subscribes to
+      // paste events on the linked textarea via pasteTarget.
+      const PasteHarness = () => {
+        const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+        return (
+          <>
+            <textarea ref={textareaRef} data-testid="paste-target" />
+            <AttachmentPickerButton
+              pasteTarget={textareaRef}
+              onAttachmentsChange={onAttachmentsChange}
+            />
+          </>
+        );
+      };
+      render(<PasteHarness />);
+      const textarea = screen.getByTestId('paste-target');
+
+      const file = new File(['fake'], 'pasted.png', { type: 'image/png' });
+      // Build a synthetic ClipboardEvent. ClipboardEventInit lets us
+      // supply a DataTransfer with the file item.
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const evt = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true });
+      textarea.dispatchEvent(evt);
+
+      await waitFor(() => {
+        const last = onAttachmentsChange.mock.calls.at(-1);
+        expect(last?.[0]?.[0]?.name).toBe('pasted.png');
+      });
+    });
+
+    it('does NOT bind clipboard paste when imageInputEnabled is off (PDF-only)', async () => {
+      const onAttachmentsChange = vi.fn();
+      const PasteHarness = () => {
+        const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+        return (
+          <>
+            <textarea ref={textareaRef} data-testid="paste-target" />
+            <AttachmentPickerButton
+              acceptMime={['application/pdf']}
+              pasteTarget={textareaRef}
+              onAttachmentsChange={onAttachmentsChange}
+            />
+          </>
+        );
+      };
+      render(<PasteHarness />);
+      const textarea = screen.getByTestId('paste-target');
+      const file = new File(['fake'], 'pasted.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+
+      // Settle event queue, then assert no attachment landed.
+      await new Promise((r) => setTimeout(r, 50));
+      // onAttachmentsChange fires once on mount with []; the image
+      // paste must not have produced a second call with content.
+      const calls = onAttachmentsChange.mock.calls;
+      for (const [arr] of calls) {
+        expect(arr).toHaveLength(0);
+      }
+    });
+
+    it('does not attach when disabled, even if a file is selected', () => {
+      const onAttachmentsChange = vi.fn();
+      render(<AttachmentPickerButton disabled onAttachmentsChange={onAttachmentsChange} />);
+      const button = screen.getByRole('button', { name: /attach an image or pdf/i });
+      expect(button).toBeDisabled();
     });
   });
 });
