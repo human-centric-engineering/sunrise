@@ -17,10 +17,26 @@ import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interf
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
 import { PatternCardGrid } from '@/components/admin/orchestration/learn/pattern-card-grid';
 
+/**
+ * Compact agent record passed through from the server page so each
+ * embedded `<ChatInterface>` can decide whether to render the mic
+ * affordance. The page fetches `id` + `enableVoiceInput` for the
+ * advisor and quiz-master agents; missing/null means "voice off" and
+ * the chat falls back to text-only (e.g. agent row not seeded yet).
+ */
+export interface LearningTabsAgent {
+  id: string;
+  enableVoiceInput: boolean;
+}
+
 interface LearningTabsProps {
   patterns: PatternSummary[];
   contextType?: string;
   contextId?: string;
+  /** Pattern Advisor agent record — used to gate the mic on the advisor tab. */
+  advisorAgent?: LearningTabsAgent | null;
+  /** Quiz Master agent record — used to gate the mic on the quiz tab. */
+  quizAgent?: LearningTabsAgent | null;
 }
 
 const ALLOWED_TABS = ['patterns', 'advisor', 'quiz'] as const;
@@ -59,7 +75,13 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
-export function LearningTabs({ patterns, contextType, contextId }: LearningTabsProps) {
+export function LearningTabs({
+  patterns,
+  contextType,
+  contextId,
+  advisorAgent,
+  quizAgent,
+}: LearningTabsProps) {
   const router = useRouter();
   const { activeTab, setActiveTab } = useUrlTabs<LearningTab>({
     defaultTab: 'patterns',
@@ -137,6 +159,8 @@ export function LearningTabs({ patterns, contextType, contextId }: LearningTabsP
           )}
           <ChatInterface
             agentSlug="pattern-advisor"
+            agentId={advisorAgent?.id}
+            voiceInputEnabled={advisorAgent?.enableVoiceInput ?? false}
             embedded
             contextType={contextType}
             contextId={contextId}
@@ -181,6 +205,8 @@ export function LearningTabs({ patterns, contextType, contextId }: LearningTabsP
 
           <ChatInterface
             agentSlug="quiz-master"
+            agentId={quizAgent?.id}
+            voiceInputEnabled={quizAgent?.enableVoiceInput ?? false}
             embedded
             starterPrompts={QUIZ_PROMPTS}
             onStreamComplete={handleQuizStreamComplete}

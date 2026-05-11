@@ -863,4 +863,38 @@ describe('ChatInterface', () => {
     // Streaming text from the same turn is also visible
     expect(screen.getByText(/Starting refund\./)).toBeInTheDocument();
   });
+
+  // ── Mic / voice-input affordance ─────────────────────────────────────────
+
+  describe('voice input', () => {
+    // The mic affordance is opt-in via `voiceInputEnabled` + `agentId`.
+    // Callers without an agent record (e.g. embedded contexts that
+    // only know the slug) keep the current text-only UX; callers
+    // that wire both props through get a mic next to Send. Mirrors
+    // the gate used by `agent-test-chat.tsx`.
+
+    it('renders the MicButton when voiceInputEnabled and agentId are both set', () => {
+      render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
+
+      expect(screen.getByRole('button', { name: /start voice input/i })).toBeInTheDocument();
+    });
+
+    it('does not render the MicButton when voiceInputEnabled is false', () => {
+      render(
+        <ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled={false} />
+      );
+
+      expect(screen.queryByRole('button', { name: /start voice input/i })).not.toBeInTheDocument();
+    });
+
+    it('does not render the MicButton when agentId is missing', () => {
+      // Defensive: voiceInputEnabled alone isn't enough — the
+      // transcribe endpoint needs an agentId to resolve the row's
+      // `enableVoiceInput` field. Rendering the mic without an id
+      // would let the operator click into a 4xx.
+      render(<ChatInterface agentSlug="pattern-advisor" voiceInputEnabled />);
+
+      expect(screen.queryByRole('button', { name: /start voice input/i })).not.toBeInTheDocument();
+    });
+  });
 });

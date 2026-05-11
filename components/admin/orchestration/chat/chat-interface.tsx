@@ -49,6 +49,7 @@ import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinkin
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
 import type { Citation, PendingApproval } from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
+import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -67,6 +68,22 @@ const MIN_THINKING_MS = 1500;
 export interface ChatInterfaceProps {
   /** Agent slug to send to `POST /chat/stream`. */
   agentSlug: string;
+  /**
+   * Agent row id — passed to the transcription endpoint so the
+   * audio path can resolve the right `enableVoiceInput` row.
+   * Required alongside `voiceInputEnabled` to render the mic button.
+   * Optional so callers that don't have the metadata yet still work.
+   */
+  agentId?: string;
+  /**
+   * When true (and `agentId` is set), renders a mic button next to
+   * the Send action that posts audio to
+   * `/api/v1/admin/orchestration/chat/transcribe` and appends the
+   * resulting text to the input. Mirrors the affordance in
+   * `agent-test-chat.tsx`. Defaults to false so existing callers
+   * keep their current text-only UX until they opt in.
+   */
+  voiceInputEnabled?: boolean;
   /** Optional context type forwarded in the chat request. */
   contextType?: string;
   /** Optional context ID forwarded in the chat request. */
@@ -105,6 +122,8 @@ interface ChatMessage {
 
 export function ChatInterface({
   agentSlug,
+  agentId,
+  voiceInputEnabled = false,
   contextType,
   contextId,
   starterPrompts,
@@ -586,6 +605,26 @@ export function ChatInterface({
             }
           }}
         />
+        {voiceInputEnabled && agentId && (
+          <MicButton
+            agentId={agentId}
+            endpoint="/api/v1/admin/orchestration/chat/transcribe"
+            disabled={streaming}
+            onTranscript={(text) =>
+              // Append to whatever the operator has already typed
+              // rather than replacing — same UX as the admin agent
+              // tester. Trim trailing whitespace so we don't end up
+              // with double spaces.
+              setInput((current) => (current ? `${current.trimEnd()} ${text}` : text))
+            }
+            onError={(msg) =>
+              setError({
+                title: 'Voice input failed',
+                message: msg,
+              })
+            }
+          />
+        )}
         <Button type="submit" size="sm" disabled={streaming || !input.trim()}>
           {streaming ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
