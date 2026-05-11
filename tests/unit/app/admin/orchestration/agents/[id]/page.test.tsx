@@ -31,6 +31,12 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/lib/orchestration/prefetch-helpers', () => ({
   getProviders: vi.fn(),
   getModels: vi.fn(),
+  getEffectiveAgentDefaults: vi.fn(async () => ({
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+    inheritedProvider: false,
+    inheritedModel: false,
+  })),
 }));
 
 // Stub AgentForm so we can inspect its props without client-side complexity
