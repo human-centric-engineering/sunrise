@@ -216,8 +216,13 @@ export const GET = withAdminAuth(async (request) => {
     const bestRole = deriveBestRole(tierRole, cap);
     const slug = deriveMatrixSlug(providerSlug, modelId);
 
-    // Capabilities array — chat + (embedding when applicable).
-    const capabilities: string[] = cap === 'embedding' ? ['embedding'] : ['chat'];
+    // Pass the inferred capability through verbatim. The matrix
+    // accepts six capabilities (chat / reasoning / embedding / audio /
+    // image / moderation); `unknown` is catalogue-only, so we emit
+    // an empty array there and the dialog review step prompts the
+    // operator to pick one before submit (the bulk endpoint's
+    // `.min(1)` refinement will reject an empty array if they don't).
+    const capabilities: string[] = cap === 'unknown' ? [] : [cap];
 
     return {
       modelId,

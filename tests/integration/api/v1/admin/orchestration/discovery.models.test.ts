@@ -360,6 +360,73 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
       expect(embed?.suggested.capabilities).toEqual(['embedding']);
     });
 
+    it('preserves inferred audio / reasoning / image / moderation capabilities', async () => {
+      // Regression for the legacy collapse: pre-Phase-2 the route
+      // mapped every non-embedding inference to ['chat'], so even when
+      // inferCapability correctly identified Whisper as audio or
+      // o3-mini as reasoning, the dialog pre-checked Chat. Now each
+      // capability passes through verbatim.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'whisper-1', name: 'Whisper 1' }),
+        makeModelInfo({ id: 'o3-mini', name: 'o3-mini' }),
+        makeModelInfo({ id: 'dall-e-3', name: 'DALL·E 3' }),
+        makeModelInfo({ id: 'text-moderation-latest', name: 'Moderation' }),
+      ]);
+
+      const response = await GET(makeRequest('openai'));
+      const data = await parseJson<{
+        data: {
+          candidates: Array<{
+            modelId: string;
+            inferredCapability: string;
+            suggested: { capabilities: string[] };
+          }>;
+        };
+      }>(response);
+
+      const byId = new Map(data.data.candidates.map((c) => [c.modelId, c]));
+
+      expect(byId.get('whisper-1')?.inferredCapability).toBe('audio');
+      expect(byId.get('whisper-1')?.suggested.capabilities).toEqual(['audio']);
+
+      expect(byId.get('o3-mini')?.inferredCapability).toBe('reasoning');
+      expect(byId.get('o3-mini')?.suggested.capabilities).toEqual(['reasoning']);
+
+      expect(byId.get('dall-e-3')?.inferredCapability).toBe('image');
+      expect(byId.get('dall-e-3')?.suggested.capabilities).toEqual(['image']);
+
+      expect(byId.get('text-moderation-latest')?.inferredCapability).toBe('moderation');
+      expect(byId.get('text-moderation-latest')?.suggested.capabilities).toEqual(['moderation']);
+    });
+
+    it("emits an empty capabilities array when inference returns 'unknown'", async () => {
+      // 'unknown' is catalogue-only; the matrix rejects it. Returning
+      // [] forces the operator to pick a capability in the review
+      // step before submit (the bulk endpoint's `.min(1)` then enforces).
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      mockListModels.mockResolvedValue([
+        makeModelInfo({ id: 'some-mystery-model-xyz', name: 'Mystery' }),
+      ]);
+
+      const response = await GET(makeRequest('openai'));
+      const data = await parseJson<{
+        data: {
+          candidates: Array<{
+            modelId: string;
+            inferredCapability: string;
+            suggested: { capabilities: string[] };
+          }>;
+        };
+      }>(response);
+
+      const mystery = data.data.candidates.find((c) => c.modelId === 'some-mystery-model-xyz');
+      expect(mystery?.inferredCapability).toBe('unknown');
+      expect(mystery?.suggested.capabilities).toEqual([]);
+    });
+
     it('sorts matrix-matched rows ahead of unmatched, then by name', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
