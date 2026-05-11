@@ -163,9 +163,16 @@ describe('AgentForm — Model tab', () => {
 
   describe('test connection', () => {
     it('shows "{n} models available" on success', async () => {
-      // Arrange
+      // Arrange — the real API response shape is `{ ok, models: string[] }`,
+      // matching `lib/orchestration/llm/provider.ts` ProviderTestResult.
+      // A previous version of this test mocked `{ modelCount: 5 }`, which
+      // masked a bug where agent-test-card was reading a non-existent
+      // `modelCount` field and always showing "0 models available".
       const { apiClient } = await import('@/lib/api/client');
-      vi.mocked(apiClient.post).mockResolvedValue({ modelCount: 5 });
+      vi.mocked(apiClient.post).mockResolvedValue({
+        ok: true,
+        models: ['m1', 'm2', 'm3', 'm4', 'm5'],
+      });
 
       const user = await renderAndOpenModelTab();
 
@@ -175,6 +182,35 @@ describe('AgentForm — Model tab', () => {
       // Assert
       await waitFor(() => {
         expect(screen.getByText(/5 models available/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows "0 models available" when the API returns an empty model list', async () => {
+      // Regression: the API returning `{ ok: true, models: [] }` should
+      // display "0 models available", not crash or hide the row.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: true, models: [] });
+
+      const user = await renderAndOpenModelTab();
+      await user.click(screen.getByRole('button', { name: /run check/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/0 models available/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows a friendly failure when the API returns ok: false', async () => {
+      // The provider route returns `{ ok: false }` (not an HTTP error) when
+      // the SDK reports a soft failure. Agent-test-card must surface this
+      // as a friendly message rather than reporting a phantom success.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ ok: false });
+
+      const user = await renderAndOpenModelTab();
+      await user.click(screen.getByRole('button', { name: /run check/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/couldn't reach this provider/i)).toBeInTheDocument();
       });
     });
 
