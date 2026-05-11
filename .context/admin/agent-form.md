@@ -99,13 +99,13 @@ Three orthogonal gates must all pass before the LLM is called:
 
 1. This toggle (`agent.enableImageInput=true`)
 2. Org-wide switch `imageInputGloballyEnabled` in **Settings → Orchestration → Image & document input** (default on)
-3. The resolved chat model carries the `'vision'` capability — seeded for GPT-4o family, GPT-4.1, GPT-5, Gemini 2.5 Pro/Flash, Grok 3, Azure GPT-4o, Bedrock Claude, and Claude 4.x
+3. The resolved chat model carries the `'vision'` capability — capability assignment lives on `AiProviderModel.capabilities` and is admin-curated. Open the provider-models matrix to see which seeded rows qualify.
 
 Mismatch produces a discrete SSE error code (`IMAGE_DISABLED` / `IMAGE_NOT_SUPPORTED`) so the chat surface can map to specific UI copy. A `CostOperation = 'vision'` row is written to `AiCostLog` on every successful turn that carried at least one image, with `imageCount` / `pdfCount` in metadata. Toggle changes are tracked in `VERSIONED_FIELDS` and produce a snapshot/restore audit entry.
 
 ### Enable document (PDF) input
 
-Switch toggle (`AiAgent.enableDocumentInput`, default off). Same architecture as image input but gates on the `'documents'` capability, which is currently seeded only for the Claude 4.x family (incl. Bedrock Claude). OpenAI Chat Completions does not yet accept native PDF parts, so PDFs to a GPT-\* agent are rejected at the gate with `PDF_NOT_SUPPORTED` rather than silently dropped.
+Switch toggle (`AiAgent.enableDocumentInput`, default off). Same architecture as image input but gates on the `'documents'` capability — operators control which provider-model rows carry it in the matrix. Native-PDF support varies by upstream provider; models without the capability are rejected at the gate with `PDF_NOT_SUPPORTED` rather than silently dropped, so the user gets a clear "switch the model" prompt instead of an LLM that pretends to have read the file.
 
 PDFs share the per-attachment and per-turn caps with images. The picker UI is the same paperclip control — `application/pdf` joins the `accept` list automatically when either toggle is on.
 

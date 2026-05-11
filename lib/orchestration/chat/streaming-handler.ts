@@ -346,7 +346,7 @@ export class StreamingChatHandler {
             } else if (hasPdfAttachments && !hasImageAttachments) {
               yield errorEvent(
                 'PDF_NOT_SUPPORTED',
-                "This agent's model can't process PDFs. Switch the model to one with document support (Claude family)."
+                "This agent's model can't process PDFs. Switch the model to one with document support."
               );
             } else {
               yield errorEvent(

@@ -840,8 +840,9 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                     </li>
                     <li>
                       The agent&apos;s resolved chat model must carry the <code>vision</code>{' '}
-                      capability — seeded for GPT-4o, Claude 4.x, Gemini 2.5, and Grok 3 families.
-                      Other models return <code>IMAGE_NOT_SUPPORTED</code> at send time.
+                      capability. Open the provider-models matrix to see which seeded rows qualify —
+                      models without the capability return <code>IMAGE_NOT_SUPPORTED</code> at send
+                      time.
                     </li>
                     <li>
                       Per-attachment cap: ~5 MB. Per-turn combined cap: ~25 MB. Max 10 attachments.
@@ -881,8 +882,9 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                     </li>
                     <li>
                       The agent&apos;s resolved chat model must carry the <code>documents</code>{' '}
-                      capability — currently the Claude 4.x family (incl. Bedrock Claude) only.
-                      OpenAI Chat Completions does not yet accept native PDF parts.
+                      capability. Open the provider-models matrix to see which seeded rows qualify —
+                      models without the capability return <code>PDF_NOT_SUPPORTED</code>
+                      at send time.
                     </li>
                     <li>
                       Per-attachment cap: ~5 MB. Counts against the same per-turn 25 MB combined cap
@@ -892,7 +894,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-sm">
-                Lets users attach PDFs to a turn. Requires a documents-capable model (Claude).
+                Lets users attach PDFs to a turn. Requires a model with the <code>documents</code>{' '}
+                capability.
               </p>
             </div>
             <Switch

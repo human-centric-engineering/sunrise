@@ -156,7 +156,7 @@ The route layer adds two more guards in front of the handler:
 
 **Validation caps** (in `lib/validations/orchestration.ts`): per-attachment ≤ `MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` (~5 MB binary, Anthropic-safe); per-turn combined ≤ `MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS = 37_500_000` (~25 MB); max 10 attachments per turn. Combined cap enforced by `chatAttachmentsArraySchema.superRefine`.
 
-**Capability seeding.** GPT-4o family, Gemini 2.5 Pro/Flash, Grok 3, Azure GPT-4o, Bedrock Claude, and Claude 4.x carry `'vision'`. Only the Claude 4.x family (incl. Bedrock) carries `'documents'` because Anthropic accepts native PDF parts; OpenAI Chat Completions currently does not, so PDFs to an OpenAI agent get rejected at the gate rather than silently dropped.
+**Capability seeding.** Capability assignment lives on `AiProviderModel.capabilities` and is admin-curated. The 009-provider-models seed assigns `'vision'` to multimodal chat models across the seeded provider catalogue, and `'documents'` to the subset that accept native PDF parts as multimodal `ContentPart` entries (a snapshot of which models qualify is in `prisma/seeds/009-provider-models.ts`). Operators can add or remove the capability per row from the matrix. Models without the required capability are rejected at the gate with `IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED` rather than silently dropped, so end-users get a clear "switch the model" prompt instead of an assistant that pretends to have read the attachment.
 
 **Attachment retention:** none. Bytes flow request → provider → discard; only the user's text becomes a persisted `AiMessage`.
 

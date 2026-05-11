@@ -627,7 +627,7 @@ Image and PDF inputs share the streaming-chat endpoint rather than getting their
 - `IMAGE_DISABLED` — `agent.enableImageInput=false`, or `AiOrchestrationSettings.imageInputGloballyEnabled=false`.
 - `PDF_DISABLED` — `agent.enableDocumentInput=false`, or `AiOrchestrationSettings.documentInputGloballyEnabled=false`.
 - `IMAGE_NOT_SUPPORTED` — resolved chat model lacks the `'vision'` capability. Map: switch model.
-- `PDF_NOT_SUPPORTED` — resolved chat model lacks the `'documents'` capability. Map: switch to a Claude family model.
+- `PDF_NOT_SUPPORTED` — resolved chat model lacks the `'documents'` capability. Map: switch to a model that carries `'documents'` (check the provider-models matrix).
 
 **Behaviour:** when at least one image or PDF passes the gates, a single `CostOperation = 'vision'` row is written to `AiCostLog` tagged to the agent with `metadata.imageCount` / `metadata.pdfCount`. Per-token chat cost rolls up under separate `chat` rows. Attachment bytes are not persisted — the chat handler only stores the user's text plus the assistant's response.
 

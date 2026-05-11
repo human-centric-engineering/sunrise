@@ -481,7 +481,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                     <code>enableDocumentInput</code> toggle is treated as off — chat endpoints
                     reject any request that carries an <code>application/pdf</code> attachment with{' '}
                     <code>PDF_DISABLED</code>. Distinct from the image switch so an org can serve
-                    images without enabling native PDF parsing (Claude only).
+                    images without enabling native PDF parsing on any agent.
                   </FieldHelp>
                 </label>
               )}
