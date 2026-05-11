@@ -83,6 +83,22 @@ describe('inferCapability', () => {
     ['fireworks', 'accounts/fireworks/models/llama-v3p1-70b-instruct', 'chat'],
     ['ollama', 'llama3:70b', 'chat'],
 
+    // OpenAI-API-compatible providers that serve Whisper through
+    // /v1/audio/transcriptions. Limited to providers whose backing
+    // class (OpenAiCompatibleProvider) implements transcribe() — the
+    // matrix should auto-tag these as audio so operators see the
+    // right test surface and the Default: Audio dropdown picks them.
+    ['groq', 'whisper-large-v3', 'audio'],
+    ['groq', 'distil-whisper-large-v3-en', 'audio'],
+    ['together', 'openai/whisper-large-v3', 'audio'],
+    ['fireworks', 'whisper-v3', 'audio'],
+    ['openai-compatible', 'whisper-1', 'audio'],
+
+    // Anthropic doesn't have audio — don't false-positive on the
+    // 'whisper' substring (defensive against future model ids that
+    // include it for unrelated reasons).
+    ['anthropic', 'claude-whisper-experiment', 'chat'],
+
     // Unknown providers fall through without claiming chat
     ['custom-vendor', 'unknown-model', 'unknown'],
   ];

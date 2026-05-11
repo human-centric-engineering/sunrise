@@ -344,12 +344,15 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(embedMock).not.toHaveBeenCalled();
     });
 
-    it('returns the unsupported response for image / audio / moderation / unknown', async () => {
+    it('returns the unsupported response for image / moderation / unknown', async () => {
+      // Audio used to live in this set, but is now testable via the
+      // silent-WAV transcribe roundtrip — see the Audio capability
+      // describe block below for its happy + failure paths.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
       vi.mocked(getProvider).mockResolvedValue(makeMockProvider() as never);
 
-      for (const capability of ['image', 'audio', 'moderation', 'unknown'] as const) {
+      for (const capability of ['image', 'moderation', 'unknown'] as const) {
         const response = await POST(makeRequest({ model: 'whatever', capability }), makeParams());
         expect(response.status).toBe(200);
         const data = await parseJson<{

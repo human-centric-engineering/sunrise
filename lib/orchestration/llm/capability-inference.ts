@@ -101,7 +101,13 @@ export function inferCapability(providerSlug: string, modelId: string): Capabili
 
   // Anthropic, Groq, Together, Fireworks, Ollama and other
   // chat-centric vendors: assume chat unless the id contains
-  // 'embed' (defensive, in case a vendor adds embeddings later).
+  // 'embed' (defensive, in case a vendor adds embeddings later) or
+  // matches one of the Whisper-family audio model patterns that
+  // these OpenAI-API-compatible vendors serve through
+  // `/v1/audio/transcriptions`. Limited to providers whose backing
+  // class (OpenAiCompatibleProvider) actually implements transcribe();
+  // adding Deepgram/AssemblyAI here would mislead operators because
+  // the runtime would silently skip those rows.
   if (
     slug === 'anthropic' ||
     slug === 'groq' ||
@@ -111,6 +117,7 @@ export function inferCapability(providerSlug: string, modelId: string): Capabili
     slug === 'openai-compatible'
   ) {
     if (id.includes('embed')) return 'embedding';
+    if (slug !== 'anthropic' && /whisper/i.test(id)) return 'audio';
     return 'chat';
   }
 
