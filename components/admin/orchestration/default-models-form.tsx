@@ -175,9 +175,10 @@ const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = 
           <code>isDefault DESC, createdAt ASC</code>).
         </p>
         <p>
-          Currently supports OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).
-          Bespoke audio providers (Deepgram, AssemblyAI) need a dedicated <code>transcribe()</code>{' '}
-          implementation — coming in a future release.
+          Currently supports OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks) via
+          the shared <code>transcribe()</code> implementation. Providers that don&apos;t expose an
+          OpenAI-compatible <code>/v1/audio/transcriptions</code> endpoint require a dedicated
+          provider class.
         </p>
         <p>
           Options come from the model matrix — any row with <code>capability: audio</code>. Add one

@@ -68,12 +68,12 @@ const CAPABILITY_META: Record<
   },
   image: {
     label: 'Image',
-    help: 'Image generation (DALL·E, gpt-image). Stored for inventory; the engine has no runtime path yet.',
+    help: 'Image generation (DALL·E, gpt-image). Stored for inventory; the orchestration engine has no runtime path for image models.',
     runtime: 'storage',
   },
   moderation: {
     label: 'Moderation',
-    help: 'Content moderation (text-moderation-latest). Stored for inventory; the engine has no runtime path yet.',
+    help: 'Content moderation (text-moderation-latest). Stored for inventory; the orchestration engine has no runtime path for moderation models.',
     runtime: 'storage',
   },
 };
@@ -416,7 +416,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             <FieldHelp title="Capabilities">
               Select every capability this model serves. Most rows are single-capability; some
               models support both chat and embedding. Image and moderation are stored as inventory —
-              the orchestration engine has no runtime path for them yet.
+              the orchestration engine does not invoke these capabilities at runtime.
             </FieldHelp>
           </Label>
           <div

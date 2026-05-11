@@ -129,7 +129,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
         capability,
         error: 'provider_no_audio_support',
         message:
-          'This provider class doesn’t implement audio transcription yet. Currently supported: OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).',
+          'This provider class does not implement audio transcription. Currently supported: OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).',
       });
     }
 

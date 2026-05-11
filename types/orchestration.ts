@@ -1113,7 +1113,7 @@ export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
  * Runtime paths exist for `chat`, `reasoning` (via `chat()`),
  * `embedding`, and `audio` (via optional `transcribe()`). `image` and
  * `moderation` are storage-only — operators can register rows so they
- * appear in audits and inventory, but no engine path invokes them yet.
+ * appear in audits and inventory, but the engine does not invoke them.
  */
 export const MODEL_CAPABILITIES = [
   'chat',
@@ -1125,11 +1125,12 @@ export const MODEL_CAPABILITIES = [
 ] as const;
 export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
 
-/** Capabilities that have no engine invocation path today.
+/** Capabilities the orchestration engine does not invoke at runtime.
  *
  * The form and matrix surface a "storage-only" note on rows whose
- * capability set is a subset of this list. Update both this constant
- * and the UI notes when an engine path lands.
+ * capability set is a subset of this list. If an engine path is ever
+ * added for one of these capabilities, update both this constant and
+ * the UI notes in lockstep.
  */
 export const STORAGE_ONLY_CAPABILITIES = [
   'image',

@@ -805,7 +805,7 @@ export function ProviderModelsMatrix({
                         model.capabilities.every((c) =>
                           STORAGE_ONLY_SET.has(c as ModelCapability)
                         ) && (
-                          <Tip label="The orchestration engine has no runtime path for image or moderation models yet — this row is informational/inventory only.">
+                          <Tip label="The orchestration engine does not invoke image or moderation models — this row is informational/inventory only.">
                             <span className="text-muted-foreground cursor-help text-[10px] uppercase">
                               Storage-only
                             </span>
