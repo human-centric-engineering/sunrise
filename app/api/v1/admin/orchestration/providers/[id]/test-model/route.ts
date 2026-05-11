@@ -22,6 +22,13 @@ import { getClientIP } from '@/lib/security/ip';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { cuidSchema } from '@/lib/validations/common';
 
+// Wider than the matrix `capabilitySchema` (lib/validations/orchestration.ts):
+// this route is invoked from the catalogue panel, which renders
+// inferred capabilities including `unknown`. Accepting the full
+// inference union here lets the route refuse-with-message (see the
+// UNSUPPORTED_TEST_MESSAGES block below) instead of 400'ing on
+// otherwise valid catalogue rows. Do not unify with the matrix
+// schema — they answer different questions.
 const capabilitySchema = z.enum([
   'chat',
   'reasoning',

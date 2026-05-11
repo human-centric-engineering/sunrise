@@ -1104,9 +1104,38 @@ export type LatencyLevel = (typeof LATENCY_LEVELS)[number];
 export const TOOL_USE_LEVELS = ['strong', 'moderate', 'none'] as const;
 export type ToolUseLevel = (typeof TOOL_USE_LEVELS)[number];
 
-/** Model capability types. */
-export const MODEL_CAPABILITIES = ['chat', 'embedding'] as const;
+/** Model capability types storable in the matrix.
+ *
+ * Excludes `unknown`, which is a discovery-only placeholder for models
+ * whose role can't be inferred from id. The catalogue (live `/v1/models`
+ * fetch) renders `unknown`; the curated matrix does not.
+ *
+ * Runtime paths exist for `chat`, `reasoning` (via `chat()`),
+ * `embedding`, and `audio` (via optional `transcribe()`). `image` and
+ * `moderation` are storage-only — operators can register rows so they
+ * appear in audits and inventory, but no engine path invokes them yet.
+ */
+export const MODEL_CAPABILITIES = [
+  'chat',
+  'reasoning',
+  'embedding',
+  'audio',
+  'image',
+  'moderation',
+] as const;
 export type ModelCapability = (typeof MODEL_CAPABILITIES)[number];
+
+/** Capabilities that have no engine invocation path today.
+ *
+ * The form and matrix surface a "storage-only" note on rows whose
+ * capability set is a subset of this list. Update both this constant
+ * and the UI notes when an engine path lands.
+ */
+export const STORAGE_ONLY_CAPABILITIES = [
+  'image',
+  'moderation',
+] as const satisfies readonly ModelCapability[];
+export type StorageOnlyCapability = (typeof STORAGE_ONLY_CAPABILITIES)[number];
 
 /** Embedding quality levels. */
 export const EMBEDDING_QUALITY_LEVELS = ['high', 'medium', 'budget'] as const;

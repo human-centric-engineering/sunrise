@@ -79,6 +79,10 @@ import {
   turnEntriesSchema,
   chatAttachmentSchema,
   searchConfigSchema,
+  createProviderModelSchema,
+  updateProviderModelSchema,
+  bulkCreateProviderModelsSchema,
+  listProviderModelsQuerySchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -2712,5 +2716,147 @@ describe('turnEntrySchema', () => {
       expect(data.costUsd).toBe(0.025);
       expect(data.turns).toBeUndefined();
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Provider model capability validation
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('provider model capability validation', () => {
+  function baseModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name: 'Whisper 1',
+      slug: 'openai-whisper-1',
+      providerSlug: 'openai',
+      modelId: 'whisper-1',
+      description: 'OpenAI speech-to-text transcription model.',
+      capabilities: ['audio'],
+      tierRole: 'infrastructure',
+      reasoningDepth: 'none',
+      latency: 'fast',
+      costEfficiency: 'high',
+      contextLength: 'n_a',
+      toolUse: 'none',
+      bestRole: 'Speech-to-text',
+      ...overrides,
+    };
+  }
+
+  describe('createProviderModelSchema.capabilities', () => {
+    it.each(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'] as const)(
+      'accepts %s as a matrix capability',
+      (capability) => {
+        const result = createProviderModelSchema.safeParse(
+          baseModel({ capabilities: [capability] })
+        );
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.capabilities).toEqual([capability]);
+        }
+      }
+    );
+
+    it("rejects 'unknown' — catalogue-only placeholder", () => {
+      // 'unknown' is returned by inferCapability when a model id can't
+      // be classified; it must never reach the matrix.
+      const result = createProviderModelSchema.safeParse(baseModel({ capabilities: ['unknown'] }));
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects garbage capability values', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseModel({ capabilities: ['not-a-capability'] })
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty capabilities array', () => {
+      const result = createProviderModelSchema.safeParse(baseModel({ capabilities: [] }));
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts multi-capability rows (chat + reasoning)', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseModel({ capabilities: ['chat', 'reasoning'] })
+      );
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('updateProviderModelSchema.capabilities', () => {
+    it('accepts a widened capability on PATCH', () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: ['reasoning'] });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects 'unknown' on PATCH", () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: ['unknown'] });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects empty capabilities array on PATCH (when supplied)', () => {
+      const result = updateProviderModelSchema.safeParse({ capabilities: [] });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('bulkCreateProviderModelsSchema.capabilities', () => {
+    it('accepts a bulk row with audio capability', () => {
+      const result = bulkCreateProviderModelsSchema.safeParse({
+        providerSlug: 'openai',
+        models: [
+          {
+            modelId: 'whisper-1',
+            name: 'Whisper',
+            capabilities: ['audio'],
+            tierRole: 'infrastructure',
+            reasoningDepth: 'none',
+            latency: 'fast',
+            costEfficiency: 'high',
+            contextLength: 'n_a',
+            toolUse: 'none',
+            bestRole: 'Speech-to-text',
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a bulk row with 'unknown' capability", () => {
+      const result = bulkCreateProviderModelsSchema.safeParse({
+        providerSlug: 'openai',
+        models: [
+          {
+            modelId: 'mystery',
+            name: 'Mystery',
+            capabilities: ['unknown'],
+            tierRole: 'worker',
+            reasoningDepth: 'none',
+            latency: 'medium',
+            costEfficiency: 'medium',
+            contextLength: 'medium',
+            toolUse: 'none',
+            bestRole: '—',
+          },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('listProviderModelsQuerySchema.capability', () => {
+    it.each(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'] as const)(
+      'accepts ?capability=%s',
+      (capability) => {
+        const result = listProviderModelsQuerySchema.safeParse({ capability });
+        expect(result.success).toBe(true);
+      }
+    );
+
+    it('rejects ?capability=unknown', () => {
+      const result = listProviderModelsQuerySchema.safeParse({ capability: 'unknown' });
+      expect(result.success).toBe(false);
+    });
   });
 });

@@ -280,6 +280,10 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     { field: 'toolUse', value: 'moderate' },
     { field: 'bestRole', value: 'Code generation' },
     { field: 'capabilities', value: ['chat', 'embedding'] },
+    { field: 'capabilities', value: ['audio'] },
+    { field: 'capabilities', value: ['reasoning'] },
+    { field: 'capabilities', value: ['image'] },
+    { field: 'capabilities', value: ['moderation'] },
     { field: 'isActive', value: false },
   ] as const;
 
@@ -368,6 +372,25 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
         }),
       })
     );
+  });
+
+  it("returns 400 when capabilities=['unknown'] (catalogue-only value)", async () => {
+    // `unknown` is the inferred-capability placeholder; the matrix
+    // must refuse it so audits/inventory stay clean.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({ isDefault: false }) as never
+    );
+
+    const response = await PATCH(
+      makePatchRequest(MODEL_ID, { capabilities: ['unknown'] }),
+      routeContext(MODEL_ID)
+    );
+    expect(response.status).toBe(400);
+    const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
   });
 
   it('returns 400 VALIDATION_ERROR when slug is already taken (P2002)', async () => {

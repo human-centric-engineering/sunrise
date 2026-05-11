@@ -1276,7 +1276,11 @@ const ratingLevelSchema = z.enum(['very_high', 'high', 'medium', 'none']);
 const contextLengthLevelSchema = z.enum(['very_high', 'high', 'medium', 'n_a']);
 const latencyLevelSchema = z.enum(['very_fast', 'fast', 'medium']);
 const toolUseLevelSchema = z.enum(['strong', 'moderate', 'none']);
-const capabilitySchema = z.enum(['chat', 'embedding']);
+// Matrix capability set — must mirror MODEL_CAPABILITIES in
+// types/orchestration.ts. Intentionally excludes `unknown` (catalogue
+// only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
+// for the wider enum used by the catalogue's test button).
+const capabilitySchema = z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']);
 const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
 
 /** POST body for creating a provider model. */

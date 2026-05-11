@@ -85,7 +85,7 @@ function makeNewModel(
     providerSlug: string;
     modelId: string;
     description: string;
-    capabilities: ('chat' | 'embedding')[];
+    capabilities: ('chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation')[];
     tierRole: TierRole;
     bestRole: string;
     reasoningDepth: RatingLevel;
@@ -104,7 +104,14 @@ function makeNewModel(
     providerSlug: 'openai' as string,
     modelId: 'gpt-5' as string,
     description: 'Next-generation reasoning model from OpenAI.' as string,
-    capabilities: ['chat'] as ('chat' | 'embedding')[],
+    capabilities: ['chat'] as (
+      | 'chat'
+      | 'reasoning'
+      | 'embedding'
+      | 'audio'
+      | 'image'
+      | 'moderation'
+    )[],
     tierRole: 'thinking' as TierRole,
     bestRole: 'Complex multi-step reasoning and analysis' as string,
     reasoningDepth: 'very_high' as RatingLevel,
@@ -203,6 +210,31 @@ describe('AddProviderModelsCapability', () => {
       const cap = new AddProviderModelsCapability();
       expect(() =>
         cap.validate({ newModels: [makeNewModel({ tierRole: 'invalid-tier' as TierRole })] })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it.each(['reasoning', 'audio', 'image', 'moderation'] as const)(
+      'accepts widened capability %s',
+      (capability) => {
+        const cap = new AddProviderModelsCapability();
+        const result = cap.validate({
+          newModels: [makeNewModel({ capabilities: [capability] })],
+        });
+        expect(result.newModels[0].capabilities).toEqual([capability]);
+      }
+    );
+
+    it('rejects unknown as a matrix capability', () => {
+      const cap = new AddProviderModelsCapability();
+      expect(() =>
+        cap.validate({
+          newModels: [
+            makeNewModel({
+              // 'unknown' is catalogue-only — see capabilitySchema in lib/validations/orchestration.ts
+              capabilities: ['unknown' as 'chat'],
+            }),
+          ],
+        })
       ).toThrow(CapabilityValidationError);
     });
   });
