@@ -20,6 +20,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { generateSilentWav } from '@/lib/audio/silent-wav';
 import { cuidSchema } from '@/lib/validations/common';
 
 // Wider than the matrix `capabilitySchema` (lib/validations/orchestration.ts):
@@ -54,7 +55,6 @@ const UNSUPPORTED_TEST_MESSAGES: Record<string, string> = {
   reasoning:
     'Reasoning models use the /v1/responses API — testing through this panel is not supported yet.',
   image: "Image generation models can't be tested through this panel.",
-  audio: "Audio models (transcription / synthesis) can't be tested through this panel.",
   moderation: "Moderation models can't be tested through this panel.",
   unknown: "Unknown model type — we don't have a test surface for this capability.",
 };
@@ -88,7 +88,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // call, no latency measurement — just a structured response so the
   // panel can render a clear "not supported" affordance instead of
   // surfacing a chat 404 / SSRF-shaped error.
-  if (capability !== 'chat' && capability !== 'embedding') {
+  if (capability !== 'chat' && capability !== 'embedding' && capability !== 'audio') {
     log.info('Model test skipped — unsupported capability', {
       providerId: id,
       slug: providerRow.slug,
@@ -108,12 +108,44 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   try {
     const provider = await getProvider(providerRow.slug);
+
+    // Audio: providers opt-in via the optional transcribe() interface
+    // member. Guard before timing — a missing method is "this provider
+    // class doesn't support audio yet", which is configurable state
+    // (e.g. seeded a Deepgram row but the Deepgram provider class has
+    // no transcribe()). Return a friendly diagnosis instead of letting
+    // the call throw a TypeError.
+    if (capability === 'audio' && typeof provider.transcribe !== 'function') {
+      log.info('Audio model test skipped — provider lacks transcribe()', {
+        providerId: id,
+        slug: providerRow.slug,
+        model,
+        adminId: session.user.id,
+      });
+      return successResponse({
+        ok: false,
+        latencyMs: null,
+        model,
+        capability,
+        error: 'provider_no_audio_support',
+        message:
+          'This provider class doesn’t implement audio transcription yet. Currently supported: OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).',
+      });
+    }
+
     const start = Date.now();
 
     if (capability === 'embedding') {
       // Single-input embedding round-trip. Cheaper than chat and
       // exercises the same auth + base URL surface.
       await provider.embed('hello');
+    } else if (capability === 'audio') {
+      // Tiny silent WAV — verifies API key, base URL and model id
+      // without recording a real clip. Most providers return an
+      // empty transcript; the Test button only cares about the
+      // round-trip succeeding.
+      const wav = generateSilentWav();
+      await provider.transcribe!(wav, { model, mimeType: 'audio/wav' });
     } else {
       await provider.chat([{ role: 'user', content: 'Say hello.' }], {
         model,

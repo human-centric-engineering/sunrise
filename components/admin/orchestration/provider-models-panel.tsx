@@ -198,7 +198,7 @@ const FILTER_BUCKETS: Array<{
   },
 ];
 
-const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding'];
+const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding', 'audio'];
 
 // Per-capability reason for a disabled test button. Shown in the Tip
 // label so the operator understands why the button isn't actionable
@@ -207,7 +207,6 @@ const UNTESTABLE_REASON: Partial<Record<Capability, string>> = {
   reasoning:
     'Reasoning models use the /v1/responses API — testing through this panel is not supported yet.',
   image: "Image generation models can't be tested through this panel.",
-  audio: "Audio models (transcription / synthesis) can't be tested through this panel.",
   moderation: "Moderation models can't be tested through this panel.",
   unknown: "Unknown model type — we don't have a test surface for this capability.",
 };
@@ -219,6 +218,8 @@ const TESTABLE_ACTION: Partial<Record<Capability, string>> = {
   chat: "Sends a small 'Say hello.' prompt (max 10 tokens) and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
   embedding:
     "Embeds the string 'hello' and reports round-trip latency. Verifies the API key, base URL, and model are reachable.",
+  audio:
+    'Posts a tiny silent WAV (1 second of 16 kHz mono PCM, ~32 kB) to the provider’s transcription endpoint and reports round-trip latency. Verifies the API key, base URL, and model are reachable. The transcript will usually be empty — that’s expected.',
 };
 
 // Reason text shown on the per-cell tooltip when context / pricing is

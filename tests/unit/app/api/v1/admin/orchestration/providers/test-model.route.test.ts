@@ -309,6 +309,94 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
     });
   });
 
+  // ── Audio capability ───────────────────────────────────────────────────────
+
+  describe('Audio capability', () => {
+    it('returns ok:true with latency when the provider has transcribe() and it succeeds', async () => {
+      // The route generates a silent WAV in-process and round-trips
+      // it through provider.transcribe(). Mock the provider so the
+      // call resolves; assert the response shape and that transcribe
+      // received an audio buffer + the model id.
+      const mockTranscribe = vi
+        .fn()
+        .mockResolvedValue({ text: '', latencyMs: 0, model: 'whisper-1' });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(getProvider).mockResolvedValue({ transcribe: mockTranscribe } as never);
+
+      const response = await POST(
+        makePostRequest({ model: 'whisper-1', capability: 'audio' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(200);
+      const body = await parseJson<{
+        data: { ok: boolean; latencyMs: number | null; model: string; capability: string };
+      }>(response);
+      expect(body.data.ok).toBe(true);
+      expect(typeof body.data.latencyMs).toBe('number');
+      expect(body.data.model).toBe('whisper-1');
+      expect(body.data.capability).toBe('audio');
+
+      // transcribe() got the silent WAV buffer + the modelId. The
+      // first arg is Buffer-typed; we only assert it's a Buffer-like
+      // object with bytes so the test stays robust to small encoder
+      // tweaks (header padding, etc.).
+      expect(mockTranscribe).toHaveBeenCalledTimes(1);
+      const [audio, options] = mockTranscribe.mock.calls[0];
+      expect(Buffer.isBuffer(audio) || audio instanceof Uint8Array).toBe(true);
+      expect(audio.length).toBeGreaterThan(44); // RIFF header + at least some PCM
+      expect(options.model).toBe('whisper-1');
+      expect(options.mimeType).toBe('audio/wav');
+    });
+
+    it('returns ok:false with provider_no_audio_support when the provider lacks transcribe()', async () => {
+      // Audio support is opt-in via the LlmProvider interface — most
+      // provider classes don't implement it. The route catches the
+      // missing method before invoking it so the operator sees a
+      // helpful diagnosis instead of a TypeError.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(getProvider).mockResolvedValue({ chat: vi.fn() } as never); // no transcribe
+
+      const response = await POST(
+        makePostRequest({ model: 'whisper-1', capability: 'audio' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(200);
+      const body = await parseJson<{
+        data: { ok: boolean; error?: string; message?: string };
+      }>(response);
+      expect(body.data.ok).toBe(false);
+      expect(body.data.error).toBe('provider_no_audio_support');
+      // Message names the supported families so the operator knows
+      // why their seeded row didn't work.
+      expect(body.data.message).toMatch(/openai-api-compatible/i);
+    });
+
+    it('returns ok:false when provider.transcribe rejects', async () => {
+      // Network blip, bad credentials, rate-limited upstream — should
+      // surface as a graceful ok:false rather than a 500. Mirrors the
+      // chat-path failure branch.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
+      vi.mocked(getProvider).mockResolvedValue({
+        transcribe: vi.fn().mockRejectedValue(new Error('401 Unauthorized')),
+      } as never);
+
+      const response = await POST(
+        makePostRequest({ model: 'whisper-1', capability: 'audio' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(200);
+      const body = await parseJson<{ data: { ok: boolean; error?: string } }>(response);
+      expect(body.data.ok).toBe(false);
+      expect(body.data.error).toBe('model_test_failed');
+    });
+  });
+
   // ── Rate limiting ──────────────────────────────────────────────────────────
 
   describe('Rate limiting', () => {
