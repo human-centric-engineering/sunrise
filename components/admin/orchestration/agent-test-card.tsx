@@ -47,10 +47,23 @@ export function AgentTestCard({ providerId, model }: AgentTestCardProps) {
     }
 
     try {
-      const res = await apiClient.post<{ modelCount: number }>(
+      // The server returns `{ ok, models: string[], error? }` from
+      // `providerManager.testProvider`. The model count is the length of
+      // that array — there's no separate `modelCount` field. Mirrors the
+      // working flow in `components/admin/orchestration/provider-test-button.tsx`.
+      const res = await apiClient.post<{ ok: boolean; models?: string[] }>(
         API.ADMIN.ORCHESTRATION.providerTest(providerId)
       );
-      setConnection({ status: 'pass', detail: `${res.modelCount ?? 0} models available` });
+      if (!res.ok) {
+        setConnection({
+          status: 'fail',
+          detail: "Couldn't reach this provider. Check server logs for details.",
+        });
+        setRunning(false);
+        return;
+      }
+      const modelCount = res.models?.length ?? 0;
+      setConnection({ status: 'pass', detail: `${modelCount} models available` });
     } catch {
       setConnection({
         status: 'fail',

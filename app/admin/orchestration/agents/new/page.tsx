@@ -2,7 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AgentForm } from '@/components/admin/orchestration/agent-form';
-import { getModels, getProviders } from '@/lib/orchestration/prefetch-helpers';
+import {
+  getEffectiveAgentDefaults,
+  getModels,
+  getProviders,
+} from '@/lib/orchestration/prefetch-helpers';
 
 export const metadata: Metadata = {
   title: 'New agent · AI Orchestration',
@@ -19,7 +23,11 @@ export const metadata: Metadata = {
  */
 
 export default async function NewAgentPage() {
-  const [providers, models] = await Promise.all([getProviders(), getModels()]);
+  const [providers, models, effectiveDefaults] = await Promise.all([
+    getProviders(),
+    getModels(),
+    getEffectiveAgentDefaults({ provider: '', model: '' }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -35,7 +43,12 @@ export default async function NewAgentPage() {
         <span>New</span>
       </nav>
 
-      <AgentForm mode="create" providers={providers} models={models} />
+      <AgentForm
+        mode="create"
+        providers={providers}
+        models={models}
+        effectiveDefaults={effectiveDefaults}
+      />
     </div>
   );
 }

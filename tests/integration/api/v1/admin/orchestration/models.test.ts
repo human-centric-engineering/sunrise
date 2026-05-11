@@ -45,9 +45,18 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiProviderModel: {
+      findMany: vi.fn(() => Promise.resolve([])),
+    },
+  },
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
 import { getAvailableModels, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 
@@ -167,6 +176,104 @@ describe('GET /api/v1/admin/orchestration/models', () => {
       await GET(makeGetRequest({ refresh: 'true' }));
 
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('DB-model merge', () => {
+    it('includes active AiProviderModel rows that the registry does not know about', async () => {
+      // Regression: operator-added models like `gpt-5` live in the DB
+      // matrix but not in the static fallback / OpenRouter registry —
+      // they must still appear in the agent form's Model dropdown.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getAvailableModels).mockReturnValue([
+        {
+          id: 'claude-opus-4-6',
+          name: 'Claude Opus 4.6',
+          provider: 'anthropic',
+          tier: 'frontier',
+          inputCostPerMillion: 15,
+          outputCostPerMillion: 75,
+          maxContext: 200000,
+          supportsTools: true,
+        },
+      ]);
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        {
+          id: 'm1',
+          slug: 'openai-gpt-5',
+          providerSlug: 'openai',
+          modelId: 'gpt-5',
+          name: 'GPT-5',
+          tierRole: 'thinking',
+          contextLength: 'very_high',
+          toolUse: 'strong',
+          costPerMillionTokens: 10,
+          isActive: true,
+        } as never,
+      ]);
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; provider: string; tier: string }> };
+      }>(response);
+      expect(data.data.models).toHaveLength(2);
+      const ids = data.data.models.map((m) => m.id).sort();
+      expect(ids).toEqual(['claude-opus-4-6', 'gpt-5']);
+    });
+
+    it('lets the DB row win when a (provider, modelId) pair exists in both sources', async () => {
+      // Operator curation is the source of truth: if the matrix and the
+      // registry disagree on a model's tier or cost, the matrix value
+      // is what the operator approved and the dropdown reflects that.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getAvailableModels).mockReturnValue([
+        {
+          id: 'gpt-4o',
+          name: 'GPT-4o (registry)',
+          provider: 'openai',
+          tier: 'frontier',
+          inputCostPerMillion: 5,
+          outputCostPerMillion: 15,
+          maxContext: 128000,
+          supportsTools: true,
+        },
+      ]);
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        {
+          id: 'm2',
+          slug: 'openai-gpt-4o',
+          providerSlug: 'openai',
+          modelId: 'gpt-4o',
+          name: 'GPT-4o (DB override)',
+          tierRole: 'worker',
+          contextLength: 'high',
+          toolUse: 'strong',
+          costPerMillionTokens: 3,
+          isActive: true,
+        } as never,
+      ]);
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; name: string; tier: string }> };
+      }>(response);
+      expect(data.data.models).toHaveLength(1);
+      expect(data.data.models[0].name).toBe('GPT-4o (DB override)');
+      expect(data.data.models[0].tier).toBe('mid'); // worker → mid
+    });
+
+    it('queries AiProviderModel with isActive: true filter', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getAvailableModels).mockReturnValue([]);
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([]);
+
+      await GET(makeGetRequest());
+
+      expect(vi.mocked(prisma.aiProviderModel.findMany)).toHaveBeenCalledWith({
+        where: { isActive: true },
+      });
     });
   });
 });

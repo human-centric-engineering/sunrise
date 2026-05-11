@@ -67,8 +67,10 @@ describe('AgentTestCard', () => {
 
   it('runs both checks successfully', async () => {
     const user = userEvent.setup();
+    // ProviderTestResult shape: { ok, models: string[], error? } — agent-test-card
+    // counts via models.length, not a separate modelCount field.
     mockPost
-      .mockResolvedValueOnce({ modelCount: 5 })
+      .mockResolvedValueOnce({ ok: true, models: ['m1', 'm2', 'm3', 'm4', 'm5'] })
       .mockResolvedValueOnce({ ok: true, latencyMs: 142 });
 
     render(<AgentTestCard providerId="prov-1" model="claude-opus-4-6" />);
@@ -97,7 +99,7 @@ describe('AgentTestCard', () => {
   it('shows model failure after provider success', async () => {
     const user = userEvent.setup();
     mockPost
-      .mockResolvedValueOnce({ modelCount: 3 })
+      .mockResolvedValueOnce({ ok: true, models: ['m1', 'm2', 'm3'] })
       .mockRejectedValueOnce(new Error('Model error'));
 
     render(<AgentTestCard providerId="prov-1" model="claude-opus-4-6" />);
@@ -123,7 +125,7 @@ describe('AgentTestCard', () => {
 
   it('shows error when no model is selected', async () => {
     const user = userEvent.setup();
-    mockPost.mockResolvedValueOnce({ modelCount: 5 });
+    mockPost.mockResolvedValueOnce({ ok: true, models: ['m1', 'm2', 'm3', 'm4', 'm5'] });
 
     render(<AgentTestCard providerId="prov-1" model={null} />);
     await user.click(screen.getByRole('button', { name: /run check/i }));

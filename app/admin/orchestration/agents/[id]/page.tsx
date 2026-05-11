@@ -10,7 +10,11 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { getModels, getProviders } from '@/lib/orchestration/prefetch-helpers';
+import {
+  getEffectiveAgentDefaults,
+  getModels,
+  getProviders,
+} from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent } from '@/types/prisma';
 
 export async function generateMetadata({
@@ -71,6 +75,11 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
 
   if (!agent) notFound();
 
+  const effectiveDefaults = await getEffectiveAgentDefaults({
+    provider: agent.provider,
+    model: agent.model,
+  });
+
   return (
     <div className="space-y-6">
       <nav className="text-muted-foreground text-xs">
@@ -87,7 +96,13 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
 
       <EvaluationTrendChart points={trend} />
 
-      <AgentForm mode="edit" agent={agent} providers={providers} models={models} />
+      <AgentForm
+        mode="edit"
+        agent={agent}
+        providers={providers}
+        models={models}
+        effectiveDefaults={effectiveDefaults}
+      />
     </div>
   );
 }

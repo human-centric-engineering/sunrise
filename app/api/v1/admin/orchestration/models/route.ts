@@ -18,8 +18,10 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
+import { prisma } from '@/lib/db/client';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { mergeDbModelsWithRegistry } from '@/lib/orchestration/llm/db-model-adapter';
 import {
   getAvailableModels,
   getRegistryFetchedAt,
@@ -39,9 +41,23 @@ export const GET = withAdminAuth(async (request, _session) => {
     log.info('Model registry refresh forced');
   }
 
-  const models = getAvailableModels();
+  // Merge operator-curated `AiProviderModel` rows on top of the
+  // in-memory registry. Without this step, models like `gpt-5` that
+  // live only in the matrix never reach the agent-form Model dropdown.
+  // See `lib/orchestration/llm/db-model-adapter.ts` for the rationale
+  // and the precedence rules (DB row wins on conflict).
+  const [registryModels, dbModels] = await Promise.all([
+    Promise.resolve(getAvailableModels()),
+    prisma.aiProviderModel.findMany({ where: { isActive: true } }),
+  ]);
+  const models = mergeDbModelsWithRegistry(registryModels, dbModels);
   const fetchedAt = getRegistryFetchedAt();
-  log.info('Models listed', { modelCount: models.length, refreshed: refresh });
+  log.info('Models listed', {
+    modelCount: models.length,
+    registryCount: registryModels.length,
+    dbCount: dbModels.length,
+    refreshed: refresh,
+  });
   return successResponse({
     models,
     refreshed: refresh,

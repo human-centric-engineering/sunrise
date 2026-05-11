@@ -49,7 +49,7 @@ import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-v
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import { slugSchema } from '@/lib/validations/common';
-import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
+import type { EffectiveAgentDefaults, ModelOption } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 export type { ModelOption };
@@ -92,6 +92,13 @@ export interface AgentFormProps {
   agent?: AiAgent;
   providers: (AiProviderConfig & { apiKeyPresent?: boolean })[] | null;
   models: ModelOption[] | null;
+  /**
+   * Server-resolved effective defaults. Used to pre-fill provider/model
+   * when the agent ships with empty strings (system-seeded agents like
+   * pattern-advisor) or when creating a new agent on a freshly-configured
+   * deployment. Optional for backwards-compatibility with older callers.
+   */
+  effectiveDefaults?: EffectiveAgentDefaults;
 }
 
 function toSlug(value: string): string {
@@ -104,7 +111,7 @@ function toSlug(value: string): string {
     .slice(0, 100);
 }
 
-export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
+export function AgentForm({ mode, agent, providers, models, effectiveDefaults }: AgentFormProps) {
   const router = useRouter();
   const isEdit = mode === 'edit';
 
@@ -115,6 +122,16 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
 
   const providerFallback = !providers || providers.length === 0;
   const modelFallback = !models || models.length === 0;
+
+  // Resolve the provider/model to seed into the form. Important: use `||`
+  // not `??` so empty strings on system-seeded agents (pattern-advisor,
+  // quiz-master, mcp-system, model-auditor) fall through to the
+  // server-resolved effective defaults instead of leaving the Select
+  // unselected and forcing the model field into text-input fallback mode.
+  const initialProvider = (agent?.provider ?? '') || effectiveDefaults?.provider || 'anthropic';
+  const initialModel = (agent?.model ?? '') || effectiveDefaults?.model || 'claude-opus-4-6';
+  const providerIsInherited = isEdit && !agent?.provider;
+  const modelIsInherited = isEdit && !agent?.model;
 
   const {
     register,
@@ -130,8 +147,8 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
       slug: agent?.slug ?? '',
       description: agent?.description ?? '',
       systemInstructions: agent?.systemInstructions ?? '',
-      provider: agent?.provider ?? 'anthropic',
-      model: agent?.model ?? 'claude-opus-4-6',
+      provider: initialProvider,
+      model: initialModel,
       temperature: agent?.temperature ?? 0.7,
       maxTokens: agent?.maxTokens ?? 4096,
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
@@ -555,6 +572,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 </SelectContent>
               </Select>
             )}
+            {providerIsInherited && (
+              <p className="text-muted-foreground text-xs">
+                Inherited from the first active provider. Saving will lock this agent to{' '}
+                <code className="font-mono">{currentProvider}</code>.
+              </p>
+            )}
           </div>
 
           {!providerFallback && providers.length > 1 && (
@@ -607,8 +630,30 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                 cost more per message. Default: <code>claude-opus-4-6</code>.
               </FieldHelp>
             </Label>
-            {modelFallback || filteredModels.length === 0 ? (
+            {modelFallback ? (
               <Input id="model" {...register('model')} className="font-mono" />
+            ) : filteredModels.length === 0 ? (
+              <>
+                <Select
+                  value=""
+                  onValueChange={(v) => setValue('model', v, { shouldValidate: true })}
+                  disabled
+                >
+                  <SelectTrigger id="model">
+                    <SelectValue placeholder="No models registered for this provider" />
+                  </SelectTrigger>
+                  <SelectContent />
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  No models are registered for{' '}
+                  <code className="font-mono">{currentProvider || '(no provider)'}</code>. Add one
+                  on the{' '}
+                  <Link href="/admin/orchestration/providers" className="underline">
+                    Providers page
+                  </Link>{' '}
+                  or pick a different provider above.
+                </p>
+              </>
             ) : (
               <Select
                 value={currentModel}
@@ -626,6 +671,12 @@ export function AgentForm({ mode, agent, providers, models }: AgentFormProps) {
                   ))}
                 </SelectContent>
               </Select>
+            )}
+            {modelIsInherited && (
+              <p className="text-muted-foreground text-xs">
+                Inherited from the system default chat model. Saving will lock this agent to{' '}
+                <code className="font-mono">{currentModel}</code>.
+              </p>
             )}
           </div>
 
