@@ -54,6 +54,56 @@ describe('AttachmentPickerButton', () => {
     expect(input.accept).toContain('application/pdf');
   });
 
+  describe('acceptMime narrowing', () => {
+    it('narrows accept to images only when only image MIMEs are passed', () => {
+      render(
+        <AttachmentPickerButton
+          acceptMime={['image/png', 'image/jpeg', 'image/gif', 'image/webp']}
+        />
+      );
+      const input = screen.getByTestId('attachment-picker-input');
+      if (!(input instanceof HTMLInputElement)) throw new Error('Expected HTMLInputElement');
+      expect(input.accept).not.toContain('application/pdf');
+      expect(input.accept).toContain('image/png');
+    });
+
+    it('narrows accept to PDF only when only the document MIME is passed', () => {
+      render(<AttachmentPickerButton acceptMime={['application/pdf']} />);
+      const input = screen.getByTestId('attachment-picker-input');
+      if (!(input instanceof HTMLInputElement)) throw new Error('Expected HTMLInputElement');
+      expect(input.accept).toBe('application/pdf');
+      // aria-label adapts to reflect what the picker actually accepts.
+      expect(screen.getByRole('button', { name: /attach a pdf/i })).toBeInTheDocument();
+    });
+
+    it('rejects a PDF dropped into an image-only picker via onError', async () => {
+      const onError = vi.fn();
+      const onAttachmentsChange = vi.fn();
+      render(
+        <AttachmentPickerButton
+          acceptMime={['image/png', 'image/jpeg', 'image/gif', 'image/webp']}
+          onAttachmentsChange={onAttachmentsChange}
+          onError={onError}
+        />
+      );
+      const input = screen.getByTestId('attachment-picker-input');
+      if (!(input instanceof HTMLInputElement)) throw new Error('Expected HTMLInputElement');
+      const pdf = makeFile('doc.pdf', 'application/pdf');
+      Object.defineProperty(input, 'files', { value: [pdf], configurable: true });
+      fireEvent.change(input);
+
+      await waitFor(() => {
+        expect(onError).toHaveBeenCalled();
+        expect(onError.mock.calls.at(-1)?.[0]).toMatch(/unsupported file type/i);
+      });
+      // Allowed list in the error message should mention images, not PDF.
+      expect(onError.mock.calls.at(-1)?.[0]).toMatch(/JPEG/i);
+      // The bad attachment must not have leaked into the on-change payload.
+      const lastChange = onAttachmentsChange.mock.calls.at(-1)?.[0] ?? [];
+      expect(lastChange).toHaveLength(0);
+    });
+  });
+
   it('disabled prop disables the button', () => {
     render(<AttachmentPickerButton disabled />);
     const button = screen.getByRole('button', { name: /attach an image or pdf/i });

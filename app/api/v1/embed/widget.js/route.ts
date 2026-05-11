@@ -813,7 +813,13 @@ export function GET(request: NextRequest): Response {
         showAttachError('You can attach at most ' + MAX_ATTACHMENTS + ' files per message.');
         return;
       }
-      var allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      // Build the allowed list from the per-toggle state so a user with
+      // only documentInputEnabled can't upload images, and vice versa.
+      // Mirrors the admin picker's acceptMime derivation.
+      var allowed = [];
+      if (cfg.imageInputEnabled) {
+        allowed.push('image/jpeg', 'image/png', 'image/gif', 'image/webp');
+      }
       if (cfg.documentInputEnabled) allowed.push('application/pdf');
       var combinedSize = 0;
       for (var p = 0; p < pendingAttachments.length; p++) {
@@ -873,9 +879,21 @@ export function GET(request: NextRequest): Response {
     }
 
     if (attachBtn && attachInput && (cfg.imageInputEnabled || cfg.documentInputEnabled)) {
-      var acceptMime = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      var acceptMime = [];
+      if (cfg.imageInputEnabled) {
+        acceptMime.push('image/jpeg', 'image/png', 'image/gif', 'image/webp');
+      }
       if (cfg.documentInputEnabled) acceptMime.push('application/pdf');
       attachInput.setAttribute('accept', acceptMime.join(','));
+      // Set the button's aria-label to reflect what the picker actually
+      // accepts — paperclip with no descriptor would be ambiguous.
+      var attachLabel =
+        cfg.imageInputEnabled && cfg.documentInputEnabled
+          ? 'Attach an image or PDF'
+          : cfg.imageInputEnabled
+            ? 'Attach an image'
+            : 'Attach a PDF';
+      attachBtn.setAttribute('aria-label', attachLabel);
       // capture="environment" prompts iOS/Android to offer the camera
       // alongside the photo library. Desktop browsers ignore it. The
       // attribute is set unconditionally; it's a hint, not a constraint.

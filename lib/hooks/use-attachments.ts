@@ -20,16 +20,38 @@ import {
 
 const MAX_ATTACHMENTS_PER_TURN = 10;
 
-/** MIME types that the picker accepts. Mirrors `chatAttachmentSchema`. */
-export const ATTACHMENT_ACCEPT_MIME = [
+/** Image MIME types — gated by the agent's `enableImageInput` toggle. */
+export const IMAGE_ATTACHMENT_MIME = [
   'image/jpeg',
   'image/png',
   'image/gif',
   'image/webp',
-  'application/pdf',
+] as const;
+
+/** Document MIME types — gated by the agent's `enableDocumentInput` toggle. */
+export const DOCUMENT_ATTACHMENT_MIME = ['application/pdf'] as const;
+
+/** Full attachment MIME set. Picker callers pass the subset they want
+ *  enabled — the union is only a backstop for callers that don't know
+ *  which toggles are on. */
+export const ATTACHMENT_ACCEPT_MIME = [
+  ...IMAGE_ATTACHMENT_MIME,
+  ...DOCUMENT_ATTACHMENT_MIME,
 ] as const;
 
 export type AttachmentMime = (typeof ATTACHMENT_ACCEPT_MIME)[number];
+
+export interface UseAttachmentsOptions {
+  /**
+   * Restrict the set of MIME types the hook accepts. When unset, every
+   * documented MIME is allowed. Set this to the union of the toggles
+   * that are actually on so a user with only `enableImageInput=true`
+   * can't drag-and-drop a PDF past the picker. The route layer still
+   * runs its own gate, but client-side rejection produces a clearer
+   * "this agent doesn't accept PDFs" error than a server SSE event.
+   */
+  allowedMimes?: readonly string[];
+}
 
 export interface AttachmentEntry {
   /** Stable id for React list keys + remove() targeting. */
@@ -78,16 +100,22 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-function isAcceptedMime(mime: string): mime is AttachmentMime {
-  return (ATTACHMENT_ACCEPT_MIME as readonly string[]).includes(mime);
-}
-
 function mintId(): string {
   // Slightly stronger than Math.random for React keys; not cryptographic.
   return `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function useAttachments(): UseAttachmentsResult {
+function describeAllowed(allowed: readonly string[]): string {
+  const hasImages = allowed.some((m) => m.startsWith('image/'));
+  const hasPdf = allowed.includes('application/pdf');
+  if (hasImages && hasPdf) return 'JPEG, PNG, GIF, WebP, PDF';
+  if (hasImages) return 'JPEG, PNG, GIF, WebP';
+  if (hasPdf) return 'PDF';
+  return 'none';
+}
+
+export function useAttachments(options: UseAttachmentsOptions = {}): UseAttachmentsResult {
+  const allowedMimes = options.allowedMimes ?? ATTACHMENT_ACCEPT_MIME;
   const [attachments, setAttachments] = useState<AttachmentEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,9 +150,9 @@ export function useAttachments(): UseAttachmentsResult {
       const newEntries: AttachmentEntry[] = [];
 
       for (const file of incoming) {
-        if (!isAcceptedMime(file.type)) {
+        if (!allowedMimes.includes(file.type)) {
           setError(
-            `${file.name}: unsupported file type "${file.type}". Allowed: JPEG, PNG, GIF, WebP, PDF.`
+            `${file.name}: unsupported file type "${file.type}". Allowed: ${describeAllowed(allowedMimes)}.`
           );
           return;
         }
@@ -180,7 +208,7 @@ export function useAttachments(): UseAttachmentsResult {
 
       setAttachments((prev) => [...prev, ...newEntries]);
     },
-    [attachments]
+    [attachments, allowedMimes]
   );
 
   const remove = useCallback((id: string) => {

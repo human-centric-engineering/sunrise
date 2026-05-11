@@ -30,6 +30,7 @@ import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinkin
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
 import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
+import { IMAGE_ATTACHMENT_MIME, DOCUMENT_ATTACHMENT_MIME } from '@/lib/hooks/use-attachments';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
@@ -283,6 +284,10 @@ export function AgentTestChat({
         <div className="flex items-end justify-between gap-2">
           {attachmentsEnabled ? (
             <AttachmentPickerButton
+              acceptMime={[
+                ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
+                ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
+              ]}
               disabled={streaming}
               pasteTarget={inputRef}
               controlsRef={attachmentsControlRef}

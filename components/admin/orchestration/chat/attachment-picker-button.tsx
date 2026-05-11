@@ -32,7 +32,13 @@ import {
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 
 export interface AttachmentPickerButtonProps {
-  /** Set of MIMEs the input should accept. Defaults to image + PDF. */
+  /**
+   * Set of MIMEs the input should accept. The hook's runtime validation
+   * uses the same list, so passing `['image/png', 'image/jpeg']` here
+   * actually rejects PDFs at the boundary — narrowing `accept` alone is
+   * cosmetic (the OS file dialog still lets users override it). Defaults
+   * to the full image + PDF set.
+   */
   acceptMime?: readonly string[];
   /** Called whenever the attached list changes (after add / remove / clear). */
   onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
@@ -110,9 +116,25 @@ export function AttachmentPickerButton({
   controlsRef,
   className,
 }: AttachmentPickerButtonProps) {
-  const { attachments, error, attach, remove, clear, payload } = useAttachments();
+  const { attachments, error, attach, remove, clear, payload } = useAttachments({
+    allowedMimes: acceptMime,
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isBusyRef = useRef(false);
+
+  // Compose an aria-label that reflects what's actually accepted so a
+  // screen reader user knows whether the button takes images, PDFs, or
+  // both. Mirrors the same logic the hook uses to format error copy.
+  const hasImageMime = acceptMime.some((m) => m.startsWith('image/'));
+  const hasPdfMime = acceptMime.includes('application/pdf');
+  const ariaLabel =
+    hasImageMime && hasPdfMime
+      ? 'Attach an image or PDF'
+      : hasImageMime
+        ? 'Attach an image'
+        : hasPdfMime
+          ? 'Attach a PDF'
+          : 'Attach a file';
 
   // Bubble error strings out as soon as they appear. The hook owns the
   // last-error state; this component is presentation only.
@@ -140,8 +162,12 @@ export function AttachmentPickerButton({
 
   // Clipboard paste: when the user pastes into the linked textarea and
   // the clipboard contains an image file, capture it. Avoids
-  // intercepting text or non-image paste contents.
+  // intercepting text or non-image paste contents. The handler is only
+  // bound when image attachments are enabled — pasting an image into a
+  // document-only agent would otherwise hit the hook's "unsupported"
+  // path and surface a confusing error.
   useEffect(() => {
+    if (!hasImageMime) return;
     const target = pasteTarget?.current;
     if (!target) return;
     const handlePaste = (event: ClipboardEvent) => {
@@ -162,7 +188,7 @@ export function AttachmentPickerButton({
     };
     target.addEventListener('paste', handlePaste);
     return () => target.removeEventListener('paste', handlePaste);
-  }, [pasteTarget, attach, disabled]);
+  }, [pasteTarget, attach, disabled, hasImageMime]);
 
   const handleClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -192,7 +218,7 @@ export function AttachmentPickerButton({
           type="button"
           size="sm"
           variant="outline"
-          aria-label="Attach an image or PDF"
+          aria-label={ariaLabel}
           onClick={handleClick}
           disabled={disabled}
           className={cn('shrink-0', className)}
