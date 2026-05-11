@@ -66,6 +66,7 @@ const TASK_TYPE_LABEL: Record<TaskType, string> = {
   chat: 'Chat',
   reasoning: 'Reasoning',
   embeddings: 'Embeddings',
+  audio: 'Audio',
 };
 
 // Stable label + colour mapping shared by the per-capability badges

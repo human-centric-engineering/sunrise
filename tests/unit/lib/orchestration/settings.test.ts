@@ -243,6 +243,10 @@ describe('hydrateSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      // Computed audio default is intentionally empty — audio support
+      // is matrix-driven, the operator picks from active rows with
+      // capabilities:['audio']. Mocking it as '' mirrors production.
+      audio: '',
     });
   });
 
@@ -321,6 +325,7 @@ describe('hydrateSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      audio: '',
     });
   });
 
@@ -334,6 +339,7 @@ describe('hydrateSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      audio: '',
     });
   });
 
@@ -348,6 +354,7 @@ describe('hydrateSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      audio: '',
     });
   });
 
@@ -361,6 +368,7 @@ describe('hydrateSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      audio: '',
     });
   });
 
@@ -582,6 +590,10 @@ describe('getOrchestrationSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      // Computed audio default is intentionally empty — audio support
+      // is matrix-driven, the operator picks from active rows with
+      // capabilities:['audio']. Mocking it as '' mirrors production.
+      audio: '',
     });
   });
 
@@ -662,6 +674,7 @@ describe('getOrchestrationSettings', () => {
       chat: 'claude-haiku-4-5',
       reasoning: 'claude-opus-4-6',
       embeddings: 'claude-haiku-4-5',
+      audio: '',
     });
   });
 

@@ -233,6 +233,11 @@ export function computeDefaultModelMap(): Record<TaskType, string> {
     // Empty signals "no suggestion" downstream — chat-tier models can't
     // embed, so any guess from this registry would mislead operators.
     embeddings: '',
+    // Same rule as embeddings: audio support is matrix-driven (see
+    // AiProviderModel.capabilities), not registry-driven. The
+    // settings form fetches options from the matrix directly; no
+    // computed suggestion makes sense here.
+    audio: '',
   };
 }
 
@@ -263,6 +268,11 @@ export function validateTaskDefaults(
       continue;
     }
     if (task === 'embeddings') continue;
+    // Audio support is matrix-driven (rows with capabilities:['audio'])
+    // not registry-driven, so we can't validate it via getModel here.
+    // The settings PATCH handler runs the matrix-existence check
+    // instead, which is the authoritative source for what's wired up.
+    if (task === 'audio') continue;
     if (!getModel(id)) {
       errors.push({ task, message: `Unknown model id: ${id}` });
     }

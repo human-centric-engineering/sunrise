@@ -84,6 +84,34 @@ export const PATCH = withAdminAuth(async (request, session) => {
     }
   }
 
+  // Audio is matrix-driven: the slot must point at an active
+  // AiProviderModel row whose capabilities include 'audio'. The
+  // hardcoded model-registry can't validate this (audio support is
+  // declared per row, not in the registry), and Zod refinements are
+  // sync, so the check runs here. Without it an admin could PATCH any
+  // string and the failure would only surface when a voice request
+  // hits the runtime and getAudioProvider() returns null.
+  if (body.defaultModels?.audio) {
+    const match = await prisma.aiProviderModel.findFirst({
+      where: {
+        modelId: body.defaultModels.audio,
+        isActive: true,
+        capabilities: { has: 'audio' },
+      },
+      select: { id: true },
+    });
+    if (!match) {
+      return errorResponse(
+        'Unknown audio model id — add a row to the model matrix with capability:"audio" first',
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { task: 'audio', value: body.defaultModels.audio },
+        }
+      );
+    }
+  }
+
   // Merge patch into existing row. For `defaultModels` we start from computed
   // defaults (so missing keys always resolve), overlay the current row, then
   // overlay the patch.

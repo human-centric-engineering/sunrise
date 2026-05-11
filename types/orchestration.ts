@@ -746,7 +746,7 @@ export interface AgentCostSummary {
 // ============================================================================
 
 /** Task categories that resolve to a default model via the settings singleton. */
-export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings'] as const;
+export const TASK_TYPES = ['routing', 'chat', 'reasoning', 'embeddings', 'audio'] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 /**

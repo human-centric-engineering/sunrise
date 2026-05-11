@@ -73,6 +73,7 @@ const TASK_TYPE_LABEL: Record<TaskType, string> = {
   chat: 'Chat',
   reasoning: 'Reasoning',
   embeddings: 'Embeddings',
+  audio: 'Audio',
 };
 
 export interface ProviderModelAgentRef {
