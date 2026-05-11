@@ -79,6 +79,8 @@ const agentFormSchema = z.object({
   visibility: z.enum(['internal', 'public', 'invite_only']),
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
   enableVoiceInput: z.boolean(),
+  enableImageInput: z.boolean(),
+  enableDocumentInput: z.boolean(),
   fallbackProviders: z.array(z.string()),
   knowledgeCategories: z.string().optional(),
   topicBoundaries: z.string().optional(),
@@ -161,6 +163,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
       rateLimitRpm: agent?.rateLimitRpm ?? null,
       enableVoiceInput: agent?.enableVoiceInput ?? false,
+      enableImageInput: agent?.enableImageInput ?? false,
+      enableDocumentInput: agent?.enableDocumentInput ?? false,
       fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
       knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
       topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
@@ -175,6 +179,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
   const currentInstructions = watch('systemInstructions');
   const currentIsActive = watch('isActive');
   const currentVoiceInput = watch('enableVoiceInput');
+  const currentImageInput = watch('enableImageInput');
+  const currentDocumentInput = watch('enableDocumentInput');
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
@@ -812,6 +818,90 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             />
           </div>
 
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="enableImageInput">
+                Enable image input{' '}
+                <FieldHelp title="Image attachments on chat">
+                  When on, users see a paperclip control in this agent&apos;s chat surfaces (admin
+                  test panel and any embed widgets) and can attach images (JPEG, PNG, WebP, GIF) to
+                  their message. Images are forwarded to the LLM as multimodal parts and discarded
+                  after the turn — bytes are not persisted. Default: off.
+                  <br />
+                  <br />
+                  <strong>Requirements:</strong>
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      The platform-wide switch at{' '}
+                      <strong>
+                        Admin → Orchestration → Settings → Image input globally enabled
+                      </strong>{' '}
+                      must be on.
+                    </li>
+                    <li>
+                      The agent&apos;s resolved chat model must carry the <code>vision</code>{' '}
+                      capability — seeded for GPT-4o, Claude 4.x, Gemini 2.5, and Grok 3 families.
+                      Other models return <code>IMAGE_NOT_SUPPORTED</code> at send time.
+                    </li>
+                    <li>
+                      Per-attachment cap: ~5 MB. Per-turn combined cap: ~25 MB. Max 10 attachments.
+                    </li>
+                  </ul>
+                </FieldHelp>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                Lets users attach images to a turn. Requires a vision-capable model.
+              </p>
+            </div>
+            <Switch
+              id="enableImageInput"
+              checked={currentImageInput}
+              onCheckedChange={(v) => setValue('enableImageInput', v, { shouldDirty: true })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="enableDocumentInput">
+                Enable document (PDF) input{' '}
+                <FieldHelp title="PDF attachments on chat">
+                  When on, users can attach PDFs to a chat turn alongside images. PDFs are sent to
+                  the LLM as native document parts (no pre-extraction). Bytes are not persisted.
+                  Default: off.
+                  <br />
+                  <br />
+                  <strong>Requirements:</strong>
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      The platform-wide switch at{' '}
+                      <strong>
+                        Admin → Orchestration → Settings → Document input globally enabled
+                      </strong>{' '}
+                      must be on.
+                    </li>
+                    <li>
+                      The agent&apos;s resolved chat model must carry the <code>documents</code>{' '}
+                      capability — currently the Claude 4.x family (incl. Bedrock Claude) only.
+                      OpenAI Chat Completions does not yet accept native PDF parts.
+                    </li>
+                    <li>
+                      Per-attachment cap: ~5 MB. Counts against the same per-turn 25 MB combined cap
+                      as images.
+                    </li>
+                  </ul>
+                </FieldHelp>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                Lets users attach PDFs to a turn. Requires a documents-capable model (Claude).
+              </p>
+            </div>
+            <Switch
+              id="enableDocumentInput"
+              checked={currentDocumentInput}
+              onCheckedChange={(v) => setValue('enableDocumentInput', v, { shouldDirty: true })}
+            />
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="maxHistoryTokens">
               Max history tokens{' '}
@@ -1145,6 +1235,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
               agentSlug={agent.slug}
               agentId={agent.id}
               voiceInputEnabled={currentVoiceInput}
+              imageInputEnabled={currentImageInput}
+              documentInputEnabled={currentDocumentInput}
               minHeight="min-h-[200px]"
             />
           ) : (

@@ -29,10 +29,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
+import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
+import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 import type { PendingApproval } from '@/types/orchestration';
 import { pendingApprovalSchema } from '@/lib/validations/orchestration';
 
@@ -53,6 +55,19 @@ export interface AgentTestChatProps {
    * provider and discarded after transcription.
    */
   voiceInputEnabled?: boolean;
+  /**
+   * When true, surfaces an attach-image control. Image attachments are
+   * sent on the next chat POST as base64 entries; bytes are not
+   * persisted. The chat handler additionally gates on the resolved
+   * model carrying the `'vision'` capability.
+   */
+  imageInputEnabled?: boolean;
+  /**
+   * When true, surfaces an attach-PDF control alongside images. PDFs
+   * require the resolved model to carry the `'documents'` capability —
+   * currently only the Claude family.
+   */
+  documentInputEnabled?: boolean;
   /** Placeholder text in the message textarea. */
   placeholder?: string;
   /** Minimum height of the reply panel. Tailwind class, e.g. `min-h-[120px]`. */
@@ -70,11 +85,14 @@ export function AgentTestChat({
   agentSlug,
   agentId,
   voiceInputEnabled = false,
+  imageInputEnabled = false,
+  documentInputEnabled = false,
   placeholder = DEFAULT_PLACEHOLDER,
   minHeight = 'min-h-[100px]',
   initialMessage = '',
 }: AgentTestChatProps) {
   const [message, setMessage] = useState(initialMessage);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<UserFacingError | null>(null);
@@ -83,6 +101,8 @@ export function AgentTestChat({
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachmentsControlRef = useRef<{ clear: () => void } | null>(null);
+  const attachmentsEnabled = imageInputEnabled || documentInputEnabled;
   // Tracks the previous `streaming` value so we refocus the textarea
   // only on the true → false transition — not on initial mount, which
   // would steal focus from other elements on the agent test page.
@@ -134,12 +154,20 @@ export function AgentTestChat({
     // Chat POSTs are not idempotent — retrying would duplicate the message
     // on the server. On network failure, show an error and let the user retry.
     try {
+      const requestBody: {
+        agentSlug: string;
+        message: string;
+        attachments?: ChatAttachment[];
+      } = { agentSlug, message: message.trim() };
+      if (attachments.length > 0) {
+        requestBody.attachments = attachments;
+      }
       const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
         method: 'POST',
         credentials: 'include',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentSlug, message: message.trim() }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!res.ok || !res.body) {
@@ -202,6 +230,10 @@ export function AgentTestChat({
             return;
           } else if (parsed.type === 'done') {
             typing.flush();
+            // Clear attachments after a successful send so the next
+            // turn starts fresh; mic + paperclip remain visible.
+            setAttachments([]);
+            attachmentsControlRef.current?.clear();
             return;
           }
         }
@@ -248,26 +280,43 @@ export function AgentTestChat({
           }}
           disabled={streaming}
         />
-        <div className="flex items-center justify-end gap-2">
-          {voiceInputEnabled && agentId && (
-            <MicButton
-              agentId={agentId}
-              endpoint="/api/v1/admin/orchestration/chat/transcribe"
+        <div className="flex items-end justify-between gap-2">
+          {attachmentsEnabled ? (
+            <AttachmentPickerButton
               disabled={streaming}
-              onTranscript={(text) =>
-                setMessage((current) => (current ? `${current.trimEnd()} ${text}` : text))
-              }
-              onError={(msg) =>
-                setError({
-                  title: 'Voice input failed',
-                  message: msg,
-                })
-              }
+              pasteTarget={inputRef}
+              controlsRef={attachmentsControlRef}
+              onAttachmentsChange={setAttachments}
+              onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
             />
+          ) : (
+            <div />
           )}
-          <Button type="submit" size="sm" disabled={streaming || !message.trim()}>
-            {streaming ? 'Streaming…' : 'Send'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {voiceInputEnabled && agentId && (
+              <MicButton
+                agentId={agentId}
+                endpoint="/api/v1/admin/orchestration/chat/transcribe"
+                disabled={streaming}
+                onTranscript={(text) =>
+                  setMessage((current) => (current ? `${current.trimEnd()} ${text}` : text))
+                }
+                onError={(msg) =>
+                  setError({
+                    title: 'Voice input failed',
+                    message: msg,
+                  })
+                }
+              />
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={streaming || (!message.trim() && attachments.length === 0)}
+            >
+              {streaming ? 'Streaming…' : 'Send'}
+            </Button>
+          </div>
         </div>
       </form>
 
