@@ -541,6 +541,43 @@ describe('AgentTestChat', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('Send button is type="button" so it cannot submit a parent <form>', () => {
+    // Regression: AgentTestChat is embedded inside the AgentForm <form>
+    // on the agent edit page's Test tab. If the Send button were
+    // type="submit", clicking it would submit the outer form and
+    // bounce the user back to the General tab. The button must be
+    // type="button" with an explicit onClick handler.
+    render(<AgentTestChat agentSlug="my-agent" initialMessage="hello" />);
+    const send = screen.getByRole('button', { name: /^send$/i });
+    expect(send).toBeInstanceOf(HTMLButtonElement);
+    expect((send as HTMLButtonElement).type).toBe('button');
+  });
+
+  it('clicking Send does not trigger an enclosing <form>.onSubmit', async () => {
+    // Simulates the real layout: AgentTestChat lives inside another
+    // form. If the Send button submits the wrapping form, the test
+    // will record an outerSubmit call — which we assert never happens.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, body: makeSseStream([contentFrame('ack'), doneFrame()]) });
+    vi.stubGlobal('fetch', fetchMock);
+    const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    const user = userEvent.setup();
+    render(
+      <form onSubmit={outerSubmit} data-testid="outer-form">
+        <AgentTestChat agentSlug="my-agent" initialMessage="hello" />
+      </form>
+    );
+
+    await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    // Critical assertion: the outer form must not have been submitted.
+    expect(outerSubmit).not.toHaveBeenCalled();
+  });
+
   it('shows a "Missing Agent" error when handleSend runs without an agentSlug', async () => {
     // Empty slug exercises the `if (!agentSlug)` early-return branch.
     const fetchMock = vi.fn();

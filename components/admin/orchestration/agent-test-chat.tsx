@@ -258,12 +258,17 @@ export function AgentTestChat({
 
   return (
     <div className="space-y-4">
-      <form
-        onSubmit={(e) => {
-          void handleSend(e);
-        }}
-        className="space-y-2"
-      >
+      {/*
+        Intentionally a <div>, not a <form>. AgentTestChat is embedded
+        inside the outer <AgentForm> <form>, and nested forms are not
+        valid HTML — browsers collapse them so a `type="submit"` button
+        in here would submit the AgentForm (saving the agent and
+        navigating back to the General tab). We handle Send via an
+        explicit button click + the textarea's Enter-key listener
+        instead, both of which call handleSend directly without
+        triggering form submission.
+      */}
+      <div className="space-y-2">
         <Label htmlFor="agent-test-chat-input">Your message</Label>
         <Textarea
           ref={inputRef}
@@ -276,6 +281,7 @@ export function AgentTestChat({
             // Enter submits, Shift+Enter inserts a newline.
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
+              e.stopPropagation();
               void handleSend(e as unknown as React.FormEvent);
             }
           }}
@@ -315,15 +321,20 @@ export function AgentTestChat({
               />
             )}
             <Button
-              type="submit"
+              type="button"
               size="sm"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleSend(e as unknown as React.FormEvent);
+              }}
               disabled={streaming || (!message.trim() && attachments.length === 0)}
             >
               {streaming ? 'Streaming…' : 'Send'}
             </Button>
           </div>
         </div>
-      </form>
+      </div>
 
       {warning && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
