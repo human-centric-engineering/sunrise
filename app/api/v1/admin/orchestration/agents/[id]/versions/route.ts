@@ -46,6 +46,11 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
         changeSummary: true,
         createdBy: true,
         createdAt: true,
+        // Surface the editor so the history reads as "v3 — model
+        // changed (Jane Doe, 12 May 2026)" rather than dropping the
+        // operator entirely. The relation already exists on the
+        // Prisma model (`AgentVersionCreator`).
+        creator: { select: { id: true, name: true, email: true } },
       },
     }),
     prisma.aiAgentVersion.count({ where: { agentId: id } }),

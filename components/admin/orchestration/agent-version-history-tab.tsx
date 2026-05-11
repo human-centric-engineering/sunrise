@@ -36,6 +36,9 @@ interface VersionEntry {
   changeSummary: string | null;
   createdBy: string;
   createdAt: string;
+  // Populated by the versions GET route. Optional so legacy rows (if
+  // any pre-creator-join calls are cached) degrade gracefully.
+  creator?: { id: string; name: string; email: string } | null;
 }
 
 export interface AgentVersionHistoryTabProps {
@@ -149,7 +152,15 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
                       {v.changeSummary ?? 'Configuration updated'}
                     </span>
                   </div>
-                  <p className="text-muted-foreground mt-0.5 text-xs">{formatDate(v.createdAt)}</p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {formatDate(v.createdAt)}
+                    {v.creator ? (
+                      <>
+                        {' · '}
+                        <span title={v.creator.email}>{v.creator.name}</span>
+                      </>
+                    ) : null}
+                  </p>
                 </div>
                 {idx > 0 && (
                   <Button

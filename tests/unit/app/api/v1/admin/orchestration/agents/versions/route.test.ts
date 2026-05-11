@@ -172,6 +172,42 @@ describe('GET /agents/:id/versions (list)', () => {
     const response = await ListVersions(makeListRequest('bad-id'), makeAgentIdParams('bad-id'));
     expect(response.status).toBe(400);
   });
+
+  it('selects the creator relation so the UI can show who made the change', async () => {
+    // Prior to this branch the route only selected `createdBy` (a
+    // CUID) and the UI had no way to render the user behind a version.
+    // Asserts both that the select includes creator and that creator
+    // fields make it back to the response body.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
+    vi.mocked(prisma.aiAgentVersion.findMany).mockResolvedValue([
+      {
+        ...makeVersion({ version: 1 }),
+        creator: { id: 'user-1', name: 'Jane Doe', email: 'jane@example.com' },
+      },
+    ] as never);
+    vi.mocked(prisma.aiAgentVersion.count).mockResolvedValue(1);
+
+    const response = await ListVersions(makeListRequest(AGENT_ID), makeAgentIdParams(AGENT_ID));
+    expect(response.status).toBe(200);
+
+    const findManyCall = vi.mocked(prisma.aiAgentVersion.findMany).mock.calls[0]?.[0];
+    expect(findManyCall?.select).toMatchObject({
+      creator: { select: { id: true, name: true, email: true } },
+    });
+
+    const body = await parseJson<{
+      data: Array<{
+        version: number;
+        creator: { id: string; name: string; email: string } | null;
+      }>;
+    }>(response);
+    expect(body.data[0].creator).toEqual({
+      id: 'user-1',
+      name: 'Jane Doe',
+      email: 'jane@example.com',
+    });
+  });
 });
 
 describe('GET /agents/:id/versions/:versionId (detail)', () => {
