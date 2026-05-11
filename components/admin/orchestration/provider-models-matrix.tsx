@@ -68,34 +68,50 @@ const TASK_TYPE_LABEL: Record<TaskType, string> = {
   embeddings: 'Embeddings',
 };
 
-// Stable label + colour mapping for the per-capability badges and the
-// filter chips. Order here drives both. Kept locally rather than
+// Stable label + colour mapping shared by the per-capability badges
+// in the table cells and the filter chips at the top. Same hue in
+// both surfaces so the operator's eye stitches "chip → badge → row"
+// without having to re-read the label. Kept locally rather than
 // hoisted to types/ because the colours are presentational and may
 // drift independently of the canonical capability set.
-const CAPABILITY_DISPLAY: Record<ModelCapability, { label: string; className: string }> = {
+//
+// `badgeClass` is the tinted style used by the cell badges.
+// `dotClass` is the solid swatch used on the inactive filter chips
+// — gives every chip a colour cue even when not pressed, so the
+// chip row reads as a key for the table colours below.
+const CAPABILITY_DISPLAY: Record<
+  ModelCapability,
+  { label: string; badgeClass: string; dotClass: string }
+> = {
   chat: {
     label: 'Chat',
-    className: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+    badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+    dotClass: 'bg-sky-500',
   },
   reasoning: {
     label: 'Reasoning',
-    className: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    dotClass: 'bg-purple-500',
   },
   embedding: {
     label: 'Embedding',
-    className: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    dotClass: 'bg-amber-500',
   },
   audio: {
     label: 'Audio',
-    className: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    badgeClass: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    dotClass: 'bg-teal-500',
   },
   image: {
     label: 'Image',
-    className: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    dotClass: 'bg-rose-500',
   },
   moderation: {
     label: 'Moderation',
-    className: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    badgeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    dotClass: 'bg-orange-500',
   },
 };
 
@@ -223,7 +239,7 @@ function capabilityBadges(capabilities: string[]): React.ReactElement {
         <Badge
           key={cap}
           variant="outline"
-          className={cn('text-xs', CAPABILITY_DISPLAY[cap].className)}
+          className={cn('text-xs', CAPABILITY_DISPLAY[cap].badgeClass)}
         >
           {CAPABILITY_DISPLAY[cap].label}
         </Badge>
@@ -452,35 +468,43 @@ export function ProviderModelsMatrix({
           className="w-[240px]"
         />
 
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by capability">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by capability">
           {MODEL_CAPABILITIES.map((cap) => {
             const active = activeCapabilities.has(cap);
+            const display = CAPABILITY_DISPLAY[cap];
             return (
-              <Button
+              <button
                 key={cap}
                 type="button"
-                variant={active ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 px-2 text-xs"
                 onClick={() => toggleCapability(cap)}
                 aria-pressed={active}
+                className={cn(
+                  'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs transition-colors',
+                  active
+                    ? cn(display.badgeClass, 'border-transparent shadow-sm')
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                )}
               >
-                {CAPABILITY_DISPLAY[cap].label}
-              </Button>
+                <span className={cn('h-1.5 w-1.5 rounded-full', display.dotClass)} aria-hidden />
+                {display.label}
+              </button>
             );
           })}
-          <Button
+          <button
             type="button"
-            variant={inUseOnly ? 'default' : 'outline'}
-            size="sm"
-            className="h-7 px-2 text-xs"
             onClick={() => setInUseOnly((v) => !v)}
             aria-pressed={inUseOnly}
             aria-label="Show only models with at least one bound agent"
             title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
+            className={cn(
+              'inline-flex h-6 items-center rounded-full border px-2 text-xs transition-colors',
+              inUseOnly
+                ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+                : 'border-input bg-background text-muted-foreground hover:bg-muted'
+            )}
           >
             Has agent
-          </Button>
+          </button>
         </div>
 
         <div className="ml-auto flex items-center gap-3">

@@ -48,6 +48,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tip } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
@@ -133,14 +134,58 @@ type FilterBucket = Capability;
 type SortKey = 'name' | 'inMatrix' | 'inUse' | 'tier' | 'context' | 'input' | 'output';
 type SortDir = 'asc' | 'desc';
 
-const FILTER_BUCKETS: Array<{ id: FilterBucket; label: string }> = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'reasoning', label: 'Reasoning' },
-  { id: 'embedding', label: 'Embedding' },
-  { id: 'image', label: 'Image' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'moderation', label: 'Moderation' },
-  { id: 'unknown', label: 'Unknown' },
+// Same hues as the matrix's capability badges so the chip row reads
+// as a key for the table colours below. `unknown` and the moderation
+// bucket only exist here (catalogue-only); the matrix lacks them but
+// otherwise the palette is identical.
+const FILTER_BUCKETS: Array<{
+  id: FilterBucket;
+  label: string;
+  activeClass: string;
+  dotClass: string;
+}> = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    activeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+    dotClass: 'bg-sky-500',
+  },
+  {
+    id: 'reasoning',
+    label: 'Reasoning',
+    activeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+    dotClass: 'bg-purple-500',
+  },
+  {
+    id: 'embedding',
+    label: 'Embedding',
+    activeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    dotClass: 'bg-amber-500',
+  },
+  {
+    id: 'image',
+    label: 'Image',
+    activeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    dotClass: 'bg-rose-500',
+  },
+  {
+    id: 'audio',
+    label: 'Audio',
+    activeClass: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
+    dotClass: 'bg-teal-500',
+  },
+  {
+    id: 'moderation',
+    label: 'Moderation',
+    activeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+    dotClass: 'bg-orange-500',
+  },
+  {
+    id: 'unknown',
+    label: 'Unknown',
+    activeClass: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200',
+    dotClass: 'bg-slate-400',
+  },
 ];
 
 const CAPABILITIES_TESTABLE: Capability[] = ['chat', 'embedding'];
@@ -432,35 +477,42 @@ export function ProviderModelsPanel({
               className="sm:max-w-sm"
               aria-label="Search models"
             />
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by capability">
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by capability">
               {FILTER_BUCKETS.map((b) => {
                 const active = activeBuckets.has(b.id);
                 return (
-                  <Button
+                  <button
                     key={b.id}
                     type="button"
-                    variant={active ? 'default' : 'outline'}
-                    size="sm"
-                    className="h-7 px-2 text-xs"
                     onClick={() => toggleBucket(b.id)}
                     aria-pressed={active}
+                    className={cn(
+                      'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs transition-colors',
+                      active
+                        ? cn(b.activeClass, 'border-transparent shadow-sm')
+                        : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                    )}
                   >
+                    <span className={cn('h-1.5 w-1.5 rounded-full', b.dotClass)} aria-hidden />
                     {b.label}
-                  </Button>
+                  </button>
                 );
               })}
-              <Button
+              <button
                 type="button"
-                variant={inUseOnly ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 px-2 text-xs"
                 onClick={() => setInUseOnly((v) => !v)}
                 aria-pressed={inUseOnly}
                 aria-label="Show only models with at least one bound agent"
                 title="Show only models that at least one active agent is directly assigned to. Models that only serve as a default-settings fallback are hidden."
+                className={cn(
+                  'inline-flex h-6 items-center rounded-full border px-2 text-xs transition-colors',
+                  inUseOnly
+                    ? 'border-transparent bg-slate-700 text-white shadow-sm dark:bg-slate-300 dark:text-slate-900'
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted'
+                )}
               >
                 Has agent
-              </Button>
+              </button>
             </div>
           </div>
 
