@@ -146,6 +146,45 @@ const unit: SeedUnit = {
         bestRole: 'High-throughput loops',
       },
 
+      // OpenAI — Reasoning model
+      {
+        slug: 'openai-o3-mini',
+        providerSlug: 'openai',
+        modelId: 'o3-mini',
+        name: 'o3-mini',
+        description:
+          'OpenAI reasoning model. Uses the /v1/responses API for explicit multi-step thinking; ideal for hard planning and verification tasks where chain-of-thought quality matters more than speed.',
+        capabilities: ['reasoning'],
+        tierRole: 'thinking',
+        reasoningDepth: 'very_high',
+        latency: 'medium',
+        costEfficiency: 'medium',
+        contextLength: 'very_high',
+        toolUse: 'strong',
+        bestRole: 'Hard reasoning, planning, verification',
+      },
+
+      // OpenAI — Audio (Whisper) — unlocks the streaming-chat mic input.
+      // The audio capability is resolved at runtime by
+      // lib/orchestration/llm/provider-manager.ts → getAudioProvider(),
+      // which queries AiProviderModel for rows with capabilities ⊇ ['audio'].
+      {
+        slug: 'openai-whisper-1',
+        providerSlug: 'openai',
+        modelId: 'whisper-1',
+        name: 'Whisper 1',
+        description:
+          'OpenAI speech-to-text. Resolved by getAudioProvider() when the operator clicks the mic in the streaming chat. No reasoning depth — Whisper is a transcription model, not an LLM.',
+        capabilities: ['audio'],
+        tierRole: 'infrastructure',
+        reasoningDepth: 'none',
+        latency: 'fast',
+        costEfficiency: 'high',
+        contextLength: 'n_a',
+        toolUse: 'none',
+        bestRole: 'Speech-to-text transcription',
+      },
+
       // OpenAI — Embedding models
       {
         slug: 'openai-text-embedding-3-small',

@@ -178,7 +178,14 @@ const ADD_PROVIDER_MODELS_DEFINITION = {
               description: { type: 'string', description: 'Brief model description.' },
               capabilities: {
                 type: 'array',
-                items: { type: 'string', enum: ['chat', 'embedding'] },
+                // Mirrors MODEL_CAPABILITIES in types/orchestration.ts.
+                // Intentionally excludes 'unknown' — the matrix rejects
+                // that placeholder; an auditor proposing it would just
+                // fail validation downstream.
+                items: {
+                  type: 'string',
+                  enum: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+                },
               },
               tierRole: {
                 type: 'string',
