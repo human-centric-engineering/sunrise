@@ -41,21 +41,45 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const { id: rawId } = await params;
   const id = parseTagId(rawId);
 
+  // Return the actual linked documents and agents — drives the drill-down in
+  // the Tags admin so operators can see exactly which docs/agents a tag
+  // covers, not just the count. Capped at 200 each; pagination on this view
+  // can come later if a tag ever spans more than that.
   const tag = await prisma.knowledgeTag.findUnique({
     where: { id },
     include: {
       _count: { select: { documents: true, agents: true } },
+      documents: {
+        include: {
+          document: {
+            select: { id: true, name: true, fileName: true, scope: true, status: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 200,
+      },
+      agents: {
+        include: {
+          agent: {
+            select: { id: true, name: true, slug: true, isActive: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 200,
+      },
     },
   });
   if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
 
   log.info('Knowledge tag fetched', { tagId: id });
 
-  const { _count, ...rest } = tag;
+  const { _count, documents, agents, ...rest } = tag;
   return successResponse({
     ...rest,
     documentCount: _count.documents,
     agentCount: _count.agents,
+    documents: documents.map((d) => d.document),
+    agents: agents.map((a) => a.agent),
   });
 });
 

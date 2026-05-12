@@ -88,6 +88,12 @@ function makeTag(
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
     _count: count,
+    // GET now returns the linked docs/agents as join-shaped relations so the
+    // drill-down on the Tags admin can show what each tag actually covers.
+    // Tests pass through arrays via overrides when they want to assert on
+    // these — otherwise the route flattens them into empty arrays.
+    documents: [] as Array<{ document: unknown }>,
+    agents: [] as Array<{ agent: unknown }>,
     ...overrides,
   };
 }
