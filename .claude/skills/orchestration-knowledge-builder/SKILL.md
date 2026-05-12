@@ -192,7 +192,7 @@ Search has two modes selected by the `hybridEnabled` flag on the `SearchConfig` 
 | `vectorWeight` | `1.0`   | Multiplier on the vector similarity score                          |
 | `bm25Weight`   | `1.0`   | Multiplier on the BM25-flavoured keyword score (range `0.1`–`2.0`) |
 
-⚠️ The keyword-weight field is **`bm25Weight`**, not `keywordWeight`. Storing `keywordWeight` is a silent no-op — the resolver ignores unknown keys.
+**Footgun:** the keyword-weight field is `bm25Weight`, not `keywordWeight`. Storing `keywordWeight` is a silent no-op — the resolver ignores unknown keys.
 
 **Search call defaults** (function signature on `searchKnowledge`):
 
