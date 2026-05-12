@@ -39,7 +39,29 @@ describe('SetupWizard — step content', () => {
 
   describe('Step 1 — StepProvider', () => {
     it('already-exists card auto-shows when providers exist and Continue advances', async () => {
-      const fetchMock = makeFetchMock({ providerTotal: 1 });
+      // Detection includes a present key so the no-keys-detected
+      // branch (which now takes priority over hasExisting) doesn't
+      // fire. This mirrors the real world: an operator with a
+      // working provider also has the matching env var set.
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: true,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
       vi.stubGlobal('fetch', fetchMock);
       const user = userEvent.setup();
       seedStorage(0);
@@ -66,6 +88,45 @@ describe('SetupWizard — step content', () => {
         return init?.method === 'POST';
       }).length;
       expect(postCallsAfter).toBe(postCallsBefore);
+    });
+
+    it('no-keys warning overrides the already-have-provider card when env keys are missing', async () => {
+      // Operator has a provider row in the DB but disabled / rotated
+      // the matching env var. The provider can't authenticate, so
+      // the wizard must show the missing-key warning instead of the
+      // "you already have a provider configured" success card.
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: false,
+            alreadyConfigured: true,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      seedStorage(0);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
+      });
+      // Success card must not appear when keys are missing.
+      expect(screen.queryByText(/already have a provider configured/i)).not.toBeInTheDocument();
+      // The missing env var the existing provider row points at is
+      // still listed so the operator knows what to restore.
+      expect(screen.getByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
     });
 
     it('shows the env-setup hint (not the manual form) when no providers and no env vars detected', async () => {

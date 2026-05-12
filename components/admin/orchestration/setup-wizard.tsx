@@ -460,6 +460,16 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     [detection]
   );
 
+  // True if at least one hosted provider has its env key set. Used to
+  // gate the "no keys detected" warning ahead of every other branch —
+  // an empty env means even an existing provider row can't
+  // authenticate, so the warning has to take priority over the
+  // "you already have a provider configured" success card.
+  const anyKeyPresent = useMemo(
+    () => (detection ?? []).some((d) => d.apiKeyPresent && !d.isLocal),
+    [detection]
+  );
+
   // Cloud providers the operator could set an env var for. Excludes
   // `isLocal` rows (Ollama doesn't use API keys) and any provider
   // that's already wired up, so the "set one of these and restart"
@@ -468,7 +478,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   const candidateEnvVars = useMemo(
     () =>
       (detection ?? [])
-        .filter((d) => !d.isLocal && !d.alreadyConfigured && d.apiKeyEnvVar)
+        .filter((d) => !d.isLocal && d.apiKeyEnvVar)
         .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar as string })),
     [detection]
   );
@@ -605,6 +615,42 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     );
   }
 
+  // Env-key absence is a hard block — it takes priority over the
+  // "you already have a provider configured" success card because a
+  // provider row without its env var can't authenticate at runtime.
+  // The operator may have just rotated or disabled a key, leaving a
+  // stale row in the DB; surfacing the missing-key warning here is
+  // the only useful signal.
+  if (!anyKeyPresent) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-900/10">
+          <AlertTriangle
+            className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400"
+            aria-hidden="true"
+          />
+          <div className="space-y-2">
+            <div className="font-medium">No LLM API keys detected in your environment</div>
+            <p className="text-muted-foreground text-xs">
+              {hasExisting
+                ? "You have a provider configured, but its API key isn't set in this environment — the provider can't authenticate. Restore the env var (or set one of the alternatives below) and restart the server."
+                : 'Sunrise reads provider API keys from environment variables at startup — it never stores them in the database. Add one of the following to your .env file and restart the server, then reopen this wizard.'}
+            </p>
+            {candidateEnvVars.length > 0 && (
+              <ul className="text-muted-foreground space-y-0.5 text-xs">
+                {candidateEnvVars.map((c) => (
+                  <li key={c.envVar}>
+                    <code className="bg-muted/60 rounded px-1 py-0.5">{c.envVar}</code> — {c.name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (hasExisting) {
     return (
       <div className="space-y-4">
@@ -676,45 +722,10 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     );
   }
 
-  // No env keys detected — show the env-setup guidance and stop.
-  // Without a matching env var, a manually-created provider can't
-  // authenticate, so there is no useful next step inside the wizard;
-  // the operator has to leave, edit `.env`, restart, and come back.
-  // No escape hatch — by the time we render this branch, manualMode
-  // is also unreachable because the user has no way to opt into it.
-  if (detectedAvailable.length === 0) {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-900/10">
-          <AlertTriangle
-            className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400"
-            aria-hidden="true"
-          />
-          <div className="space-y-2">
-            <div className="font-medium">No LLM API keys detected in your environment</div>
-            <p className="text-muted-foreground text-xs">
-              Sunrise reads provider API keys from environment variables at startup — it never
-              stores them in the database. Add one of the following to your <code>.env</code> file
-              and restart the server, then reopen this wizard.
-            </p>
-            {candidateEnvVars.length > 0 && (
-              <ul className="text-muted-foreground space-y-0.5 text-xs">
-                {candidateEnvVars.map((c) => (
-                  <li key={c.envVar}>
-                    <code className="bg-muted/60 rounded px-1 py-0.5">{c.envVar}</code> — {c.name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Manual path: operator opted into manual mode from the detection
   // list via "Configure manually instead →". Only reachable when at
-  // least one env key was detected.
+  // least one env key was detected; the no-keys branch above is the
+  // single source of "no API key" UX.
   return (
     <form
       onSubmit={(e) => {
