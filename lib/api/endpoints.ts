@@ -79,6 +79,8 @@ export const API = {
       agentInviteTokenById: (id: string, tokenId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/invite-tokens/${tokenId}`,
       agentVersions: (id: string): string => `/api/v1/admin/orchestration/agents/${id}/versions`,
+      agentVersionById: (id: string, versionId: string): string =>
+        `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}`,
       agentVersionRestore: (id: string, versionId: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/versions/${versionId}/restore`,
       agentEmbedTokens: (id: string): string =>

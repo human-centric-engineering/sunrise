@@ -47,6 +47,8 @@ vi.mock('@/lib/api/endpoints', () => ({
     ADMIN: {
       ORCHESTRATION: {
         agentVersions: (id: string) => `/api/v1/admin/orchestration/agents/${id}/versions`,
+        agentVersionById: (id: string, vId: string) =>
+          `/api/v1/admin/orchestration/agents/${id}/versions/${vId}`,
         agentVersionRestore: (id: string, vId: string) =>
           `/api/v1/admin/orchestration/agents/${id}/versions/${vId}/restore`,
       },
@@ -283,6 +285,200 @@ describe('AgentVersionHistoryTab', () => {
     // APIClientError.message is shown verbatim; generic Error shows the fallback
     await waitFor(() => {
       expect(screen.getByText('Forbidden: insufficient permissions')).toBeInTheDocument();
+    });
+  });
+
+  // ─── Expandable diff ────────────────────────────────────────────────────────
+  //
+  // Each row in the history list expands to show a Before → After
+  // table built from the version's snapshot and the next-older
+  // snapshot. The list fetch returns metadata only; snapshots are
+  // pulled on demand.
+  describe('expandable diff', () => {
+    const SNAPSHOTS: Record<string, { snapshot: Record<string, unknown> }> = {
+      'ver-3': {
+        snapshot: {
+          model: 'claude-opus-4-6',
+          temperature: 0.9,
+          systemInstructions: 'You are concise and helpful.',
+        },
+      },
+      'ver-2': {
+        snapshot: {
+          model: 'claude-sonnet-4-6',
+          temperature: 0.7,
+          systemInstructions: 'You are concise and helpful.',
+        },
+      },
+      'ver-1': {
+        snapshot: {
+          model: 'claude-sonnet-4-6',
+          temperature: 0.5,
+          systemInstructions: 'Initial system prompt.',
+        },
+      },
+    };
+
+    function routeFetch(url: string): Promise<unknown> {
+      // Versions list
+      if (url.endsWith('/versions?limit=50')) return Promise.resolve(VERSIONS);
+      // Version detail — match the trailing /:versionId
+      const detailMatch = url.match(/\/versions\/(ver-[^/]+)$/);
+      if (detailMatch) {
+        const id = detailMatch[1];
+        const detail = SNAPSHOTS[id];
+        if (!detail) return Promise.reject(new Error(`unknown version ${id}`));
+        return Promise.resolve({ id, version: 0, ...detail });
+      }
+      return Promise.reject(new Error(`unmatched URL: ${url}`));
+    }
+
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => routeFetch(url));
+    });
+
+    it('expands a row and shows the Before → After diff against the previous version', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      // The expand control wraps the row content; clicking the
+      // changeSummary text targets it.
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+
+      // Diff table headers appear …
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Field' })).toBeInTheDocument();
+        expect(screen.getByRole('columnheader', { name: 'Before' })).toBeInTheDocument();
+        expect(screen.getByRole('columnheader', { name: 'After' })).toBeInTheDocument();
+      });
+
+      // … and the changed fields are listed with before/after values.
+      expect(screen.getByText('Model')).toBeInTheDocument();
+      expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
+      expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+      expect(screen.getByText('Temperature')).toBeInTheDocument();
+    });
+
+    it('lazy-fetches snapshots on expand and caches them across rows', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      // Only the list fetch has fired so far.
+      const listCallsOnly = mockGet.mock.calls.filter(([u]) =>
+        String(u).endsWith('/versions?limit=50')
+      );
+      expect(listCallsOnly).toHaveLength(1);
+
+      // Expand v3 → fetches ver-3 (after) AND ver-2 (before).
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+
+      await waitFor(() => {
+        const detailUrls = mockGet.mock.calls
+          .map(([u]) => String(u))
+          .filter((u) => /\/versions\/ver-/.test(u));
+        expect(detailUrls).toContain(
+          `/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-3`
+        );
+        expect(detailUrls).toContain(
+          `/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2`
+        );
+      });
+
+      const callsAfterFirstExpand = mockGet.mock.calls.length;
+
+      // Expand v2 → ver-2 is already cached (used as "before" for v3),
+      // ver-1 is new. Only one new fetch.
+      await user.click(screen.getByText('Changed temperature'));
+
+      await waitFor(() => {
+        const detailUrls = mockGet.mock.calls
+          .map(([u]) => String(u))
+          .filter((u) => /\/versions\/ver-/.test(u));
+        expect(detailUrls).toContain(
+          `/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-1`
+        );
+      });
+
+      // Exactly one new call between the two expansions (ver-1).
+      expect(mockGet.mock.calls.length - callsAfterFirstExpand).toBe(1);
+    });
+
+    it('renders the oldest row as an "Initial value" view (no Before column)', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v1')).toBeInTheDocument();
+      });
+
+      // The v1 row has no changeSummary, so it renders the fallback
+      // "Configuration updated" label — click that to expand.
+      await user.click(screen.getByText('Configuration updated'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Initial value' })).toBeInTheDocument();
+      });
+      // No "Before" / "After" pair on the initial version.
+      expect(screen.queryByRole('columnheader', { name: 'After' })).not.toBeInTheDocument();
+    });
+
+    it('collapses the row when clicked a second time', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      const trigger = screen.getByText('Updated model to claude-opus-4-6');
+      await user.click(trigger);
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Field' })).toBeInTheDocument();
+      });
+
+      await user.click(trigger);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows a snapshot error inline without breaking the rest of the list', async () => {
+      const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
+      mockGet.mockImplementation((url: string) => {
+        if (url.endsWith('/versions?limit=50')) return Promise.resolve(VERSIONS);
+        if (/\/versions\/ver-3$/.test(url)) {
+          return Promise.reject(
+            new MockAPIClientError('Snapshot is unavailable', 'NOT_FOUND', 404)
+          );
+        }
+        return Promise.resolve({ id: 'x', version: 0, snapshot: {} });
+      });
+
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Snapshot is unavailable')).toBeInTheDocument();
+      });
+
+      // Other rows remain usable — the list fetch succeeded.
+      expect(screen.getByText('v2')).toBeInTheDocument();
     });
   });
 
