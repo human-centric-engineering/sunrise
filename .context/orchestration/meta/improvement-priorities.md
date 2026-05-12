@@ -361,6 +361,149 @@ These were P0–P2 in `maturity-analysis.md` but lose value or relevance under s
 
 ---
 
+## Tier 5 — Proposed: Graph-shaped agent enablement
+
+A new category of improvements grounded in a single observation: **the way an agent is configured today is linear (a freeform text prompt), but the way an agent actually has to work is graph-shaped** — exploring, hitting dead ends, backing up, trying alternatives, and only converging when the constraints say it's safe to stop. Agents execute literally; they do not smooth over ambiguity the way humans do. Wherever the platform asks an agent to _infer_ what was meant from English prose instead of _check itself against an executable signal_, we leave latent quality on the table.
+
+The execution layer is already graph-shaped — DAG workflows, `route`, `parallel`, `reflect`, `orchestrator`, conditional retries with `maxRetries` back-edges, human approval pauses — so the gap is not in how steps fire. The gap is in **what shapes the agent's behaviour and what it gets to feed back on**:
+
+- Agent instructions are linear text. There is no structured way to express "these are the executable constraints the agent must satisfy" — only an English description the agent is asked to reconstruct correctly every call, on every model upgrade, across every fork.
+- The `reflect` and `evaluate` steps are introspective: an LLM grading an LLM. They do not connect agent output to an external pass/fail signal (a test suite, a JSON-schema check, a synthetic-user run, a CI build).
+- The feedback loops themselves are unobserved. If `reflect` quietly stops converging or `evaluate` scores drift downward as the corpus changes, no metric surfaces it — the same way flaky tests rot human teams, but with no green/red light to spot it.
+- There is no first-class primitive for "try N approaches, suspend the unfinished ones, compare them, pick the best." `parallel` fans out and joins; it does not _select_.
+
+Closing these gaps is what differentiates an agent platform that "kind of works most of the time" from one that holds its quality posture as the underlying models change. The four items below are the closure. They are ordered by leverage — item 20 unlocks the typing for the rest.
+
+| #   | Improvement                                                               | Value     | Effort       | Status         |
+| --- | ------------------------------------------------------------------------- | --------- | ------------ | -------------- |
+| 20  | Executable behavioural specifications on agents                           | Very high | High         | ⚪ Not started |
+| 21  | External-signal feedback — `run_check` capability + `reflect` integration | High      | Moderate     | ⚪ Not started |
+| 22  | Feedback-loop health observability                                        | Moderate  | Low–Moderate | ⚪ Not started |
+| 23  | `branch_and_select` step — explore-and-pick primitive                     | Moderate  | Moderate     | ⚪ Not started |
+
+### 20. Executable behavioural specifications on agents — ⚪ Not started
+
+**Why it matters.** Today an agent's behaviour is shaped by a `systemPrompt` string and a set of bound capabilities. That works when the agent does narrow, well-bounded things. It breaks down the moment the agent has to make judgement calls — answering with the right tone, refusing the right topics, citing in the right format, returning structured data in a stable shape across model versions. The platform's response so far has been "tighten the prompt" and `output_guard`. Both are still inference: the agent has to _re-derive_ the contract from English every turn, and the guard fires after the fact rather than constraining the search space.
+
+An executable specification flips that. Instead of (or alongside) a freeform prompt, each agent gets a **suite of behavioural assertions** stored as structured rows: scenario input, expected behaviour predicates, a category (refusal / format / tone / citation / tool-use), and a severity (blocking / warning). Predicates are concrete and machine-checkable — `output.matchesSchema(Z)`, `output.containsCitation()`, `output.refusedTopics(['legal advice'])`, `output.toneScore({faithful, polite}) >= 0.8`, `output.calledTool('search_knowledge_base')`, `output.length < 500`. A new `AiAgentBehaviourSpec` table is owned by the agent and versioned alongside `AiAgentVersion`, so a publish snapshots both the prompt and the spec atomically — drift between "what the agent is meant to do" and "what's deployed" stops being possible.
+
+Two execution paths consume the spec:
+
+1. **Pre-release validation.** A new "Behaviour" tab on the agent form runs every assertion against its bound test scenario on Save → Publish. Failing assertions either block publish or emit a publish-time warning (per-assertion severity flag), with a per-assertion diff: scenario, actual output, which predicate failed and how. This is the same shape as a unit-test suite, surfaced inside admin where it cannot rot in a separate repo.
+2. **Inline runtime evaluation.** Each agent response (post-stream, fire-and-forget so it never blocks the chat reply) is scored against the predicates that apply to the runtime context — schema-shape and tool-call predicates apply universally; topic-refusal predicates apply only when the conversation matches a tag. Failures emit a `behaviour_violation` audit event and a new named metric on `AiEvaluationLog` so violations sit next to faithfulness / groundedness / relevance in the existing dashboards.
+
+**UI shape.** A new tab on the Agent form ("Behaviour"), positioned between "Instructions" and "Capabilities". Empty state explains what behavioural assertions are and offers three starter packs (Refusal, Format, Tone) that seed common predicates. Each assertion row shows: scenario name, an inline editable test prompt, a category chip, a predicate builder (dropdown of predicate types → operand fields → expected value), and a per-row "Run now" button that exercises the assertion against the agent's current published prompt+capabilities, returning pass/fail + actual output inline. A summary strip at the top of the tab shows pass / fail counts and aggregate runtime, with one-click "Run all" before publishing. The conversation trace viewer gains a "Behavioural assertions" sub-panel per assistant message, showing which predicates were evaluated and their results — the same affordance as the existing citation-guard sub-panel, so admins learn one inspection pattern and reuse it.
+
+**Benefits.**
+
+- **Drift detection across model upgrades.** When a fork swaps GPT-4o for Claude 4.5 Sonnet, the suite either still passes or fingerprints what changed. Today that regression surfaces as user complaints.
+- **A real "definition of done" for an agent.** The prompt becomes the implementation; the spec becomes the contract. New contributors can read the spec to know what the agent is _for_, not just how it's currently phrased.
+- **Closes the authoring↔observability gap.** The same predicates that gate publish are the ones reported on in analytics, so the platform stops having one definition of "good" at publish time and a different one (faithfulness/groundedness/relevance) at runtime.
+- **Shareable across forks.** Forks can ship libraries of predicates (a compliance pack for regulated domains, a tone pack for consumer-facing agents). A freeform prompt cannot carry that.
+- **Backbone for items 21–23.** The structured contract becomes the natural argument shape for `run_check`, the natural unit of measurement for feedback-loop health, and a clean selector criterion for `branch_and_select`.
+
+**Risks.**
+
+- **Brittleness.** Predicates that are too strict flag every prompt change as a regression. Mitigation: ship semantic (LLM-judged) predicates for tone/style and structural (schema, tool-called, regex) predicates for the contract. Default starter packs lean structural.
+- **LLM-judged predicates re-introduce the LLM-grades-LLM weakness.** Mitigation: prefer structural predicates where possible; require a reference example for every LLM-judged predicate so the judge has a calibration anchor; never let a single LLM-judged failure block publish (require N-of-M).
+- **Adoption friction.** An empty Behaviour tab is worse than no tab — it shouts "more work to do." Mitigation: starter packs that seed five sensible predicates the moment the tab is opened, plus per-assertion "Run now" so admins see immediate feedback on whether their current prompt already satisfies the assertion.
+- **Storage overhead.** Per-response runtime evaluation writes a row per applicable predicate per message. Mitigation: sampled evaluation (configurable, default 20% of messages once an agent crosses N requests/day), with always-on for the structural predicates that are cheap.
+
+**Difficulty: High.** Schema work (`AiAgentBehaviourSpec` versioned alongside `AiAgentVersion`), a predicate evaluator with N built-in predicate types and a registration surface for custom ones, publish-time blocking + runtime scoring + audit events + new evaluation-log metric, a new tab on the agent form with a meaningful empty state and predicate builder, trace-viewer integration. Realistically two to three sprints.
+
+### 21. External-signal feedback — `run_check` capability + `reflect` integration — ⚪ Not started
+
+**Why it matters.** `reflect` today is LLM-grades-LLM: the same model that drafted the answer is asked whether the answer is good. That works for surface-level quality issues but is structurally weak for two cases — (a) anything where the truth lives in the world (does this SQL execute? does this code pass the tests? does this email parse as valid HTML? does this JSON match the downstream schema?), and (b) anything where the model is wrong in a way it is structurally unable to spot (a confident hallucination of a method signature, a refusal that should not have been a refusal). The fix is to make the feedback signal _external_: connect the agent's output to a runnable check whose pass/fail is determined by something other than another LLM call.
+
+The shape is a new `run_check` system capability that takes `{ checkType, payload, config }` and returns `{ passed, signal, details? }`. The `checkType` discriminates: `'jsonSchema'` validates the payload against a Zod-encoded schema; `'regex'` runs a regex; `'httpProbe'` issues a request and checks the response shape; `'sqlExecute'` runs the SQL against a read-only sandbox connection (allowlisted per-agent via `customConfig`); `'shell'` (gated behind explicit opt-in env var, never default) runs a command in a sandboxed worker. Agents can call `run_check` directly inside a tool loop, but the higher-leverage path is wiring it into `reflect`: the executor gains a `checks: CheckSpec[]` option, and an iteration is only marked converged when _every_ check returns `passed: true` (or `maxIterations` is exhausted). The check signal — the actual error message, the failing schema path, the wrong row count — is fed into the next iteration's revision prompt so the agent knows specifically what to fix instead of being asked the vague "make this better" we ask today.
+
+This is the missing half of the reflect loop. Today `reflect` asks "is this good?" and stops when the LLM says yes. With `checks`, it stops when something _external_ says yes — which is structurally different and structurally more reliable.
+
+**UI shape.** Two surfaces. (1) The `reflect` step in the workflow builder gets a new "Checks" sub-section in its node config: a list with an "Add check" button, each check showing type (dropdown), the type-specific operand panel (Zod schema editor for `jsonSchema`, query box + read-only-DB picker for `sqlExecute`, URL + expected-status for `httpProbe`), and a per-check "Blocking / Soft" toggle. Soft checks appear in the revision prompt but do not gate convergence; blocking checks must all pass. (2) The trace viewer's `reflect` step expansion shows a check ledger per iteration: a row per check with name, pass/fail dot, runtime, and an on-hover detail panel showing the actual signal returned (schema diff, SQL error, HTTP response). This reuses the visual motif of the citation-guard sub-panel.
+
+**Benefits.**
+
+- **Closes the structural weakness of LLM-grades-LLM** for any case where ground truth exists outside the model. SQL queries that actually parse and return rows. JSON outputs that actually match the downstream consumer's schema. HTTP requests that actually reach a 200.
+- **Removes the "model agrees with itself" failure mode** where reflect loops terminate at iteration 1 because the model is overconfident about its first draft.
+- **Worked examples become first-class.** Code-generating, SQL-generating, and structured-data-extracting workflows can be expressed in the platform without custom executor work each time. Today these workflows are either built outside Sunrise or shipped with a fragile chain of `evaluate` → `route` glue.
+- **Reduces tokens** spent on the LLM-judge half of `reflect` for cases where a schema or regex is cheaper and more reliable.
+- **Composes with item 20.** A behavioural predicate like `output.matchesSchema(X)` is a `run_check`-flavoured object; the executor for both is the same evaluator. Building 20 makes 21 cheaper, and shipping 21 first makes 20's `output.*` predicates trivially implementable.
+
+**Risks.**
+
+- **Sandbox safety.** `shell` and `sqlExecute` introduce new attack surface. Mitigation: ship `jsonSchema`, `regex`, `httpProbe` first (no execution surface); gate `sqlExecute` behind a per-agent read-only allowlisted connection string with statement timeout and row cap; gate `shell` behind a global opt-in env var with documented threat model and a dedicated sandboxed worker process. The progression is value-ranked: 80% of the benefit is in the three non-executing types.
+- **Over-use.** Not every reflect loop needs an external check. Documentation should frame `checks` as "when ground truth lives outside the model" and `evaluate` as "when the question is judgement-bound."
+- **Check errors create false-failure loops.** A network blip on `httpProbe` could create an infinite revision loop if treated as `passed: false`. Mitigation: tri-state result — `passed` / `failed` / `errored`. `errored` short-circuits the reflect loop with a clear telemetry signal; it never silently masks as a quality failure.
+- **Slow checks slow the loop.** A `sqlExecute` that takes 5s adds 5s × iterations to every run. Mitigation: per-check timeout (default 10s, configurable), surfaced in the trace's per-iteration latency strip.
+
+**Difficulty: Moderate.** New `run_check` capability with N check types behind a registration surface, a `reflect` executor extension to plumb checks into convergence, workflow-builder UI for check config, trace-viewer surface, sandbox plumbing for the runnable types. The capability itself is one sprint; the SQL and shell sandboxes are the schedule risk and can be deferred without losing the structural win.
+
+### 22. Feedback-loop health observability — ⚪ Not started
+
+**Why it matters.** The platform has plenty of feedback loops — `reflect` iteration, `evaluate` scoring, retry back-edges with `maxRetries`, orchestrator re-planning rounds, citation-guard hits. None of them are themselves observed. If a `reflect` loop quietly stops converging across a week of executions, nothing surfaces it; the agent looks like it is working because every run _completes_, just at `maxIterations` instead of at genuine convergence. If `evaluate` scores drift downward as a corpus changes underneath, no metric trips. The execution-level metrics today are "did it succeed", "what did it cost", "how long" — none of which detect the slow erosion of the feedback layer itself.
+
+This is the orchestration equivalent of flaky tests in a CI pipeline. Flaky tests don't fail the build until they do, and by the time they do, the team has already stopped trusting the suite. The pattern is identical: a feedback layer that's silently weakening still looks green from the outside.
+
+Concretely, the work is three reportable signals on a new admin "Feedback health" dashboard:
+
+1. **Reflect convergence rate** — per agent and per workflow step, what percentage of `reflect` invocations converged before `maxIterations`. A drop below the rolling baseline (configurable, default 80%) flags the agent.
+2. **Evaluate score drift** — for each named metric (faithfulness, groundedness, relevance, plus the per-agent behavioural metric from item 20), a 7-day rolling average and its variance against the prior period. A statistically significant downward drift flags the agent.
+3. **Retry exhaustion rate** — what percentage of steps with a `retry` error strategy hit the configured cap. A rising rate is the structural signature of a constraint that has become too strict, or an upstream capability that has degraded.
+
+The raw data already exists. `reflect` emits per-iteration events; `AiEvaluationLog` stores per-response scores; retry attempts are captured in the execution trace's `retries[]` array. The work is the aggregation query, the dashboard, and the threshold-cross alerting hook (reuse the existing webhook hook dispatcher — emit `feedback.health.degraded` events that fork operators can route to Slack or PagerDuty).
+
+**UI shape.** A new "Feedback health" page under Observability. Three cards across the top — Reflect Convergence, Evaluate Drift, Retry Exhaustion — each showing the 7-day rolling number, a sparkline, and a coloured chip (Healthy / Warning / Degraded). Below, a per-agent table sortable by any of the three columns, with a "Why?" link on each degraded row that drops into a filtered execution list showing the underlying failures. Threshold values live on the singleton `AiOrchestrationSettings` row alongside the existing budget thresholds, with sensible defaults and per-agent overrides for the small handful of agents that have legitimately different baselines.
+
+**Benefits.**
+
+- **Catches silent quality erosion** that no current dashboard surfaces — the slow drift that today only surfaces as user complaints.
+- **Makes "is our feedback layer healthy?" a glance-able question** rather than an audit pass.
+- **Closes the loop between the evaluation infrastructure and the operational view of it** — same data, different lens, no second source of truth.
+- **Forces honest reckoning with `reflect` and `evaluate` defaults.** If a workflow's reflect step hits `maxIterations` 80% of the time, that's a design signal — either raise the iteration cap, lower the bar, or use item 21's external checks to get a more reliable convergence signal.
+
+**Risks.**
+
+- **Alert fatigue** if thresholds default too aggressive. Mitigation: conservative defaults (10% relative drop required to flag), require N consecutive samples below threshold, never page on a single data point.
+- **Noisy per-agent baselines on low-traffic agents.** A pilot agent doing 30 requests/day has noisy stats. Mitigation: suppress the chip below a sample-size floor and surface "Insufficient data" explicitly rather than implying a false green.
+- **Misinterpretation.** A high retry-exhaustion rate could mean an upstream provider degraded, not that the feedback loop itself is broken. Mitigation: the dashboard's "Why?" drilldown segments the failures by cause (provider failure, validation failure, timeout) so the operator reads the signal correctly.
+
+**Difficulty: Low–Moderate.** Aggregation queries against already-captured data, one new dashboard page, settings-singleton threshold fields, hook event emission, drilldown filter routing. No new instrumentation — this is a presentation and alerting layer on top of what exists. One sprint.
+
+### 23. `branch_and_select` step — explore-and-pick primitive — ⚪ Not started
+
+**Why it matters.** A recurring pattern in graph-shaped agent work is: try several approaches in parallel, compare the results, pick the best, discard the rest. The platform has the ingredients — `parallel` fans out, `evaluate` scores, `route` directs — but no clean primitive to compose them. Today admins approximate it by chaining `parallel` → `evaluate` → `route`, which works but is verbose, fragile (the route condition has to interpolate the evaluate output with template strings that go wrong silently), and does not propagate cost or trace context cleanly. More importantly, it does not carry forward the _unselected_ branches' state in a way you can reason about — they just vanish, so debugging "why did we pick this draft when the other was clearly better?" is impossible without re-running.
+
+A first-class `branch_and_select` step type takes `{ branches: StepSpec[], selector: SelectorSpec }`. The selector is one of: an LLM judge prompt with an explicit rubric; a numeric score derived from each branch's output (max/min); or a predicate (reuse `run_check` types from item 21 — pick the first branch that passes all checks). The step runs every branch in parallel (same engine path and `Promise.allSettled` plumbing as `parallel`), assembles the candidates, runs the selector, marks one branch's output as `selected`, persists the unselected candidates' outputs to `discardedBranches` on the step trace, and routes only the selected output downstream. Cost is the sum of all branches; the trace shows both the winner and the runners-up with a clear visual distinction.
+
+This makes patterns like "try three drafts at different temperatures, ship the most cited one" or "ask three retrieval strategies and use whichever returned the source the user explicitly asked about" trivially expressible.
+
+**UI shape.** New node type in the workflow-builder palette under "Composition", alongside `parallel`, `chain`, `route`. Drawer config: number-of-branches selector (2–6), per-branch sub-step picker (same UI as `parallel`'s branch list), selector-mode dropdown (LLM-judge / numeric / predicate), selector-mode-specific config below (rubric textarea for LLM-judge; output-path picker + max/min toggle for numeric; check list for predicate). Trace viewer renders the step as a fan-out / fan-in like `parallel`, but with the selected branch highlighted in the convergence node and the discarded branches rendered at `opacity: 0.4` with a tooltip explaining "this branch was not selected — selector reason: …". The execution aggregates card gains a "discarded cost" sub-stat showing what percentage of the run was spent on outputs that did not propagate.
+
+**Benefits.**
+
+- **Removes the multi-step boilerplate** for what is a genuinely common pattern. Authors write one step instead of three glued together with template-string fragility.
+- **Preserves discarded-branch outputs for inspection.** Debugging "why this draft?" stops requiring a re-run. The trace tells you everything that was considered and why each runner-up lost.
+- **Makes the engineering trade-off explicit.** "I am spending 3× to get the best of 3" is now visible in cost analytics rather than buried in a `parallel`-aggregate that does not flag the multiplier. Operators see the trade and decide whether it earned its keep.
+- **Composes cleanly with items 20 and 21.** A predicate selector reuses `run_check` types directly; an LLM-judge selector with a rubric is itself a behavioural assertion in `branch_and_select` clothing. Each item makes the others naturally typed.
+
+**Risks.**
+
+- **Easy to over-use.** A `branch_and_select` is N× the cost of a single LLM call. If every step in a workflow uses one, cost explodes. Mitigation: the workflow validator warns when a workflow has more than two `branch_and_select` steps on the same path, and the cost analytics surfaces "discarded cost %" prominently on the workflow detail page so the trade is unmissable.
+- **Selector quality bounds the step.** A bad LLM judge picks the wrong branch and the structural advantage of multiple candidates is wasted. Mitigation: encourage predicate selectors where possible; LLM-judge selectors always require a written rubric (the config UI refuses to save without one); add the rubric to the trace so it's auditable post-hoc.
+- **Trace-row size growth.** Persisting discarded branch outputs grows the execution trace row. Mitigation: per-step `discardedBranches.maxBytes` cap that truncates outputs to head+tail; full outputs available via a separate paged API if the operator needs them.
+
+**Difficulty: Moderate.** New executor (80% reuses `parallel`'s code path), new node type in the workflow-builder palette, trace-viewer surface for the discarded-branch view, validator integration, three selector implementations (LLM-judge, numeric, predicate). The selector machinery is the genuinely new code; the rest is composition. One sprint.
+
+### Tier summary
+
+The four items are not independent. Item 20 (executable specs) is the spine — once an agent's contract is a structured object, items 21 (`run_check`) and 22 (feedback health) become naturally typed by it: a behavioural assertion _is_ a `run_check`-shaped object; a behavioural assertion failure _is_ the same health signal as a reflect non-convergence. Item 23 (`branch_and_select`) is the most architecturally independent but composes cleanly with the others — predicate selectors reuse `run_check` types, LLM-judge selectors are bounded behavioural-spec rubrics.
+
+Sequenced: **20 → 21 → 22 → 23**, with 23 reorderable forward if a specific pilot needs a structured "try three drafts, pick one" pattern. Items 21 and 22 are individually shippable as standalone wins; item 20 is the high-value, high-effort spine and is most worth doing first if a multi-sprint slot is available.
+
+The combined effect: agents stop being freeform-text prompts judged by another freeform LLM, and become structured objects whose contract is checkable, whose feedback is observable, and whose alternatives are first-class. That is the difference between an agent platform that "kind of works most of the time" and one that holds its quality posture as the underlying models change.
+
+---
+
 ## Suggested sequencing
 
 A pragmatic order for the next sprints, optimised for "shortest path to a sellable wedge."
