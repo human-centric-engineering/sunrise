@@ -1281,6 +1281,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
               imageInputEnabled={currentImageInput}
               documentInputEnabled={currentDocumentInput}
               showClearButton
+              persistenceKey={`agent-test-chat:${agent.id}`}
               className="h-[500px]"
             />
           ) : (

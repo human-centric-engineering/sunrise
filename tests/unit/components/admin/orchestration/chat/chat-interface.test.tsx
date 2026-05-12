@@ -1163,4 +1163,166 @@ describe('ChatInterface', () => {
       expect(send).toBeDisabled();
     });
   });
+
+  // ─── localStorage persistence ──────────────────────────────────────────────
+  //
+  // The Test tab on the agent edit page persists its conversation per
+  // agent so navigating tabs (or briefly leaving the page) doesn't
+  // discard recent context. We exercise the persistence boundary
+  // here: hydration, save-on-settle, TTL expiry, sanitisation of
+  // approval cards, and the absent-key default.
+  describe('localStorage persistence', () => {
+    const KEY = 'agent-test-chat:agent-xyz';
+
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    it('rehydrates messages + conversationId from storage on mount', async () => {
+      window.localStorage.setItem(
+        KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          conversationId: 'conv-restored',
+          messages: [
+            { role: 'user', content: 'earlier question' },
+            { role: 'assistant', content: 'earlier answer' },
+          ],
+        })
+      );
+
+      render(<ChatInterface agentSlug="my-agent" persistenceKey={KEY} />);
+
+      // Hydration runs in a post-mount effect, so the restored
+      // messages appear on the next render rather than synchronously.
+      await waitFor(() => {
+        expect(screen.getByText('earlier question')).toBeInTheDocument();
+        expect(screen.getByText('earlier answer')).toBeInTheDocument();
+      });
+    });
+
+    it('persists the conversation after a completed turn', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi back!'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface agentSlug="my-agent" persistenceKey={KEY} enableTypingAnimation={false} />
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        const raw = window.localStorage.getItem(KEY);
+        expect(raw).not.toBeNull();
+        const parsed = JSON.parse(raw as string) as {
+          conversationId: string | null;
+          messages: Array<{ role: string; content: string }>;
+        };
+        expect(parsed.conversationId).toBe('conv-1');
+        expect(parsed.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+        expect(parsed.messages[0].content).toBe('hello');
+        expect(parsed.messages[1].content).toBe('Hi back!');
+      });
+    });
+
+    it('discards a stored conversation older than the TTL', () => {
+      const TWENTY_FIVE_HOURS = 25 * 60 * 60 * 1000;
+      window.localStorage.setItem(
+        KEY,
+        JSON.stringify({
+          savedAt: Date.now() - TWENTY_FIVE_HOURS,
+          conversationId: 'conv-old',
+          messages: [{ role: 'user', content: 'ancient question' }],
+        })
+      );
+
+      render(<ChatInterface agentSlug="my-agent" persistenceKey={KEY} />);
+
+      expect(screen.queryByText('ancient question')).not.toBeInTheDocument();
+      // Stale blob is also pruned from storage so it doesn't linger.
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it('strips pendingApproval cards before persisting (workflow state lives server-side)', async () => {
+      const user = userEvent.setup();
+      const approval = {
+        executionId: 'exec-1',
+        stepId: 'step-approve',
+        title: 'Approve this?',
+        description: 'desc',
+      };
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        approvalRequiredFrame(approval),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface agentSlug="my-agent" persistenceKey={KEY} enableTypingAnimation={false} />
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'kick it off');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        const raw = window.localStorage.getItem(KEY);
+        expect(raw).not.toBeNull();
+        const parsed = JSON.parse(raw as string) as {
+          messages: Array<Record<string, unknown>>;
+        };
+        // Approval card is not in the persisted payload …
+        for (const msg of parsed.messages) {
+          expect(msg.pendingApproval).toBeUndefined();
+        }
+        // … but the user turn that kicked it off is still there.
+        expect(parsed.messages.some((m) => m.role === 'user' && m.content === 'kick it off')).toBe(
+          true
+        );
+      });
+    });
+
+    it('does not touch localStorage when persistenceKey is not provided', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('reply'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem');
+
+      render(<ChatInterface agentSlug="my-agent" enableTypingAnimation={false} />);
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('reply')).toBeInTheDocument();
+      });
+
+      // No reads or writes against the storage key namespace.
+      const writes = setItemSpy.mock.calls.filter(([k]) =>
+        String(k).startsWith('agent-test-chat:')
+      );
+      const reads = getItemSpy.mock.calls.filter(([k]) => String(k).startsWith('agent-test-chat:'));
+      expect(writes).toHaveLength(0);
+      expect(reads).toHaveLength(0);
+    });
+  });
 });

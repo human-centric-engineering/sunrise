@@ -66,6 +66,14 @@ const MAX_RECONNECT_ATTEMPTS = 3;
  */
 const MIN_THINKING_MS = 1500;
 
+/**
+ * How long a persisted conversation survives in localStorage before
+ * being treated as stale and discarded. Long enough to span a session
+ * of admin work; short enough that stale conversations don't
+ * accumulate across browser profiles.
+ */
+const PERSISTENCE_TTL_MS = 24 * 60 * 60 * 1000;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ChatInterfaceProps {
@@ -123,6 +131,21 @@ export interface ChatInterfaceProps {
   showClearButton?: boolean;
   /** Fires after conversation is cleared. */
   onConversationCleared?: () => void;
+  /**
+   * When set, the conversation is persisted to `localStorage` under
+   * this key after each turn settles and rehydrated on mount. Useful
+   * for chat surfaces (e.g. the agent Test tab) where navigating
+   * away and back shouldn't discard recent context.
+   *
+   * Attachment binaries are never persisted — only message text,
+   * role, citations, and an `attachmentCount` chip. `pendingApproval`
+   * cards are also stripped because the underlying workflow state
+   * lives server-side and may have moved on by the time the user
+   * returns.
+   *
+   * Stored data older than 24 h is discarded on read.
+   */
+  persistenceKey?: string;
 }
 
 interface ChatMessage {
@@ -139,6 +162,13 @@ interface ChatMessage {
    * sends don't read as an empty message.
    */
   attachmentCount?: number;
+}
+
+interface PersistedChatState {
+  /** Epoch ms — used to apply the TTL on read. */
+  savedAt: number;
+  conversationId: string | null;
+  messages: ChatMessage[];
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -160,6 +190,7 @@ export function ChatInterface({
   typingAnimationOptions = { chunkSize: 2 },
   showClearButton = false,
   onConversationCleared,
+  persistenceKey,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -181,14 +212,100 @@ export function ChatInterface({
   // other elements while a turn is mid-flight.
   const wasStreamingRef = useRef(false);
 
+  // Hydration gate. When `persistenceKey` is set we must wait for the
+  // load effect to run before the save effect is allowed to write —
+  // otherwise the first render (with empty state) would overwrite the
+  // stored conversation before we got the chance to restore it.
+  const [hydrated, setHydrated] = useState(!persistenceKey);
+
+  // Restore the persisted conversation on mount / when the key changes.
+  // Best-effort: any parse failure, schema mismatch, or stale entry is
+  // silently dropped and the chat starts empty.
+  useEffect(() => {
+    if (!persistenceKey || typeof window === 'undefined') {
+      setHydrated(true);
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(persistenceKey);
+      if (!raw) {
+        setHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as PersistedChatState;
+      if (
+        parsed &&
+        typeof parsed.savedAt === 'number' &&
+        Date.now() - parsed.savedAt <= PERSISTENCE_TTL_MS &&
+        Array.isArray(parsed.messages) &&
+        parsed.messages.length > 0
+      ) {
+        setMessages(parsed.messages);
+        setConversationId(typeof parsed.conversationId === 'string' ? parsed.conversationId : null);
+      } else {
+        window.localStorage.removeItem(persistenceKey);
+      }
+    } catch {
+      // Corrupt blob or quota-exceeded — drop it and carry on.
+      try {
+        window.localStorage.removeItem(persistenceKey);
+      } catch {
+        // ignore
+      }
+    } finally {
+      setHydrated(true);
+    }
+  }, [persistenceKey]);
+
+  // Persist the conversation after each turn settles. We deliberately
+  // skip writes while `streaming` is true: typing-animation deltas
+  // would otherwise trigger a write on every tick, and a mid-stream
+  // navigation away would leave a half-finished assistant turn in
+  // storage. The last write after `done` (or after the user clears)
+  // is the canonical snapshot.
+  useEffect(() => {
+    if (!persistenceKey || !hydrated || typeof window === 'undefined') return;
+    if (streaming) return;
+    try {
+      if (messages.length === 0) {
+        window.localStorage.removeItem(persistenceKey);
+        return;
+      }
+      const sanitized = messages.map((m) => {
+        // Drop pendingApproval — the workflow state lives server-side
+        // and may have been resolved or expired by the time the user
+        // returns. Re-rendering a stale card would be misleading.
+        const { pendingApproval: _pendingApproval, ...rest } = m;
+        return rest;
+      });
+      const payload: PersistedChatState = {
+        savedAt: Date.now(),
+        conversationId,
+        messages: sanitized,
+      };
+      window.localStorage.setItem(persistenceKey, JSON.stringify(payload));
+    } catch {
+      // Quota exceeded or serialisation failure — best-effort only.
+    }
+  }, [persistenceKey, hydrated, messages, streaming, conversationId]);
+
   const typing = useTypingAnimation({
     disabled: !enableTypingAnimation,
     ...typingAnimationOptions,
   });
 
-  // Update last assistant message when displayText changes (typing animation)
+  // Update last assistant message when displayText changes (typing animation).
+  //
+  // Bail when the buffer is empty AND we're not actively streaming or
+  // animating: that combination is the post-mount initial state, and
+  // running setMessages there would race the hydration effect's restore
+  // and silently wipe a rehydrated assistant turn (the callback always
+  // sees the latest committed state, so it observes the restored
+  // content as "different from the empty buffer" and overwrites it).
+  // Once a turn is in flight the buffer is the source of truth again.
   useEffect(() => {
     if (!enableTypingAnimation) return;
+    if (!streaming && !typing.isAnimating && !typing.displayText) return;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (!last || last.role !== 'assistant') return prev;
@@ -197,7 +314,7 @@ export function ChatInterface({
       updated[updated.length - 1] = { ...last, content: typing.displayText };
       return updated;
     });
-  }, [typing.displayText, enableTypingAnimation]);
+  }, [typing.displayText, typing.isAnimating, streaming, enableTypingAnimation]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
