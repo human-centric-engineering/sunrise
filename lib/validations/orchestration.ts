@@ -1120,6 +1120,13 @@ export const knowledgeSearchSchema = z.object({
 
   scope: documentScopeSchema.optional(),
 
+  /**
+   * When set, route the search through the agent's knowledge-access resolver
+   * so the admin sees results as that agent would. Acts as a preview tool —
+   * lets operators verify their tag/doc grants without spinning up a chat.
+   */
+  agentId: cuidSchema.optional(),
+
   limit: z.coerce
     .number()
     .int('Limit must be an integer')

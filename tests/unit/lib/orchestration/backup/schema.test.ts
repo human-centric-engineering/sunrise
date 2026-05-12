@@ -99,10 +99,18 @@ describe('backupSchema', () => {
     expect(() => backupSchema.parse(payload)).not.toThrow();
   });
 
-  it('rejects wrong schemaVersion (e.g. 2)', () => {
-    const payload = makeValidPayload({ schemaVersion: 2 });
+  it('rejects wrong schemaVersion (e.g. 99)', () => {
+    const payload = makeValidPayload({ schemaVersion: 99 });
 
     expect(() => backupSchema.parse(payload)).toThrow();
+  });
+
+  it('accepts schemaVersion: 2', () => {
+    // v2 added knowledge-tag scoping. The schema accepts both v1 (legacy) and
+    // v2 payloads — see lib/orchestration/backup/schema.ts.
+    const payload = makeValidPayload({ schemaVersion: 2 });
+
+    expect(() => backupSchema.parse(payload)).not.toThrow();
   });
 
   it('rejects missing schemaVersion', () => {

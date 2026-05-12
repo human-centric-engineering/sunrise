@@ -18,6 +18,10 @@ const mockTx = {
   aiWorkflowVersion: { findFirst: vi.fn(), create: vi.fn() },
   aiWebhookSubscription: { findFirst: vi.fn(), create: vi.fn() },
   aiOrchestrationSettings: { upsert: vi.fn() },
+  knowledgeTag: { upsert: vi.fn() },
+  aiAgentKnowledgeTag: { deleteMany: vi.fn(), createMany: vi.fn() },
+  aiAgentKnowledgeDocument: { deleteMany: vi.fn(), createMany: vi.fn() },
+  aiKnowledgeDocument: { findMany: vi.fn() },
 };
 
 vi.mock('@/lib/db/client', () => ({
@@ -170,7 +174,7 @@ describe('importOrchestrationConfig', () => {
   });
 
   it('throws ZodError when schema is invalid (wrong schemaVersion)', async () => {
-    const invalidPayload = { ...minPayload, schemaVersion: 2 };
+    const invalidPayload = { ...minPayload, schemaVersion: 99 };
 
     await expect(importOrchestrationConfig(invalidPayload, 'user-1')).rejects.toThrow();
   });

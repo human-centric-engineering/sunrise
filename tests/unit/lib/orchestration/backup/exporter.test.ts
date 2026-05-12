@@ -20,6 +20,7 @@ vi.mock('@/lib/db/client', () => ({
     aiCapability: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiWorkflow: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiWebhookSubscription: { findMany: (...a: unknown[]) => mockFindMany(...a) },
+    knowledgeTag: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiOrchestrationSettings: { findUnique: (...a: unknown[]) => mockFindUnique(...a) },
   },
 }));
@@ -45,9 +46,13 @@ const agentRow = {
   isActive: true,
   metadata: null,
   knowledgeCategories: [],
+  knowledgeAccessMode: 'full',
   topicBoundaries: [],
   brandVoiceInstructions: null,
   widgetConfig: null,
+  // Include shape from the new exporter query — no grants for the default fixture.
+  grantedTags: [],
+  grantedDocuments: [],
 };
 
 const capabilityRow = {
@@ -110,17 +115,18 @@ describe('exportOrchestrationConfig', () => {
     vi.resetAllMocks();
   });
 
-  it('returns payload with schemaVersion: 1', async () => {
+  it('returns payload with schemaVersion: 2', async () => {
     mockFindMany
       .mockResolvedValueOnce([]) // agents
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
 
-    expect(payload.schemaVersion).toBe(1);
+    expect(payload.schemaVersion).toBe(2);
   });
 
   it('returns payload with exportedAt as an ISO string', async () => {
@@ -129,6 +135,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const before = new Date().toISOString();
@@ -147,6 +154,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -162,6 +170,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     await exportOrchestrationConfig();
@@ -177,6 +186,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -190,6 +200,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(settingsRow);
 
     const payload = await exportOrchestrationConfig();
@@ -206,6 +217,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([webhookRow]); // webhooks — no secret
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -221,6 +233,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([capabilityRow])
       .mockResolvedValueOnce([workflowRow])
       .mockResolvedValueOnce([webhookRow]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(settingsRow);
 
     const payload = await exportOrchestrationConfig();
@@ -243,6 +256,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([workflowRow, unpublishedRow]) // workflows: one with, one without
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();

@@ -10,7 +10,7 @@ import { prisma } from '@/lib/db/client';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
 
 export async function exportOrchestrationConfig(): Promise<BackupPayload> {
-  const [agents, capabilities, workflows, webhooks, settings] = await Promise.all([
+  const [agents, capabilities, workflows, webhooks, knowledgeTags, settings] = await Promise.all([
     prisma.aiAgent.findMany({
       where: { isSystem: false },
       select: {
@@ -28,6 +28,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         isActive: true,
         metadata: true,
         knowledgeCategories: true,
+        knowledgeAccessMode: true,
         topicBoundaries: true,
         brandVoiceInstructions: true,
         rateLimitRpm: true,
@@ -38,6 +39,8 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         retentionDays: true,
         providerConfig: true,
         widgetConfig: true,
+        grantedTags: { select: { tag: { select: { slug: true } } } },
+        grantedDocuments: { select: { document: { select: { fileHash: true } } } },
       },
     }),
     prisma.aiCapability.findMany({
@@ -75,6 +78,13 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         description: true,
         // Exclude secret — never export secrets
         isActive: true,
+      },
+    }),
+    prisma.knowledgeTag.findMany({
+      select: {
+        slug: true,
+        name: true,
+        description: true,
       },
     }),
     prisma.aiOrchestrationSettings.findUnique({
@@ -121,14 +131,30 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
       : []
   );
 
+  // Flatten agent grants into the slug/hash arrays the backup format expects.
+  // `grantedTags`/`grantedDocuments` are include-shaped (join rows with one
+  // nested entity each) — flatten them before serialising.
+  const flattenedAgents = agents.map((a) => {
+    const { grantedTags, grantedDocuments, knowledgeAccessMode, ...rest } = a;
+    return {
+      ...rest,
+      // The DB column is `String`; coerce to the strict enum the backup schema wants.
+      knowledgeAccessMode:
+        knowledgeAccessMode === 'restricted' ? ('restricted' as const) : ('full' as const),
+      grantedTagSlugs: grantedTags.map((g) => g.tag.slug),
+      grantedDocumentHashes: grantedDocuments.map((g) => g.document.fileHash),
+    };
+  });
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2 as const,
     exportedAt: new Date().toISOString(),
     data: {
-      agents,
+      agents: flattenedAgents,
       capabilities,
       workflows: flattenedWorkflows,
       webhooks,
+      knowledgeTags,
       settings,
     },
   };

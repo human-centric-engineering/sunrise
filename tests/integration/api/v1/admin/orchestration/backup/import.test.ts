@@ -69,6 +69,7 @@ function makeImportResult() {
     capabilities: { created: 1, updated: 0 },
     workflows: { created: 1, updated: 0 },
     webhooks: { created: 0, skipped: 0 },
+    knowledgeTags: { created: 0, updated: 0 },
     settingsUpdated: true,
     warnings: [] as string[],
   };
