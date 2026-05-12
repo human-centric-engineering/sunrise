@@ -832,15 +832,19 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="flex justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setManualMode(false)}
-          disabled={submitting}
-          type="button"
-        >
-          ← Back to detected providers
-        </Button>
+        {detectedAvailable.length > 0 ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setManualMode(false)}
+            disabled={submitting}
+            type="button"
+          >
+            ← Back to detected providers
+          </Button>
+        ) : (
+          <span />
+        )}
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? (
             <>
