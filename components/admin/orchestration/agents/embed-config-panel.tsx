@@ -41,6 +41,44 @@ interface EmbedConfigPanelProps {
 export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElement {
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-medium">Embed widget</h3>
+        <FieldHelp
+          title="About embed"
+          ariaLabel="About embed"
+          contentClassName="w-[28rem] max-w-[calc(100vw-2rem)]"
+        >
+          <p>
+            Embed lets you drop this agent onto a third-party website as a floating chat widget —
+            your marketing site, customer portal, help docs, anywhere you control the HTML. The
+            widget loads inside a Shadow DOM, so it won&apos;t pick up or clash with the host
+            page&apos;s CSS.
+          </p>
+          <p className="mt-2 font-medium">How to use it:</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+            <li>
+              Customise look-and-feel in <strong>Widget Appearance</strong> below (colours,
+              greeting, conversation starters).
+            </li>
+            <li>
+              In the <strong>Embed tokens</strong> section below, click{' '}
+              <strong>Create Token</strong> and restrict it to the origins where the widget will run
+              (e.g.
+              <code> https://example.com</code>) so the token can&apos;t be lifted and reused
+              elsewhere.
+            </li>
+            <li>
+              That token row will show a generated <code>&lt;script&gt;</code> snippet — copy it
+              with the copy button and paste it into the partner site&apos;s HTML, just before{' '}
+              <code>&lt;/body&gt;</code>. The widget appears automatically on page load.
+            </li>
+          </ol>
+          <p className="mt-2">
+            Tokens are revocable: deactivate to pause an embed without deleting it, or delete to
+            permanently kill the integration. Each token is scoped to this agent only.
+          </p>
+        </FieldHelp>
+      </div>
       <WidgetAppearanceSection agentId={agentId} />
       <TokensCard agentId={agentId} appUrl={appUrl} />
     </div>
@@ -158,10 +196,18 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          Embed Widget
-          <FieldHelp title="Embeddable chat widget">
-            Generate embed tokens to add a chat widget to external websites. Each token scopes
-            access to this agent and can be restricted to specific origins.
+          Embed tokens
+          <FieldHelp title="Embed tokens">
+            <p>
+              Each token authenticates the widget when it loads on a partner site. The widget sends
+              the token with every chat request; the server verifies it&apos;s active, scoped to
+              this agent, and called from one of its allowed origins.
+            </p>
+            <p className="mt-2">
+              Create one token per integration (e.g. one for your marketing site, one for the
+              customer portal) so you can revoke them independently. Toggle <strong>Active</strong>{' '}
+              off to pause an embed without losing the token; delete to kill it permanently.
+            </p>
           </FieldHelp>
         </CardTitle>
       </CardHeader>
@@ -185,9 +231,17 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
             <div className="space-y-1">
               <Label htmlFor="embed-origins" className="flex items-center gap-1 text-xs">
                 Allowed origins
-                <FieldHelp title="CORS origins">
-                  Comma-separated list of origins (e.g. https://example.com). Leave blank to allow
-                  all origins.
+                <FieldHelp title="Allowed origins (CORS)">
+                  <p>
+                    Comma-separated list of websites permitted to use this token — e.g.{' '}
+                    <code>https://example.com, https://app.example.com</code>. Requests from any
+                    other origin are rejected by CORS, so a leaked token can&apos;t be reused on a
+                    site you don&apos;t control.
+                  </p>
+                  <p className="mt-2">
+                    Each entry must be a full origin (scheme + host, no path). Leave blank to allow
+                    any origin — only do this for internal testing.
+                  </p>
                 </FieldHelp>
               </Label>
               <Input

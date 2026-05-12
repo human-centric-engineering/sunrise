@@ -1197,9 +1197,16 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
           {isEdit && agent ? (
             <AgentCapabilitiesTab agentId={agent.id} />
           ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">
-                Save the agent first, then attach capabilities.
+            <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
+              <p>
+                <strong className="text-foreground">Capabilities</strong> are tools the agent can
+                call mid-conversation — e.g. search a knowledge base, look up an order, send an
+                email, hit an external API. The model picks them up automatically when a user&apos;s
+                message needs one.
+              </p>
+              <p>
+                Save the agent first, then come back to this tab to attach capabilities from the
+                catalogue.
               </p>
             </div>
           )}
@@ -1296,9 +1303,16 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
           {isEdit && agent ? (
             <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
           ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">
-                Save the agent first, then manage embed tokens.
+            <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
+              <p>
+                <strong className="text-foreground">Embed</strong> drops this agent onto a
+                third-party site as a floating chat widget. You generate an origin-scoped token,
+                paste a <code>&lt;script&gt;</code> snippet into the partner site&apos;s HTML, and
+                the widget loads in a Shadow DOM (no CSS clash with the host page).
+              </p>
+              <p>
+                Save the agent first to generate embed tokens and configure the widget&apos;s
+                appearance.
               </p>
             </div>
           )}

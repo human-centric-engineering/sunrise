@@ -112,10 +112,12 @@ describe('AgentCapabilitiesTab', () => {
       // Act
       render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
 
-      // Assert
+      // Assert — match the column <header> nodes specifically; "Attached"
+      // and "Available" also appear in the panel intro copy, so a plain
+      // getByText would match multiple nodes.
       await waitFor(() => {
-        expect(screen.getByText('Attached')).toBeInTheDocument();
-        expect(screen.getByText('Available')).toBeInTheDocument();
+        expect(screen.getByText('Attached', { selector: 'header' })).toBeInTheDocument();
+        expect(screen.getByText('Available', { selector: 'header' })).toBeInTheDocument();
       });
     });
 
@@ -452,8 +454,8 @@ describe('AgentCapabilitiesTab', () => {
       });
 
       // Both column headings still rendered (layout intact)
-      expect(screen.getByText('Attached')).toBeInTheDocument();
-      expect(screen.getByText('Available')).toBeInTheDocument();
+      expect(screen.getByText('Attached', { selector: 'header' })).toBeInTheDocument();
+      expect(screen.getByText('Available', { selector: 'header' })).toBeInTheDocument();
     });
 
     it('renders "No capabilities attached yet" when agent capabilities fetch returns empty array', async () => {
