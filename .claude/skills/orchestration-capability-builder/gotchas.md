@@ -46,7 +46,7 @@ This means: a capability can work when dispatched manually but be invisible to a
 
 ## Built-in Capabilities Are isSystem: true
 
-The 9 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) are seeded with `isSystem: true` and **cannot be deleted** via the API. To give an agent access, bind the existing capability — don't create a new one with the same slug.
+The built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `call_external_api`, `run_workflow`, `upload_to_storage`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) are seeded with `isSystem: true` and **cannot be deleted** via the API. To give an agent access, bind the existing capability — don't create a new one with the same slug.
 
 ## No next/\* Imports
 
@@ -54,4 +54,20 @@ The 9 built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `est
 
 ## Dispatcher Pipeline Order Matters for Debugging
 
-The 9-step pipeline runs in sequence and returns on first failure. If you're seeing `capability_inactive` but the capability exists, check that `isActive: true` on the DB row. If you're seeing `unknown_capability`, the handler isn't registered in `registry.ts`. The error code tells you exactly which step failed.
+The pipeline runs in sequence and returns on first failure. If you're seeing `capability_inactive` but the capability exists, check that `isActive: true` on the DB row. If you're seeing `unknown_capability`, the handler isn't registered in `registry.ts`. The error code tells you exactly which step failed.
+
+## `isIdempotent` Default Is `false` — Leave It Alone Unless Provably Safe
+
+The dispatch cache (`AiWorkflowStepDispatch`) deduplicates side effects on re-drive after crashes. Capabilities default to `isIdempotent: false`, meaning the cache is **active** — second invocations with the same `(executionId, stepId)` return the cached result instead of re-firing. Set `true` only when the capability is naturally rerun-safe (idempotent PUTs, vendors that handle `Idempotency-Key` themselves, pure reads). A `true` on a destructive capability silently doubles writes on retry — there is no second guard.
+
+## `customConfig` Env-Var Templating Is Read-Time, Not Save-Time
+
+Stringy `customConfig` fields (`forcedUrl`, `forcedHeaders` on `call_external_api`; `url`, `headers` on workflow `external_call`) accept the `${env:VAR}` template. The literal stays in the DB; resolution happens on every call. Goal of "secret never in DB" is only met by read-time resolution — rotation is `change one env var`, no binding edit needed. Missing env var at call time surfaces as `invalid_binding` (capability path) or `ExecutorError('missing_env_var')` (workflow step). Strict pattern `[A-Z][A-Z0-9_]*` — a typo can't accidentally match a real env var.
+
+## `call_external_api` Is Multipart-Aware
+
+For vendors that need `multipart/form-data` (Gotenberg HTML→PDF, file-upload APIs), pass `multipart: { files: [...], fields: {...} }` instead of `body`. The two are **mutually exclusive** (Zod refine). HMAC auth + multipart is rejected as `multipart_hmac_unsupported` — the boundary varies so signatures aren't deterministic.
+
+## In-Chat Approvals Route Through `run_workflow`
+
+The dispatcher's `requires_approval` failure code stays admin-only — chat clients render Approve / Reject cards by routing through workflow `human_approval` pauses via the `run_workflow` capability, not by extending the capability dispatcher. Capability-level (non-workflow) in-chat approvals are explicitly out of scope; if a partner needs one, author a one-step workflow with `human_approval` and bind `run_workflow` to the agent.

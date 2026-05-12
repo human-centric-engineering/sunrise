@@ -73,3 +73,27 @@ The `tool_call` step config field is `capabilitySlug` (not `capability` or `tool
 ## Budget Enforcement Is Per-Execution
 
 The `budgetLimitUsd` on the workflow applies per execution, not globally. Each new execution starts with a fresh cost counter. For global cost control, use agent-level `monthlyBudgetUsd`.
+
+## PATCH Writes To Draft, Not Live
+
+Workflows are immutable-versioned. `PATCH /workflows/:id` writes to `draftDefinition` — the published version (and any executions, schedules, or `run_workflow` calls pinned to it) is **untouched**. Nothing goes live until `POST /workflows/:id/publish` snapshots the draft as a new `AiWorkflowVersion` and repoints `publishedVersionId`. A common confusion: "I saved my changes but the workflow still runs the old steps." That's correct — publish to roll it forward.
+
+## Rollback Creates A New Version
+
+`POST /rollback` does **not** delete newer versions or overwrite the current pin in-place. It copies the target version into a new monotonic version (vN+1) and pins to it. The chain is append-only — the previously-current version remains in `GET /versions` history. This means rollback is itself an auditable forward step, not a destructive operation.
+
+## `external_call` Body Modes Are Mutually Exclusive
+
+`bodyTemplate` (string) and `multipart` (structured file/field shape) cannot both be set on the same `external_call` step — Zod refine rejects it. HMAC auth paired with `multipart` is rejected at execute time as `multipart_hmac_unsupported` (the boundary varies, so signatures aren't deterministic). Pick HMAC + `bodyTemplate`, or non-HMAC + `multipart`.
+
+## `agent_call` Multi-Turn Mode Falls Back On Re-Drive
+
+Multi-turn checkpointing covers `reflect` and `orchestrator` cleanly. `agent_call` in multi-turn mode is **explicitly not supported** for full resume — it falls back to a fresh start on re-drive. The dispatch cache prevents inner-side-effect duplication (capabilities the agent called won't fire twice), so the cost of re-drive is LLM tokens only, not the side effect itself. Document the limitation if a long agent_call session is load-bearing.
+
+## Inbound Trigger Replay Protection Is Channel-Scoped
+
+`AiWorkflowExecution.dedupKey` is computed per-channel: `<channel>:<externalId>` for shared-secret channels (slack, postmark), `hmac:<workflowId>:<externalId>` for per-trigger HMAC. The Slack/Postmark scope is **channel-global** — replaying a Slack `event_id` to a different workflow URL collides on the same dedup key (Slack signs `v0:{ts}:{body}` without binding the URL, so cross-workflow replay would otherwise sail through). Generic-HMAC channels don't share secrets across workflows, so per-workflow scope is correct there.
+
+## Capability `isIdempotent` Default Is `false`
+
+The dispatch cache is **on by default** for `tool_call`. Capabilities can opt out by setting `isIdempotent: true` when they handle re-run dedup naturally (e.g. an idempotent upstream API). Misconfiguring `isIdempotent: true` on a destructive capability is documented as the "you marked it idempotent" admin trade-off. When designing workflows with risky tool calls, leave the default alone unless you've explicitly verified the capability is rerun-safe.

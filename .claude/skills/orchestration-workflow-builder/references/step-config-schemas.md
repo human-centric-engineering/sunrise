@@ -105,27 +105,43 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 ### rag_retrieve
 
 ```json
-{ "query": "", "topK": 5, "similarityThreshold": 0.7 }
+{ "query": "", "topK": 10, "similarityThreshold": 0.8, "categories": [] }
 ```
 
 - `query` — search query (supports templates)
-- `topK` — number of results to return
-- `similarityThreshold` — minimum cosine similarity (0.0-1.0)
+- `topK` — number of results to return (default `10`)
+- `similarityThreshold` — minimum cosine similarity, 0.0–1.0 (default `0.8`)
+- `categories` — optional category filter; empty array = search all categories the agent has access to
 
 ### external_call
 
 ```json
-{ "url": "", "method": "POST", "timeoutMs": 30000, "authType": "none" }
+{
+  "url": "https://api.example.com/resource",
+  "method": "POST",
+  "headers": { "X-Source": "sunrise" },
+  "bodyTemplate": "{ \"query\": \"{{input.query}}\" }",
+  "timeoutMs": 30000,
+  "authType": "bearer",
+  "authSecret": "EXAMPLE_API_TOKEN",
+  "idempotencyKey": "auto"
+}
 ```
 
-- `url` — endpoint URL (required)
-- `method` — HTTP method
-- `headers` — optional headers object
-- `bodyTemplate` — optional body (supports templates)
-- `timeoutMs` — request timeout
-- `authType` — `"none"`, `"bearer"`, or `"api_key"`
-- `authSecret` — env var name containing the secret (for bearer/api_key)
-- `responseTransform` — optional JMESPath or Handlebars expression to extract data
+- `url` — endpoint URL (required). Supports `${env:VAR}` templates resolved at call time.
+- `method` — `GET` / `POST` / `PUT` / `PATCH` / `DELETE`.
+- `headers` — optional headers object. Values support `${env:VAR}` templating.
+- `bodyTemplate` — optional string body (supports `{{stepId.output}}` templates). **Mutually exclusive with `multipart`.**
+- `multipart` — optional `{ files: [{ name, filename?, contentType, data }], fields?: Record<string,string> }` for `multipart/form-data` bodies. File `data` is base64; per-file 8 MB cap and 25 MB total cap. **Mutually exclusive with `bodyTemplate`. Incompatible with `authType: 'hmac'` (rejected as `multipart_hmac_unsupported`).**
+- `timeoutMs` — request timeout.
+- `authType` — `none` / `bearer` / `api-key` / `query-param` / `basic` / `hmac`. (Note: hyphenated, not `api_key`.)
+- `authSecret` — env var name containing the secret. The literal `${env:VAR}` stays in config; resolved on every call. Missing env var → `missing_env_var` at execute time.
+- `apiKeyHeaderName` — header name when `authType: 'api-key'` (default `X-API-Key`; set for vendors like Postmark's `X-Postmark-Server-Token`).
+- `authQueryParam` — query-param name when `authType: 'query-param'` (default `api_key`).
+- `hmacHeaderName`, `hmacAlgorithm` (`sha256` / `sha512`), `hmacBodyTemplate` — HMAC config when `authType: 'hmac'`. Template tokens: `{method}`, `{path}`, `{body}`.
+- `idempotencyKey` — `"auto"` generates a UUID per call; any other string is used verbatim. The crash-recovery dispatch cache derives a key automatically if you don't set one.
+- `idempotencyKeyHeader` — header name for the idempotency key (default `Idempotency-Key`).
+- `responseTransform` — optional JMESPath or Handlebars expression to extract data from the response.
 
 ## Output Steps
 

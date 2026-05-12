@@ -36,6 +36,10 @@ For Claude Code, create them via a database seed or API call.
     You help customers with order enquiries, refunds, and general questions.
     Always verify the customer's order before making changes.
     Escalate to a human if the refund exceeds $100 or the customer is upset.`,
+  // Pin a specific model + provider, or leave both as "" to inherit the
+  // matrix-resolved default for the implied TaskType (chat). The runtime
+  // resolver `lib/orchestration/llm/agent-resolver.ts` is the source of
+  // truth for which model an agent actually runs on.
   model: "claude-sonnet-4-6",
   provider: "anthropic",
   temperature: 0.3,

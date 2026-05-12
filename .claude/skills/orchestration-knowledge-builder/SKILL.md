@@ -44,10 +44,10 @@ mcp_integrations:
       - zod: '/colinhacks/zod'
 
 parameters:
-  supported_formats: ['md', 'txt', 'epub', 'docx', 'pdf']
+  supported_formats: ['md', 'txt', 'csv', 'epub', 'docx', 'pdf']
   max_file_size_mb: 50
-  default_top_k: 5
-  default_similarity_threshold: 0.7
+  default_top_k: 10
+  default_similarity_threshold: 0.8
 ---
 
 # Knowledge Builder Skill
@@ -75,9 +75,17 @@ pending → processing → ready
 
 ## 6-Step Setup Process
 
-### Step 1: Create an embedding provider
+### Step 1: Ensure an embedding-capable model is available
 
-An embedding provider is required before documents can be searched. **Voyage AI** is recommended (free tier available):
+Embedding generation resolves through the embedding-model registry (`lib/orchestration/llm/embedding-models.ts`), which reads from DB-backed `AiProviderModel` rows tagged with `embedding` capability. Any active provider with at least one embedding-capable model works.
+
+Common choices:
+
+- **Voyage AI** (`providerType: "voyage"`, env `VOYAGE_API_KEY`) — free tier, query/document input-type optimisation.
+- **OpenAI** (`providerType: "openai-compatible"`, env `OPENAI_API_KEY`) — `text-embedding-3-small` / `text-embedding-3-large`.
+- **Local** (e.g. Ollama via OpenAI-compatible) — zero-cost dev option.
+
+Create the provider (if not already present):
 
 ```
 POST /api/v1/admin/orchestration/providers
@@ -90,7 +98,7 @@ POST /api/v1/admin/orchestration/providers
 }
 ```
 
-Set `VOYAGE_API_KEY` in `.env.local`. Do NOT use Anthropic for embeddings — Anthropic does not offer an embedding model.
+Set the corresponding env var in `.env.local`. **Anthropic does not offer an embedding model** — pick a different provider for embeddings even if Anthropic is the chat provider. Fresh installs ship with no providers; the setup wizard or env-var detection registry surfaces what is wired.
 
 ### Step 2: Upload documents
 
@@ -121,6 +129,14 @@ import { uploadDocumentFromBuffer } from '@/lib/orchestration/knowledge/document
 
 const doc = await uploadDocumentFromBuffer(buffer, 'book.epub', userId, 'reference');
 ```
+
+**CSV** (row-atomic chunking — one chunk per row, batched in groups of 10 above 5,000 rows):
+
+```typescript
+const doc = await uploadDocumentFromBuffer(buffer, 'pricing.csv', userId, 'tariffs');
+```
+
+CSV runs through a separate `chunkCsvDocument` path inside `uploadDocumentFromBuffer` — each chunk's content is a pipe-joined `Header: Value | …` string from `csv-parser.ts`. This makes per-row retrieval atomic and avoids row-bleed across chunks.
 
 **PDF** (two-step flow — preview then confirm):
 
@@ -160,14 +176,32 @@ GET /api/v1/admin/orchestration/knowledge/embedding-status
 
 ### Step 4: Configure search parameters
 
-Search uses a hybrid approach (vector + keyword). Configure via global settings:
+Search has two modes selected by the `hybridEnabled` flag on the `SearchConfig` JSON in the settings singleton.
 
-| Parameter             | Default | Description                         |
-| --------------------- | ------- | ----------------------------------- |
-| `vectorWeight`        | 0.7     | Weight for semantic similarity      |
-| `keywordWeight`       | 0.3     | Weight for keyword matching         |
-| `similarityThreshold` | 0.7     | Minimum cosine similarity (0.0-1.0) |
-| `topK`                | 5       | Number of results per search        |
+**Vector-only mode** (`hybridEnabled: false` or unset — the default):
+
+| Field                | Default | Description                                                 |
+| -------------------- | ------- | ----------------------------------------------------------- |
+| `vectorWeight`       | `1.0`   | Multiplier on cosine similarity                             |
+| `keywordBoostWeight` | `-0.02` | Non-positive distance reduction for keyword-matching chunks |
+
+**Hybrid mode** (`hybridEnabled: true`) — blends BM25-flavoured (`ts_rank_cd`) and vector scores:
+
+| Field          | Default | Description                                                        |
+| -------------- | ------- | ------------------------------------------------------------------ |
+| `vectorWeight` | `1.0`   | Multiplier on the vector similarity score                          |
+| `bm25Weight`   | `1.0`   | Multiplier on the BM25-flavoured keyword score (range `0.1`–`2.0`) |
+
+**Footgun:** the keyword-weight field is `bm25Weight`, not `keywordWeight`. Storing `keywordWeight` is a silent no-op — the resolver ignores unknown keys.
+
+**Search call defaults** (function signature on `searchKnowledge`):
+
+| Argument       | Default | Description                         |
+| -------------- | ------- | ----------------------------------- |
+| `limit` (topK) | `10`    | Number of results per search        |
+| `threshold`    | `0.8`   | Minimum cosine similarity (0.0–1.0) |
+
+Per-field fallback: a partial override (e.g. `{ hybridEnabled: true }` alone) inherits defaults for every field the admin did not set.
 
 ### Step 5: Scope knowledge to agents
 
@@ -205,12 +239,15 @@ GET /api/v1/admin/orchestration/capabilities?slug=search_knowledge_base
 
 ## Supported Formats
 
-| Format | Extensions                 | Pipeline                          | Max Size |
-| ------ | -------------------------- | --------------------------------- | -------- |
-| Text   | `.md`, `.markdown`, `.txt` | Read → chunk → embed → store      | 50 MB    |
-| EPUB   | `.epub`                    | Parse → chunk → embed → store     | 50 MB    |
-| DOCX   | `.docx`                    | Parse → chunk → embed → store     | 50 MB    |
-| PDF    | `.pdf`                     | Parse → preview → confirm → chunk | 50 MB    |
+| Format | Extensions                 | Pipeline                                          | Max Size |
+| ------ | -------------------------- | ------------------------------------------------- | -------- |
+| Text   | `.md`, `.markdown`, `.txt` | Read → chunk → embed → store                      | 50 MB    |
+| CSV    | `.csv`                     | Parse → row-atomic chunk → embed → store          | 50 MB    |
+| EPUB   | `.epub`                    | Parse → chunk → embed → store                     | 50 MB    |
+| DOCX   | `.docx`                    | Parse → chunk → embed → store                     | 50 MB    |
+| PDF    | `.pdf`                     | Parse → preview → confirm → chunk → embed → store | 50 MB    |
+
+Parsers live in `lib/orchestration/knowledge/parsers/`. PDF parsing supports multiple backends; the per-file extension determines the pipeline.
 
 ## Category Resolution (priority order)
 
@@ -220,12 +257,23 @@ GET /api/v1/admin/orchestration/capabilities?slug=search_knowledge_base
 
 ## Chunking
 
-The chunker (`chunkMarkdownDocument`) splits documents into semantic chunks:
+Two chunkers live in `lib/orchestration/knowledge/`:
 
-- Preserves section boundaries (headings)
-- Classifies chunk types (e.g., `pattern_overview`, `implementation`, `example`)
+**Structural chunker (`chunker.ts`)** — the default path for plain-text / Markdown / DOCX / EPUB / confirmed-PDF:
+
+- Splits on `##` then `###` headers and merges/splits sections into the 50–800 token range
+- Preserves section boundaries; classifies chunk types (e.g. `pattern_overview`, `implementation`, `example`)
+- Tiered split fallback: paragraphs → lines → sentences → char-window so PDF prose (which `pdfjs-dist` extracts with `\n` line separators but rarely `\n\n` paragraph breaks) does not collapse into one oversized chunk per document
 - Generates unique `chunkKey` values for idempotent seeding
 - Supports metadata comments: `<!-- metadata: category=X, keywords=a,b,c -->`
+
+**Semantic chunker (`semantic-chunker.ts`)** — opt-in upgrade for prose without strong structural cues (raw transcripts, PDF prose without headers):
+
+- Embeds each sentence, measures cosine distance between adjacent sentences in the original order, and declares a chunk boundary where the distance is in the top quartile
+- Cost: N embedding calls per document (a few hundred for a typical PDF). Pennies with `text-embedding-3-small`, free with local Ollama or Voyage free-tier
+- Failure-safe: the caller is expected to fall back to the structural splitter if semantic chunking throws, returns empty, or the text is too short to analyse — semantic chunking is a quality upgrade, never a hard dependency
+
+**CSV chunker (`chunker.ts#chunkCsvDocument`)** — row-atomic, one chunk per data row, batched in groups of 10 above 5,000 rows so embedding cost stays bounded.
 
 ## Search API
 
@@ -236,8 +284,8 @@ import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge
 const results = await searchKnowledge(
   'chain of thought reasoning',
   { chunkType: 'pattern_overview', categories: ['ai-patterns'] },
-  10, // topK
-  0.7 // similarityThreshold
+  10, // topK (default)
+  0.8 // similarityThreshold (default)
 );
 
 // Single pattern lookup
@@ -246,6 +294,16 @@ const pattern = await getPatternDetail(3);
 // List all categories and keywords
 const tags = await listMetaTags();
 ```
+
+## Visualisation
+
+The admin Knowledge → **Visualize** tab renders the corpus three ways:
+
+- **Structure view** — hierarchical KB → document → chunk graph (when total chunks < 500). Powered by `GET /api/v1/admin/orchestration/knowledge/graph?view=structure[&scope=system|app]`.
+- **Embedded view** — same graph rendered with embedding-derived edge weights. `view=embedded`.
+- **Projection view** — UMAP / 2-D scatter of chunk embeddings via `EmbeddingProjectionView`, useful for spotting clusters and outliers in the corpus.
+
+Use the Visualize tab as a sanity check after large ingests — clusters that should be coherent will read as one tight blob; misplaced documents stand out as orphans. Useful for catching mis-categorised uploads before they pollute retrieval.
 
 ## Seeding (dev/test data)
 
