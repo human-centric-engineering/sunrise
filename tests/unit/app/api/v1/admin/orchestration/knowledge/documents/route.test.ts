@@ -49,11 +49,16 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
-vi.mock('@/lib/orchestration/knowledge/document-manager', () => ({
-  uploadDocument: vi.fn(),
-  uploadDocumentFromBuffer: vi.fn(),
-  previewDocument: vi.fn(),
-}));
+vi.mock('@/lib/orchestration/knowledge/document-manager', async (importOriginal) => {
+  const real =
+    await importOriginal<typeof import('@/lib/orchestration/knowledge/document-manager')>();
+  return {
+    ...real,
+    uploadDocument: vi.fn(),
+    uploadDocumentFromBuffer: vi.fn(),
+    previewDocument: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
   requiresPreview: vi.fn(() => false),
