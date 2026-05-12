@@ -89,6 +89,7 @@ describe('dbModelToModelInfo', () => {
       maxContext: 1_000_000,
       supportsTools: true,
       available: true,
+      capabilities: ['chat'],
     });
   });
 

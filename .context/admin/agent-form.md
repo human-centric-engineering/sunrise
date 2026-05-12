@@ -91,7 +91,7 @@ The effective maximum recording length depends on the deployment platform — Su
 Switch toggle (`AiAgent.enableImageInput`, default off). When on, the chat surfaces bound to this agent render a paperclip control in the input area for image attachments (JPEG, PNG, WebP, GIF):
 
 - `AgentTestChat` in the form's Test tab
-- Any embed widget bound to this agent (image input is wired in Phase 4 of the rollout)
+- Any embed widget bound to this agent
 
 Images are forwarded to the LLM as multimodal `ContentPart` entries and discarded after the turn — bytes are not persisted. Per-attachment cap ~5 MB binary (`MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` base64 chars); per-turn combined cap ~25 MB across all attachments; maximum of 10 attachments per turn.
 
