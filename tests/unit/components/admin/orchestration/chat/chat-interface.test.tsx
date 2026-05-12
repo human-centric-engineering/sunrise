@@ -945,15 +945,11 @@ describe('ChatInterface', () => {
       const user = userEvent.setup();
       render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
 
-      const input = screen.getByPlaceholderText(/type a message/i);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      const input = screen.getByPlaceholderText(/type a message/i) as HTMLInputElement;
       await user.type(input, 'tell me about');
       await user.click(screen.getByTestId('fire-transcript'));
 
-      // Trim happens on the join; expect the two halves separated by
-      // exactly one space. `getByPlaceholderText` types as the
-      // umbrella `HTMLElement` — narrow at the call site so `.value`
-      // is reachable without prettier unwrapping a free-floating
-      // cast.
       expect(input.value).toBe('tell me about hello from the mic');
     });
 
@@ -963,7 +959,8 @@ describe('ChatInterface', () => {
       const user = userEvent.setup();
       render(<ChatInterface agentSlug="pattern-advisor" agentId="agent-123" voiceInputEnabled />);
 
-      const input = screen.getByPlaceholderText(/type a message/i);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      const input = screen.getByPlaceholderText(/type a message/i) as HTMLInputElement;
       await user.click(screen.getByTestId('fire-transcript'));
 
       expect(input.value).toBe('hello from the mic');
