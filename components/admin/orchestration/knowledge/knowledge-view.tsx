@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Database, Eye, Search } from 'lucide-react';
+import { AlertTriangle, Database, Eye, Search, Tag } from 'lucide-react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -18,6 +18,7 @@ import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab
 import { ExploreTab } from '@/components/admin/orchestration/knowledge/explore-tab';
 import { VisualizeTab } from '@/components/admin/orchestration/knowledge/visualize-tab';
 import { ErrorsTab } from '@/components/admin/orchestration/knowledge/errors-tab';
+import { KnowledgeTagsTable } from '@/components/admin/orchestration/knowledge/knowledge-tags-table';
 
 export type KnowledgeScope = 'all' | 'system' | 'app';
 
@@ -87,6 +88,10 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
             <Database className="h-3.5 w-3.5" />
             Manage
           </TabsTrigger>
+          <TabsTrigger value="tags" className="gap-1.5">
+            <Tag className="h-3.5 w-3.5" />
+            Tags
+          </TabsTrigger>
           <TabsTrigger value="explore" className="gap-1.5">
             <Search className="h-3.5 w-3.5" />
             Explore
@@ -103,6 +108,16 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
 
         <TabsContent value="manage">
           <ManageTab documents={filteredDocuments} onRefresh={refresh} />
+        </TabsContent>
+
+        <TabsContent value="tags">
+          {/* The tags admin lives both here (in-flow) and as the standalone
+              page at /admin/orchestration/knowledge/tags. The table self-fetches
+              on mount when no server data is seeded. */}
+          <KnowledgeTagsTable
+            initialTags={[]}
+            initialMeta={{ page: 1, limit: 50, total: 0, totalPages: 1 }}
+          />
         </TabsContent>
 
         <TabsContent value="explore">

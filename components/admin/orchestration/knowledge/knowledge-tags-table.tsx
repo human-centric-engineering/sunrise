@@ -9,7 +9,7 @@
  * `force=true` second-confirmation pattern when the tag is in use.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pencil, Trash2 } from 'lucide-react';
 
@@ -69,6 +69,15 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
       // Non-fatal: keep the old list.
     }
   }
+
+  // When rendered without server-seeded data (e.g. inside the Knowledge → Tags
+  // tab, which doesn't pre-fetch), pull the current list on mount.
+  useEffect(() => {
+    if (initialTags.length === 0) {
+      void refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <>

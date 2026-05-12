@@ -634,7 +634,7 @@ describe('KnowledgeView', () => {
       expect(manageTab).toHaveAttribute('data-state', 'active');
     });
 
-    it('all four tabs are interactive (rendered as clickable tab buttons)', () => {
+    it('all tabs are interactive (rendered as clickable tab buttons)', () => {
       // Verifies the tab panel structure is correct — each tab is a
       // button with role="tab" that can be interacted with.
       // The URL-synced tab hook relies on router.replace to update state,
@@ -642,8 +642,10 @@ describe('KnowledgeView', () => {
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
       const tabs = screen.getAllByRole('tab');
-      // Exactly 4 tabs: Manage, Explore, Visualize, Errors
-      expect(tabs).toHaveLength(4);
+      // Five tabs: Manage, Tags, Explore, Visualize, Errors. Tags joined when
+      // the knowledge-access-control feature shipped — it surfaces the tag
+      // taxonomy in-flow rather than via a header link.
+      expect(tabs).toHaveLength(5);
 
       // Each tab is a button (not disabled)
       tabs.forEach((tab) => {

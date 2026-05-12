@@ -7,6 +7,7 @@
 
 export const KNOWLEDGE_TABS = {
   MANAGE: 'manage',
+  TAGS: 'tags',
   EXPLORE: 'explore',
   VISUALIZE: 'visualize',
   ERRORS: 'errors',
@@ -27,6 +28,7 @@ export const DEFAULT_KNOWLEDGE_TAB: KnowledgeTab = KNOWLEDGE_TABS.MANAGE;
  */
 export const KNOWLEDGE_TAB_TITLES: Record<KnowledgeTab, string> = {
   [KNOWLEDGE_TABS.MANAGE]: 'Manage - Knowledge Base - Sunrise',
+  [KNOWLEDGE_TABS.TAGS]: 'Tags - Knowledge Base - Sunrise',
   [KNOWLEDGE_TABS.EXPLORE]: 'Explore - Knowledge Base - Sunrise',
   [KNOWLEDGE_TABS.VISUALIZE]: 'Visualize - Knowledge Base - Sunrise',
   [KNOWLEDGE_TABS.ERRORS]: 'Errors - Knowledge Base - Sunrise',
