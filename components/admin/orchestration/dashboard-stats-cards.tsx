@@ -35,8 +35,8 @@ interface StatCardData {
 
 function StatCard({ title, value, description, icon, href, alert }: StatCardData) {
   return (
-    <Link href={href} className="group block">
-      <Card className="group-hover:border-primary/40 transition-colors">
+    <Link href={href} className="group block h-full">
+      <Card className="group-hover:border-primary/40 h-full transition-colors">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">{title}</CardTitle>
           <div className="text-muted-foreground" aria-hidden="true">
