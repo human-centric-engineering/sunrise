@@ -258,6 +258,26 @@ export const updateAgentSchema = z.object({
     .max(50, 'At most 50 knowledge categories')
     .optional(),
 
+  knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
+
+  /**
+   * IDs of `KnowledgeTag` rows this agent may search (only consulted when
+   * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
+   * route leaves the join rows untouched; pass `[]` to clear all tag grants.
+   */
+  grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
+
+  /**
+   * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
+   * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
+   * untouched; pass `[]` to clear them. System-scoped docs always pass through
+   * the resolver — granting them explicitly is unnecessary.
+   */
+  grantedDocumentIds: z
+    .array(cuidSchema)
+    .max(1000, 'At most 1000 document grants per agent')
+    .optional(),
+
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
 
   brandVoiceInstructions: z

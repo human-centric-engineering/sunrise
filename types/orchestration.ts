@@ -704,6 +704,18 @@ export type AiCapabilityListItem = AiCapability & {
   _agents: CapabilityAgentRef[];
 };
 
+/** Enriched knowledge-tag row returned by the list endpoint. */
+export interface KnowledgeTagListItem {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  documentCount: number;
+  agentCount: number;
+}
+
 /** Agent with its capabilities loaded */
 export type AgentWithCapabilities = AiAgent & {
   capabilities: Array<{

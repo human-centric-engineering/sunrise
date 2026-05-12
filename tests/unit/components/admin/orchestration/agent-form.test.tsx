@@ -255,15 +255,17 @@ describe('AgentForm — function coverage gaps', () => {
   // ── knowledgeCategories and topicBoundaries transform ─────────────────────
 
   describe('comma-split transforms in payload', () => {
-    it('splits knowledgeCategories comma-string into array in POST payload', async () => {
-      // Arrange: non-empty knowledgeCategories covers the ternary true branch
+    it('submits new POST payloads with knowledgeAccessMode defaulting to "full"', async () => {
+      // The legacy comma-separated `knowledgeCategories` text input was removed in
+      // Phase 4 of the knowledge-access-control feature — see KnowledgeAccessSection
+      // for its replacement. New agents created without touching the access section
+      // ship with `knowledgeAccessMode: 'full'` and empty grant arrays.
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent', name: 'Test' });
 
       const user = userEvent.setup();
       render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
 
-      // Fill required fields
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'KB Agent');
       await user.click(screen.getByRole('tab', { name: /instructions/i }));
       await user.type(
@@ -273,23 +275,16 @@ describe('AgentForm — function coverage gaps', () => {
       await user.click(screen.getByRole('tab', { name: /general/i }));
       await user.type(screen.getByRole('textbox', { name: /^description/i }), 'My agent.');
 
-      // Navigate to instructions tab to fill knowledge categories
-      await user.click(screen.getByRole('tab', { name: /instructions/i }));
-      await user.type(
-        screen.getByRole('textbox', { name: /knowledge categories/i }),
-        'billing, support, faq'
-      );
-
-      // Submit
       await user.click(screen.getByRole('button', { name: /create agent/i }));
 
-      // Assert: payload contains array of categories, not the raw string
       await waitFor(() => {
         expect(apiClient.post).toHaveBeenCalledWith(
           expect.stringContaining('/agents'),
           expect.objectContaining({
             body: expect.objectContaining({
-              knowledgeCategories: ['billing', 'support', 'faq'],
+              knowledgeAccessMode: 'full',
+              grantedTagIds: [],
+              grantedDocumentIds: [],
             }),
           })
         );

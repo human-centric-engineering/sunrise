@@ -48,6 +48,7 @@ import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-inv
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
+import { KnowledgeAccessSection } from '@/components/admin/orchestration/knowledge-access-section';
 import { slugSchema } from '@/lib/validations/common';
 import type { EffectiveAgentDefaults, ModelOption } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
@@ -83,15 +84,28 @@ const agentFormSchema = z.object({
   enableDocumentInput: z.boolean(),
   fallbackProviders: z.array(z.string()),
   knowledgeCategories: z.string().optional(),
+  knowledgeAccessMode: z.enum(['full', 'restricted']),
+  knowledgeTagIds: z.array(z.string()),
+  knowledgeDocumentIds: z.array(z.string()),
   topicBoundaries: z.string().optional(),
   brandVoiceInstructions: z.string().max(10000).nullable().optional(),
 });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
 
+/**
+ * Agent record as enriched by the admin GET endpoint — adds the flattened
+ * id arrays for knowledge grants on top of the bare Prisma row. The form
+ * needs both to seed the knowledgeAccessMode radio and the two MultiSelects.
+ */
+export type AgentWithGrants = AiAgent & {
+  grantedTagIds?: string[];
+  grantedDocumentIds?: string[];
+};
+
 export interface AgentFormProps {
   mode: 'create' | 'edit';
-  agent?: AiAgent;
+  agent?: AgentWithGrants;
   providers: (AiProviderConfig & { apiKeyPresent?: boolean })[] | null;
   models: ModelOption[] | null;
   /**
@@ -167,6 +181,10 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       enableDocumentInput: agent?.enableDocumentInput ?? false,
       fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
       knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
+      knowledgeAccessMode:
+        (agent?.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
+      knowledgeTagIds: agent?.grantedTagIds ?? [],
+      knowledgeDocumentIds: agent?.grantedDocumentIds ?? [],
       topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
       brandVoiceInstructions: agent?.brandVoiceInstructions ?? null,
     },
@@ -251,21 +269,26 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
     setError(null);
     setSaved(false);
 
-    // Transform comma-separated strings into arrays for the API
+    // Transform comma-separated strings into arrays for the API and map the
+    // form's knowledgeTagIds / knowledgeDocumentIds onto the API contract
+    // (grantedTagIds / grantedDocumentIds).
+    const { knowledgeTagIds, knowledgeDocumentIds, ...rest } = data;
     const payload = {
-      ...data,
-      knowledgeCategories: data.knowledgeCategories
-        ? data.knowledgeCategories
+      ...rest,
+      knowledgeCategories: rest.knowledgeCategories
+        ? rest.knowledgeCategories
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
         : [],
-      topicBoundaries: data.topicBoundaries
-        ? data.topicBoundaries
+      topicBoundaries: rest.topicBoundaries
+        ? rest.topicBoundaries
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
         : [],
+      grantedTagIds: knowledgeTagIds,
+      grantedDocumentIds: knowledgeDocumentIds,
     };
 
     try {
@@ -1136,21 +1159,16 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             )}
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="knowledgeCategories">
-              Knowledge categories{' '}
-              <FieldHelp title="Knowledge base categories">
-                Comma-separated list of knowledge base categories this agent can search. When set,
-                knowledge base queries are scoped to documents in these categories only. Leave blank
-                to search all categories.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="knowledgeCategories"
-              placeholder="e.g. billing, support, faq"
-              {...register('knowledgeCategories')}
-            />
-          </div>
+          <KnowledgeAccessSection
+            mode={watch('knowledgeAccessMode')}
+            tagIds={watch('knowledgeTagIds')}
+            documentIds={watch('knowledgeDocumentIds')}
+            onModeChange={(next) => setValue('knowledgeAccessMode', next, { shouldDirty: true })}
+            onTagsChange={(next) => setValue('knowledgeTagIds', next, { shouldDirty: true })}
+            onDocumentsChange={(next) =>
+              setValue('knowledgeDocumentIds', next, { shouldDirty: true })
+            }
+          />
 
           <div className="grid gap-2">
             <Label htmlFor="topicBoundaries">
@@ -1236,7 +1254,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 // Re-pull the fresh agent into the form after a version restore.
                 void (async () => {
                   try {
-                    const fresh = await apiClient.get<AiAgent>(
+                    const fresh = await apiClient.get<AgentWithGrants>(
                       API.ADMIN.ORCHESTRATION.agentById(agent.id)
                     );
                     reset({
@@ -1262,6 +1280,10 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                       rateLimitRpm: fresh.rateLimitRpm ?? null,
                       fallbackProviders: fresh.fallbackProviders ?? [],
                       knowledgeCategories: fresh.knowledgeCategories?.join(', ') ?? '',
+                      knowledgeAccessMode:
+                        (fresh.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
+                      knowledgeTagIds: fresh.grantedTagIds ?? [],
+                      knowledgeDocumentIds: fresh.grantedDocumentIds ?? [],
                       topicBoundaries: fresh.topicBoundaries?.join(', ') ?? '',
                       brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
                     });

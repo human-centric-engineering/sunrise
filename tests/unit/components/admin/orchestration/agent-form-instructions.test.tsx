@@ -253,13 +253,15 @@ describe('AgentForm — Instructions tab', () => {
       expect(textarea).toBeInTheDocument();
     });
 
-    it('renders knowledge categories input', async () => {
+    it('renders the knowledge access section with a Full/Restricted radio', async () => {
+      // The legacy comma-separated knowledge-categories input was replaced by the
+      // KnowledgeAccessSection component (Phase 4 of knowledge-access-control).
       const user = userEvent.setup();
       render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
       await user.click(screen.getByRole('tab', { name: /instructions/i }));
 
-      const input = screen.getByRole('textbox', { name: /knowledge categories/i });
-      expect(input).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: /full access/i })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: /restricted/i })).toBeInTheDocument();
     });
 
     it('renders topic boundaries input', async () => {
