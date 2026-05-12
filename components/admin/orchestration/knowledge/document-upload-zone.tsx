@@ -114,7 +114,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     async function fetchTags(): Promise<void> {
       try {
         const tags = await apiClient.get<TagRow[]>(
-          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=100`
         );
         setAvailableTags(Array.isArray(tags) ? tags : []);
       } catch {

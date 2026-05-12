@@ -70,7 +70,7 @@ export function DocumentTagsModal({
     setError(null);
     try {
       const [allTagRows, docPayload] = await Promise.all([
-        apiClient.get<TagRow[]>(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`),
+        apiClient.get<TagRow[]>(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=100`),
         apiClient.get<{ document: { tagIds?: string[] } }>(
           API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId)
         ),

@@ -62,7 +62,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
     try {
       // apiClient unwraps the envelope; type param is the data shape itself.
       const list = await apiClient.get<KnowledgeTagListItem[]>(
-        `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
+        `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=100`
       );
       setTags(Array.isArray(list) ? list : []);
       router.refresh();

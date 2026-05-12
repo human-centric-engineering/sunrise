@@ -70,7 +70,7 @@ export function KnowledgeAccessSection({
     void (async () => {
       try {
         const tagList = await apiClient.get<TagRow[]>(
-          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=100`
         );
         if (!cancelled) setTags(Array.isArray(tagList) ? tagList : []);
       } catch {
@@ -95,7 +95,7 @@ export function KnowledgeAccessSection({
         // is imperfect — but Phase 4 deliberately keeps the doc picker scope
         // to "names users would recognise", which fits inside the first page.
         const docs = await apiClient.get<DocumentRow[]>(
-          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?limit=200`
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?limit=100`
         );
         if (cancelled) return;
         const labels: Record<string, string> = {};
