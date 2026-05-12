@@ -415,6 +415,11 @@ export function VisualizeTab({ scope }: VisualizeTabProps) {
     return {
       tooltip: {
         trigger: 'item' as const,
+        // Constrain tooltip width and force wrapping on the outer container —
+        // inner div max-widths don't help when a single long token (URL,
+        // hyphenless file name, long chunk preview) has no break opportunity.
+        extraCssText:
+          'max-width:320px;white-space:normal;word-break:break-word;overflow-wrap:anywhere;',
         formatter: (params: {
           dataType?: string;
           data?: {

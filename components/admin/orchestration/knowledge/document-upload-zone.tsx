@@ -36,6 +36,16 @@ const pdfPreviewDataSchema = z.object({
     author: z.string().nullable(),
     sectionCount: z.number(),
     warnings: z.array(z.string()),
+    pages: z
+      .array(
+        z.object({
+          num: z.number(),
+          charCount: z.number(),
+          hasText: z.boolean(),
+        })
+      )
+      .nullable()
+      .optional(),
     requiresConfirmation: z.boolean(),
   }),
 });
@@ -75,6 +85,7 @@ export interface PdfPreviewData {
     author: string | null;
     sectionCount: number;
     warnings: string[];
+    pages?: { num: number; charCount: number; hasText: boolean }[] | null;
     requiresConfirmation: boolean;
   };
 }

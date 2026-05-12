@@ -31,13 +31,24 @@ export interface Chunk {
   estimatedTokens: number;
 }
 
-/** Target chunk size range in tokens */
-const MIN_CHUNK_TOKENS = 50;
-const MAX_CHUNK_TOKENS = 800;
+// Numeric chunker config is defined in `chunker-config.ts` so client
+// components can render the values without pulling the embedder/DB
+// client into the browser bundle. Re-exported here so existing
+// `chunker.ts` imports keep working unchanged.
+export {
+  MIN_CHUNK_TOKENS,
+  MAX_CHUNK_TOKENS,
+  CHARS_PER_TOKEN_ESTIMATE,
+} from '@/lib/orchestration/knowledge/chunker-config';
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  MAX_CHUNK_TOKENS,
+  MIN_CHUNK_TOKENS,
+} from '@/lib/orchestration/knowledge/chunker-config';
 
 /** Rough token estimate: ~4 characters per token for English text */
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);
 }
 
 /** Generate a URL-safe slug from text */
@@ -566,22 +577,28 @@ export async function chunkMarkdownDocument(
   return chunks;
 }
 
-/** CSVs above this row count switch from one-row-per-chunk to batched chunks. */
-export const CSV_ROW_BATCH_THRESHOLD = 5000;
-/** Rows per chunk when batching kicks in. */
-export const CSV_ROWS_PER_BATCH = 10;
-/**
- * Per-row character cap. Rows above this length are dropped before embedding
- * because every embedding provider rejects inputs over its token budget
- * (Voyage voyage-3 ≈ 32k tokens; OpenAI text-embedding-3-small 8,191 tokens).
- * 32,000 chars is a generous safety margin (~8,000 tokens at the standard
- * 4-chars/token approximation) that suits every provider Sunrise ships with.
- *
- * Realistic CSV rows are well under this — a row that crosses it almost
- * always means the source has a binary blob or a JSON payload stuffed into
- * one cell, which a row-atomic CSV chunker can't usefully embed anyway.
- */
-export const CSV_MAX_ROW_CHARS = 32_000;
+// CSV chunking caps live in `chunker-config.ts` (server-free constants
+// so they can also be rendered by client components). Re-exported here so
+// existing imports from `chunker` keep working.
+//
+// Notes on the cap values:
+//   - `CSV_MAX_ROW_CHARS` is a generous safety margin (~8,000 tokens at
+//     4 chars/token) that suits every embedding provider Sunrise ships
+//     with: Voyage voyage-3 ≈ 32k tokens, OpenAI text-embedding-3-small
+//     8,191 tokens.
+//   - Realistic CSV rows are well under this — a row that crosses it
+//     almost always means the source has a binary blob or a JSON payload
+//     stuffed into one cell, which a row-atomic CSV chunker can't
+//     usefully embed anyway.
+export {
+  CSV_ROW_BATCH_THRESHOLD,
+  CSV_ROWS_PER_BATCH,
+  CSV_MAX_ROW_CHARS,
+} from '@/lib/orchestration/knowledge/chunker-config';
+import {
+  CSV_ROW_BATCH_THRESHOLD,
+  CSV_ROWS_PER_BATCH,
+} from '@/lib/orchestration/knowledge/chunker-config';
 
 /**
  * Chunk a parsed CSV document into one chunk per row (or batched rows for

@@ -299,4 +299,98 @@ describe('PdfPreviewModal', () => {
 
     expect(screen.queryByText('Extraction warnings')).not.toBeInTheDocument();
   });
+
+  describe('PagesStrip and page coverage banner', () => {
+    it('does not render PagesStrip when pages is not present', () => {
+      render(
+        <PdfPreviewModal
+          data={mockPreviewData}
+          open={true}
+          onOpenChange={onOpenChange}
+          onConfirmed={onConfirmed}
+        />
+      );
+
+      expect(screen.queryByText(/% of pages produced text/i)).toBeNull();
+    });
+
+    it('renders page coverage banner with all pages having text', () => {
+      const withPagesData = {
+        ...mockPreviewData,
+        preview: {
+          ...mockPreviewData.preview,
+          pages: [
+            { num: 1, charCount: 800, hasText: true },
+            { num: 2, charCount: 950, hasText: true },
+            { num: 3, charCount: 720, hasText: true },
+            { num: 4, charCount: 880, hasText: true },
+          ],
+        },
+      };
+
+      render(
+        <PdfPreviewModal
+          data={withPagesData}
+          open={true}
+          onOpenChange={onOpenChange}
+          onConfirmed={onConfirmed}
+        />
+      );
+
+      expect(screen.getByText(/100% of pages produced text/i)).toBeInTheDocument();
+    });
+
+    it('renders amber page coverage banner when some pages are scanned', () => {
+      const withScannedPages = {
+        ...mockPreviewData,
+        preview: {
+          ...mockPreviewData.preview,
+          pages: [
+            { num: 1, charCount: 800, hasText: true },
+            { num: 2, charCount: 10, hasText: false },
+            { num: 3, charCount: 720, hasText: true },
+            { num: 4, charCount: 0, hasText: false },
+          ],
+        },
+      };
+
+      render(
+        <PdfPreviewModal
+          data={withScannedPages}
+          open={true}
+          onOpenChange={onOpenChange}
+          onConfirmed={onConfirmed}
+        />
+      );
+
+      expect(screen.getByText(/50% of pages produced text/i)).toBeInTheDocument();
+      expect(screen.getByText(/2 likely scanned/i)).toBeInTheDocument();
+    });
+
+    it('renders one bar per page in the strip', () => {
+      const withPagesData = {
+        ...mockPreviewData,
+        preview: {
+          ...mockPreviewData.preview,
+          pages: [
+            { num: 1, charCount: 800, hasText: true },
+            { num: 2, charCount: 950, hasText: true },
+            { num: 3, charCount: 720, hasText: true },
+            { num: 4, charCount: 880, hasText: true },
+          ],
+        },
+      };
+
+      render(
+        <PdfPreviewModal
+          data={withPagesData}
+          open={true}
+          onOpenChange={onOpenChange}
+          onConfirmed={onConfirmed}
+        />
+      );
+
+      expect(screen.getByText(/4 pages/i)).toBeInTheDocument();
+    });
+  });
 });

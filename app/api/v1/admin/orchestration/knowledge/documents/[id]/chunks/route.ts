@@ -8,6 +8,7 @@
  * Authentication: Admin role required.
  */
 
+import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -16,6 +17,21 @@ import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
+
+const documentMetaSchema = z
+  .object({
+    coverage: z
+      .object({
+        parsedChars: z.number(),
+        chunkChars: z.number(),
+        coveragePct: z.number(),
+      })
+      .nullable()
+      .optional(),
+    warnings: z.array(z.string()).optional(),
+  })
+  .passthrough()
+  .nullable();
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const clientIP = getClientIP(request);
@@ -49,6 +65,15 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     },
   });
 
+  // Surface the coverage metric + warnings the chunk pipeline wrote into
+  // `document.metadata` (see lib/orchestration/knowledge/coverage.ts). The
+  // admin Chunks Inspector renders these so the operator can see at a
+  // glance how much of the parsed text actually made it into chunks.
+  const metaParsed = documentMetaSchema.safeParse(document.metadata ?? null);
+  const meta = metaParsed.success ? metaParsed.data : null;
+  const coverage = meta?.coverage ?? null;
+  const warnings = meta?.warnings ?? [];
+
   log.info('Document chunks fetched', { documentId: id, chunkCount: chunks.length });
-  return successResponse({ chunks });
+  return successResponse({ chunks, coverage, warnings });
 });

@@ -1,7 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, Cpu, Eye, RefreshCw, Sprout, Tag, Trash2 } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  Cpu,
+  Eye,
+  RefreshCw,
+  Sparkles,
+  Sprout,
+  Tag,
+  Trash2,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +20,13 @@ import { Tip } from '@/components/ui/tooltip';
 import { z } from 'zod';
 
 import { API } from '@/lib/api/endpoints';
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  CSV_MAX_ROW_CHARS,
+  MAX_CHUNK_TOKENS,
+  MIN_CHUNK_TOKENS,
+} from '@/lib/orchestration/knowledge/chunker-config';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import type { AiKnowledgeDocument } from '@/types/orchestration';
 
 const metaTagEntrySchema = z.object({
@@ -95,6 +112,21 @@ interface MetaTagSummary {
 }
 
 const KEYWORD_COLLAPSED_LIMIT = 30;
+
+/**
+ * Extract the coverage metric the chunk pipeline writes to document
+ * metadata (see lib/orchestration/knowledge/coverage.ts). Returns null
+ * for older documents that pre-date the metric or rows where the JSON
+ * shape isn't what we expect — the table renders a `—` in that case
+ * rather than misleading the operator with a fabricated percentage.
+ */
+function readCoverage(metadata: unknown): { coveragePct: number } | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const cov = (metadata as Record<string, unknown>).coverage;
+  if (!cov || typeof cov !== 'object') return null;
+  const pct = (cov as Record<string, unknown>).coveragePct;
+  return typeof pct === 'number' ? { coveragePct: pct } : null;
+}
 
 function MetaTagSection({
   title,
@@ -214,6 +246,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
+  const [setupPreference, setSetupPreference] = useLocalStorage<'open' | 'closed' | null>(
+    'orchestration.knowledge.builtin-patterns-panel',
+    null
+  );
 
   const fetchMetaTags = useCallback(async () => {
     try {
@@ -366,6 +402,180 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     metaTags !== null &&
     (metaTags.system.categories.length > 0 || metaTags.system.keywords.length > 0);
 
+  // Built-in setup panel: collapsed by default once setup is complete (chunks loaded
+  // and all embedded). Manual user preference (open/closed) wins over the auto rule.
+  const setupComplete = hasChunks && allEmbedded;
+  const setupOpen = setupPreference === null ? !setupComplete : setupPreference === 'open';
+
+  // Built-in setup panel JSX — assigned to a variable so we can render it
+  // either near the top of the page (while setup is in progress) or at the
+  // bottom (once setupComplete, since it's no longer the operator's focus).
+  const builtInPanel = (
+    <div className="border-primary/30 from-primary/5 rounded-lg border border-dashed bg-gradient-to-br to-transparent">
+      <button
+        type="button"
+        onClick={() => setSetupPreference(setupOpen ? 'closed' : 'open')}
+        className="hover:bg-primary/5 flex w-full items-center gap-2 rounded-t-lg px-4 py-3 text-left transition-colors"
+        aria-expanded={setupOpen}
+      >
+        <Sparkles className="text-primary h-4 w-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-medium">Built-in: Agentic Design Patterns</h3>
+            <Badge variant="outline" className="text-[10px] tracking-wide uppercase">
+              One-time setup
+            </Badge>
+            {setupComplete && (
+              <span className="text-primary inline-flex items-center gap-1 text-xs">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Complete
+              </span>
+            )}
+          </div>
+          {!setupOpen && (
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              {setupComplete
+                ? 'Patterns loaded and embedded. Click to expand.'
+                : !hasChunks
+                  ? 'Load the built-in patterns to enable the Learning page.'
+                  : !hasProvider
+                    ? 'Configure an embedding provider to enable vector search.'
+                    : `${embeddingStatus?.embedded ?? 0}/${embeddingStatus?.total ?? 0} chunks embedded.`}
+            </p>
+          )}
+        </div>
+        <ChevronDown
+          className={`text-muted-foreground h-4 w-4 shrink-0 transition-transform ${setupOpen ? '' : '-rotate-90'}`}
+        />
+      </button>
+
+      {setupOpen && (
+        <div className="border-primary/20 space-y-3 border-t border-dashed px-4 pt-3 pb-4">
+          <p className="text-muted-foreground text-xs">
+            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns.{' '}
+            <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
+            Generate embeddings to enable vector search (requires an embedding provider).
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Button
+                onClick={() => void handleSeed()}
+                disabled={seeding}
+                variant="outline"
+                size="sm"
+              >
+                <Sprout className="mr-1 h-4 w-4" />
+                {seeding ? 'Loading...' : 'Load Agentic Design Patterns'}
+              </Button>
+              <FieldHelp
+                title="Load Agentic Design Patterns"
+                ariaLabel="What does Load Patterns do?"
+              >
+                <p>
+                  Inserts all pre-chunked content from the built-in <em>Agentic Design Patterns</em>{' '}
+                  guide into the database. The Learning Patterns page works immediately — no
+                  embedding provider needed.
+                </p>
+                <p className="mt-2">
+                  Adapted from <em>Agentic Design Patterns</em> by Antonio Gullí.
+                </p>
+                <p className="mt-2">
+                  If the patterns are already loaded, clicking again has no effect.
+                </p>
+              </FieldHelp>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button
+                onClick={() => void handleEmbed()}
+                disabled={embedDisabled}
+                variant="outline"
+                size="sm"
+                title={
+                  !hasChunks
+                    ? 'Load Agentic Design Patterns first'
+                    : !hasProvider
+                      ? 'Configure an embedding provider first'
+                      : allEmbedded
+                        ? 'All chunks are already embedded'
+                        : undefined
+                }
+              >
+                <Cpu className="mr-1 h-4 w-4" />
+                {embedding ? 'Embedding...' : 'Generate Embeddings'}
+              </Button>
+              <FieldHelp
+                title="Generate Embeddings"
+                ariaLabel="What does Generate Embeddings do?"
+                contentClassName="w-80 max-h-80 overflow-y-auto"
+              >
+                <p>
+                  Sends each unembedded chunk to the configured embedding model to generate a vector
+                  (a numerical fingerprint of its meaning). These vectors enable similarity search
+                  so the Advisor, Quiz, and Search can find relevant content.
+                </p>
+                <p className="mt-2">
+                  Requires a configured <strong>embedding provider</strong>. Recommended options:
+                </p>
+                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+                  <li>
+                    <strong>Voyage AI</strong> — best retrieval quality, free tier (200 M
+                    tokens/month)
+                  </li>
+                  <li>
+                    <strong>OpenAI</strong> — text-embedding-3-small, low cost, native 1 536 dims
+                  </li>
+                  <li>
+                    <strong>Ollama</strong> — local, free, but 768-dim (requires schema change)
+                  </li>
+                </ul>
+                <p className="mt-2 text-xs">
+                  <strong>Note:</strong> Anthropic (Claude) does not offer an embeddings API. Only
+                  processes chunks that don&apos;t have embeddings yet, so it&apos;s safe to run
+                  multiple times.
+                </p>
+              </FieldHelp>
+              {embeddingStatus && hasChunks && !allEmbedded && (
+                <span className="text-muted-foreground text-xs">
+                  {embeddingStatus.embedded}/{embeddingStatus.total} embedded
+                </span>
+              )}
+              {allEmbedded && (
+                <span className="text-muted-foreground text-xs">All chunks embedded</span>
+              )}
+            </div>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => setCompareOpen(true)}
+              className="text-primary text-xs hover:underline"
+            >
+              Compare embedding providers →
+            </button>
+          </div>
+          {lastSeededAt && (
+            <p className="text-muted-foreground text-xs">
+              Last seeded:{' '}
+              {new Date(lastSeededAt).toLocaleString(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })}
+            </p>
+          )}
+          {seedError && <p className="text-destructive text-sm">{seedError}</p>}
+          {embedError && <p className="text-destructive text-sm">{embedError}</p>}
+          {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
+            <EmbeddingStatusBanner
+              total={embeddingStatus.total}
+              embedded={embeddingStatus.embedded}
+              hasActiveProvider={hasProvider}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-8">
       {/* General knowledge base explainer */}
@@ -439,131 +649,88 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         </span>
       </div>
 
-      {/* Built-in Agentic Design Patterns — separated from generic knowledge base */}
-      <div className="bg-muted/30 space-y-3 rounded-lg border p-4">
-        <div>
-          <h3 className="text-sm font-medium">Built-in: Agentic Design Patterns</h3>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Sunrise ships with a pre-chunked guide covering 21 agentic design patterns.{' '}
-            <strong>Step 1:</strong> Load the patterns (no API key needed). <strong>Step 2:</strong>{' '}
-            Generate embeddings to enable vector search (requires an embedding provider).
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <Button
-              onClick={() => void handleSeed()}
-              disabled={seeding}
-              variant="outline"
-              size="sm"
-            >
-              <Sprout className="mr-1 h-4 w-4" />
-              {seeding ? 'Loading...' : 'Load Agentic Design Patterns'}
-            </Button>
-            <FieldHelp title="Load Agentic Design Patterns" ariaLabel="What does Load Patterns do?">
-              <p>
-                Inserts all pre-chunked content from the built-in <em>Agentic Design Patterns</em>{' '}
-                guide into the database. The Learning Patterns page works immediately — no embedding
-                provider needed.
-              </p>
-              <p className="mt-2">
-                Adapted from <em>Agentic Design Patterns</em> by Antonio Gullí.
-              </p>
-              <p className="mt-2">
-                If the patterns are already loaded, clicking again has no effect.
-              </p>
-            </FieldHelp>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Button
-              onClick={() => void handleEmbed()}
-              disabled={embedDisabled}
-              variant="outline"
-              size="sm"
-              title={
-                !hasChunks
-                  ? 'Load Agentic Design Patterns first'
-                  : !hasProvider
-                    ? 'Configure an embedding provider first'
-                    : allEmbedded
-                      ? 'All chunks are already embedded'
-                      : undefined
-              }
-            >
-              <Cpu className="mr-1 h-4 w-4" />
-              {embedding ? 'Embedding...' : 'Generate Embeddings'}
-            </Button>
-            <FieldHelp
-              title="Generate Embeddings"
-              ariaLabel="What does Generate Embeddings do?"
-              contentClassName="w-80 max-h-80 overflow-y-auto"
-            >
-              <p>
-                Sends each unembedded chunk to the configured embedding model to generate a vector
-                (a numerical fingerprint of its meaning). These vectors enable similarity search so
-                the Advisor, Quiz, and Search can find relevant content.
-              </p>
-              <p className="mt-2">
-                Requires a configured <strong>embedding provider</strong>. Recommended options:
-              </p>
-              <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-                <li>
-                  <strong>Voyage AI</strong> — best retrieval quality, free tier (200 M
-                  tokens/month)
-                </li>
-                <li>
-                  <strong>OpenAI</strong> — text-embedding-3-small, low cost, native 1 536 dims
-                </li>
-                <li>
-                  <strong>Ollama</strong> — local, free, but 768-dim (requires schema change)
-                </li>
-              </ul>
-              <p className="mt-2 text-xs">
-                <strong>Note:</strong> Anthropic (Claude) does not offer an embeddings API. Only
-                processes chunks that don&apos;t have embeddings yet, so it&apos;s safe to run
-                multiple times.
-              </p>
-            </FieldHelp>
-            {embeddingStatus && hasChunks && !allEmbedded && (
-              <span className="text-muted-foreground text-xs">
-                {embeddingStatus.embedded}/{embeddingStatus.total} embedded
-              </span>
-            )}
-            {allEmbedded && (
-              <span className="text-muted-foreground text-xs">All chunks embedded</span>
-            )}
-          </div>
-        </div>
-        <div>
-          <button
-            type="button"
-            onClick={() => setCompareOpen(true)}
-            className="text-primary text-xs hover:underline"
-          >
-            Compare embedding providers →
-          </button>
-        </div>
-        {lastSeededAt && (
-          <p className="text-muted-foreground text-xs">
-            Last seeded:{' '}
-            {new Date(lastSeededAt).toLocaleString(undefined, {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })}
-          </p>
-        )}
-        {seedError && <p className="text-destructive text-sm">{seedError}</p>}
-        {embedError && <p className="text-destructive text-sm">{embedError}</p>}
-        {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
-          <EmbeddingStatusBanner
-            total={embeddingStatus.total}
-            embedded={embeddingStatus.embedded}
-            hasActiveProvider={hasProvider}
-          />
-        )}
-      </div>
+      {/* Built-in setup renders near the top while still in progress so it
+          stays in the operator's path of attention. Once setupComplete, it
+          falls to the bottom of the page (see end of this component) since
+          it's already done and shouldn't take prime real estate. */}
+      {!setupComplete && builtInPanel}
 
       <DocumentUploadZone onUploadComplete={onRefresh} onPdfPreview={handlePdfPreview} />
+
+      {/* Chunking settings — accessed via an ⓘ button underneath the upload
+          zone. The popover surfaces both the live values and the advice for
+          when to change them. Values come from `chunker-config.ts` so they
+          can never drift from what the runtime uses. */}
+      <div className="text-muted-foreground -mt-4 flex items-center gap-1.5 text-xs">
+        <span>Chunking settings</span>
+        <FieldHelp
+          title="Chunking settings"
+          ariaLabel="About the chunking settings"
+          contentClassName="w-96 max-h-96 overflow-y-auto"
+        >
+          <p>
+            These values control how documents are split into chunks before embedding. They are{' '}
+            <strong>code-level constants</strong> today — there is no admin UI to change them. The
+            values below are what the runtime actually uses, read directly from{' '}
+            <code>lib/orchestration/knowledge/chunker-config.ts</code>.
+          </p>
+
+          <dl className="bg-muted/40 mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-md p-2 text-xs">
+            <div>
+              <dt className="text-muted-foreground">Min chunk size</dt>
+              <dd className="font-medium">{MIN_CHUNK_TOKENS} tokens</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Max chunk size</dt>
+              <dd className="font-medium">{MAX_CHUNK_TOKENS} tokens</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Token estimate</dt>
+              <dd className="font-medium">~{CHARS_PER_TOKEN_ESTIMATE} chars / token</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">CSV row cap</dt>
+              <dd className="font-medium">{CSV_MAX_ROW_CHARS.toLocaleString()} chars</dd>
+            </div>
+          </dl>
+
+          <p className="text-foreground mt-3 font-medium">Chunk size (min/max tokens)</p>
+          <p>
+            The chunker aims for chunks between <strong>{MIN_CHUNK_TOKENS}</strong> and{' '}
+            <strong>{MAX_CHUNK_TOKENS}</strong> tokens. Below the min, neighbouring sections merge;
+            above the max, sections split. <strong>Smaller chunks</strong> = sharper similarity
+            match (good for FAQs, glossaries); <strong>larger chunks</strong> = more surrounding
+            context per match (good for long-form prose, legal text).
+          </p>
+          <p className="text-foreground mt-2 font-medium">Token estimation</p>
+          <p>
+            Tokens are approximated as <strong>~{CHARS_PER_TOKEN_ESTIMATE}</strong> characters per
+            token (a common rule of thumb for English). The chunker doesn&apos;t call the embedding
+            provider&apos;s tokenizer — it&apos;s a heuristic.
+          </p>
+          <p className="text-foreground mt-2 font-medium">Split hierarchy</p>
+          <p>
+            When a section exceeds the max, the chunker tries to split it cleanly in this order:{' '}
+            <strong>paragraph → line → sentence → fixed-width window</strong>. The last tier is the
+            safety net that guarantees no chunk ever exceeds the cap, at the cost of cutting
+            mid-sentence.
+          </p>
+          <p className="text-foreground mt-2 font-medium">CSV per-row cap</p>
+          <p>
+            CSV uploads chunk one row per chunk. Rows above{' '}
+            <strong>{CSV_MAX_ROW_CHARS.toLocaleString()}</strong> characters are dropped before
+            embedding (they exceed every embedding API&apos;s input limit) and named in the document
+            warnings.
+          </p>
+          <p className="text-foreground mt-2 font-medium">When to change these</p>
+          <p>
+            Rarely. Defaults work well for OpenAI, Voyage, and Ollama embeddings. Consider a change
+            only if (a) you switch to a smaller-context embedding model, (b) your documents are
+            uniformly very short or very long, or (c) coverage on most documents is consistently
+            low.
+          </p>
+        </FieldHelp>
+      </div>
 
       {/* Meta-tags in use */}
       {metaTags && (hasAppTags || hasSystemTags) && (
@@ -667,6 +834,11 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                         <span>Chunks</span>
                       </Tip>
                     </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      <Tip label="Percentage of the parsed source text that was captured in stored chunks. Click the document to see details.">
+                        <span>Coverage</span>
+                      </Tip>
+                    </th>
                     <th className="px-4 py-2 text-left font-medium">
                       <Tip label="When this document was uploaded">
                         <span>Uploaded</span>
@@ -707,6 +879,35 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                           <Badge variant={style.variant}>{style.label}</Badge>
                         </td>
                         <td className="px-4 py-2 text-right">{doc.chunkCount}</td>
+                        <td className="px-4 py-2 text-right text-xs">
+                          {(() => {
+                            const cov = readCoverage(doc.metadata);
+                            if (!cov) {
+                              return (
+                                <Tip label="No coverage metric — this document was uploaded before coverage was tracked. Re-chunk to compute it.">
+                                  <span className="text-muted-foreground">—</span>
+                                </Tip>
+                              );
+                            }
+                            const healthy = cov.coveragePct >= 95;
+                            const label = healthy
+                              ? `${cov.coveragePct}% of the parsed source text was captured in stored chunks — ≥95% is healthy. Click the document name to inspect the chunks.`
+                              : `Only ${cov.coveragePct}% of the parsed source text made it into chunks. Some content was likely dropped by the chunker (oversize CSV rows, empty paragraph splits). Click the document name to review.`;
+                            return (
+                              <Tip label={label}>
+                                <span
+                                  className={
+                                    healthy
+                                      ? 'text-green-700 dark:text-green-400'
+                                      : 'text-amber-700 dark:text-amber-400'
+                                  }
+                                >
+                                  {cov.coveragePct}%
+                                </span>
+                              </Tip>
+                            );
+                          })()}
+                        </td>
                         <td className="text-muted-foreground px-4 py-2 text-xs">
                           {new Date(doc.createdAt).toLocaleDateString()}
                         </td>
@@ -749,17 +950,19 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                                     Review
                                   </Button>
                                 ) : (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={rechunkingId === doc.id}
-                                    onClick={() => void handleRechunk(doc.id)}
-                                  >
-                                    <RefreshCw
-                                      className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
-                                    />
-                                    Rechunk
-                                  </Button>
+                                  <Tip label="Re-splits the document into chunks and re-embeds them from scratch. Useful after switching embedding provider (so the new vectors are used), to retry a document with low coverage, or after a code-level chunker upgrade. Existing chunks and embeddings are replaced — agents will use the new ones immediately.">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={rechunkingId === doc.id}
+                                      onClick={() => void handleRechunk(doc.id)}
+                                    >
+                                      <RefreshCw
+                                        className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
+                                      />
+                                      Rechunk
+                                    </Button>
+                                  </Tip>
                                 )}
                                 {deleteConfirmId === doc.id ? (
                                   <span className="inline-flex items-center gap-1">
@@ -829,6 +1032,12 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           }
         }}
       />
+
+      {/* Built-in setup falls to the bottom once complete — out of the
+          operator's path of attention but still reachable (collapsed by
+          default, can be expanded). The active-setup rendering near the
+          top is the same panel; only one renders at a time. */}
+      {setupComplete && builtInPanel}
     </div>
   );
 }

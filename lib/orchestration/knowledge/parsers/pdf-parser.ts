@@ -23,6 +23,12 @@ import type {
 const MIN_VIABLE_TEXT_LENGTH = 50;
 /** Per-page char count below which a page is treated as scanned-suspect. */
 const PAGE_SCANNED_THRESHOLD = 50;
+/** Tunables for header/footer detection. See `stripHeadersAndFooters`. */
+const HEADER_FOOTER_MARGIN_LINES = 2;
+const HEADER_FOOTER_MIN_FREQUENCY = 0.3;
+const HEADER_FOOTER_MIN_PAGES = 3;
+const HEADER_FOOTER_MAX_LINE_LENGTH = 100;
+const HEADER_FOOTER_STRIP_CAP_PER_SIDE = 3;
 
 /** Options accepted by parsePdf. */
 export interface ParsePdfOptions {
@@ -144,6 +150,136 @@ function applyPageTables(
 }
 
 /**
+ * Normalise a candidate line for repetition matching: collapse whitespace,
+ * replace digit runs with `#` (so "Page 3" and "Page 17" collapse together),
+ * and lowercase. Returns the empty string when nothing meaningful remains.
+ */
+function normaliseMargin(line: string): string {
+  return line.trim().replace(/\s+/g, ' ').replace(/\d+/g, '#').toLowerCase();
+}
+
+/**
+ * Detect and strip repeated headers/footers from each page.
+ *
+ * PDF text extraction surfaces running headers, footers, and page numbers
+ * as the first and last lines of each page — these add no semantic value
+ * and pollute the chunker (a repeated "Chapter 4 — The Foo" line appears
+ * once per page and dominates similarity search for that page's chunk).
+ *
+ * Algorithm:
+ *   1. Collect the top N and bottom N non-blank lines of every page.
+ *   2. Tally each normalised candidate (whitespace-collapsed, digits → `#`,
+ *      lowercased) by page count.
+ *   3. A candidate is treated as a header/footer if it appears on at
+ *      least `HEADER_FOOTER_MIN_FREQUENCY` of pages AND at least
+ *      `HEADER_FOOTER_MIN_PAGES` absolute pages. The two-floor rule keeps
+ *      noisy short books (5–10 pages) from over-stripping.
+ *   4. Strip matching lines from the top and bottom of each page, capped
+ *      at `HEADER_FOOTER_STRIP_CAP_PER_SIDE` removals per side so we never
+ *      eat the body if our heuristic misfires.
+ *
+ * Returns the rewritten page entries plus a count of stripped lines for
+ * surfacing as metadata. No-ops on documents below `HEADER_FOOTER_MIN_PAGES`.
+ */
+function stripHeadersAndFooters(pages: PageEntry[]): {
+  entries: PageEntry[];
+  strippedCount: number;
+  repeatedPatternCount: number;
+} {
+  if (pages.length < HEADER_FOOTER_MIN_PAGES) {
+    return { entries: pages, strippedCount: 0, repeatedPatternCount: 0 };
+  }
+
+  const pageCountByKey = new Map<string, Set<number>>();
+  for (const page of pages) {
+    const lines = page.text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    if (lines.length === 0) continue;
+
+    const candidates = new Set<string>();
+    for (let i = 0; i < Math.min(HEADER_FOOTER_MARGIN_LINES, lines.length); i++) {
+      candidates.add(lines[i]);
+    }
+    for (let i = Math.max(0, lines.length - HEADER_FOOTER_MARGIN_LINES); i < lines.length; i++) {
+      candidates.add(lines[i]);
+    }
+    for (const c of candidates) {
+      if (c.length > HEADER_FOOTER_MAX_LINE_LENGTH) continue;
+      const key = normaliseMargin(c);
+      if (!key) continue;
+      let set = pageCountByKey.get(key);
+      if (!set) {
+        set = new Set<number>();
+        pageCountByKey.set(key, set);
+      }
+      set.add(page.num);
+    }
+  }
+
+  const minPages = Math.max(
+    HEADER_FOOTER_MIN_PAGES,
+    Math.ceil(pages.length * HEADER_FOOTER_MIN_FREQUENCY)
+  );
+  const repeats = new Set<string>();
+  for (const [key, set] of pageCountByKey) {
+    if (set.size >= minPages) repeats.add(key);
+  }
+
+  if (repeats.size === 0) {
+    return { entries: pages, strippedCount: 0, repeatedPatternCount: 0 };
+  }
+
+  let strippedCount = 0;
+  const entries = pages.map((page) => {
+    const lines = page.text.split('\n');
+
+    let topRemoved = 0;
+    while (lines.length > 0 && topRemoved < HEADER_FOOTER_STRIP_CAP_PER_SIDE) {
+      const candidate = lines[0].trim();
+      if (candidate.length === 0) {
+        lines.shift();
+        continue;
+      }
+      if (
+        candidate.length <= HEADER_FOOTER_MAX_LINE_LENGTH &&
+        repeats.has(normaliseMargin(candidate))
+      ) {
+        lines.shift();
+        topRemoved++;
+        strippedCount++;
+        continue;
+      }
+      break;
+    }
+
+    let bottomRemoved = 0;
+    while (lines.length > 0 && bottomRemoved < HEADER_FOOTER_STRIP_CAP_PER_SIDE) {
+      const candidate = lines[lines.length - 1].trim();
+      if (candidate.length === 0) {
+        lines.pop();
+        continue;
+      }
+      if (
+        candidate.length <= HEADER_FOOTER_MAX_LINE_LENGTH &&
+        repeats.has(normaliseMargin(candidate))
+      ) {
+        lines.pop();
+        bottomRemoved++;
+        strippedCount++;
+        continue;
+      }
+      break;
+    }
+
+    return { ...page, text: lines.join('\n').trim() };
+  });
+
+  return { entries, strippedCount, repeatedPatternCount: repeats.size };
+}
+
+/**
  * Group consecutive scanned-suspect pages into ranges and produce one warning
  * per range, e.g. "Pages 4–7 of 22 produced no extractable text — likely scanned".
  */
@@ -223,6 +359,16 @@ export async function parsePdf(
     if (applied.tablesRendered > 0) {
       metadata.tablesExtracted = String(applied.tablesRendered);
     }
+  }
+
+  // Strip repeated running headers / footers / page numbers AFTER the
+  // table-merge step so injected `<!-- table-start -->` blocks (which sit
+  // at the bottom of the page entry) are never considered as candidates.
+  const stripped = stripHeadersAndFooters(pageEntries);
+  pageEntries = stripped.entries;
+  if (stripped.strippedCount > 0) {
+    metadata.headersFootersStripped = String(stripped.strippedCount);
+    metadata.headerFooterPatterns = String(stripped.repeatedPatternCount);
   }
 
   const pageInfo: PageInfo[] = pageEntries.map((p) => ({

@@ -181,6 +181,11 @@ export function EmbeddingProjectionView({ scope }: EmbeddingProjectionViewProps)
     return {
       tooltip: {
         trigger: 'item' as const,
+        // Force wrapping on the outer tooltip container — long unbroken
+        // tokens (URLs, hyphenless names, dense content previews) would
+        // otherwise push past any inner-div max-width.
+        extraCssText:
+          'max-width:320px;white-space:normal;word-break:break-word;overflow-wrap:anywhere;',
         formatter: (params: { data?: { value?: number[]; chunk?: ProjectionChunk } }) => {
           const chunk = params.data?.chunk;
           if (!chunk) return '';

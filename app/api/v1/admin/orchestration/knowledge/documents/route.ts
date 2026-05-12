@@ -28,6 +28,7 @@ import {
   uploadDocument,
   uploadDocumentFromBuffer,
   previewDocument,
+  parseDocumentMetadata,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
@@ -228,6 +229,9 @@ export const POST = withAdminAuth(async (request, session) => {
       adminId: session.user.id,
     });
 
+    const meta = parseDocumentMetadata(preview.document.metadata);
+    const pages = meta?.pages ?? null;
+
     return successResponse(
       {
         document: preview.document,
@@ -243,6 +247,7 @@ export const POST = withAdminAuth(async (request, session) => {
           author: preview.author ?? null,
           sectionCount: preview.sectionCount,
           warnings: preview.warnings,
+          pages,
           requiresConfirmation: true,
         },
       },

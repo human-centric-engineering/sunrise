@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle, FileText } from 'lucide-react';
+import { AlertTriangle, CheckCircle, CheckCircle2, FileText } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -12,8 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
 
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
@@ -153,6 +155,12 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
             </div>
           )}
 
+          {/* Per-page extraction strip — one block per page, height
+              proportional to char count, colored amber when the page came
+              back below the scanned-suspect threshold. Lets the operator
+              spot-check coverage without scrolling the full extracted text. */}
+          {preview.pages && preview.pages.length > 0 && <PagesStrip pages={preview.pages} />}
+
           {/* Extracted text */}
           <div className="space-y-1">
             <label htmlFor="pdf-content" className="text-sm font-medium">
@@ -206,5 +214,105 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface PageStat {
+  num: number;
+  charCount: number;
+  hasText: boolean;
+}
+
+function PagesStrip({ pages }: { pages: PageStat[] }) {
+  const max = Math.max(1, ...pages.map((p) => p.charCount));
+  const total = pages.length;
+  const withText = pages.filter((p) => p.hasText).length;
+  const empty = total - withText;
+  const totalChars = pages.reduce((acc, p) => acc + p.charCount, 0);
+  // Pre-chunking page coverage: what fraction of pages produced enough
+  // text to clear the scanned-suspect threshold. Mirrors the post-chunking
+  // metric shown in the Chunks Inspector so the operator gets the same
+  // green/amber headline at both stages of the pipeline.
+  const pagePct = total === 0 ? 100 : Math.round((withText / total) * 1000) / 10;
+  const healthy = pagePct >= 95;
+  return (
+    <div className="space-y-2">
+      <div
+        className={`flex items-start gap-2 rounded-md border p-3 text-xs ${
+          healthy
+            ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200'
+            : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'
+        }`}
+      >
+        {healthy ? (
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        )}
+        <div className="flex-1">
+          <span className="font-medium">{pagePct}% of pages produced text</span>{' '}
+          <span className="opacity-80">
+            ({withText} of {total} {total === 1 ? 'page' : 'pages'}, {totalChars.toLocaleString()}{' '}
+            chars total
+            {empty > 0 ? `, ${empty} likely scanned` : ''})
+          </span>
+          <FieldHelp title="Page coverage" ariaLabel="About page coverage" contentClassName="w-80">
+            <p>
+              Pre-chunking signal: what fraction of pages produced enough extractable text to clear
+              the scanned-suspect threshold. The matching post-chunking metric — what fraction of
+              the <em>parsed text</em> made it into stored chunks — appears in the Chunks Inspector
+              after you confirm.
+            </p>
+            <p className="mt-2">
+              <strong>Below 95%</strong> means a meaningful share of the PDF is likely image-only
+              and an agent won&apos;t be able to retrieve that content. OCR those pages externally
+              (macOS Preview, Adobe Acrobat, or <code>ocrmypdf</code>) and re-upload, or paste the
+              corrected text into the editor below before confirming.
+            </p>
+          </FieldHelp>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-sm font-medium">
+          Per-page extraction
+          <FieldHelp
+            title="Per-page extraction"
+            ariaLabel="About per-page extraction"
+            contentClassName="w-80"
+          >
+            <p>
+              One bar per page, height proportional to the character count extracted from that page.
+              Hover any bar for the exact count.
+            </p>
+            <p className="mt-2">
+              <strong>Amber bars</strong> mark pages whose extracted text fell below the
+              scanned-suspect threshold — these are the pages counted against the page coverage
+              figure above.
+            </p>
+          </FieldHelp>
+        </div>
+        <div className="bg-muted/30 flex h-12 items-end gap-px rounded-md border p-1">
+          {pages.map((p) => {
+            const heightPct = Math.max(4, Math.round((p.charCount / max) * 100));
+            return (
+              <Tip
+                key={p.num}
+                label={`Page ${p.num} — ${p.charCount.toLocaleString()} chars${p.hasText ? '' : ' (likely scanned)'}`}
+              >
+                <div
+                  className={`min-w-[2px] flex-1 rounded-sm ${
+                    p.hasText
+                      ? 'bg-primary/60 hover:bg-primary'
+                      : 'bg-amber-400 hover:bg-amber-500 dark:bg-amber-600 dark:hover:bg-amber-500'
+                  }`}
+                  style={{ height: `${heightPct}%` }}
+                />
+              </Tip>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }

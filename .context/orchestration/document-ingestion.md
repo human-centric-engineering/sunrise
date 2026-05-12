@@ -35,17 +35,19 @@ Upload (multipart form)
 
 ## Key Files
 
-| File                                                 | Purpose                                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                            |
-| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                            |
-| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)              |
-| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                                       |
-| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                                       |
-| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                           |
-| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                                          |
-| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()`            |
-| `lib/orchestration/knowledge/chunker.ts`             | `chunkMarkdownDocument()` (heading-aware) + `chunkCsvDocument()` (row-per-chunk) |
+| File                                                 | Purpose                                                                                                                                                                                            |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/orchestration/knowledge/parsers/index.ts`       | Format router, `parseDocument()`, `requiresPreview()`                                                                                                                                              |
+| `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                                                                                                                                              |
+| `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)                                                                                                                                |
+| `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                                                                                                                                                         |
+| `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                                                                                                                                                         |
+| `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                                                                                                                                             |
+| `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                                                                                                                                                            |
+| `lib/orchestration/knowledge/document-manager.ts`    | `uploadDocumentFromBuffer()`, `previewDocument()`, `confirmPreview()`                                                                                                                              |
+| `lib/orchestration/knowledge/chunker.ts`             | `chunkMarkdownDocument()` (heading-aware) + `chunkCsvDocument()` (row-per-chunk)                                                                                                                   |
+| `lib/orchestration/knowledge/chunker-config.ts`      | Chunker constants (`MIN_CHUNK_TOKENS`, `MAX_CHUNK_TOKENS`, `CHARS_PER_TOKEN_ESTIMATE`, CSV caps) — extracted so client components can import without pulling the DB client into the browser bundle |
+| `lib/orchestration/knowledge/coverage.ts`            | `computeCoverage()`, `buildCoverageWarning()` — post-chunk text-capture metric, persisted to `document.metadata.coverage`                                                                          |
 
 ## API Endpoints
 
@@ -74,6 +76,7 @@ Max size: 50 MB (increased from 10 MB to accommodate EPUBs).
     "sectionCount": 42,
     "warnings": ["..."],
     "requiresConfirmation": true,
+    "pages": [{ "num": 1, "charCount": 1240, "hasText": true }, ...],
   },
 }
 ```
@@ -176,6 +179,24 @@ instead. Per-page char counts are persisted on the preview metadata as
 `pages: [{ num, charCount, hasText }]` so a future page-picker UI can render
 without another parser change.
 
+### Header/footer stripping
+
+After table-merge and before `pageInfo` / `fullText` computation, the PDF parser
+runs `stripHeadersAndFooters()` on the extracted page entries. It:
+
+1. Scans the top 2 and bottom 2 non-blank lines of every page to build a
+   candidate set.
+2. Normalises each candidate (collapse whitespace, replace digit runs with `#`,
+   lowercase) and tallies how many pages it appears on.
+3. Any candidate that appears on ≥ 30 % of pages **and** ≥ 3 absolute pages is
+   classified as a header/footer pattern.
+4. Strips matching lines from the top and bottom of every page (capped at 3
+   lines per side so a misfiring heuristic can't eat body content).
+
+The number of stripped lines and pattern count are written to
+`document.metadata.headersFootersStripped` / `document.metadata.headerFooterPatterns`
+so the admin can see the effect. No-op on documents fewer than 3 pages.
+
 For scanned PDFs Sunrise does not ship OCR — produce a searchable PDF
 externally first (macOS Preview, Adobe Acrobat, `ocrmypdf`) then re-upload.
 
@@ -224,6 +245,29 @@ HTML) to the chunk renderer, harden `renderMarkdownTable` first to escape
 | `ready`          | Successfully processed, chunks available for search         |
 | `failed`         | Processing failed (see `errorMessage`)                      |
 | `pending_review` | PDF uploaded, awaiting admin confirmation of extracted text |
+
+## Coverage Metric
+
+After every chunking operation the pipeline computes a coverage metric via
+`lib/orchestration/knowledge/coverage.ts` and persists it on the document:
+
+```jsonc
+{
+  "coverage": {
+    "parsedChars": 124000, // length of source text fed into the chunker
+    "chunkChars": 123200, // sum of all stored chunk content lengths (trimmed)
+    "coveragePct": 99.4, // (chunkChars / parsedChars) × 100, rounded to 1 dp
+  },
+}
+```
+
+`coveragePct` can exceed 100 because heading-aware chunking re-emits section
+titles inside each child chunk — over-capture is harmless, only under-capture
+warrants attention. When `coveragePct < 95` a warning is appended to
+`document.metadata.warnings` and surfaced in the admin Chunks Inspector.
+
+This metric is computed on `uploadDocument`, `uploadCsvFromParsed`,
+`confirmPreview`, and `rechunkDocument`.
 
 ## Parser Output
 
