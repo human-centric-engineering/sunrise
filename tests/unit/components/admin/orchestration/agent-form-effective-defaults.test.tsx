@@ -120,6 +120,7 @@ function makeSystemSeededAgent(): AiAgent {
     systemInstructionsHistory: [],
     metadata: {},
     knowledgeCategories: [],
+    knowledgeAccessMode: 'full',
     topicBoundaries: [],
     brandVoiceInstructions: null,
     rateLimitRpm: null,

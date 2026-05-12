@@ -42,6 +42,12 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       deleteMany: vi.fn(),
     },
+    knowledgeTag: {
+      upsert: vi.fn(),
+    },
+    aiKnowledgeDocumentTag: {
+      upsert: vi.fn(),
+    },
     user: {
       findFirst: vi.fn(),
     },
@@ -131,9 +137,23 @@ const CHUNKS_PATH = '/data/chunks.json';
 // --- Phase 1: seedChunks ---
 
 describe('seedChunks', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // New seeder upserts tags and document↔tag links; default no-op mocks keep tests
+    // focused on the legacy assertions (chunk insert SQL, uploader resolution, etc.).
+    vi.mocked(prisma.knowledgeTag.upsert).mockImplementation((args: never) => {
+      const a = args as { where: { slug: string }; create: { slug: string; name: string } };
+      return Promise.resolve({
+        id: `tag-${a.where.slug}`,
+        slug: a.where.slug,
+        name: a.create?.name ?? a.where.slug,
+      } as never);
+    });
+    vi.mocked(prisma.aiKnowledgeDocumentTag.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue({} as never);
+  });
 
-  it('returns early without reading file or writing when document already exists', async () => {
+  it('skips when the legacy single document already exists (refuses to silently delete embeddings)', async () => {
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
       makeDocument({ status: 'ready' }) as never
     );
@@ -145,7 +165,7 @@ describe('seedChunks', () => {
     expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
-  it('checks for existing doc by the exact document name', async () => {
+  it('detects the legacy single document by its exact name', async () => {
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
       makeDocument({ status: 'ready' }) as never
     );
@@ -157,11 +177,30 @@ describe('seedChunks', () => {
     });
   });
 
-  it('cleans up a failed document before re-seeding', async () => {
+  it('skips when any new-layout pattern document already exists', async () => {
+    // First findFirst (legacy) → null; second (new-layout) → existing doc.
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(
+        makeDocument({
+          status: 'ready',
+          fileName: 'agentic-design-patterns-pattern-1.md',
+        }) as never
+      );
+
+    await seedChunks(CHUNKS_PATH);
+
+    expect(vi.mocked(readFile)).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+  });
+
+  it('cleans up a failed legacy document before re-seeding into the new layout', async () => {
     const failedDoc = makeDocument({ id: 'failed-doc', status: 'failed' });
     const chunks = [makeSeedChunk()];
 
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(failedDoc as never);
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst)
+      .mockResolvedValueOnce(failedDoc as never)
+      .mockResolvedValueOnce(null as never);
     vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.aiKnowledgeDocument.delete).mockResolvedValue(failedDoc as never);
     vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks) as never);
