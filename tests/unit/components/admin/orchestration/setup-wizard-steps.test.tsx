@@ -77,33 +77,11 @@ describe('SetupWizard — step content', () => {
       await waitFor(() => {
         expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
       });
-      // The manual form is the escape-hatch, not the default view —
-      // operator must opt in via "Configure manually anyway".
+      // The manual form is intentionally unreachable here — without an
+      // env var a manually-created provider can't authenticate, so the
+      // operator has to leave, edit .env, restart, and come back.
       expect(screen.queryByRole('button', { name: /create provider/i })).not.toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: /configure manually anyway/i })
-      ).toBeInTheDocument();
-    });
-
-    it('"Configure manually anyway" reveals the manual form when no env vars detected', async () => {
-      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
-      seedStorage(0);
-      const user = userEvent.setup();
-
-      render(<SetupWizard open={true} onOpenChange={() => {}} />);
-
-      await waitFor(() => {
-        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByRole('button', { name: /configure manually anyway/i }));
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
-      });
-      expect(document.getElementById('provider-flavour')).not.toBeNull();
-      expect(document.getElementById('provider-name')).not.toBeNull();
-      expect(document.getElementById('provider-slug')).not.toBeNull();
+      expect(screen.queryByRole('button', { name: /configure manually/i })).not.toBeInTheDocument();
     });
 
     it('detection-card click POSTs to /providers and PATCHes /settings with suggestions', async () => {
@@ -181,23 +159,40 @@ describe('SetupWizard — step content', () => {
 
     it('manual form submit POSTs the filled fields to /providers and advances to step 2', async () => {
       // Drives handleManualSubmit + the four Select onChange
-      // handlers in the manual form. Without this the entire
-      // happy-path through the manual provider-creation flow is
-      // uncovered (only field rendering was tested before).
-      const fetchMock = makeFetchMock({ providerTotal: 0 });
+      // handlers in the manual form. The manual form is only
+      // reachable when at least one env key was detected; opt into
+      // manual mode via "Configure manually instead →".
+      const fetchMock = makeFetchMock({
+        providerTotal: 0,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: false,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
       vi.stubGlobal('fetch', fetchMock);
       seedStorage(0);
       const user = userEvent.setup();
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      // No env keys detected → opt into manual mode first.
       await waitFor(() => {
         expect(
-          screen.getByRole('button', { name: /configure manually anyway/i })
+          screen.getByRole('button', { name: /configure manually instead/i })
         ).toBeInTheDocument();
       });
-      await user.click(screen.getByRole('button', { name: /configure manually anyway/i }));
+      await user.click(screen.getByRole('button', { name: /configure manually instead/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();

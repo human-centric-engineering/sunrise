@@ -676,14 +676,13 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     );
   }
 
-  // No env keys detected and the operator hasn't opted into manual
-  // mode — show the env-setup guidance instead of the manual form.
+  // No env keys detected — show the env-setup guidance and stop.
   // Without a matching env var, a manually-created provider can't
-  // authenticate, so pointing the operator at `.env` first is the
-  // shorter path to a working setup. The manual form is preserved as
-  // an escape hatch (Ollama / custom self-hosted endpoints) via the
-  // "Configure manually anyway" link.
-  if (detectedAvailable.length === 0 && !manualMode) {
+  // authenticate, so there is no useful next step inside the wizard;
+  // the operator has to leave, edit `.env`, restart, and come back.
+  // No escape hatch — by the time we render this branch, manualMode
+  // is also unreachable because the user has no way to opt into it.
+  if (detectedAvailable.length === 0) {
     return (
       <div className="space-y-4">
         <div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-900/10">
@@ -709,22 +708,13 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
             )}
           </div>
         </div>
-        <div className="flex justify-end">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setManualMode(true)}
-            disabled={submitting}
-          >
-            Configure manually anyway →
-          </Button>
-        </div>
       </div>
     );
   }
 
-  // Manual path: operator chose manual (or detection found nothing
-  // and they clicked "Configure manually anyway").
+  // Manual path: operator opted into manual mode from the detection
+  // list via "Configure manually instead →". Only reachable when at
+  // least one env key was detected.
   return (
     <form
       onSubmit={(e) => {
@@ -732,13 +722,6 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       }}
       className="space-y-4"
     >
-      {detectedAvailable.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          Manual configuration. Use this for Ollama or a self-hosted endpoint that doesn&apos;t need
-          an API key — for hosted providers, set the API key env var first and restart.
-        </p>
-      )}
-
       <div className="space-y-2">
         <Label htmlFor="provider-flavour">
           Provider type{' '}
@@ -838,19 +821,15 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="flex justify-between">
-        {manualMode ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setManualMode(false)}
-            disabled={submitting}
-            type="button"
-          >
-            {detectedAvailable.length > 0 ? '← Back to detected providers' : '← Back'}
-          </Button>
-        ) : (
-          <span />
-        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setManualMode(false)}
+          disabled={submitting}
+          type="button"
+        >
+          ← Back to detected providers
+        </Button>
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting ? (
             <>
