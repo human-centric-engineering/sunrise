@@ -63,6 +63,24 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
+vi.mock('@/lib/orchestration/llm/known-providers', () => ({
+  KNOWN_PROVIDERS: [
+    {
+      slug: 'anthropic',
+      name: 'Anthropic',
+      providerType: 'anthropic',
+      defaultBaseUrl: null,
+      apiKeyEnvVars: ['ANTHROPIC_API_KEY'],
+      isLocal: false,
+      suggestedDefaultChatModel: 'claude-sonnet-4-6',
+      suggestedRoutingModel: null,
+      suggestedReasoningModel: null,
+      suggestedEmbeddingModel: null,
+    },
+  ],
+  detectApiKeyEnvVar: vi.fn(() => 'ANTHROPIC_API_KEY'),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 function makeProvider(

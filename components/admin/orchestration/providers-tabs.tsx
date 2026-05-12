@@ -26,12 +26,24 @@ import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 interface ProvidersTabsProps {
   initialProviders: ProviderRow[];
   initialModels: ModelRow[];
+  /**
+   * Server-detected presence of at least one hosted-provider env var.
+   * When false, ProvidersList hides the "Add provider" buttons — the
+   * resulting config would have no API key to authenticate with, so
+   * the amber no-keys banner is the only useful action. Defaults to
+   * true so callers that haven't migrated keep the existing CTAs.
+   */
+  hasAnyEnvKey?: boolean;
 }
 
 const ALLOWED_TABS = ['configuration', 'models'] as const;
 type ProvidersTab = (typeof ALLOWED_TABS)[number];
 
-export function ProvidersTabs({ initialProviders, initialModels }: ProvidersTabsProps) {
+export function ProvidersTabs({
+  initialProviders,
+  initialModels,
+  hasAnyEnvKey = true,
+}: ProvidersTabsProps) {
   const { activeTab, setActiveTab } = useUrlTabs<ProvidersTab>({
     defaultTab: 'configuration',
     allowedTabs: ALLOWED_TABS,
@@ -45,7 +57,7 @@ export function ProvidersTabs({ initialProviders, initialModels }: ProvidersTabs
       </TabsList>
 
       <TabsContent value="configuration">
-        <ProvidersList initialProviders={initialProviders} />
+        <ProvidersList initialProviders={initialProviders} hasAnyEnvKey={hasAnyEnvKey} />
       </TabsContent>
 
       <TabsContent value="models">

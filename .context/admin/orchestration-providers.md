@@ -58,7 +58,16 @@ Providers are few (typically ≤ 6) and have distinctive state (status dot, `Loc
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Component:** `components/admin/orchestration/providers-list.tsx` (client island, takes `initialProviders: ProviderRow[]` from the server shell).
+**Component:** `components/admin/orchestration/providers-list.tsx` (client island, takes `initialProviders: ProviderRow[]` and `hasAnyEnvKey: boolean` from the server shell).
+
+### Env-key gate
+
+`providers/page.tsx` scans `process.env` at render time using `KNOWN_PROVIDERS` and `detectApiKeyEnvVar()` from `lib/orchestration/llm/known-providers.ts`. If no hosted provider has a matching env var (`hasAnyEnvKey === false`), it passes `hasAnyEnvKey={false}` to `<ProvidersList>`, which:
+
+- Hides the "+ Add provider" CTA in the header and the empty-state prompt — adding a provider without an API key produces a row that can't authenticate.
+- Changes the empty-state copy from "No providers configured yet." to "No providers configured. Add an LLM API key to your .env and restart the server to get started."
+
+The `<ProviderDetectionsBanner>` component (`components/admin/orchestration/provider-detections-banner.tsx`) renders an amber inline banner when `unconfigured.length === 0 && showNoKeysWarning`, directing the operator to set an env var and restart before continuing. The banner is also shown on `providers/new/page.tsx` so the operator sees the guidance before filling the create form.
 
 ### Status dot rules
 

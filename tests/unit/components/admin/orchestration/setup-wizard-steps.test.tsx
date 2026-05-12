@@ -39,7 +39,29 @@ describe('SetupWizard — step content', () => {
 
   describe('Step 1 — StepProvider', () => {
     it('already-exists card auto-shows when providers exist and Continue advances', async () => {
-      const fetchMock = makeFetchMock({ providerTotal: 1 });
+      // Detection includes a present key so the no-keys-detected
+      // branch (which now takes priority over hasExisting) doesn't
+      // fire. This mirrors the real world: an operator with a
+      // working provider also has the matching env var set.
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: true,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
       vi.stubGlobal('fetch', fetchMock);
       const user = userEvent.setup();
       seedStorage(0);
@@ -68,18 +90,59 @@ describe('SetupWizard — step content', () => {
       expect(postCallsAfter).toBe(postCallsBefore);
     });
 
-    it('renders manual flavour-picker form when no providers and no env vars detected', async () => {
+    it('no-keys warning overrides the already-have-provider card when env keys are missing', async () => {
+      // Operator has a provider row in the DB but disabled / rotated
+      // the matching env var. The provider can't authenticate, so
+      // the wizard must show the missing-key warning instead of the
+      // "you already have a provider configured" success card.
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: false,
+            alreadyConfigured: true,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      seedStorage(0);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
+      });
+      // Success card must not appear when keys are missing.
+      expect(screen.queryByText(/already have a provider configured/i)).not.toBeInTheDocument();
+      // The missing env var the existing provider row points at is
+      // still listed so the operator knows what to restore.
+      expect(screen.getByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+    });
+
+    it('shows the env-setup hint (not the manual form) when no providers and no env vars detected', async () => {
       vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
       seedStorage(0);
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
+        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
       });
-      expect(document.getElementById('provider-flavour')).not.toBeNull();
-      expect(document.getElementById('provider-name')).not.toBeNull();
-      expect(document.getElementById('provider-slug')).not.toBeNull();
+      // The manual form is intentionally unreachable here — without an
+      // env var a manually-created provider can't authenticate, so the
+      // operator has to leave, edit .env, restart, and come back.
+      expect(screen.queryByRole('button', { name: /create provider/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /configure manually/i })).not.toBeInTheDocument();
     });
 
     it('detection-card click POSTs to /providers and PATCHes /settings with suggestions', async () => {
@@ -157,15 +220,40 @@ describe('SetupWizard — step content', () => {
 
     it('manual form submit POSTs the filled fields to /providers and advances to step 2', async () => {
       // Drives handleManualSubmit + the four Select onChange
-      // handlers in the manual form. Without this the entire
-      // happy-path through the manual provider-creation flow is
-      // uncovered (only field rendering was tested before).
-      const fetchMock = makeFetchMock({ providerTotal: 0 });
+      // handlers in the manual form. The manual form is only
+      // reachable when at least one env key was detected; opt into
+      // manual mode via "Configure manually instead →".
+      const fetchMock = makeFetchMock({
+        providerTotal: 0,
+        detected: [
+          {
+            slug: 'anthropic',
+            name: 'Anthropic',
+            providerType: 'anthropic',
+            defaultBaseUrl: null,
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: true,
+            alreadyConfigured: false,
+            isLocal: false,
+            suggestedDefaultChatModel: 'claude-sonnet-4-6',
+            suggestedRoutingModel: null,
+            suggestedReasoningModel: null,
+            suggestedEmbeddingModel: null,
+          },
+        ],
+      });
       vi.stubGlobal('fetch', fetchMock);
       seedStorage(0);
       const user = userEvent.setup();
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /configure manually instead/i })
+        ).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /configure manually instead/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
@@ -458,6 +546,232 @@ describe('SetupWizard — step content', () => {
       // Latency badge appears on success.
       await waitFor(() => {
         expect(screen.getByText(/42ms round-trip/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows "no active providers found" warning when Step 3 loads with zero providers', async () => {
+      // Covers the `providers.length === 0` early-return branch in StepSmokeTest.
+      // providerTotal:1 satisfies the probe (prevents snap-back to step 0) while
+      // providers:[] makes StepSmokeTest's own /providers fetch return an empty
+      // list — the path where a provider was deleted after the wizard was opened.
+      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1, providers: [] }));
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no active providers found/i)).toBeInTheDocument();
+      });
+      expect(
+        screen.getByText(/go back and configure a provider before running the smoke test/i)
+      ).toBeInTheDocument();
+    });
+
+    it('Run test marks failure when /test-model HTTP response is not ok', async () => {
+      // Covers the `!modelRes.ok` early-return branch (line ~1256) — previously
+      // uncovered because the mock always returned HTTP ok:true for test-model.
+      vi.stubGlobal(
+        'fetch',
+        makeFetchMock({
+          providerTotal: 1,
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              apiKeyPresent: true,
+              isLocal: false,
+            },
+          ],
+          defaultModels: { chat: 'claude-sonnet-4-6' },
+          providerTestModelHttpOk: false,
+        })
+      );
+      const user = userEvent.setup();
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/the model call failed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('Run test marks network-error failure when fetch throws', async () => {
+      // Covers the catch block (line ~1278) — triggered when fetch itself rejects
+      // (e.g. network unreachable) rather than returning an HTTP error response.
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : '';
+        if (u.includes('/providers/detect')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, data: { detected: [] } }),
+          });
+        }
+        if (u.match(/\/providers\/[^/]+\/test-model/) && init?.method === 'POST') {
+          return Promise.reject(new Error('Network unreachable'));
+        }
+        if (u.match(/\/providers\/[^/]+\/test/) && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, data: { ok: true } }),
+          });
+        }
+        if (u.includes('/providers')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                success: true,
+                data: [
+                  {
+                    id: 'prov-1',
+                    slug: 'anthropic',
+                    name: 'Anthropic',
+                    apiKeyPresent: true,
+                    isLocal: false,
+                  },
+                ],
+                meta: { total: 1 },
+              }),
+          });
+        }
+        if (u.includes('/settings')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                success: true,
+                data: { defaultModels: { chat: 'claude-sonnet-4-6' } },
+              }),
+          });
+        }
+        return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/could not reach the server/i)).toBeInTheDocument();
+      });
+    });
+
+    it('Run test marks failure when /test HTTP response is not ok', async () => {
+      // Covers the `!testRes.ok` early-return in runTest — the provider
+      // connectivity endpoint returns an HTTP error (e.g. 502 gateway timeout).
+      vi.stubGlobal(
+        'fetch',
+        makeFetchMock({
+          providerTotal: 1,
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              apiKeyPresent: true,
+              isLocal: false,
+            },
+          ],
+          defaultModels: { chat: 'claude-sonnet-4-6' },
+          providerTestHttpOk: false,
+        })
+      );
+      const user = userEvent.setup();
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/connectivity check failed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('Run test marks failure when /test returns ok:false in response body', async () => {
+      // Covers the `!testParsed.data.data?.ok` branch (line 1219) — the
+      // HTTP response is ok but the provider-level test reports a failure
+      // (bad API key, wrong base URL, etc.). Drives line 1227 which was
+      // previously unreachable because all tests passed the body-level check.
+      vi.stubGlobal(
+        'fetch',
+        makeFetchMock({
+          providerTotal: 1,
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              apiKeyPresent: true,
+              isLocal: false,
+            },
+          ],
+          defaultModels: { chat: 'claude-sonnet-4-6' },
+          providerTestOk: false,
+        })
+      );
+      const user = userEvent.setup();
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/the provider rejected the connection/i)).toBeInTheDocument();
+      });
+    });
+
+    it('Run test marks failure when no default chat model is configured', async () => {
+      // Covers the `!chatModel` early-return in runTest. The settings fetch
+      // returns no defaultModels.chat so the wizard can't proceed to test-model.
+      vi.stubGlobal(
+        'fetch',
+        makeFetchMock({
+          providerTotal: 1,
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              apiKeyPresent: true,
+              isLocal: false,
+            },
+          ],
+          defaultModels: {},
+        })
+      );
+      const user = userEvent.setup();
+      seedStorage(2);
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/no default chat model is set/i)).toBeInTheDocument();
       });
     });
   });
