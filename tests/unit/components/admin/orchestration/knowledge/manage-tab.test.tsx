@@ -927,4 +927,37 @@ describe('ManageTab', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
   });
+
+  // ── Coverage column ───────────────────────────────────────────────────────
+
+  describe('Coverage column', () => {
+    it('no coverage for document with null metadata', () => {
+      const docNoCoverage = makeDocument({ id: 'doc-no-cov', name: 'No Coverage Doc' });
+      // metadata: null by default from makeDocument
+      render(<ManageTab documents={[docNoCoverage]} onRefresh={vi.fn()} />);
+
+      // readCoverage(null) returns null — no percentage text should appear
+      expect(document.body.textContent).not.toMatch(/\d+%/);
+    });
+
+    it('shows green coverage for healthy document (≥95%)', () => {
+      const docHealthy = {
+        ...makeDocument({ id: 'doc-healthy', name: 'Healthy Doc' }),
+        metadata: { coverage: { parsedChars: 1000, chunkChars: 990, coveragePct: 99 } },
+      };
+      render(<ManageTab documents={[docHealthy]} onRefresh={vi.fn()} />);
+
+      expect(screen.getByText('99%')).toBeInTheDocument();
+    });
+
+    it('shows amber-class coverage for low-coverage document (<95%)', () => {
+      const docLow = {
+        ...makeDocument({ id: 'doc-low', name: 'Low Coverage Doc' }),
+        metadata: { coverage: { parsedChars: 1000, chunkChars: 700, coveragePct: 70 } },
+      };
+      render(<ManageTab documents={[docLow]} onRefresh={vi.fn()} />);
+
+      expect(screen.getByText('70%')).toBeInTheDocument();
+    });
+  });
 });

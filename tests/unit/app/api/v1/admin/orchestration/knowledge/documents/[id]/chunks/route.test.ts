@@ -150,4 +150,61 @@ describe('GET /knowledge/documents/:id/chunks', () => {
     const body = await response.json();
     expect(body.data.chunks).toHaveLength(0);
   });
+
+  describe('coverage and warnings in response', () => {
+    it('includes coverage metric from document metadata', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue({
+        id: VALID_CUID,
+        metadata: {
+          coverage: { parsedChars: 1000, chunkChars: 980, coveragePct: 98 },
+          warnings: [],
+        },
+      } as never);
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+      const response = await callGET(VALID_CUID);
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      expect(body.data.coverage.coveragePct).toBe(98);
+      expect(body.data.coverage.parsedChars).toBe(1000);
+    });
+
+    it('returns null coverage when document metadata has no coverage field', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue({
+        id: VALID_CUID,
+        metadata: { someOtherField: true },
+      } as never);
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+      const response = await callGET(VALID_CUID);
+      const body = await response.json();
+      expect(body.data.coverage).toBeNull();
+    });
+
+    it('returns null coverage when document metadata is null', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue({
+        id: VALID_CUID,
+        metadata: null,
+      } as never);
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+      const response = await callGET(VALID_CUID);
+      const body = await response.json();
+      expect(body.data.coverage).toBeNull();
+      expect(body.data.warnings).toEqual([]);
+    });
+
+    it('includes warnings from document metadata', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue({
+        id: VALID_CUID,
+        metadata: { warnings: ['Page 3 appears scanned', 'Low coverage detected'] },
+      } as never);
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
+
+      const response = await callGET(VALID_CUID);
+      const body = await response.json();
+      expect(body.data.warnings).toEqual(['Page 3 appears scanned', 'Low coverage detected']);
+    });
+  });
 });

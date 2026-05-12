@@ -30,7 +30,7 @@ The server page fetches documents from `GET /api/v1/admin/orchestration/knowledg
 
 ### Document list
 
-Table with columns: name (clickable → chunks viewer), category badge, status badge, chunk count, created date, actions. Documents with a category show a secondary badge; documents without show "—". Status badge colors:
+Table with columns: name (clickable → chunks viewer), category badge, status badge, chunk count, **coverage**, created date, actions. Documents with a category show a secondary badge; documents without show "—". The Coverage column shows the post-chunking text-capture percentage from `document.metadata.coverage.coveragePct`. Green (≥ 95%) indicates all parsed text was captured; amber indicates content was likely dropped. Older documents without a coverage metric show `—`; rechunking computes it. Status badge colors:
 
 | Status           | Badge variant | Label        |
 | ---------------- | ------------- | ------------ |
@@ -60,6 +60,8 @@ A modal (`DocumentChunksModal`) that displays all chunks for a document. Trigger
 - Estimated token count per chunk
 - Content in a scrollable monospace pre block
 - Keywords as small outline badges
+- Green/amber coverage banner: `X% of source text captured (chunkChars of parsedChars chars)` with a FieldHelp explaining the metric
+- Ingestion warnings list (parser warnings + low-coverage notice)
 
 Fetches from `GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks`.
 
@@ -72,6 +74,8 @@ The "Built-in: Agentic Design Patterns" section provides a clear two-step flow:
 
 Shows embedding progress (X/Y embedded) and "Last seeded" timestamp.
 
+The panel renders near the top of the page while setup is in progress. Once both steps are complete (`allEmbedded = true`), it auto-collapses and moves to the **bottom** of the page so it doesn't dominate the operator's view. The user can expand/collapse manually at any time via the header button; the preference persists in `localStorage` under `orchestration.knowledge.builtin-patterns-panel`.
+
 ### File upload (staged flow)
 
 Staged upload: drop/select one or more files → files are staged (not uploaded yet) → optionally assign a category → click Upload. Maximum 10 files per batch.
@@ -82,6 +86,23 @@ Staged upload: drop/select one or more files → files are staged (not uploaded 
 4. **Clear button** (×) unstages all files without uploading
 
 **PDF flow:** When a PDF is uploaded, the API returns a preview response. The upload zone calls `onPdfPreview` which opens the `PdfPreviewModal` for review.
+
+### Chunking settings
+
+A read-only informational ⓘ button sits underneath the upload zone and opens a
+`<FieldHelp>` popover showing the live chunker constants:
+
+| Setting        | Value          | Meaning                                           |
+| -------------- | -------------- | ------------------------------------------------- |
+| Min chunk size | 50 tokens      | Below this, neighbouring sections merge           |
+| Max chunk size | 800 tokens     | Above this, sections split                        |
+| Token estimate | ~4 chars/token | Heuristic used by the chunker (English text)      |
+| CSV row cap    | 32,000 chars   | Rows above this are dropped and named in warnings |
+
+Plus the split hierarchy: paragraph → line → sentence → fixed-width window.
+
+Values are sourced from `lib/orchestration/knowledge/chunker-config.ts` (a
+server-free constants file) so the UI can never drift from the runtime.
 
 **Inline upload explainer.** Above the drop zone an `<aside>` card carries a one-paragraph summary of how upload works (parse → chunk into ~50–800-token pieces → embed into 1,536-dim vectors → graph nodes) with a **Read full guide** popover that opens the complete guide body. The same guide body is also wired to the (ⓘ) `<FieldHelp>` next to the "Upload Document" heading — hoisted into a shared `<UploadGuideBody />` component so a future edit lands in one place. The guide covers: the parse → chunk → embed pipeline; what you'll see in the graph (nodes/edges, per-document-size chunk-count examples, the 500-chunk graph-collapse threshold); category usage; in-document metadata comment format; content quality tips; large-document guidance; supported formats.
 
@@ -95,6 +116,8 @@ Opened automatically after a PDF upload. Displays:
 - Optional category input
 - Confirm & Chunk button → calls `POST /documents/:id/confirm`
 - Discard button → calls `DELETE /documents/:id`
+- Page-coverage banner: `X% of pages produced text (N of M pages, K chars total)` green/amber — pre-chunking signal. Below 95% indicates scanned pages.
+- Per-page extraction bar strip: one bar per page, height proportional to char count, amber for scanned-suspect pages
 
 ### Meta-tags panel
 

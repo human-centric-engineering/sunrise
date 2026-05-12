@@ -232,4 +232,115 @@ describe('DocumentChunksModal', () => {
       expect(screen.getByText('2 chunks')).toBeInTheDocument();
     });
   });
+
+  describe('Coverage banner and warnings', () => {
+    it('shows green coverage banner for healthy coverage (≥95%)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              chunks: [],
+              coverage: { parsedChars: 1000, chunkChars: 980, coveragePct: 98 },
+              warnings: [],
+            },
+          }),
+      });
+
+      render(
+        <DocumentChunksModal
+          documentId="doc-1"
+          documentName="Test"
+          open={true}
+          onOpenChange={onOpenChange}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/98% of source text captured/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows amber coverage banner for low coverage (<95%)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              chunks: [],
+              coverage: { parsedChars: 1000, chunkChars: 720, coveragePct: 72 },
+              warnings: [],
+            },
+          }),
+      });
+
+      render(
+        <DocumentChunksModal
+          documentId="doc-1"
+          documentName="Test"
+          open={true}
+          onOpenChange={onOpenChange}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/72% of source text captured/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows warnings list when document has ingestion warnings', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: {
+              chunks: [],
+              coverage: null,
+              warnings: ['Pages 3-5 appear scanned', 'Only 70% of the parsed text was captured'],
+            },
+          }),
+      });
+
+      render(
+        <DocumentChunksModal
+          documentId="doc-1"
+          documentName="Test"
+          open={true}
+          onOpenChange={onOpenChange}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Pages 3-5 appear scanned')).toBeInTheDocument();
+        expect(screen.getByText(/ingestion warnings/i)).toBeInTheDocument();
+      });
+    });
+
+    it('does not show coverage banner when coverage is null', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: { chunks: [], coverage: null, warnings: [] },
+          }),
+      });
+
+      render(
+        <DocumentChunksModal
+          documentId="doc-1"
+          documentName="Test"
+          open={true}
+          onOpenChange={onOpenChange}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText(/% of source text captured/i)).toBeNull();
+      });
+    });
+  });
 });
