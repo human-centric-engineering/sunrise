@@ -235,4 +235,15 @@ export interface ModelInfo {
   maxContext: number;
   supportsTools: boolean;
   available?: boolean;
+  /**
+   * Capability strings carried on the matrix row (e.g. `'vision'`,
+   * `'documents'`, `'chat'`, `'audio'`). Optional because the static
+   * registry doesn't know about admin-curated capabilities — only the
+   * DB-backed rows merged via `dbModelToModelInfo` populate this.
+   *
+   * Consumers (agent form, capability gate) treat absence as "unknown"
+   * — the runtime gate is still the authoritative answer; the form
+   * uses this to disable toggles pre-emptively.
+   */
+  capabilities?: string[];
 }

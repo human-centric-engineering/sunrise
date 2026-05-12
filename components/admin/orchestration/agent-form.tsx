@@ -194,6 +194,28 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
 
   const filteredModels = models?.filter((m) => m.provider === currentProvider) ?? [];
 
+  // Derive capability flags for the currently-selected model so we can
+  // pre-emptively disable image/document toggles when the model can't
+  // handle that modality. The runtime gate in `streaming-handler.ts` is
+  // still the authoritative check, but disabling the toggle in the
+  // form stops the operator from saving an unreachable configuration
+  // and getting a confusing SSE error at send time. The toggle's
+  // saved on/off VALUE is preserved across model swaps — if the
+  // operator switches back to a compatible model later, their intent
+  // is restored. Unknown capabilities (registry-only models that
+  // bypass the matrix) fall through to "enabled" so we don't lock
+  // operators out of working configurations.
+  const currentModelInfo = filteredModels.find((m) => m.id === currentModel);
+  const currentModelCapabilities = currentModelInfo?.capabilities;
+  // When capabilities are unknown (no matrix row) we default to
+  // enabled — let the runtime gate decide. When capabilities ARE
+  // known, the toggle is disabled iff the relevant capability is
+  // absent.
+  const supportsVision =
+    currentModelCapabilities === undefined || currentModelCapabilities.includes('vision');
+  const supportsDocuments =
+    currentModelCapabilities === undefined || currentModelCapabilities.includes('documents');
+
   // When provider changes, reset model if the current value doesn't belong to the new provider.
   useEffect(() => {
     if (modelFallback || !currentProvider) return;
@@ -851,12 +873,20 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-sm">
-                Lets users attach images to a turn. Requires a vision-capable model.
+                {supportsVision ? (
+                  <>Lets users attach images to a turn. Requires a vision-capable model.</>
+                ) : (
+                  <>
+                    The current model doesn&apos;t support image input. Switch to a{' '}
+                    <code>vision</code>-capable model in the Model tab to enable.
+                  </>
+                )}
               </p>
             </div>
             <Switch
               id="enableImageInput"
               checked={currentImageInput}
+              disabled={!supportsVision}
               onCheckedChange={(v) => setValue('enableImageInput', v, { shouldDirty: true })}
             />
           </div>
@@ -894,13 +924,23 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 </FieldHelp>
               </Label>
               <p className="text-muted-foreground text-sm">
-                Lets users attach PDFs to a turn. Requires a model with the <code>documents</code>{' '}
-                capability.
+                {supportsDocuments ? (
+                  <>
+                    Lets users attach PDFs to a turn. Requires a model with the{' '}
+                    <code>documents</code> capability.
+                  </>
+                ) : (
+                  <>
+                    The current model doesn&apos;t support PDF input. Switch to a model with the{' '}
+                    <code>documents</code> capability in the Model tab to enable.
+                  </>
+                )}
               </p>
             </div>
             <Switch
               id="enableDocumentInput"
               checked={currentDocumentInput}
+              disabled={!supportsDocuments}
               onCheckedChange={(v) => setValue('enableDocumentInput', v, { shouldDirty: true })}
             />
           </div>
