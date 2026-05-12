@@ -8,14 +8,17 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
+import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
-const categoriesResponseSchema = z.object({
-  data: z
-    .object({ app: z.object({ categories: z.array(z.object({ value: z.string() })) }).optional() })
-    .optional(),
-});
+interface TagRow {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+}
 
 const errorBodySchema = z
   .object({
@@ -100,39 +103,25 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
-  const [category, setCategory] = useState('');
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [availableTags, setAvailableTags] = useState<TagRow[]>([]);
   const [extractTables, setExtractTables] = useState(false);
-  const [existingCategories, setExistingCategories] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const categoryRef = useRef<HTMLDivElement>(null);
 
-  // Fetch existing categories for suggestions
+  // Load the managed tag taxonomy once so the picker can offer it. apiClient
+  // unwraps the envelope, so the generic type is the inner data shape.
   useEffect(() => {
-    async function fetchCategories() {
+    async function fetchTags(): Promise<void> {
       try {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
-        if (!res.ok) return;
-        const body = categoriesResponseSchema.parse(await res.json());
-        if (body.data?.app?.categories) {
-          setExistingCategories(body.data.app.categories.map((c) => c.value));
-        }
+        const tags = await apiClient.get<TagRow[]>(
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
+        );
+        setAvailableTags(Array.isArray(tags) ? tags : []);
       } catch {
-        // Supplementary — ignore failures
+        // Supplementary — picker just shows an empty list if this fails.
       }
     }
-    void fetchCategories();
-  }, []);
-
-  // Close suggestions on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (categoryRef.current && !categoryRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    void fetchTags();
   }, []);
 
   const validateFile = useCallback((file: File): string | null => {
@@ -190,8 +179,9 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       if (stagedFiles.length === 1) {
         const formData = new FormData();
         formData.append('file', stagedFiles[0]);
-        if (category.trim()) {
-          formData.append('category', category.trim());
+        // FormData supports repeated keys; the server collects via getAll('tagIds').
+        for (const tagId of tagIds) {
+          formData.append('tagIds', tagId);
         }
         const isPdf = stagedFiles[0].name.toLowerCase().endsWith('.pdf');
         if (isPdf && extractTables) {
@@ -216,7 +206,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           onPdfPreview
         ) {
           setStagedFiles([]);
-          setCategory('');
+          setTagIds([]);
           onPdfPreview({
             document: responseBody.data.document,
             preview: responseBody.data.preview,
@@ -225,7 +215,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         }
 
         setStagedFiles([]);
-        setCategory('');
+        setTagIds([]);
         onUploadComplete();
         return;
       }
@@ -235,8 +225,8 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       for (const file of stagedFiles) {
         formData.append('files', file);
       }
-      if (category.trim()) {
-        formData.append('category', category.trim());
+      for (const tagId of tagIds) {
+        formData.append('tagIds', tagId);
       }
 
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/bulk`, {
@@ -270,14 +260,14 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       }
 
       setStagedFiles([]);
-      setCategory('');
+      setTagIds([]);
       onUploadComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [stagedFiles, category, extractTables, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, tagIds, extractTables, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -298,10 +288,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     [stageFiles]
   );
 
-  const filteredSuggestions = existingCategories.filter(
-    (c) =>
-      c.toLowerCase().includes(category.toLowerCase()) && c.toLowerCase() !== category.toLowerCase()
-  );
+  const tagOptions: MultiSelectOption[] = availableTags.map((t) => ({
+    value: t.id,
+    label: t.name,
+    description: t.description ?? t.slug,
+  }));
 
   return (
     <div className="space-y-3">
@@ -387,55 +378,38 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             </Button>
           )}
 
-          <div ref={categoryRef} className="relative space-y-1">
+          <div className="space-y-1">
             <div className="flex items-center gap-1">
-              <label htmlFor="upload-category" className="text-xs font-medium">
-                Category
-              </label>
+              <span id="upload-tags-label" className="text-xs font-medium">
+                Tags
+              </span>
               <span className="text-muted-foreground text-xs">(optional)</span>
-              <FieldHelp title="Document category" ariaLabel="What is the document category?">
+              <FieldHelp title="Document tags" ariaLabel="What are document tags?">
                 <p>
-                  Assigns this document to a category so it can be filtered in search and scoped to
-                  specific agents. If left blank, the system will look for a{' '}
-                  <code className="text-xs">{'<!-- metadata: category=... -->'}</code> comment
-                  inside the document.
+                  Tags are the managed taxonomy that scopes which agents can search this document.
+                  When an agent runs in <em>Restricted</em> knowledge mode, granting it a tag gives
+                  it access to every document carrying that tag.
                 </p>
                 <p className="mt-2">
-                  Use an existing category from the suggestions to keep things consistent, or type a
-                  new one. Categories are case-sensitive — &quot;Sales&quot; and &quot;sales&quot;
-                  are treated as different values.
+                  Manage the tag list under the <em>Tags</em> tab. Leave blank if you only need this
+                  document visible to agents with full KB access.
                 </p>
               </FieldHelp>
             </div>
-            <Input
-              id="upload-category"
-              placeholder="e.g. sales, engineering, onboarding"
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              disabled={uploading}
-              className="h-8 text-sm"
-            />
-            {showSuggestions && filteredSuggestions.length > 0 && (
-              <div className="bg-popover border-border absolute top-full z-10 mt-1 w-full rounded-md border shadow-md">
-                {filteredSuggestions.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className="hover:bg-accent w-full px-3 py-1.5 text-left text-sm"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setCategory(suggestion);
-                      setShowSuggestions(false);
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+            {availableTags.length === 0 ? (
+              <p className="text-muted-foreground text-xs">
+                No tags exist yet. Create some under the <em>Tags</em> tab to scope agent access.
+              </p>
+            ) : (
+              <MultiSelect
+                value={tagIds}
+                onChange={setTagIds}
+                options={tagOptions}
+                placeholder="No tags applied"
+                emptyText="No matching tags."
+                disabled={uploading}
+                ariaLabelledBy="upload-tags-label"
+              />
             )}
           </div>
 
@@ -491,7 +465,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               size="sm"
               onClick={() => {
                 setStagedFiles([]);
-                setCategory('');
+                setTagIds([]);
                 setExtractTables(false);
                 setError(null);
               }}
@@ -524,7 +498,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       />
 
       {/* Fetch from URL */}
-      <FetchFromUrl category={category} onFetchComplete={onUploadComplete} />
+      <FetchFromUrl tagIds={tagIds} onFetchComplete={onUploadComplete} />
 
       {error && <p className="text-destructive text-sm">{error}</p>}
     </div>
@@ -534,10 +508,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 // ─── Fetch from URL sub-component ──────────────────────────────────────────
 
 function FetchFromUrl({
-  category,
+  tagIds,
   onFetchComplete,
 }: {
-  category: string;
+  tagIds: string[];
   onFetchComplete: () => void;
 }): ReactElement {
   const [url, setUrl] = useState('');
@@ -554,7 +528,7 @@ function FetchFromUrl({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: url.trim(),
-          category: category.trim() || undefined,
+          ...(tagIds.length > 0 ? { tagIds } : {}),
         }),
       });
       if (!res.ok) {

@@ -154,9 +154,10 @@ describe('Knowledge Documents API', () => {
 
   describe('GET /knowledge/documents', () => {
     it('returns paginated documents', async () => {
-      // Arrange
+      // Arrange — list endpoint now returns inline tag chips alongside the
+      // chunk count, so the mock has to mirror the new include shape.
       vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
-        { ...mockDocument, _count: { chunks: 5 } },
+        { ...mockDocument, _count: { chunks: 5 }, tags: [] },
       ] as never);
       vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(1);
 
@@ -167,6 +168,7 @@ describe('Knowledge Documents API', () => {
       // Assert
       expect(res.status).toBe(200);
       expect(json.data).toHaveLength(1);
+      expect(json.data[0].tags).toEqual([]);
       expect(json.meta.total).toBe(1);
     });
 

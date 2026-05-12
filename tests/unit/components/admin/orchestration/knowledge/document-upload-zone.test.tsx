@@ -17,19 +17,13 @@ globalThis.fetch = mockFetch;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Default mock that handles both meta-tags fetch and upload */
+/** Default mock that handles the tags fetch and upload. */
 function setupDefaultMocks() {
   mockFetch.mockImplementation((url: string) => {
-    if (typeof url === 'string' && url.includes('/meta-tags')) {
+    if (typeof url === 'string' && url.includes('/knowledge/tags')) {
       return Promise.resolve({
         ok: true,
-        json: () =>
-          Promise.resolve({
-            data: {
-              app: { categories: [], keywords: [] },
-              system: { categories: [], keywords: [] },
-            },
-          }),
+        json: () => Promise.resolve({ success: true, data: [] }),
       });
     }
     // Match the real uploadResponseSchema shape: { data?: { document?, preview? } }
@@ -244,7 +238,27 @@ describe('DocumentUploadZone', () => {
     });
   });
 
-  it('sends category in form data when provided', async () => {
+  it('sends selected tagIds in form data when tags are picked', async () => {
+    // Mock the /knowledge/tags endpoint to expose a small picker option list.
+    // When the operator picks one, its id should arrive in the multipart body
+    // under the repeated `tagIds` field (collected server-side via getAll).
+    mockFetch.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/knowledge/tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              success: true,
+              data: [{ id: 'tag-cuid-1', slug: 'engineering', name: 'Engineering' }],
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: {} }),
+      });
+    });
+
     const user = userEvent.setup();
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
 
@@ -253,11 +267,15 @@ describe('DocumentUploadZone', () => {
 
     fireEvent.change(input, { target: { files: [validFile] } });
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/e\.g\. sales/i)).toBeInTheDocument();
-    });
+    // Wait for the staged-file UI (the Tags combobox lives in there).
+    const combobox = await screen.findByRole('combobox');
+    await user.click(combobox);
 
-    await user.type(screen.getByPlaceholderText(/e\.g\. sales/i), 'engineering');
+    // Pick the only tag option.
+    await user.click(await screen.findByText('Engineering'));
+    // Close the popover so the upload button is hittable.
+    await user.keyboard('{Escape}');
+
     await user.click(screen.getByRole('button', { name: /^upload$/i }));
 
     await waitFor(() => {
@@ -269,7 +287,7 @@ describe('DocumentUploadZone', () => {
       );
       expect(uploadCall).toBeDefined();
       const formData = (uploadCall as [string, RequestInit])[1].body as FormData;
-      expect(formData.get('category')).toBe('engineering');
+      expect(formData.getAll('tagIds')).toEqual(['tag-cuid-1']);
     });
   });
 
@@ -936,97 +954,10 @@ describe('DocumentUploadZone', () => {
     });
   });
 
-  it('selects a category suggestion on mousedown', async () => {
-    // Arrange: categories available in meta-tags
-    mockFetch.mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                app: {
-                  categories: [
-                    { value: 'sales', chunkCount: 5, documentCount: 1 },
-                    { value: 'engineering', chunkCount: 3, documentCount: 1 },
-                  ],
-                  keywords: [],
-                },
-                system: { categories: [], keywords: [] },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
-    });
-
-    const user = userEvent.setup();
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
-
-    // Stage a file so the category input appears
-    const input = screen.getByLabelText(/upload document/i);
-    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
-    fireEvent.change(input, { target: { files: [validFile] } });
-
-    await waitFor(() => expect(screen.getByPlaceholderText(/e\.g\. sales/i)).toBeInTheDocument());
-
-    // Act: type partial text to show suggestions, then select one
-    await user.type(screen.getByPlaceholderText(/e\.g\. sales/i), 'sal');
-
-    await waitFor(() => expect(screen.getByText('sales')).toBeInTheDocument());
-
-    // Fire mousedown on the suggestion button
-    fireEvent.mouseDown(screen.getByText('sales'));
-
-    // Assert: category input set to selected suggestion
-    await waitFor(() => {
-      const catInput = screen.getByPlaceholderText(/e\.g\. sales/i);
-      expect((catInput as HTMLInputElement).value).toBe('sales');
-    });
-  });
-
-  it('shows category suggestions from existing meta-tags', async () => {
-    mockFetch.mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                app: {
-                  categories: [
-                    { value: 'sales', chunkCount: 10, documentCount: 2 },
-                    { value: 'engineering', chunkCount: 5, documentCount: 1 },
-                  ],
-                  keywords: [],
-                },
-                system: { categories: [], keywords: [] },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ success: true }),
-      });
-    });
-
-    const user = userEvent.setup();
-    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
-
-    const input = screen.getByLabelText(/upload document/i);
-    const validFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
-
-    fireEvent.change(input, { target: { files: [validFile] } });
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText(/e\.g\. sales/i)).toBeInTheDocument();
-    });
-
-    await user.type(screen.getByPlaceholderText(/e\.g\. sales/i), 'sal');
-
-    await waitFor(() => {
-      expect(screen.getByText('sales')).toBeInTheDocument();
-    });
-  });
+  // The legacy free-text Category input (with `/meta-tags` autocomplete) was
+  // removed when the managed Tags taxonomy shipped — see the new
+  // KnowledgeAccessSection / MultiSelect-based picker. The two tests that
+  // exercised "type partial text to pick a category suggestion" are gone
+  // along with the feature. Coverage moved to "sends selected tagIds in
+  // form data when tags are picked" above.
 });

@@ -60,10 +60,11 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
 
   async function refresh(): Promise<void> {
     try {
-      const res = await apiClient.get<{ data: KnowledgeTagListItem[] }>(
+      // apiClient unwraps the envelope; type param is the data shape itself.
+      const list = await apiClient.get<KnowledgeTagListItem[]>(
         `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
       );
-      setTags(res.data);
+      setTags(Array.isArray(list) ? list : []);
       router.refresh();
     } catch {
       // Non-fatal: keep the old list.

@@ -742,6 +742,26 @@ export type DocumentWithChunks = AiKnowledgeDocument & {
   chunks: AiKnowledgeChunk[];
 };
 
+/**
+ * Lightweight tag reference returned inline on each document by the admin
+ * documents list endpoint. The full KnowledgeTag row carries description and
+ * timestamps; the table only needs id/slug/name to render chips.
+ */
+export interface DocumentTagRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+/**
+ * Shape returned by `GET /admin/orchestration/knowledge/documents` for each
+ * row. Same as the Prisma row plus inline tags (flattened from the join
+ * table) so the admin table can render tag chips without a per-row fetch.
+ */
+export type KnowledgeDocumentListItem = AiKnowledgeDocument & {
+  tags?: DocumentTagRef[];
+};
+
 /** Evaluation session with logs */
 export type EvaluationSessionWithLogs = AiEvaluationSession & {
   logs: AiEvaluationLog[];

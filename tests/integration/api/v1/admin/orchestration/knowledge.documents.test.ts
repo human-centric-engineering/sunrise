@@ -94,6 +94,9 @@ function makeDocument(overrides: Record<string, unknown> = {}) {
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
     _count: { chunks: 12 },
+    // GET now returns inline tags joined through `AiKnowledgeDocumentTag`.
+    // Tests pass `tags: [...]` via overrides when they want chip rendering.
+    tags: [] as Array<{ tag: { id: string; slug: string; name: string } }>,
     ...overrides,
   };
 }

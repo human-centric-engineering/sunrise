@@ -34,6 +34,7 @@ function makeDocument(
     fileName: string;
     status: string;
     chunkCount: number;
+    tags: Array<{ id: string; slug: string; name: string }>;
   }> = {}
 ) {
   return {
@@ -51,6 +52,7 @@ function makeDocument(
     uploadedBy: 'user-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    tags: overrides.tags ?? [],
   };
 }
 
@@ -492,7 +494,9 @@ describe('ManageTab', () => {
 
   // ── Meta-tags panel ───────────────────────────────────────────────────────
 
-  it('renders separate app and system meta-tag sections', async () => {
+  it('renders the Indexed keywords panel with app + system sections when both have keywords', async () => {
+    // Categories are intentionally ignored by the panel now — Tags own that
+    // concept. The panel renders keyword chips only.
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/meta-tags')) {
         return Promise.resolve({
@@ -501,15 +505,12 @@ describe('ManageTab', () => {
             Promise.resolve({
               data: {
                 app: {
-                  categories: [
-                    { value: 'sales', chunkCount: 15, documentCount: 3 },
-                    { value: 'engineering', chunkCount: 8, documentCount: 2 },
-                  ],
+                  categories: [{ value: 'sales', chunkCount: 1, documentCount: 1 }],
                   keywords: [{ value: 'pricing', chunkCount: 5, documentCount: 1 }],
                 },
                 system: {
-                  categories: [{ value: 'patterns', chunkCount: 20, documentCount: 1 }],
-                  keywords: [],
+                  categories: [],
+                  keywords: [{ value: 'reasoning', chunkCount: 3, documentCount: 1 }],
                 },
               },
             }),
@@ -523,19 +524,19 @@ describe('ManageTab', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Meta-tags in use')).toBeInTheDocument();
+      expect(screen.getByText('Indexed keywords')).toBeInTheDocument();
     });
 
-    // App section is expanded by default
+    // App section open by default — keyword chip visible.
     expect(screen.getByText('App knowledge')).toBeInTheDocument();
-    expect(screen.getByText('sales')).toBeInTheDocument();
-    expect(screen.getByText('engineering')).toBeInTheDocument();
     expect(screen.getByText('pricing')).toBeInTheDocument();
 
-    // System section present but collapsed by default
+    // Category text from the legacy column must NOT bleed into this panel.
+    expect(screen.queryByText('sales')).not.toBeInTheDocument();
+
+    // System section present but collapsed by default — chip not yet rendered.
     expect(screen.getByText('System knowledge')).toBeInTheDocument();
-    // System categories not visible until expanded
-    expect(screen.queryByText('patterns')).not.toBeInTheDocument();
+    expect(screen.queryByText('reasoning')).not.toBeInTheDocument();
   });
 
   it('expands system section when clicked', async () => {
@@ -549,7 +550,7 @@ describe('ManageTab', () => {
               data: {
                 app: { categories: [], keywords: [] },
                 system: {
-                  categories: [{ value: 'patterns', chunkCount: 20, documentCount: 1 }],
+                  categories: [],
                   keywords: [{ value: 'reasoning', chunkCount: 5, documentCount: 1 }],
                 },
               },
@@ -567,16 +568,14 @@ describe('ManageTab', () => {
       expect(screen.getByText('System knowledge')).toBeInTheDocument();
     });
 
-    // Click to expand
     await user.click(screen.getByText('System knowledge'));
 
     await waitFor(() => {
-      expect(screen.getByText('patterns')).toBeInTheDocument();
       expect(screen.getByText('reasoning')).toBeInTheDocument();
     });
   });
 
-  it('does not render meta-tags panel when no tags exist in either scope', async () => {
+  it('does not render the Indexed keywords panel when no keywords exist in either scope', async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/meta-tags')) {
         return Promise.resolve({
@@ -584,7 +583,11 @@ describe('ManageTab', () => {
           json: () =>
             Promise.resolve({
               data: {
-                app: { categories: [], keywords: [] },
+                // Categories present but panel still hidden — it ignores them.
+                app: {
+                  categories: [{ value: 'sales', chunkCount: 1, documentCount: 1 }],
+                  keywords: [],
+                },
                 system: { categories: [], keywords: [] },
               },
             }),
@@ -601,7 +604,7 @@ describe('ManageTab', () => {
       expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/meta-tags'));
     });
 
-    expect(screen.queryByText('Meta-tags in use')).not.toBeInTheDocument();
+    expect(screen.queryByText('Indexed keywords')).not.toBeInTheDocument();
   });
 
   it('shows "Show all" toggle and reveals hidden keywords when clicked', async () => {
@@ -633,7 +636,7 @@ describe('ManageTab', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Meta-tags in use')).toBeInTheDocument();
+      expect(screen.getByText('Indexed keywords')).toBeInTheDocument();
     });
 
     // First 30 visible, 31st hidden
@@ -653,16 +656,27 @@ describe('ManageTab', () => {
     expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
   });
 
-  it('renders category column in document table', async () => {
-    const docWithCategory = makeDocument({
-      id: 'doc-cat',
+  it('renders tag chips in the document table when the document has tags', async () => {
+    // The Category column was replaced by a Tags column when knowledge-access-control
+    // shipped — chips render the doc's KnowledgeTag join rows.
+    const docWithTags = makeDocument({
+      id: 'doc-tag',
       name: 'Sales Playbook',
+      tags: [{ id: 'tag-cuid-1', slug: 'sales', name: 'Sales' }],
     });
-    (docWithCategory as Record<string, unknown>).category = 'sales';
 
-    render(<ManageTab documents={[docWithCategory]} onRefresh={vi.fn()} />);
+    render(<ManageTab documents={[docWithTags]} onRefresh={vi.fn()} />);
 
-    expect(screen.getByText('sales')).toBeInTheDocument();
+    // Chip text is the tag's display name, not the slug.
+    expect(screen.getByText('Sales')).toBeInTheDocument();
+  });
+
+  it('renders a "+ Add" affordance in the Tags column when a document has no tags', async () => {
+    const docWithoutTags = makeDocument({ id: 'doc-empty', name: 'Untagged Doc', tags: [] });
+
+    render(<ManageTab documents={[docWithoutTags]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByText('+ Add')).toBeInTheDocument();
   });
 
   // ── Delete action ─────────────────────────────────────────────────────────

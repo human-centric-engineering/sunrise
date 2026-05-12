@@ -12,7 +12,7 @@ import {
   type KnowledgeTab,
 } from '@/lib/constants/knowledge';
 import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
 import { ExploreTab } from '@/components/admin/orchestration/knowledge/explore-tab';
@@ -29,7 +29,7 @@ const SCOPE_OPTIONS: { value: KnowledgeScope; label: string }[] = [
 ];
 
 interface KnowledgeViewProps {
-  documents: AiKnowledgeDocument[];
+  documents: KnowledgeDocumentListItem[];
 }
 
 export function KnowledgeView({ documents }: KnowledgeViewProps) {

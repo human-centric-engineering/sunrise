@@ -27,7 +27,7 @@ import {
   MIN_CHUNK_TOKENS,
 } from '@/lib/orchestration/knowledge/chunker-config';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 const metaTagEntrySchema = z.object({
   value: z.string(),
@@ -102,6 +102,11 @@ interface MetaTagEntry {
 }
 
 interface ScopedMetaTags {
+  // Kept on the type so the API shape doesn't have to change, but the panel
+  // no longer renders categories — they were the old chunk-level scoping
+  // mechanism, replaced by Tags (see KnowledgeTag, Phase 2 of
+  // knowledge-access-control). The /meta-tags endpoint still returns them
+  // because the underlying chunk.category column is alive until Phase 6.
   categories: MetaTagEntry[];
   keywords: MetaTagEntry[];
 }
@@ -128,7 +133,7 @@ function readCoverage(metadata: unknown): { coveragePct: number } | null {
   return typeof pct === 'number' ? { coveragePct: pct } : null;
 }
 
-function MetaTagSection({
+function IndexedKeywordsSection({
   title,
   scope,
   defaultOpen,
@@ -142,11 +147,12 @@ function MetaTagSection({
   onToggleKeywords: () => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const hasCats = scope.categories.length > 0;
   const hasKws = scope.keywords.length > 0;
   const visibleKeywords = showAllKeywords
     ? scope.keywords
     : scope.keywords.slice(0, KEYWORD_COLLAPSED_LIMIT);
+
+  if (!hasKws) return null;
 
   return (
     <div className="space-y-2">
@@ -160,60 +166,32 @@ function MetaTagSection({
         />
         {title}
         <span className="text-muted-foreground font-normal">
-          ({scope.categories.length} categories, {scope.keywords.length} keywords)
+          ({scope.keywords.length} keywords)
         </span>
       </button>
 
       {open && (
-        <div className="space-y-2 pl-5">
-          {hasCats && (
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                Categories ({scope.categories.length})
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {scope.categories.map((tag) => (
-                  <Tip
-                    key={tag.value}
-                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
-                  >
-                    <Badge variant="secondary" className="text-xs">
-                      {tag.value}
-                      <span className="text-muted-foreground ml-1">({tag.chunkCount})</span>
-                    </Badge>
-                  </Tip>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {hasKws && (
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                Keywords ({scope.keywords.length})
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {visibleKeywords.map((tag) => (
-                  <Tip
-                    key={tag.value}
-                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
-                  >
-                    <Badge variant="outline" className="text-xs">
-                      {tag.value}
-                    </Badge>
-                  </Tip>
-                ))}
-              </div>
-              {scope.keywords.length > KEYWORD_COLLAPSED_LIMIT && (
-                <button
-                  type="button"
-                  onClick={onToggleKeywords}
-                  className="text-primary text-xs hover:underline"
-                >
-                  {showAllKeywords ? 'Show less' : `Show all ${scope.keywords.length} keywords`}
-                </button>
-              )}
-            </div>
+        <div className="space-y-1 pl-5">
+          <div className="flex flex-wrap gap-1">
+            {visibleKeywords.map((tag) => (
+              <Tip
+                key={tag.value}
+                label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
+              >
+                <Badge variant="outline" className="text-xs">
+                  {tag.value}
+                </Badge>
+              </Tip>
+            ))}
+          </div>
+          {scope.keywords.length > KEYWORD_COLLAPSED_LIMIT && (
+            <button
+              type="button"
+              onClick={onToggleKeywords}
+              className="text-primary text-xs hover:underline"
+            >
+              {showAllKeywords ? 'Show less' : `Show all ${scope.keywords.length} keywords`}
+            </button>
           )}
         </div>
       )}
@@ -222,7 +200,7 @@ function MetaTagSection({
 }
 
 interface ManageTabProps {
-  documents: AiKnowledgeDocument[];
+  documents: KnowledgeDocumentListItem[];
   onRefresh: () => void;
 }
 
@@ -396,11 +374,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
 
-  const hasAppTags =
-    metaTags !== null && (metaTags.app.categories.length > 0 || metaTags.app.keywords.length > 0);
-  const hasSystemTags =
-    metaTags !== null &&
-    (metaTags.system.categories.length > 0 || metaTags.system.keywords.length > 0);
+  // Categories are intentionally ignored here — the panel now shows only the
+  // BM25 keyword index. See "Indexed keywords" panel below.
+  const hasAppKeywords = metaTags !== null && metaTags.app.keywords.length > 0;
+  const hasSystemKeywords = metaTags !== null && metaTags.system.keywords.length > 0;
 
   // Built-in setup panel: collapsed by default once setup is complete (chunks loaded
   // and all embedded). Manual user preference (open/closed) wins over the auto rule.
@@ -732,49 +709,42 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         </FieldHelp>
       </div>
 
-      {/* Meta-tags in use */}
-      {metaTags && (hasAppTags || hasSystemTags) && (
+      {/* Indexed keywords — search-relevance diagnostic. NOT a configuration
+          surface: tags are how operators scope agent access (see the Tags tab). */}
+      {metaTags && (hasAppKeywords || hasSystemKeywords) && (
         <div className="space-y-3 rounded-lg border p-4">
           <div className="flex items-center gap-1.5">
             <Tag className="text-muted-foreground h-4 w-4" />
-            <h3 className="text-sm font-medium">Meta-tags in use</h3>
+            <h3 className="text-sm font-medium">Indexed keywords</h3>
             <FieldHelp
-              title="Meta-tags in use"
-              ariaLabel="About meta-tags"
+              title="Indexed keywords"
+              ariaLabel="About indexed keywords"
               contentClassName="w-80 max-h-80 overflow-y-auto"
             >
               <p>
-                This panel shows all category and keyword values found across your knowledge base
-                chunks, separated by scope. Use it to check for consistency before uploading new
-                documents.
+                Distinct keyword values found across knowledge-base chunks, with chunk and document
+                counts. Keywords feed the BM25 component of hybrid search: chunks whose keywords
+                match the query get a relevance boost on top of the vector score.
+              </p>
+              <p className="mt-2">
+                This is a <strong>diagnostic</strong>, not a configuration surface — you can&apos;t
+                edit keywords from here. They&apos;re extracted during ingestion (from frontmatter,
+                heading text, or explicit <code>keywords=...</code> metadata comments).
+              </p>
+              <p className="mt-2">
+                <strong>To scope which documents an agent can search,</strong> use the <em>Tags</em>{' '}
+                tab.
               </p>
               <p className="mt-2">
                 <strong>App knowledge</strong> contains your uploaded documents.{' '}
                 <strong>System knowledge</strong> contains the built-in Agentic Design Patterns
                 (read-only).
               </p>
-              <p className="mt-2">
-                <strong>Categories</strong> are best kept to a small, consistent set (5–15 values).
-                Agents can be configured to only search specific categories, so inconsistent naming
-                (e.g. &quot;sales&quot; vs &quot;Sales&quot; vs &quot;selling&quot;) means some
-                content won&apos;t be found.
-              </p>
-              <p className="mt-2">
-                <strong>Keywords</strong> are more forgiving — they boost search relevance
-                additively, so having many unique keywords is fine. Duplicates or near-duplicates
-                are less harmful here.
-              </p>
-              <p className="mt-2">
-                Tags are completely <strong>free-form</strong> — you can use any values. But the
-                trade-off is that there&apos;s no automatic normalisation. &quot;Sales&quot; and
-                &quot;sales&quot; are treated as different values. Agree on naming conventions
-                before bulk uploading.
-              </p>
             </FieldHelp>
           </div>
 
-          {hasAppTags && (
-            <MetaTagSection
+          {hasAppKeywords && (
+            <IndexedKeywordsSection
               title="App knowledge"
               scope={metaTags.app}
               defaultOpen
@@ -783,8 +753,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             />
           )}
 
-          {hasSystemTags && (
-            <MetaTagSection
+          {hasSystemKeywords && (
+            <IndexedKeywordsSection
               title="System knowledge"
               scope={metaTags.system}
               defaultOpen={false}
@@ -820,8 +790,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                       </Tip>
                     </th>
                     <th className="px-4 py-2 text-left font-medium">
-                      <Tip label="Document category for filtering and agent scoping">
-                        <span>Category</span>
+                      <Tip label="Knowledge tags applied to this document — click a chip (or the document name) to edit. Tags determine which restricted-mode agents can search the document.">
+                        <span>Tags</span>
                       </Tip>
                     </th>
                     <th className="px-4 py-2 text-left font-medium">
@@ -867,12 +837,37 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                           </button>
                         </td>
                         <td className="px-4 py-2">
-                          {doc.category ? (
-                            <Badge variant="secondary" className="text-xs">
-                              {doc.category}
-                            </Badge>
+                          {doc.tags && doc.tags.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {doc.tags.map((tag) => (
+                                <button
+                                  key={tag.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setViewChunksId(doc.id);
+                                    setViewChunksName(doc.name);
+                                  }}
+                                  title={`Edit tags for ${doc.name}`}
+                                  className="focus-visible:ring-ring rounded-sm focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none"
+                                >
+                                  <Badge variant="secondary" className="text-xs hover:underline">
+                                    {tag.name}
+                                  </Badge>
+                                </button>
+                              ))}
+                            </div>
                           ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setViewChunksId(doc.id);
+                                setViewChunksName(doc.name);
+                              }}
+                              className="text-muted-foreground hover:text-foreground text-xs hover:underline"
+                              title="No tags — click to add"
+                            >
+                              + Add
+                            </button>
                           )}
                         </td>
                         <td className="px-4 py-2">

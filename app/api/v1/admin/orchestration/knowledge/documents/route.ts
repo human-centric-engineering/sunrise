@@ -33,6 +33,45 @@ import {
 import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { cuidSchema } from '@/lib/validations/common';
+
+/**
+ * Parse `tagIds` repeated form fields (multipart) into a deduped list of valid
+ * CUIDs. Unknown/malformed entries are dropped silently — the agent operator
+ * doesn't need an error storm if the picker round-trips an outdated id; the
+ * resolver's all-or-nothing model means dropped tags are recoverable from the
+ * chunks-modal tag editor.
+ */
+function parseTagIdsFromForm(formData: FormData): string[] {
+  const raw = formData.getAll('tagIds');
+  const out = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== 'string') continue;
+    const parsed = cuidSchema.safeParse(v);
+    if (parsed.success) out.add(parsed.data);
+  }
+  return [...out];
+}
+
+/**
+ * Apply tag grants to a freshly-created document. Skips on empty input.
+ * Wrapped in try/catch so an upload doesn't fail wholesale if (say) a tag was
+ * deleted between the picker fetch and the upload submit.
+ */
+async function applyDocumentTags(documentId: string, tagIds: string[]): Promise<number> {
+  if (tagIds.length === 0) return 0;
+  try {
+    const result = await prisma.aiKnowledgeDocumentTag.createMany({
+      data: tagIds.map((tagId) => ({ documentId, tagId })),
+      skipDuplicates: true,
+    });
+    invalidateAllAgentAccess();
+    return result.count;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * Maximum decoded file size accepted from a multipart upload, in bytes.
@@ -89,16 +128,30 @@ export const GET = withAdminAuth(async (request, _session) => {
     ];
   }
 
-  const [documents, total] = await Promise.all([
+  const [rawDocuments, total] = await Promise.all([
     prisma.aiKnowledgeDocument.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { chunks: true } } },
+      include: {
+        _count: { select: { chunks: true } },
+        tags: { include: { tag: { select: { id: true, slug: true, name: true } } } },
+      },
     }),
     prisma.aiKnowledgeDocument.count({ where }),
   ]);
+
+  // Flatten the tag join rows into an inline `tags` array. The doc list page
+  // renders these as chips in the table — agents granted any of these tags
+  // can search this document when running in restricted mode.
+  const documents = rawDocuments.map((d) => {
+    const { tags, ...rest } = d;
+    return {
+      ...rest,
+      tags: tags.map((t) => ({ id: t.tag.id, slug: t.tag.slug, name: t.tag.name })),
+    };
+  });
 
   log.info('Documents listed', { count: documents.length, total });
 
@@ -161,10 +214,14 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  // Optional category from form field
+  // Optional category from form field (legacy free-text — kept while
+  // chunk.category still exists; Phase 6 drops it). Tags are the canonical
+  // organisation surface.
   const categoryField = formData.get('category');
   const category =
     typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
+
+  const tagIds = parseTagIdsFromForm(formData);
 
   const ext = getExtension(file.name);
 
@@ -185,12 +242,14 @@ export const POST = withAdminAuth(async (request, session) => {
     }
 
     const document = await uploadDocument(content, file.name, session.user.id, category);
+    const tagsApplied = await applyDocumentTags(document.id, tagIds);
 
     log.info('Document uploaded (text)', {
       documentId: document.id,
       fileName: file.name,
       sizeBytes: file.size,
       category: document.category ?? 'none',
+      tagsApplied,
       adminId: session.user.id,
     });
 
@@ -218,6 +277,10 @@ export const POST = withAdminAuth(async (request, session) => {
       ['true', '1', 'on', 'yes'].includes(extractTablesField.toLowerCase());
 
     const preview = await previewDocument(buffer, file.name, session.user.id, { extractTables });
+    // Attach tags eagerly so they survive the preview→confirm round trip. If
+    // the operator rejects the preview, the doc row (and its tag links) are
+    // deleted via the existing reject flow.
+    const tagsApplied = await applyDocumentTags(preview.document.id, tagIds);
 
     log.info('Document preview created (PDF)', {
       documentId: preview.document.id,
@@ -226,6 +289,7 @@ export const POST = withAdminAuth(async (request, session) => {
       extractedTextLength: preview.extractedText.length,
       warnings: preview.warnings.length,
       extractTables,
+      tagsApplied,
       adminId: session.user.id,
     });
 
@@ -258,6 +322,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // EPUB, DOCX: direct buffer upload
   const document = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, category);
+  const tagsApplied = await applyDocumentTags(document.id, tagIds);
 
   log.info('Document uploaded (binary)', {
     documentId: document.id,
@@ -265,6 +330,7 @@ export const POST = withAdminAuth(async (request, session) => {
     format: ext,
     sizeBytes: file.size,
     category: document.category ?? 'none',
+    tagsApplied,
     adminId: session.user.id,
   });
 

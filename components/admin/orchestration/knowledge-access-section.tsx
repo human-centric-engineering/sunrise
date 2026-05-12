@@ -69,10 +69,10 @@ export function KnowledgeAccessSection({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await apiClient.get<{ data: TagRow[] }>(
+        const tagList = await apiClient.get<TagRow[]>(
           `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`
         );
-        if (!cancelled) setTags(res?.data ?? []);
+        if (!cancelled) setTags(Array.isArray(tagList) ? tagList : []);
       } catch {
         // Non-fatal: form remains usable, MultiSelect just shows an empty list.
       }
@@ -94,12 +94,12 @@ export function KnowledgeAccessSection({
         // and pick the relevant rows. For agents with hundreds of grants this
         // is imperfect — but Phase 4 deliberately keeps the doc picker scope
         // to "names users would recognise", which fits inside the first page.
-        const res = await apiClient.get<{ data: DocumentRow[] }>(
+        const docs = await apiClient.get<DocumentRow[]>(
           `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?limit=200`
         );
         if (cancelled) return;
         const labels: Record<string, string> = {};
-        for (const doc of res.data) {
+        for (const doc of docs ?? []) {
           if (documentIds.includes(doc.id)) labels[doc.id] = doc.name;
         }
         setSelectedDocLabels(labels);
@@ -127,8 +127,8 @@ export function KnowledgeAccessSection({
     url.searchParams.set('limit', '50');
     if (query.trim()) url.searchParams.set('q', query.trim());
     try {
-      const res = await apiClient.get<{ data: DocumentRow[] }>(`${url.pathname}${url.search}`);
-      return res.data.map((doc) => ({
+      const docs = await apiClient.get<DocumentRow[]>(`${url.pathname}${url.search}`);
+      return (docs ?? []).map((doc) => ({
         value: doc.id,
         label: doc.name,
         description: doc.fileName,

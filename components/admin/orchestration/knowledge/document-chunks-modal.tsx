@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, FileText, Save } from 'lucide-react';
 import { z } from 'zod';
 
@@ -87,6 +88,7 @@ export function DocumentChunksModal({
   open,
   onOpenChange,
 }: DocumentChunksModalProps) {
+  const router = useRouter();
   const [chunks, setChunks] = useState<ChunkData[]>([]);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -125,14 +127,16 @@ export function DocumentChunksModal({
   const fetchTagsAndDoc = useCallback(async () => {
     if (!documentId) return;
     try {
-      const [tagsRes, docRes] = await Promise.all([
-        apiClient.get<{ data: TagRow[] }>(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`),
+      // apiClient unwraps the success envelope, so each generic is the data
+      // shape (not { data: ... }).
+      const [allTagRows, docPayload] = await Promise.all([
+        apiClient.get<TagRow[]>(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`),
         apiClient.get<{ document: { tagIds?: string[] } }>(
           API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId)
         ),
       ]);
-      setAllTags(tagsRes?.data ?? []);
-      const current = docRes?.document?.tagIds ?? [];
+      setAllTags(Array.isArray(allTagRows) ? allTagRows : []);
+      const current = docPayload?.document?.tagIds ?? [];
       setTagIds(current);
       setOriginalTagIds(current);
       setTagError(null);
@@ -184,6 +188,9 @@ export function DocumentChunksModal({
         body: { tagIds },
       });
       setOriginalTagIds(tagIds);
+      // Refresh the parent server-rendered document list so the tag chips on
+      // the table reflect the new state when the modal closes.
+      router.refresh();
     } catch (err) {
       setTagError(err instanceof APIClientError ? err.message : 'Failed to save tags');
     } finally {
