@@ -65,8 +65,12 @@ export interface MakeFetchMockOptions {
   postProviderOk?: boolean;
   /** Result returned by POST /providers/:id/test. */
   providerTestOk?: boolean;
+  /** Whether POST /providers/:id/test HTTP response is ok (default true). */
+  providerTestHttpOk?: boolean;
   /** Result returned by POST /providers/:id/test-model. */
   providerTestModelOk?: boolean;
+  /** Whether POST /providers/:id/test-model HTTP response is ok (default true). */
+  providerTestModelHttpOk?: boolean;
   /** Models returned by GET /models. */
   models?: Array<{ id: string; provider: string }>;
   /** defaultModels echoed back by GET /settings. */
@@ -86,7 +90,9 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
     detected = [],
     postProviderOk = true,
     providerTestOk = true,
+    providerTestHttpOk = true,
     providerTestModelOk = true,
+    providerTestModelHttpOk = true,
     models = [],
     defaultModels = {},
   } = opts;
@@ -105,6 +111,9 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
     // match that would otherwise be swallowed by the generic /test
     // arm.
     if (u.match(/\/providers\/[^/]+\/test-model/) && init?.method === 'POST') {
+      if (!providerTestModelHttpOk) {
+        return Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({}) });
+      }
       return Promise.resolve({
         ok: true,
         json: () =>
@@ -113,6 +122,9 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
     }
 
     if (u.match(/\/providers\/[^/]+\/test/) && init?.method === 'POST') {
+      if (!providerTestHttpOk) {
+        return Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({}) });
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ success: true, data: { ok: providerTestOk } }),

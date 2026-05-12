@@ -28,7 +28,9 @@ When a key is detected, the operator clicks the matching card and the wizard:
 1. POSTs the provider config (slug, providerType, baseUrl, apiKeyEnvVar) to `/providers`.
 2. PATCHes the suggested chat + embedding model into `AiOrchestrationSettings.defaultModels` — only if the slot is unset, never overwriting operator edits.
 
-When no keys are detected, the wizard renders a manual flavour picker (Anthropic / OpenAI-compatible / Voyage). Operators can also opt into manual mode from the detection screen via "Configure manually instead →".
+When no keys are detected (`anyKeyPresent === false`), the wizard renders an amber hard-block card: "No LLM API keys detected in your environment." The card lists the env-var names the operator should set (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and the message varies by context — if a provider row already exists but its key is missing, the copy warns that the existing provider can't authenticate. The manual form and detection cards are not shown in this state; the operator must set an env var and restart before proceeding.
+
+When at least one key is detected, the detection cards render. Operators can also opt into manual mode from the detection screen via "Configure manually instead →".
 
 ## Default-model step (Step 3)
 

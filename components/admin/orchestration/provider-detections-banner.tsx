@@ -200,7 +200,7 @@ export function ProviderDetectionsBanner({
   if (unconfigured.length === 0 && showNoKeysWarning) {
     const candidateEnvVars = detected
       .filter((d) => !d.isLocal && !d.alreadyConfigured && d.apiKeyEnvVar)
-      .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar as string }));
+      .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar! }));
     return (
       <Card
         data-testid="provider-no-keys-banner"

@@ -479,7 +479,7 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
     () =>
       (detection ?? [])
         .filter((d) => !d.isLocal && d.apiKeyEnvVar)
-        .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar as string })),
+        .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar! })),
     [detection]
   );
 

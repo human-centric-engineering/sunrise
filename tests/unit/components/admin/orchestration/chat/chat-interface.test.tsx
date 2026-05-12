@@ -954,7 +954,7 @@ describe('ChatInterface', () => {
       // umbrella `HTMLElement` — narrow at the call site so `.value`
       // is reachable without prettier unwrapping a free-floating
       // cast.
-      expect((input as HTMLInputElement).value).toBe('tell me about hello from the mic');
+      expect(input.value).toBe('tell me about hello from the mic');
     });
 
     it('uses the transcript as the input value when nothing has been typed yet', async () => {
@@ -966,7 +966,7 @@ describe('ChatInterface', () => {
       const input = screen.getByPlaceholderText(/type a message/i);
       await user.click(screen.getByTestId('fire-transcript'));
 
-      expect((input as HTMLInputElement).value).toBe('hello from the mic');
+      expect(input.value).toBe('hello from the mic');
     });
 
     it('surfaces mic errors through the standard error banner', async () => {
