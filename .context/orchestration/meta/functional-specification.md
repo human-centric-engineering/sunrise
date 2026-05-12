@@ -83,7 +83,7 @@ An agent is the primary deployment unit: a configured AI persona with model sele
 
 ### 1.2 Agent Lifecycle
 
-- **Versioning**: Instruction changes create `AiAgentVersion` records — full history with diff capability
+- **Versioning**: Every editable behavioural and operational field — General-tab metadata (`name`, `slug`, `description`, `isActive`, `visibility`, `retentionDays`), Model-tab config (provider, model, temperature, guard modes, attachment toggles, etc.), and Instructions-tab content (`systemInstructions`, knowledge categories, topic boundaries, brand voice) — is captured in `VERSIONED_FIELDS` and creates an `AiAgentVersion` row on change. Each row stores the **pre-update** state of every versioned field as a JSON snapshot plus a tab-prefixed `changeSummary` (e.g. `"General: Description · Model: Temperature, Model"`). "Restore to version N" rewrites the live agent back to that captured pre-update state. The version-history UI lazy-loads adjacent snapshots and renders a Before/After diff per save, using the live agent state as the "After" for the newest row (since the most recent save's post-update state lives on the agent row itself, not in any version snapshot).
 - **Cloning**: Duplicate an agent with all configuration for A/B experimentation
 - **Export/Import**: JSON serialisation for backup, migration, or sharing between environments
 - **Bulk operations**: Multi-agent export, comparison between agents
