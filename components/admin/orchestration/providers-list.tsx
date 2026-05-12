@@ -579,6 +579,7 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         onProviderCreated={() => {
           void refreshProviders();
         }}
+        showNoKeysWarning={providers.length === 0}
       />
 
       {reactivateError && (

@@ -120,6 +120,61 @@ describe('ProviderDetectionsBanner', () => {
     });
   });
 
+  it('shows the no-keys warning when showNoKeysWarning and nothing is detected', async () => {
+    // Mirrors the providers-list empty-state branch: when the
+    // operator has zero providers AND zero env keys are set, the
+    // banner surfaces the same "add env vars and restart" guidance
+    // the setup wizard shows. Includes candidate env vars from
+    // detection rows whose key isn't present.
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        detected: [
+          makeDetection({
+            slug: 'anthropic',
+            name: 'Anthropic',
+            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyPresent: false,
+          }),
+          makeDetection({
+            slug: 'openai',
+            name: 'OpenAI',
+            apiKeyEnvVar: 'OPENAI_API_KEY',
+            apiKeyPresent: false,
+          }),
+        ],
+      })
+    );
+
+    render(<ProviderDetectionsBanner showNoKeysWarning />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('provider-no-keys-banner')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
+    expect(screen.getByText(/ANTHROPIC_API_KEY/)).toBeInTheDocument();
+    expect(screen.getByText(/OPENAI_API_KEY/)).toBeInTheDocument();
+  });
+
+  it('does not show the no-keys warning when showNoKeysWarning is false', async () => {
+    // Default behaviour — banner stays silent when there is nothing
+    // to surface, regardless of detection state. Prevents the warning
+    // appearing in contexts that don't opt in (e.g. providers list
+    // after the operator has already configured something).
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        detected: [makeDetection({ apiKeyPresent: false })],
+      })
+    );
+
+    const { container } = render(<ProviderDetectionsBanner />);
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="provider-no-keys-banner"]')).toBeNull();
+    });
+  });
+
   it('renders nothing when every detection is already configured', async () => {
     vi.stubGlobal(
       'fetch',

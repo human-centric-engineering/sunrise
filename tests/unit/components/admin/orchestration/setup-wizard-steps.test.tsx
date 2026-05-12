@@ -68,11 +68,35 @@ describe('SetupWizard — step content', () => {
       expect(postCallsAfter).toBe(postCallsBefore);
     });
 
-    it('renders manual flavour-picker form when no providers and no env vars detected', async () => {
+    it('shows the env-setup hint (not the manual form) when no providers and no env vars detected', async () => {
       vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
       seedStorage(0);
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
+      });
+      // The manual form is the escape-hatch, not the default view —
+      // operator must opt in via "Configure manually anyway".
+      expect(screen.queryByRole('button', { name: /create provider/i })).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /configure manually anyway/i })
+      ).toBeInTheDocument();
+    });
+
+    it('"Configure manually anyway" reveals the manual form when no env vars detected', async () => {
+      vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 0 }));
+      seedStorage(0);
+      const user = userEvent.setup();
+
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/no llm api keys detected/i)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /configure manually anyway/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();
@@ -166,6 +190,14 @@ describe('SetupWizard — step content', () => {
       const user = userEvent.setup();
 
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      // No env keys detected → opt into manual mode first.
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /configure manually anyway/i })
+        ).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /configure manually anyway/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /create provider/i })).toBeInTheDocument();

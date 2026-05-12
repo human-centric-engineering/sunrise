@@ -50,10 +50,21 @@ export interface ProviderDetectionsBannerProps {
    * refresh its provider list. Detection list refreshes on its own.
    */
   onProviderCreated?: () => void;
+  /**
+   * When true, the banner also surfaces a "no LLM API keys detected"
+   * warning whenever `/providers/detect` reports zero present keys.
+   * Used by the providers list on a fresh install so the operator
+   * gets the same env-setup guidance as the setup wizard, instead of
+   * the bare "No providers configured yet" empty state. Leaving this
+   * off (default) preserves the original behaviour: render nothing
+   * when there's nothing detectable to act on.
+   */
+  showNoKeysWarning?: boolean;
 }
 
 export function ProviderDetectionsBanner({
   onProviderCreated,
+  showNoKeysWarning = false,
 }: ProviderDetectionsBannerProps): React.ReactElement | null {
   const [detected, setDetected] = useState<DetectionRow[] | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -177,11 +188,62 @@ export function ProviderDetectionsBanner({
     [fetchDetection, onProviderCreated, persistSuggestedDefaults]
   );
 
-  // Loading / no-detection / no-unconfigured-detection paths all render
-  // nothing — the banner only takes vertical space when there's a real
-  // gap to surface.
+  // Loading path renders nothing — wait until /providers/detect returns
+  // before deciding which message (if any) to surface.
   if (detected === null) return null;
   const unconfigured = detected.filter((d) => d.apiKeyPresent && !d.alreadyConfigured);
+
+  // No keys present anywhere AND the caller opted into the warning
+  // (typically because there are zero configured providers). Mirror
+  // the wizard's no-keys guidance so the operator hits the same
+  // "set env keys and restart" message everywhere.
+  if (unconfigured.length === 0 && showNoKeysWarning) {
+    const candidateEnvVars = detected
+      .filter((d) => !d.isLocal && !d.alreadyConfigured && d.apiKeyEnvVar)
+      .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar as string }));
+    return (
+      <Card
+        data-testid="provider-no-keys-banner"
+        className="border-amber-300 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-900/10"
+      >
+        <CardContent className="space-y-2 p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle
+              className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400"
+              aria-hidden="true"
+            />
+            <div className="text-sm">
+              <p className="font-medium">No LLM API keys detected in your environment</p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Sunrise reads provider API keys from environment variables at startup — it never
+                stores them in the database. Add one of the following to your <code>.env</code> file
+                and restart the server, then come back here.
+              </p>
+              {candidateEnvVars.length > 0 && (
+                <ul className="text-muted-foreground mt-2 space-y-0.5 text-xs">
+                  {candidateEnvVars.map((c) => (
+                    <li key={c.envVar}>
+                      <code className="bg-muted/60 rounded px-1 py-0.5">{c.envVar}</code> — {c.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-muted-foreground mt-2 text-xs">
+                Running Ollama or a self-hosted endpoint without an API key?{' '}
+                <Link href="/admin/orchestration/providers/new" className="underline">
+                  Add it manually
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Nothing to surface — the banner only takes vertical space when
+  // there's a real gap to act on.
   if (unconfigured.length === 0) return null;
 
   return (
