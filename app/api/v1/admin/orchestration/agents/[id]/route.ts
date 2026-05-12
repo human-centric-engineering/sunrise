@@ -25,6 +25,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { logger } from '@/lib/logging';
+import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import {
   systemInstructionsHistorySchema,
   updateAgentSchema,
@@ -148,12 +149,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Version-triggering fields — snapshot the current config before
-  // the update if any of these are changing. `name`, `slug`,
-  // `description`, and `isActive` are intentionally excluded: they're
-  // metadata / operational state, not part of the agent's behavioural
-  // fingerprint. Everything the agent form exposes that affects
-  // runtime behaviour belongs here.
+  // the update if any of these are changing. Every editable field on
+  // the admin form is included so the audit trail is complete:
+  // operators rely on the version list to recover from accidental
+  // changes (description rewrites, slug typos, active-flag flips), so
+  // omitting any field silently loses recovery surface.
   const VERSIONED_FIELDS = [
+    'name',
+    'slug',
+    'description',
+    'isActive',
     'systemInstructions',
     'model',
     'temperature',
@@ -228,6 +233,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
         // Snapshot the current (pre-update) agent config
         const snapshot = {
+          name: current.name,
+          slug: current.slug,
+          description: current.description,
+          isActive: current.isActive,
           systemInstructions: current.systemInstructions,
           model: current.model,
           provider: current.provider,
@@ -252,7 +261,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           enableDocumentInput: current.enableDocumentInput,
         };
 
-        const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');
+        const changeSummary = buildChangeSummary(changedVersionedFields);
 
         await tx.aiAgentVersion.create({
           data: {

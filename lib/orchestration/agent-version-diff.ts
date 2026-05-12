@@ -14,6 +14,10 @@
 
 /** Human-readable labels for the fields we expect to see in a snapshot. */
 const FIELD_LABELS: Record<string, string> = {
+  name: 'Name',
+  slug: 'Slug',
+  description: 'Description',
+  isActive: 'Active',
   systemInstructions: 'System instructions',
   model: 'Model',
   provider: 'Provider',
@@ -39,6 +43,46 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 /**
+ * Mapping from snapshot field → admin form tab. Used by
+ * `buildChangeSummary` to produce a tab-prefixed headline so the
+ * operator can tell at a glance which tab the changes landed on.
+ * Keep this in sync with `components/admin/orchestration/agent-form.tsx`.
+ */
+const FIELD_TO_TAB: Record<string, string> = {
+  // General tab
+  name: 'General',
+  slug: 'General',
+  description: 'General',
+  isActive: 'General',
+  visibility: 'General',
+  retentionDays: 'General',
+  // Model tab
+  provider: 'Model',
+  fallbackProviders: 'Model',
+  model: 'Model',
+  temperature: 'Model',
+  maxTokens: 'Model',
+  monthlyBudgetUsd: 'Model',
+  rateLimitRpm: 'Model',
+  maxHistoryTokens: 'Model',
+  enableVoiceInput: 'Model',
+  enableImageInput: 'Model',
+  enableDocumentInput: 'Model',
+  inputGuardMode: 'Model',
+  outputGuardMode: 'Model',
+  citationGuardMode: 'Model',
+  providerConfig: 'Model',
+  metadata: 'Model',
+  // Instructions tab
+  systemInstructions: 'Instructions',
+  brandVoiceInstructions: 'Instructions',
+  knowledgeCategories: 'Instructions',
+  topicBoundaries: 'Instructions',
+};
+
+const TAB_ORDER: string[] = ['General', 'Model', 'Instructions'];
+
+/**
  * Whitelist of snapshot-shape fields. Used to extract the snapshot
  * subset from a live `AiAgent` row, so the diff against the newest
  * version row doesn't surface non-versioned columns like `name`,
@@ -47,6 +91,10 @@ const FIELD_LABELS: Record<string, string> = {
  * `app/api/v1/admin/orchestration/agents/[id]/route.ts`.
  */
 export const SNAPSHOT_FIELDS = [
+  'name',
+  'slug',
+  'description',
+  'isActive',
   'systemInstructions',
   'model',
   'provider',
@@ -81,6 +129,11 @@ export function extractSnapshotFromAgent(agent: Record<string, unknown>): Record
 
 /** Stable display order: most-meaningful fields first. */
 const FIELD_ORDER: string[] = [
+  'name',
+  'slug',
+  'description',
+  'isActive',
+  'visibility',
   'model',
   'provider',
   'fallbackProviders',
@@ -91,7 +144,6 @@ const FIELD_ORDER: string[] = [
   'monthlyBudgetUsd',
   'rateLimitRpm',
   'retentionDays',
-  'visibility',
   'inputGuardMode',
   'outputGuardMode',
   'citationGuardMode',
@@ -114,6 +166,44 @@ export interface FieldChange {
   before: unknown;
   /** The value in the newer snapshot. */
   after: unknown;
+}
+
+/**
+ * Build the human-readable `changeSummary` string for a versioned
+ * save. Groups changed fields by their parent form tab so the
+ * version-history headline reads like:
+ *
+ *   "General: Description · Model: Temperature, Model"
+ *
+ * If every change is on a single tab the tab name still prefixes
+ * the line ("General: Description"). Unknown fields land under an
+ * "Other" group at the end so a new field appearing in the snapshot
+ * before this map is updated still shows up rather than vanishing.
+ */
+export function buildChangeSummary(changedFields: readonly string[]): string {
+  if (changedFields.length === 0) return '';
+
+  const grouped = new Map<string, string[]>();
+  for (const field of changedFields) {
+    const tab = FIELD_TO_TAB[field] ?? 'Other';
+    const bucket = grouped.get(tab);
+    if (bucket) {
+      bucket.push(labelForField(field));
+    } else {
+      grouped.set(tab, [labelForField(field)]);
+    }
+  }
+
+  const entries = [...grouped.entries()].sort(([a], [b]) => {
+    const ai = TAB_ORDER.indexOf(a);
+    const bi = TAB_ORDER.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  return entries.map(([tab, fields]) => `${tab}: ${fields.join(', ')}`).join(' · ');
 }
 
 export function labelForField(field: string): string {

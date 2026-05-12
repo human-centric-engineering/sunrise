@@ -478,7 +478,9 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(response.status).toBe(200);
       expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
       const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
-      expect(createCall.data.changeSummary).toContain('inputGuardMode changed');
+      expect(createCall.data.changeSummary).toContain('Input guard');
+      // Tab prefix is part of the new headline format.
+      expect(createCall.data.changeSummary).toContain('Model:');
     });
 
     it('creates a version snapshot when visibility changes', async () => {
@@ -557,14 +559,61 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(snapshot).toHaveProperty('enableDocumentInput', false);
     });
 
-    it('does NOT create a version snapshot for non-versioned field changes (name)', async () => {
+    it('creates a version snapshot for General-tab changes (name, slug, description, isActive)', async () => {
+      // Every editable form field belongs in version history so
+      // operators can recover from accidental renames, description
+      // rewrites, or activation flips. This regression guard was
+      // previously inverted — name was deliberately excluded.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
       vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ name: 'Renamed' }) as never);
 
       await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(AGENT_ID));
 
-      expect(prisma.aiAgentVersion.create).not.toHaveBeenCalled();
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      // changeSummary is tab-prefixed and uses the friendly label.
+      expect(createCall.data.changeSummary).toBe('General: Name');
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      // Snapshot captures the PRE-update value so a restore would
+      // revert the rename.
+      expect(snapshot).toHaveProperty('name', 'Test Agent');
+    });
+
+    it('builds a tab-prefixed change summary that groups changes by their parent tab', async () => {
+      // Changes that span tabs should read like:
+      //   "General: Description · Model: Temperature, Model"
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({
+          description: 'old desc',
+          model: 'claude-sonnet-4-6',
+          temperature: 0.7,
+        }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({
+          description: 'new desc',
+          model: 'claude-opus-4-7',
+          temperature: 0.9,
+        }) as never
+      );
+
+      await PATCH(
+        makeRequest('PATCH', {
+          description: 'new desc',
+          model: 'claude-opus-4-7',
+          temperature: 0.9,
+        }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      const summary = createCall.data.changeSummary as string;
+      expect(summary).toMatch(/^General: Description · Model: /);
+      expect(summary).toContain('Model');
+      expect(summary).toContain('Temperature');
     });
 
     it('does NOT create a version when a versioned field is sent with the same value (no-op save)', async () => {
@@ -655,7 +704,7 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
       const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
-      expect(createCall.data.changeSummary).toBe('visibility changed');
+      expect(createCall.data.changeSummary).toBe('General: Visibility');
     });
 
     it('treats string[] order-equal arrays as unchanged (fallbackProviders)', async () => {
@@ -748,7 +797,7 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
 
       expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
       const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
-      expect(createCall.data.changeSummary).toContain('enableVoiceInput changed');
+      expect(createCall.data.changeSummary).toContain('Voice input');
       const snapshot = createCall.data.snapshot as Record<string, unknown>;
       expect(snapshot).toHaveProperty('enableVoiceInput', false); // pre-update value
     });

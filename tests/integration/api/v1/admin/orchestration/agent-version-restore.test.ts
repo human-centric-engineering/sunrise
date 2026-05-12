@@ -216,6 +216,51 @@ describe('POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restor
     });
   });
 
+  it('restore applies General-tab fields (name, slug, description, isActive) from the snapshot', async () => {
+    // These four were excluded from version snapshots until version
+    // history was extended to cover every editable form field. The
+    // restore schema and updateData assembly must mirror the writer
+    // or a restore would silently leave the General tab unchanged.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst)
+      .mockResolvedValueOnce({
+        id: VERSION_ID,
+        agentId: AGENT_ID,
+        version: 2,
+        snapshot: {
+          ...SNAPSHOT,
+          name: 'Original Name',
+          slug: 'original-slug',
+          description: 'Original description.',
+          isActive: false,
+        },
+      } as never)
+      .mockResolvedValueOnce({ version: 4 } as never);
+    vi.mocked(prisma.aiAgent.update).mockResolvedValue({
+      id: AGENT_ID,
+      ...SNAPSHOT,
+      name: 'Original Name',
+      slug: 'original-slug',
+      description: 'Original description.',
+      isActive: false,
+    } as never);
+    vi.mocked(prisma.aiAgentVersion.create).mockResolvedValue({} as never);
+
+    const response = await POST(makeRequest(), routeContext as never);
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgent.update).toHaveBeenCalledWith({
+      where: { id: AGENT_ID },
+      data: expect.objectContaining({
+        name: 'Original Name',
+        slug: 'original-slug',
+        description: 'Original description.',
+        isActive: false,
+      }),
+    });
+  });
+
   it('restore applies enableImageInput and enableDocumentInput from the snapshot', async () => {
     // Same regression guard as the enableVoiceInput case above: the
     // schema, updateData, and snapshot block must agree on the new

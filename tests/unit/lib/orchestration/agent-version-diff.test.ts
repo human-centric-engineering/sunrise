@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  buildChangeSummary,
   diffAgentSnapshots,
   extractSnapshotFromAgent,
   formatSnapshotValue,
@@ -28,6 +29,31 @@ describe('labelForField', () => {
   });
 });
 
+describe('buildChangeSummary', () => {
+  it('groups changed fields by their parent tab and uses friendly labels', () => {
+    const out = buildChangeSummary(['description', 'temperature', 'model']);
+    // "General" sorts before "Model" per the configured tab order.
+    expect(out).toBe('General: Description · Model: Temperature, Model');
+  });
+
+  it('omits the separator when only one tab is affected', () => {
+    expect(buildChangeSummary(['description', 'name'])).toBe('General: Description, Name');
+    expect(buildChangeSummary(['temperature'])).toBe('Model: Temperature');
+  });
+
+  it('places unknown fields under an "Other" group at the end', () => {
+    // A snapshot field that hasn't been added to the tab map yet
+    // should still surface in the summary rather than vanish.
+    expect(buildChangeSummary(['someBrandNewThing', 'temperature'])).toBe(
+      'Model: Temperature · Other: Some Brand New Thing'
+    );
+  });
+
+  it('returns the empty string when nothing changed', () => {
+    expect(buildChangeSummary([])).toBe('');
+  });
+});
+
 describe('extractSnapshotFromAgent', () => {
   it('keeps only the snapshot-shape fields and drops everything else', () => {
     const agent = {
@@ -35,24 +61,32 @@ describe('extractSnapshotFromAgent', () => {
       name: 'My Agent',
       slug: 'my-agent',
       createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: 'user-1',
+      isSystem: false,
       model: 'claude-opus-4-7',
       temperature: 0.7,
       systemInstructions: 'be terse',
       enableImageInput: true,
     };
     const out = extractSnapshotFromAgent(agent);
-    // Snapshot-shape fields survive…
+    // Snapshot-shape fields (including the General-tab additions —
+    // name, slug, description, isActive) survive.
     expect(out).toEqual({
+      name: 'My Agent',
+      slug: 'my-agent',
       model: 'claude-opus-4-7',
       temperature: 0.7,
       systemInstructions: 'be terse',
       enableImageInput: true,
     });
-    // …non-snapshot fields are excluded so they don't read as
-    // changes when diffed against a version row's snapshot.
-    expect(out).not.toHaveProperty('name');
-    expect(out).not.toHaveProperty('slug');
+    // …non-snapshot fields (timestamps, ownership, system flag) are
+    // excluded so they don't read as changes when diffed against a
+    // version row's snapshot.
     expect(out).not.toHaveProperty('createdAt');
+    expect(out).not.toHaveProperty('updatedAt');
+    expect(out).not.toHaveProperty('createdBy');
+    expect(out).not.toHaveProperty('isSystem');
   });
 });
 
