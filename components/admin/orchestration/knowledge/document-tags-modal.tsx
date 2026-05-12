@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation';
 import { Save, Tag as TagIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -28,10 +29,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { cn } from '@/lib/utils';
 
 interface TagRow {
   id: string;
@@ -98,15 +100,31 @@ export function DocumentTagsModal({
     }
   }, [open, documentId, fetchTagsAndDoc]);
 
-  const tagOptions = useMemo<MultiSelectOption[]>(
-    () =>
-      allTags.map((t) => ({
-        value: t.id,
-        label: t.name,
-        description: t.description ?? t.slug,
-      })),
-    [allTags]
-  );
+  const [filter, setFilter] = useState('');
+  useEffect(() => {
+    if (!open) setFilter('');
+  }, [open]);
+
+  const filteredTags = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return allTags;
+    return allTags.filter(
+      (t) =>
+        t.name.toLowerCase().includes(q) ||
+        t.slug.toLowerCase().includes(q) ||
+        (t.description?.toLowerCase().includes(q) ?? false)
+    );
+  }, [allTags, filter]);
+
+  const selectedSet = useMemo(() => new Set(tagIds), [tagIds]);
+
+  function toggle(id: string): void {
+    if (selectedSet.has(id)) {
+      setTagIds(tagIds.filter((v) => v !== id));
+    } else {
+      setTagIds([...tagIds, id]);
+    }
+  }
 
   const dirty = useMemo(() => {
     if (tagIds.length !== originalTagIds.length) return true;
@@ -152,9 +170,7 @@ export function DocumentTagsModal({
 
         <div className="grid gap-3">
           <div className="flex items-center gap-1">
-            <Label htmlFor="doc-tags-modal" className="text-sm">
-              Tags
-            </Label>
+            <Label className="text-sm">Tags</Label>
             <FieldHelp title="Knowledge tags">
               <p>
                 Manage the tag taxonomy under <em>Knowledge → Tags</em>. System-scoped documents are
@@ -162,6 +178,11 @@ export function DocumentTagsModal({
                 filtering and organisation.
               </p>
             </FieldHelp>
+            {!loading && allTags.length > 0 ? (
+              <span className="text-muted-foreground ml-auto text-xs">
+                {tagIds.length} of {allTags.length} selected
+              </span>
+            ) : null}
           </div>
 
           {loading ? (
@@ -171,14 +192,70 @@ export function DocumentTagsModal({
               No tags exist yet. Create some under <em>Knowledge → Tags</em>.
             </p>
           ) : (
-            <MultiSelect
-              id="doc-tags-modal"
-              value={tagIds}
-              onChange={setTagIds}
-              options={tagOptions}
-              placeholder="No tags applied"
-              emptyText="No matching tags."
-            />
+            <div className="rounded-md border">
+              <div className="border-b p-2">
+                <Input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter tags…"
+                  aria-label="Filter tags"
+                  className="h-8"
+                />
+              </div>
+              <div className="max-h-72 overflow-y-auto py-1" role="listbox" aria-multiselectable>
+                {filteredTags.length === 0 ? (
+                  <p className="text-muted-foreground px-3 py-6 text-center text-xs">
+                    No tags match &ldquo;{filter}&rdquo;.
+                  </p>
+                ) : (
+                  filteredTags.map((tag) => {
+                    const checked = selectedSet.has(tag.id);
+                    return (
+                      <label
+                        key={tag.id}
+                        className={cn(
+                          'hover:bg-muted/60 flex cursor-pointer items-start gap-2 px-3 py-2 text-sm',
+                          checked && 'bg-muted/40'
+                        )}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggle(tag.id)}
+                          className="mt-0.5"
+                          aria-label={`${checked ? 'Remove' : 'Apply'} tag ${tag.name}`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{tag.name}</div>
+                          {tag.description ? (
+                            <div className="text-muted-foreground truncate text-xs">
+                              {tag.description}
+                            </div>
+                          ) : (
+                            <div className="text-muted-foreground truncate font-mono text-xs">
+                              {tag.slug}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              {tagIds.length > 0 ? (
+                <div className="flex items-center justify-between border-t px-2 py-1.5">
+                  <span className="text-muted-foreground text-xs">{tagIds.length} selected</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setTagIds([])}
+                  >
+                    Clear all
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           )}
 
           {error ? <p className="text-destructive text-sm">{error}</p> : null}
