@@ -39,7 +39,7 @@ mcp_integrations:
 parameters:
   pattern_count: 21
   sunrise_step_types: 15
-  sunrise_templates: 9
+  sunrise_templates: 12
 ---
 
 # Agent Architect
@@ -153,6 +153,10 @@ Flow: Generate research plan → specialised agents work sub-tasks → RAG retri
 Patterns: 1 (Chaining) + 8 (Memory) + 5 (Tool Use) + 9 (Learning) + 19 (Evaluation)
 Flow: Load memories → chain through understanding → reasoning → response → call tools as needed → evaluate quality → negative feedback updates instructions for next time.
 
+**Recipe 6: Event-Driven Workflow (scheduled or inbound-triggered)**
+Patterns: 12 (Exception Handling) + 5 (Tool Use) + 14 (RAG) + 13 (HITL, optional)
+Flow: Trigger fires (cron schedule or inbound Slack / Postmark / HMAC webhook at `POST /inbound/:channel/:slug`) → workflow normalises payload → retrieves context → calls downstream tools or agents → optional human approval gate → notifies original channel via `send_notification` or `call_external_api`. Use when the agent system is reacting to the world rather than handling a user-initiated chat.
+
 ---
 
 ## Trade-off Dimensions
@@ -208,20 +212,27 @@ Warn against these common mistakes:
 
 Every pattern maps to concrete Sunrise orchestration primitives:
 
-| Pattern                | Sunrise primitive                                                  |
-| ---------------------- | ------------------------------------------------------------------ |
-| Routing (2)            | `route` step type in workflow                                      |
-| Tool Use (5)           | Custom capabilities + `tool_call` step                             |
-| Planning (6)           | `plan` step type or `orchestrator` step                            |
-| Multi-Agent (7)        | Multiple `AiAgent` records + `agent_call` step                     |
-| Memory (8)             | `read_user_memory` / `write_user_memory` built-in caps             |
-| Human-in-the-Loop (13) | `human_approval` step type + approval queue                        |
-| RAG (14)               | Knowledge base + `search_knowledge_base` cap + `rag_retrieve` step |
-| Guardrails (18)        | `guard` step type (LLM or regex mode)                              |
-| Evaluation (19)        | `evaluate` step type with rubric scoring                           |
-| Parallelisation (3)    | `parallel` step type with branches                                 |
-| Reflection (4)         | `reflect` step type with critique loop                             |
-| Prompt Chaining (1)    | Sequential `llm_call` steps or `chain` step                        |
+| Pattern                      | Sunrise primitive                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Prompt Chaining (1)          | Sequential `llm_call` steps or `chain` step                                                           |
+| Routing (2)                  | `route` step type in workflow                                                                         |
+| Parallelisation (3)          | `parallel` step type with branches                                                                    |
+| Reflection (4)               | `reflect` step type with critique loop (bounded by `maxIterations`)                                   |
+| Tool Use (5)                 | `call_external_api` (recipe-driven) or custom capability + `tool_call` step                           |
+| Planning (6)                 | `plan` step type or `orchestrator` step                                                               |
+| Multi-Agent (7)              | Multiple `AiAgent` records + `agent_call` step (or `orchestrator` for dynamic delegation)             |
+| Memory (8)                   | `read_user_memory` / `write_user_memory` built-in caps; multi-modal context via image/PDF inputs      |
+| Tool Use → external HTTP (5) | `external_call` step (workflows) with `multipart` support for vendors like Gotenberg                  |
+| Human-in-the-Loop (13)       | `human_approval` step + approval queue + in-chat Approve/Reject card via `run_workflow` capability    |
+| RAG (14)                     | Knowledge base + `search_knowledge_base` cap + `rag_retrieve` step (hybrid BM25 + vector)             |
+| Guardrails (18)              | `guard` step type (LLM or regex), plus per-agent input/output/citation guard modes                    |
+| Evaluation (19)              | `evaluate` step type + per-agent named metrics (faithfulness / groundedness / relevance)              |
+| Exception Handling (12)      | Per-step `errorStrategy` (`retry` / `fallback` / `skip` / `fail`), lease-based crash recovery         |
+| Scheduled / Inbound triggers | `AiWorkflowSchedule` (cron) + `POST /inbound/:channel/:slug` (Slack / Postmark / generic HMAC)        |
+| Resource-Aware (16)          | TaskType-routed default models via the model matrix (routing / chat / reasoning / embeddings / audio) |
+| MCP (10)                     | Built-in MCP server: capabilities exposed as MCP tools with key-scoped access and full audit          |
+
+**Versioning is built-in for both agents and workflows.** `AiAgentVersion` and `AiWorkflowVersion` snapshot every editable change; PATCH writes to draft, POST `/publish` snapshots, POST `/rollback` is an append-only forward step. Architectural conversations about "how do we evolve this agent's prompt without breaking production?" already have an answer in the platform — no separate version-control plumbing needed.
 
 ## Building Solutions
 
