@@ -56,6 +56,20 @@ const documentMetadataSchema = z
      */
     csvSections: z.array(csvSectionSchema).optional(),
     /**
+     * Per-page diagnostics written by the PDF parser at preview time.
+     * Surfaced in the PDF preview modal as a page-coverage bar strip.
+     */
+    pages: z
+      .array(
+        z.object({
+          num: z.number(),
+          charCount: z.number(),
+          hasText: z.boolean(),
+        })
+      )
+      .nullable()
+      .optional(),
+    /**
      * Text-capture coverage written at chunk time. parsedChars / chunkChars
      * are byte counts after trimming; coveragePct is chunkChars / parsedChars
      * × 100, can exceed 100 because heading-aware chunking re-emits titles.
@@ -74,7 +88,7 @@ const documentMetadataSchema = z
   .nullable();
 
 /** Safely parse document metadata from Prisma JSON field */
-function parseDocumentMetadata(raw: unknown) {
+export function parseDocumentMetadata(raw: unknown) {
   const result = documentMetadataSchema.safeParse(raw);
   return result.success ? result.data : null;
 }
