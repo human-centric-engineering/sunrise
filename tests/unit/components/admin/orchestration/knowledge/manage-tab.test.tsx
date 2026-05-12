@@ -656,19 +656,37 @@ describe('ManageTab', () => {
     expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
   });
 
-  it('renders tag chips in the document table when the document has tags', async () => {
-    // The Category column was replaced by a Tags column when knowledge-access-control
-    // shipped — chips render the doc's KnowledgeTag join rows.
+  it('renders a tag-count chip in the Tags column when the document has tags', async () => {
+    // The column shows a count rather than every tag inline — a doc with many
+    // tags would otherwise overflow the row. Clicking the chip opens the
+    // chunks modal where the operator edits the actual tag list.
     const docWithTags = makeDocument({
       id: 'doc-tag',
       name: 'Sales Playbook',
-      tags: [{ id: 'tag-cuid-1', slug: 'sales', name: 'Sales' }],
+      tags: [
+        { id: 'tag-cuid-1', slug: 'sales', name: 'Sales' },
+        { id: 'tag-cuid-2', slug: 'pricing', name: 'Pricing' },
+        { id: 'tag-cuid-3', slug: 'q4', name: 'Q4' },
+      ],
     });
 
     render(<ManageTab documents={[docWithTags]} onRefresh={vi.fn()} />);
 
-    // Chip text is the tag's display name, not the slug.
-    expect(screen.getByText('Sales')).toBeInTheDocument();
+    expect(screen.getByText('3 tags')).toBeInTheDocument();
+    // Tooltip carries the full list so it stays discoverable from the row.
+    expect(screen.getByLabelText(/Edit 3 tags on Sales Playbook/i)).toBeInTheDocument();
+  });
+
+  it('uses singular "1 tag" when the document has exactly one tag', async () => {
+    const docOneTag = makeDocument({
+      id: 'doc-one',
+      name: 'Single',
+      tags: [{ id: 'tag-cuid-1', slug: 'sales', name: 'Sales' }],
+    });
+
+    render(<ManageTab documents={[docOneTag]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByText('1 tag')).toBeInTheDocument();
   });
 
   it('renders a "+ Add" affordance in the Tags column when a document has no tags', async () => {
