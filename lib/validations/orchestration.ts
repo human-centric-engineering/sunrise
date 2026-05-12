@@ -510,6 +510,53 @@ export const listCapabilitiesQuerySchema = paginationQuerySchema.extend({
 });
 
 // ============================================================================
+// Knowledge Tag Schemas (knowledge-access-control)
+// ============================================================================
+
+/**
+ * Slug for a KnowledgeTag — lowercase alphanumeric + hyphens, used as the stable
+ * cross-environment identifier in backups and as the API path key.
+ */
+const knowledgeTagSlugSchema = z
+  .string()
+  .trim()
+  .min(1, 'Slug is required')
+  .max(64, 'Slug must be 64 chars or less')
+  .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens only');
+
+const knowledgeTagNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Name is required')
+  .max(120, 'Name must be 120 chars or less');
+
+const knowledgeTagDescriptionSchema = z
+  .string()
+  .trim()
+  .max(500, 'Description must be 500 chars or less')
+  .optional();
+
+export const createKnowledgeTagSchema = z.object({
+  slug: knowledgeTagSlugSchema,
+  name: knowledgeTagNameSchema,
+  description: knowledgeTagDescriptionSchema,
+});
+
+export const updateKnowledgeTagSchema = z
+  .object({
+    slug: knowledgeTagSlugSchema.optional(),
+    name: knowledgeTagNameSchema.optional(),
+    description: knowledgeTagDescriptionSchema,
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export const listKnowledgeTagsQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+});
+
+// ============================================================================
 // Agent → Capability Pivot Schemas
 // ============================================================================
 
