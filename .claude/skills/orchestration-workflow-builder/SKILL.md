@@ -47,7 +47,7 @@ mcp_integrations:
 parameters:
   step_types: 15
   error_strategies: ['retry', 'fallback', 'skip', 'fail']
-  template_count: 9
+  template_count: 12
 ---
 
 # Workflow Builder Skill
@@ -102,11 +102,13 @@ interface ConditionalEdge {
 
 ### Input Steps
 
-| Type            | Purpose                         | Key Config                                            |
-| --------------- | ------------------------------- | ----------------------------------------------------- |
-| `tool_call`     | Execute a registered capability | `capabilitySlug` (required)                           |
-| `rag_retrieve`  | Search knowledge base           | `query`, `topK`, `similarityThreshold`                |
-| `external_call` | HTTP call to external service   | `url` (required), `method`, `headers`, `bodyTemplate` |
+| Type            | Purpose                         | Key Config                                                                                                                                                      |
+| --------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool_call`     | Execute a registered capability | `capabilitySlug` (required)                                                                                                                                     |
+| `rag_retrieve`  | Search knowledge base           | `query`, `topK`, `similarityThreshold`, `categories`                                                                                                            |
+| `external_call` | HTTP call to external service   | `url` (required), `method`, `headers`, `bodyTemplate` **or** `multipart`, `authType` (`none`/`bearer`/`api-key`/`query-param`/`basic`/`hmac`), `idempotencyKey` |
+
+`external_call`'s `bodyTemplate` and `multipart` are **mutually exclusive** (Zod refine). HMAC auth + `multipart` is rejected at execute time with `multipart_hmac_unsupported` (the boundary varies, so signatures aren't deterministic). Multipart `data` / `filename` / `contentType` and field values are templates interpolated against the execution context before the FormData is built.
 
 ### Output Steps
 
@@ -154,21 +156,24 @@ After every step, the engine checks cumulative cost against `budgetLimitUsd`:
 
 If no `budgetLimitUsd` is set, the check is skipped.
 
-## Built-in Templates (9)
+## Built-in Templates (12)
 
 Start from these rather than building from scratch:
 
-| Template                      | Patterns                                        |
-| ----------------------------- | ----------------------------------------------- |
-| `tpl-customer-support`        | Routing, RAG, Tool Use, HITL, Guardrails        |
-| `tpl-content-pipeline`        | Planning, Chaining, Reflection, Parallelisation |
-| `tpl-saas-backend`            | Routing, Tool Use, Approval Gates               |
-| `tpl-research-agent`          | Planning, RAG, Parallelisation, Multi-Agent     |
-| `tpl-conversational-learning` | RAG, Adaptive Questioning                       |
-| `tpl-data-pipeline`           | Parallel Processing, Quality Gates              |
-| `tpl-outreach-safety`         | Guardrails, Human Approval, Evaluation          |
-| `tpl-code-review`             | Parallel Analysis, Quality Scoring              |
-| `tpl-autonomous-research`     | Orchestrator, Dynamic Delegation                |
+| Template                       | Patterns                                        |
+| ------------------------------ | ----------------------------------------------- |
+| `tpl-customer-support`         | Routing, RAG, Tool Use, HITL, Guardrails        |
+| `tpl-content-pipeline`         | Planning, Chaining, Reflection, Parallelisation |
+| `tpl-saas-backend`             | Routing, Tool Use, Approval Gates               |
+| `tpl-research-agent`           | Planning, RAG, Parallelisation, Multi-Agent     |
+| `tpl-conversational-learning`  | RAG, Adaptive Questioning                       |
+| `tpl-data-pipeline`            | Parallel Processing, Quality Gates              |
+| `tpl-outreach-safety`          | Guardrails, Human Approval, Evaluation          |
+| `tpl-code-review`              | Parallel Analysis, Quality Scoring              |
+| `tpl-autonomous-research`      | Orchestrator, Dynamic Delegation                |
+| `tpl-cited-knowledge-advisor`  | RAG, Citation Hygiene, Output Guard             |
+| `tpl-scheduled-source-monitor` | Scheduled Triggers, RAG, Notification           |
+| `tpl-provider-model-audit`     | Tool Use, Approval, Audit-Driven Config Update  |
 
 Templates are in `prisma/seeds/data/templates/`. Fetch via API: `GET /api/v1/admin/orchestration/workflows`.
 
@@ -187,14 +192,14 @@ Pure function, no DB. Checks in order:
 
 ### Required config (backend-enforced)
 
-| Step Type        | Required Field          | Error Code                |
-| ---------------- | ----------------------- | ------------------------- |
-| `human_approval` | `config.prompt`         | `MISSING_APPROVAL_PROMPT` |
-| `tool_call`      | `config.capabilitySlug` | `MISSING_CAPABILITY_SLUG` |
-| `guard`          | `config.rules`          | `MISSING_GUARD_RULES`     |
-| `evaluate`       | `config.rubric`         | `MISSING_EVALUATE_RUBRIC` |
-| `external_call`  | `config.url`            | `MISSING_EXTERNAL_URL`    |
-| `agent_call`     | `config.agentSlug`      | `MISSING_AGENT_SLUG`      |
+| Step Type        | Required Field                                                            | Error Code                |
+| ---------------- | ------------------------------------------------------------------------- | ------------------------- |
+| `human_approval` | `config.prompt`                                                           | `MISSING_APPROVAL_PROMPT` |
+| `tool_call`      | `config.capabilitySlug`                                                   | `MISSING_CAPABILITY_SLUG` |
+| `guard`          | `config.rules`                                                            | `MISSING_GUARD_RULES`     |
+| `evaluate`       | `config.rubric`                                                           | `MISSING_EVALUATE_RUBRIC` |
+| `external_call`  | `config.url` and one of `bodyTemplate` / `multipart` (mutually exclusive) | `MISSING_EXTERNAL_URL`    |
+| `agent_call`     | `config.agentSlug`                                                        | `MISSING_AGENT_SLUG`      |
 
 ### Semantic validator (`semanticValidateWorkflow`)
 
@@ -207,6 +212,31 @@ DB-backed checks:
 ### FE-only checks (not enforced by backend)
 
 The backend does **not** check for empty `llm_call.prompt`, `rag_retrieve.query`, `plan.objective`, or `reflect.critiquePrompt`. Workflows created via API can pass validation with empty config and fail at runtime.
+
+## Versioning Lifecycle (publish / draft / rollback)
+
+Workflows are **immutable-versioned**. `AiWorkflow` no longer stores the live definition directly. Instead:
+
+- `AiWorkflow.publishedVersionId` pins the executions-facing snapshot.
+- `AiWorkflow.draftDefinition` (nullable JSON) holds in-progress edits.
+- `AiWorkflowVersion` rows are immutable snapshots — monotonic per workflow, mirrors `AiAgentVersion`.
+- `AiWorkflowExecution.versionId` pins each run to the snapshot it executed.
+
+**The single mutation point** is `lib/orchestration/workflows/version-service.ts`. Five operations, all audited:
+
+| Operation     | Route                                  | Effect                                                                                                                                     |
+| ------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Create v1     | `POST /workflows`                      | Atomic — creates the workflow row and v1 in one transaction                                                                                |
+| Save draft    | `PATCH /workflows/:id`                 | Writes to `draftDefinition`; **does not affect running executions**                                                                        |
+| Discard draft | `POST /workflows/:id/discard-draft`    | Nulls `draftDefinition`; published version is untouched                                                                                    |
+| Publish draft | `POST /workflows/:id/publish`          | Validates (Zod + structural + semantic) then snapshots the draft as a new version; repoints `publishedVersionId`; clears `draftDefinition` |
+| Rollback      | `POST /workflows/:id/rollback`         | Copies the target version into a **new** monotonic version and pins to it (chain stays append-only)                                        |
+| List versions | `GET /workflows/:id/versions`          | Newest first                                                                                                                               |
+| Read version  | `GET /workflows/:id/versions/:version` | Inspect a specific snapshot                                                                                                                |
+
+**Practical implication.** When the user says "edit a workflow", PATCH writes a draft, and the running schedules / triggers / `run_workflow` calls continue to execute the previously published version. Nothing goes live until `POST /publish`. A `changeSummary` (optional, ≤500 chars) is captured on publish for the version history panel.
+
+The legacy `workflowDefinition` column and `/definition-revert` / `/definition-history` routes were dropped — old code paths referencing them are gone.
 
 ## Creating a Workflow via API
 
@@ -221,11 +251,13 @@ POST /api/v1/admin/orchestration/workflows
     "errorStrategy": "fail",
     "steps": [ ... ]
   },
-  "patternsUsed": ["routing", "rag"],
+  "patternsUsed": [2, 14],
   "budgetLimitUsd": 5.00,
   "isActive": true
 }
 ```
+
+`workflowDefinition` is accepted on POST only — it becomes v1 atomically. Subsequent edits go through `PATCH` (writes to draft) and `POST /publish` (promotes the draft). `patternsUsed` is an `Int[]` of pattern numbers.
 
 ## Execution
 
@@ -238,7 +270,33 @@ POST /api/v1/admin/orchestration/executions
 ```
 
 Returns `AsyncIterable<ExecutionEvent>`:
-`workflow_started` → N × `step_started/step_completed/step_failed` → `workflow_completed/workflow_failed`
+`workflow_started` → N × `step_started/step_completed/step_retry/step_failed/approval_required/budget_warning` → `workflow_completed/workflow_failed`
+
+## How Workflows Get Triggered
+
+A workflow can fire from five distinct entry points. Each pins `versionId` from the workflow's current `publishedVersionId` at invocation time.
+
+| Trigger                   | Mechanism                                                       | Use for                                          |
+| ------------------------- | --------------------------------------------------------------- | ------------------------------------------------ |
+| Manual / admin            | `POST /api/v1/admin/orchestration/executions`                   | Ad-hoc runs, testing                             |
+| Streaming (SSE)           | `POST /workflows/:id/execute-stream`                            | UI runs that need live `ExecutionEvent` updates  |
+| Scheduled (cron)          | `AiWorkflowSchedule` row + maintenance tick                     | Recurring tasks, polling, scheduled reports      |
+| Inbound trigger           | `POST /api/v1/inbound/:channel/:slug` (Slack / Postmark / HMAC) | React to email, Slack, or external system events |
+| `run_workflow` capability | Chat agent invokes the workflow as a tool                       | Conversational agents that delegate to pipelines |
+
+**Inbound triggers** use `AiWorkflowTrigger` rows (`channel` is `'slack'`, `'postmark'`, or `'hmac'`). Adapters live in `lib/orchestration/inbound/adapters/`. Each adapter handles its verification protocol (Slack signing, Postmark Basic auth, generic HMAC) and normalises the payload into a flat shape so workflow templates can write `{{ trigger.from.email }}` without knowing vendor specifics. Dedup is channel-scoped — replay protection lives on the `AiWorkflowExecution.dedupKey` UNIQUE constraint.
+
+**Scheduled triggers** are cron expressions on `AiWorkflowSchedule`. The unified maintenance tick reads due rows and dispatches. Single-instance deployment profile — no distributed lock needed.
+
+**`run_workflow` capability** is the bridge from chat agents into workflows. Per-agent `customConfig.allowedWorkflowSlugs` whitelist (fail-closed). The capability returns `{ status: 'pending_approval' | 'completed', ... }` and integrates with the in-chat approval card surface.
+
+## Crash Recovery and Idempotency
+
+Workflows survive process crashes. The skill author rarely configures this directly but should know it exists when designing long-running pipelines.
+
+- **Lease-based recovery.** Each running execution owns a `leaseToken` + `leaseExpiresAt`. A 60-s heartbeat refreshes the lease across long single steps; a 3-minute lease expiry plus an orphan-sweep pass means a crashed host's row is re-driven from the last checkpoint by another invocation (or the next maintenance tick). Cap is 3 recovery attempts; beyond that the row is marked `failed` with `error.code = 'recovery_exhausted'`.
+- **Dispatch cache (idempotency).** `AiWorkflowStepDispatch` is keyed on `(executionId, stepId)`. The three risky executors thread it: `external_call` derives an `Idempotency-Key` HTTP header from the cache key; `send_notification` caches per-step; `tool_call` consults the capability's `isIdempotent` flag (default `false` = cache active; opt-out only for naturally-safe-to-rerun capabilities).
+- **Multi-turn checkpointing.** `currentStepTurns` (JSON) on the execution row persists per-turn state for `agent_call`, `orchestrator`, and `reflect`. On resume, completed turns are short-circuited so side effects don't double-fire. `agent_call` multi-turn mode is **not** supported — it falls back to a fresh start on re-drive; the dispatch cache prevents inner-side-effect duplication so the cost is LLM tokens only, not the side effect.
 
 ## 5-Step Workflow Creation Process
 
