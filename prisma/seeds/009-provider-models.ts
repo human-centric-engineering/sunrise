@@ -89,7 +89,7 @@ const unit: SeedUnit = {
         name: 'GPT-5',
         description:
           'OpenAI flagship. Very high reasoning, strong tool use. Best for planning and complex orchestration.',
-        capabilities: ['chat', 'vision'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'thinking',
         reasoningDepth: 'very_high',
         latency: 'medium',
@@ -105,7 +105,7 @@ const unit: SeedUnit = {
         name: 'GPT-4.1',
         description:
           'Strong reasoning with improved instruction following. Good general-purpose worker.',
-        capabilities: ['chat', 'vision'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'fast',
@@ -120,7 +120,7 @@ const unit: SeedUnit = {
         modelId: 'gpt-4o',
         name: 'GPT-4o',
         description: 'Multimodal model with strong reasoning. Fast with good cost efficiency.',
-        capabilities: ['chat', 'vision'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'worker',
         reasoningDepth: 'high',
         latency: 'fast',
@@ -136,7 +136,7 @@ const unit: SeedUnit = {
         name: 'GPT-4o Mini',
         description:
           'Fastest and cheapest OpenAI model. Ideal for high-volume, latency-sensitive loops.',
-        capabilities: ['chat', 'vision'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'infrastructure',
         reasoningDepth: 'medium',
         latency: 'very_fast',
@@ -641,7 +641,7 @@ const unit: SeedUnit = {
         name: 'GPT-4o (Azure)',
         description:
           'GPT-4o via Azure OpenAI Service. Enterprise layer with compliance, private networking.',
-        capabilities: ['chat', 'vision'],
+        capabilities: ['chat', 'vision', 'documents'],
         tierRole: 'control_plane',
         reasoningDepth: 'high',
         latency: 'medium',
@@ -661,7 +661,15 @@ const unit: SeedUnit = {
         name: 'OpenRouter Auto',
         description:
           'Automatic model selection and routing. Optimised cost with automatic fallback across providers.',
-        capabilities: ['chat'],
+        // documents capability is best-effort here: OpenRouter routes
+        // requests through whichever upstream model it picks, and not
+        // every upstream accepts the `file` content part shape that
+        // OpenAI's Chat Completions defines. If the chosen route lacks
+        // PDF support the call will surface a provider error rather
+        // than silently dropping the attachment. Operators who want
+        // guaranteed PDF support should target a specific Claude or
+        // GPT-4o row instead.
+        capabilities: ['chat', 'documents'],
         tierRole: 'control_plane',
         reasoningDepth: 'medium',
         latency: 'medium',

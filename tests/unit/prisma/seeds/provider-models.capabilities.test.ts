@@ -69,6 +69,62 @@ describe('seed 009 — provider-models capability assignment', () => {
     }
   });
 
+  describe('OpenAI / Azure — vision and documents (Phase 6)', () => {
+    // OpenAI Chat Completions gained inline PDF support late 2024 via
+    // the `file` content part. The provider conversion in
+    // `openai-compatible.ts` now emits that shape for application/pdf
+    // attachments, so the seed enables `documents` on every OpenAI
+    // model row in the GPT-4o / GPT-4.1 / GPT-5 family + Azure mirror.
+    const openaiDocSlugs = [
+      'openai-gpt-5',
+      'openai-gpt-4-1',
+      'openai-gpt-4o',
+      'openai-gpt-4o-mini',
+      'microsoft-azure-gpt-4o',
+    ];
+    for (const slug of openaiDocSlugs) {
+      it(`${slug} carries both vision and documents`, () => {
+        const caps = capabilitiesFor(slug);
+        expect(caps).not.toBeNull();
+        expect(caps).toContain('vision');
+        expect(caps).toContain('documents');
+      });
+    }
+  });
+
+  describe('OpenRouter — documents (best-effort, route-dependent)', () => {
+    // OpenRouter forwards through whichever underlying model it picks;
+    // not every route accepts the OpenAI `file` content part shape.
+    // The seed marks documents anyway so operators who target
+    // OpenRouter can attempt PDF chat — the gate accepts the request,
+    // and if the chosen route doesn't support it, OpenRouter surfaces
+    // a provider error rather than silently dropping the attachment.
+    it('openrouter-auto carries documents', () => {
+      const caps = capabilitiesFor('openrouter-auto');
+      expect(caps).not.toBeNull();
+      expect(caps).toContain('documents');
+    });
+  });
+
+  describe('Vision-only chat models — documents explicitly OFF', () => {
+    // Locks in the conservative scope: these providers have
+    // vision-capable models in the seed, but their OpenAI-compatible
+    // adapters either don't accept the `file` content part shape, or
+    // we haven't verified the wire-format yet. Leaving documents off
+    // makes the gate reject PDFs cleanly with PDF_NOT_SUPPORTED
+    // instead of letting OpenAI's shape leak to a provider that won't
+    // parse it.
+    const visionOnlySlugs = ['google-gemini-2-5-pro', 'google-gemini-2-5-flash', 'xai-grok-3'];
+    for (const slug of visionOnlySlugs) {
+      it(`${slug} has vision but NOT documents`, () => {
+        const caps = capabilitiesFor(slug);
+        expect(caps).not.toBeNull();
+        expect(caps).toContain('vision');
+        expect(caps).not.toContain('documents');
+      });
+    }
+  });
+
   describe('text-only chat models should not carry vision or documents', () => {
     const textOnlySlugs = [
       'mistral-mistral-large',
