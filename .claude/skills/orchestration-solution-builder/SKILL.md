@@ -49,9 +49,10 @@ mcp_integrations:
 
 parameters:
   complexity_tiers: ['simple', 'moderate', 'complex']
-  default_provider: 'anthropic'
-  default_model_routing: 'claude-haiku-4-5'
-  default_model_chat: 'claude-sonnet-4-6'
+  # Fresh installs ship with no providers. The setup wizard creates the
+  # first provider; thereafter agents reference whatever the operator wired.
+  # No hardcoded defaults — the model matrix + agent-resolver pick the
+  # actual model per TaskType (routing / chat / reasoning / embeddings / audio).
 ---
 
 # Solution Builder Skill
@@ -94,15 +95,17 @@ You build complete agentic solutions from problem description to running system.
 
 **Order matters.** Each step depends on the previous ones.
 
-### Step 1: Ensure provider exists
+### Step 1: Ensure at least one provider is configured
 
-Check if the provider is already configured:
+Sunrise is provider-agnostic. **Fresh installs ship with no providers** — system-seeded agents have empty `provider` and `model` strings and rely on the runtime resolver (`lib/orchestration/llm/agent-resolver.ts`) to pick a model from the matrix at call time. Developer onboarding runs through the rewritten setup wizard, which detects available env vars and surfaces what is wired.
+
+Check what is already configured:
 
 ```
 GET /api/v1/admin/orchestration/providers
 ```
 
-If not, create one:
+Create a provider (any compatible flavour — Anthropic, OpenAI / OpenAI-compatible, Voyage, Ollama, etc.):
 
 ```
 POST /api/v1/admin/orchestration/providers
@@ -115,7 +118,7 @@ POST /api/v1/admin/orchestration/providers
 }
 ```
 
-For RAG, also create an embedding provider (Voyage AI recommended):
+The env-var detection registry (`lib/orchestration/llm/env-detection`) tells the setup wizard which providers can be one-click activated based on the running process's environment. Anthropic-only deployments are fine for chat; **add a separate embedding-capable provider (Voyage / OpenAI / local) if RAG is needed** — Anthropic does not offer embeddings.
 
 ```json
 {
@@ -126,16 +129,20 @@ For RAG, also create an embedding provider (Voyage AI recommended):
 }
 ```
 
+Default models per TaskType (`routing` / `chat` / `reasoning` / `embeddings` / `audio`) are admin-tunable via the model matrix. Agents can leave `provider` and `model` empty to inherit the matrix-resolved defaults — useful for solutions that should portably follow whatever the operator has configured.
+
 ### Step 2: Create agents
 
-One agent per distinct role. Model selection by role:
+One agent per distinct role. Pick the model **by TaskType**, not by hardcoded name — that way solutions stay portable across the providers the operator has configured.
 
-| Role              | Model             | Temperature | Why                             |
-| ----------------- | ----------------- | ----------- | ------------------------------- |
-| Router/Classifier | claude-haiku-4-5  | 0.0         | Fast, cheap, deterministic      |
-| Worker/Specialist | claude-sonnet-4-6 | 0.5         | Capable, good balance           |
-| Creative/Writer   | claude-sonnet-4-6 | 0.7-0.9     | More varied output              |
-| Reviewer/Judge    | claude-sonnet-4-6 | 0.1-0.3     | Consistent, critical evaluation |
+| Role              | TaskType    | Temperature | Why                             |
+| ----------------- | ----------- | ----------- | ------------------------------- |
+| Router/Classifier | `routing`   | 0.0         | Fast, cheap, deterministic      |
+| Worker/Specialist | `chat`      | 0.5         | Capable, good balance           |
+| Creative/Writer   | `chat`      | 0.7-0.9     | More varied output              |
+| Reviewer/Judge    | `reasoning` | 0.1-0.3     | Consistent, critical evaluation |
+
+Leave `provider` and `model` empty (`""`) to inherit the matrix-resolved default for the implied TaskType. Or pin an explicit slug pair when the solution genuinely needs a specific model.
 
 ```
 POST /api/v1/admin/orchestration/agents
@@ -144,14 +151,24 @@ POST /api/v1/admin/orchestration/agents
   "slug": "support-agent",
   "description": "Handles customer support queries",
   "systemInstructions": "You are a helpful customer support agent...",
-  "model": "claude-sonnet-4-6",
-  "provider": "anthropic",
+  "provider": "",
+  "model": "",
   "temperature": 0.5,
   "maxTokens": 4096,
   "monthlyBudgetUsd": 50,
   "knowledgeCategories": ["product-docs", "faq"]
 }
 ```
+
+**Multi-modal and voice input toggles** (all default off; effective state also depends on the org-wide kill switches in `AiOrchestrationSettings` and the resolved chat model carrying the matching capability):
+
+| Field                 | Effect                                                                                     | Required model capability      |
+| --------------------- | ------------------------------------------------------------------------------------------ | ------------------------------ |
+| `enableImageInput`    | Surfaces an attach-image control on admin + embed chat surfaces                            | `vision`                       |
+| `enableDocumentInput` | Surfaces an attach-PDF control                                                             | `documents`                    |
+| `enableVoiceInput`    | Surfaces a microphone control; transcribed via the `audio`-capable provider (e.g. Whisper) | provider-level `transcribe?()` |
+
+Agent updates are **versioned** — `PATCH /agents/:id` creates an `AiAgentVersion` row capturing the field changes. A tab-prefixed change summary appears in the version history panel; rollback works like workflow rollback (append-only forward step).
 
 ### Step 3: Create custom capabilities
 
@@ -168,7 +185,24 @@ Use `/orchestration-capability-builder` for detailed templates and gotchas when 
 
 ### Step 4: Bind built-in capabilities
 
-The 9 built-in capabilities exist as `isSystem: true` rows. Don't recreate — just bind:
+The 11 built-in capabilities exist as `isSystem: true` rows. Don't recreate — just bind:
+
+| Slug                         | Purpose                                                               |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `search_knowledge_base`      | Hybrid semantic + BM25 search over the knowledge base                 |
+| `get_pattern_detail`         | Lookup an agentic design pattern by number                            |
+| `estimate_workflow_cost`     | Pre-flight USD cost estimate for a workflow                           |
+| `read_user_memory`           | Per-user persistent memory read                                       |
+| `write_user_memory`          | Per-user persistent memory write                                      |
+| `escalate_to_human`          | Dispatch the helpdesk / approval-queue webhook                        |
+| `call_external_api`          | Recipe-driven HTTP integration (Postmark, Stripe, Slack, etc.)        |
+| `run_workflow`               | Chat agent triggers a workflow (with optional `human_approval` pause) |
+| `upload_to_storage`          | Upload base64 payloads to S3 / Vercel Blob / local                    |
+| `apply_audit_changes`        | Apply approved model-audit field changes                              |
+| `add_provider_models`        | Register new models from audit proposals                              |
+| `deactivate_provider_models` | Soft-delete deprecated provider models                                |
+
+Bind with:
 
 ```
 # Find the capability ID
@@ -187,26 +221,30 @@ Common bindings:
 - `search_knowledge_base` — any RAG-enabled agent
 - `escalate_to_human` — agents handling sensitive topics
 - `read_user_memory` / `write_user_memory` — conversational agents needing memory
+- `call_external_api` — agents that need to send email, post to chat, charge payments, render PDFs etc. **Prefer the recipe-driven approach over building a new capability** — recipes live in `.context/orchestration/recipes/`.
+- `run_workflow` — chat agents that need to trigger a multi-step pipeline (and optionally pause for in-chat user approval). Per-agent `customConfig.allowedWorkflowSlugs` whitelist required.
+- `upload_to_storage` — agents that produce binary outputs needing durable storage (e.g. rendered PDFs).
 
 ### Step 5: Set up knowledge base (if using RAG)
 
-1. **Create embedding provider** — Voyage AI recommended (`providerType: "voyage"`, `apiKeyEnvVar: "VOYAGE_API_KEY"`). Do NOT use Anthropic for embeddings.
-2. **Upload documents** — `POST /api/v1/admin/orchestration/knowledge/documents` (multipart/form-data with `file` and optional `category`). PDFs use a two-step flow: `previewDocument()` → admin review → `confirmPreview()`.
+1. **Ensure an embedding-capable model is active** — embedding resolution is dynamic via `lib/orchestration/llm/embedding-models.ts` (DB-backed `AiProviderModel` rows tagged with `embedding` capability). Voyage AI, OpenAI `text-embedding-3-*`, or local Ollama all work. Anthropic does NOT offer embeddings.
+2. **Upload documents** — `POST /api/v1/admin/orchestration/knowledge/documents` (multipart/form-data with `file` and optional `category`). Supported formats: Markdown, text, **CSV (row-atomic)**, EPUB, DOCX, and PDF. PDFs use a two-step flow: `previewDocument()` → admin review → `confirmPreview()`.
 3. **Generate embeddings** — `POST /api/v1/admin/orchestration/knowledge/embed` (embeddings are NOT auto-generated on upload). Check status: `GET /api/v1/admin/orchestration/knowledge/embedding-status`.
 4. **Scope to agents** — `PATCH /api/v1/admin/orchestration/agents/{id}` with `knowledgeCategories: ["category1", "category2"]`. Empty array = agent sees all categories.
 5. **Bind capability** — bind the built-in `search_knowledge_base` capability to the agent (Step 4 process).
+6. **Sanity-check the corpus** — admin Knowledge → **Visualize** tab renders structure, embedded-graph, and UMAP projection views. Useful for spotting mis-categorised uploads before they pollute retrieval.
 
-Use `/orchestration-knowledge-builder` for detailed chunking configuration, search tuning, and gotchas.
+Use `/orchestration-knowledge-builder` for detailed chunking configuration (structural / semantic / CSV), hybrid-search tuning (`bm25Weight`, not `keywordWeight`), and gotchas.
 
 ### Step 6: Compose the workflow (if needed)
 
 Simple solutions (single agent chat) don't need a workflow. For multi-step processing:
 
-1. **Select a template** — 9 built-in templates in `prisma/seeds/data/templates/` (customer-support, content-pipeline, research-agent, etc.). Start from the closest one.
-2. **Define the DAG** — `WorkflowDefinition` has `entryStepId`, `errorStrategy`, and `steps[]`. Each step has `id`, `name`, `type` (15 types available), `config`, and `nextSteps[]` (edges). Key step types: `llm_call`, `route`, `human_approval`, `tool_call`, `rag_retrieve`, `parallel`, `reflect`, `agent_call`.
+1. **Select a template** — 12 built-in templates in `prisma/seeds/data/templates/` (`customer-support`, `content-pipeline`, `research-agent`, `cited-knowledge-advisor`, `scheduled-source-monitor`, `provider-model-audit`, etc.). Start from the closest one.
+2. **Define the DAG** — `WorkflowDefinition` has `entryStepId`, `errorStrategy`, and `steps[]`. Each step has `id`, `name`, `type` (15 types available), `config`, and `nextSteps[]` (edges). Key step types: `llm_call`, `route`, `human_approval`, `tool_call`, `rag_retrieve`, `parallel`, `reflect`, `agent_call`, `orchestrator`.
 3. **Configure error handling** — per-step `errorStrategy`: `retry` (transient failures), `fallback` (alternative path), `skip` (non-critical), `fail` (critical). Set `budgetLimitUsd` for cost caps (80% warning, 100% stop).
 4. **Validate** — `validateWorkflow()` checks DAG structure (cycles, orphans, required config). `semanticValidateWorkflow()` checks DB references (model, capability, agent slugs exist).
-5. **Create** via API:
+5. **Create** v1 atomically via API (`POST` creates the workflow row and v1 in one transaction; `patternsUsed` is an `Int[]` of pattern numbers):
 
 ```
 POST /api/v1/admin/orchestration/workflows
@@ -214,15 +252,24 @@ POST /api/v1/admin/orchestration/workflows
   "name": "Customer Support Pipeline",
   "slug": "customer-support",
   "workflowDefinition": { ... },
-  "patternsUsed": ["routing", "rag", "tool_use"],
+  "patternsUsed": [2, 5, 14],
   "budgetLimitUsd": 5.00,
   "isActive": true
 }
 ```
 
+6. **Iterate via draft / publish** — workflows are immutable-versioned. After v1, `PATCH /workflows/:id` writes to `draftDefinition`; nothing goes live until `POST /workflows/:id/publish` snapshots the draft as a new `AiWorkflowVersion` and repoints `publishedVersionId`. Use `POST /workflows/:id/rollback` to forward-step to a prior version (append-only, never destructive).
+
+7. **Decide how the workflow is triggered**. Five entry points:
+   - Manual / admin run (`POST /executions`)
+   - Streaming UI run (`POST /workflows/:id/execute-stream`)
+   - Scheduled cron via `AiWorkflowSchedule`
+   - Inbound trigger at `POST /api/v1/inbound/:channel/:slug` (Slack / Postmark / generic HMAC)
+   - Invoked by a chat agent through the `run_workflow` capability
+
 Template variables in prompts: `{{input}}` (workflow input), `{{previous.output}}` (last step), `{{stepId.output}}` (specific step).
 
-Use `/orchestration-workflow-builder` for step config schemas, template examples, and gotchas.
+Use `/orchestration-workflow-builder` for the full versioning lifecycle, step config schemas, triggering surfaces, and crash-recovery semantics.
 
 ### Step 7: Test
 
