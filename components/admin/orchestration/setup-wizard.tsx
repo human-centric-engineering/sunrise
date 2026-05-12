@@ -34,7 +34,7 @@
  */
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
 import { z } from 'zod';
 
@@ -145,15 +145,56 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
   const [state, setState, clearState] = useLocalStorage<WizardState>(STORAGE_KEY, DEFAULT_STATE);
   const wiz = useWizard({ totalSteps: TOTAL_STEPS, initialIndex: state.stepIndex });
 
-  // Keep the wizard step-index in sync with persisted state
+  // Mirror `wiz.stepIndex` into persisted state when the user advances. Two
+  // skips keep us out of trouble:
+  //   1. The mount-time firing — at that point both indices are at their
+  //      initial values, and writing would clobber the stored value before
+  //      useLocalStorage's post-mount hydration has read it back.
+  //   2. Already-in-sync cases — when `state.stepIndex` already matches
+  //      `wiz.stepIndex` we skip the write. That handles the reconcile path
+  //      (after hydration the next effect calls wiz.goTo to match state, and
+  //      we don't want to round-trip that back) and the clearState-on-Finish
+  //      path (clearState removes storage, then reconcile snaps wiz to 0,
+  //      and this skip prevents us re-creating the row).
+  const writeBackInitialisedRef = useRef(false);
   useEffect(() => {
+    if (!writeBackInitialisedRef.current) {
+      writeBackInitialisedRef.current = true;
+      return;
+    }
+    if (wiz.stepIndex === state.stepIndex) return;
     setState((prev) => ({ ...prev, stepIndex: wiz.stepIndex }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wiz.stepIndex]);
 
+  // useLocalStorage starts with the default value at hydration time and reads
+  // from storage in a post-mount effect — so `state.stepIndex` may flip from
+  // its initial 0 to the stored value on the second render. `useWizard` locks
+  // in its starting step from `state.stepIndex` once and ignores later
+  // changes, so a divergence between the two strands them. Reconcile here:
+  // whenever the persisted step disagrees with the wizard's current step,
+  // sync the wizard. The other effect (`[wiz.stepIndex]`) handles the
+  // reverse direction, so there's no loop — they only fire when their own
+  // dependency actually changes.
+  useEffect(() => {
+    if (state.stepIndex !== wiz.stepIndex) {
+      wiz.goTo(state.stepIndex);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.stepIndex]);
+
   // Probe the backend once on open to auto-advance past completed steps.
   const [probed, setProbed] = useState(false);
   const [probingError, setProbingError] = useState<string | null>(null);
+
+  // Latest state in a ref so the async probe closure below can read the
+  // post-hydration step index rather than the closure-captured initial value.
+  // (Adding `state.stepIndex` to the effect dep array would refire the probe
+  // on every step change, which we don't want.)
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (!open || probed) return;
@@ -178,7 +219,7 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
         // typically because the dialog was closed mid-flow or the
         // operator deleted the provider after wizard progress was
         // saved.
-        if (!hasProvider && state.stepIndex > 0) {
+        if (!hasProvider && stateRef.current.stepIndex > 0) {
           wiz.goTo(0);
         }
       } catch {

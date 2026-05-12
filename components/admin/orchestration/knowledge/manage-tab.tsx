@@ -72,6 +72,7 @@ const errorBodySchema = z
 
 import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
 import { DocumentChunksModal } from '@/components/admin/orchestration/knowledge/document-chunks-modal';
+import { DocumentTagsModal } from '@/components/admin/orchestration/knowledge/document-tags-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
@@ -224,6 +225,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
+  // Separate state so the Tags chip on a row opens the tag editor directly,
+  // not the chunks list — two modals, one job each.
+  const [editTagsId, setEditTagsId] = useState<string | null>(null);
+  const [editTagsName, setEditTagsName] = useState<string | null>(null);
   const [setupPreference, setSetupPreference] = useLocalStorage<'open' | 'closed' | null>(
     'orchestration.knowledge.builtin-patterns-panel',
     null
@@ -844,8 +849,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setViewChunksId(doc.id);
-                                  setViewChunksName(doc.name);
+                                  setEditTagsId(doc.id);
+                                  setEditTagsName(doc.name);
                                 }}
                                 aria-label={`Edit ${doc.tags.length} tag${doc.tags.length === 1 ? '' : 's'} on ${doc.name}`}
                                 className="focus-visible:ring-ring rounded-sm focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none"
@@ -859,8 +864,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                             <button
                               type="button"
                               onClick={() => {
-                                setViewChunksId(doc.id);
-                                setViewChunksName(doc.name);
+                                setEditTagsId(doc.id);
+                                setEditTagsName(doc.name);
                               }}
                               className="text-muted-foreground hover:text-foreground text-xs hover:underline"
                               title="No tags — click to add"
@@ -1023,6 +1028,17 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           if (!open) {
             setViewChunksId(null);
             setViewChunksName(null);
+          }
+        }}
+      />
+      <DocumentTagsModal
+        documentId={editTagsId}
+        documentName={editTagsName}
+        open={editTagsId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditTagsId(null);
+            setEditTagsName(null);
           }
         }}
       />
