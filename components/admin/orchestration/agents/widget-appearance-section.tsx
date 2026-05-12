@@ -376,6 +376,7 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
                       onChange={(e) => updateStarter(i, e.target.value)}
                     />
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
                       onClick={() => removeStarter(i)}
@@ -386,7 +387,7 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
                   </div>
                 ))}
                 {form.conversationStarters.length < 4 && (
-                  <Button variant="outline" size="sm" onClick={addStarter}>
+                  <Button type="button" variant="outline" size="sm" onClick={addStarter}>
                     <Plus className="mr-1 h-3 w-3" /> Add starter
                   </Button>
                 )}
@@ -395,11 +396,11 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
 
             {/* Actions */}
             <div className="flex items-center gap-2 pt-2">
-              <Button size="sm" onClick={() => void save()} disabled={saving}>
+              <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
                 <Save className="mr-1 h-3 w-3" />
                 {saving ? 'Saving…' : 'Save appearance'}
               </Button>
-              <Button variant="outline" size="sm" onClick={reset} disabled={saving}>
+              <Button type="button" variant="outline" size="sm" onClick={reset} disabled={saving}>
                 <RotateCcw className="mr-1 h-3 w-3" /> Reset to defaults
               </Button>
               {savedAt !== null && (

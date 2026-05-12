@@ -139,6 +139,31 @@ Both gate on `AiAgent.enableVoiceInput && AiOrchestrationSettings.voiceInputGlob
 
 **Cost tracking:** `CostOperation = 'transcription'` rows on `AiCostLog`, priced per-minute (`WHISPER_USD_PER_MINUTE = 0.006`) using `durationMs` reported by the provider. See `.context/orchestration/cost-tracking.md`.
 
+## Image and PDF input
+
+End users can attach images (JPEG/PNG/WebP/GIF) and PDFs to a chat turn. Attachments are sent inline on the standard `POST /chat/stream` body as base64-encoded `ChatAttachment` entries; the streaming-chat path is the same as text-only chat. The attachment data is passed straight to the LLM as `ContentPart[]` parts and discarded — only the agent's text response is persisted.
+
+**Three orthogonal gates run in `streaming-handler.ts` before any provider invocation:**
+
+1. **Per-agent toggle.** `AiAgent.enableImageInput` (images) and `AiAgent.enableDocumentInput` (PDFs). Default off, surfaced as toggles in the admin agent form. Failure emits SSE `IMAGE_DISABLED` / `PDF_DISABLED`.
+2. **Org-wide kill switch.** `AiOrchestrationSettings.imageInputGloballyEnabled` and `AiOrchestrationSettings.documentInputGloballyEnabled`. Default on. Failure emits the same `*_DISABLED` codes with a platform-wide message.
+3. **Model capability.** `assertModelSupportsAttachments(providerSlug, modelId, kinds)` in `lib/orchestration/llm/provider-manager.ts` checks `AiProviderModel.capabilities` for `'vision'` (image input) and/or `'documents'` (native PDF input). Throws `CAPABILITY_NOT_SUPPORTED`, mapped to `IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED` SSE events with copy referencing model selection. Distinct from `'image'` (image generation, storage-only).
+
+The route layer adds two more guards in front of the handler:
+
+- **Rate limit.** `imageLimiter` (20 req/min) keyed `image:user:${userId}` for both admin and consumer routes. Shared bucket across surfaces so a single user cannot abuse images by switching admin/consumer/embed.
+- **Magic-byte validation.** `validateImageMagicBytes()` (from `lib/storage/image.ts`) for `image/*` and `validatePdfMagicBytes()` for `application/pdf`. Mismatch returns 415 `IMAGE_INVALID_TYPE` before reaching the orchestration handler.
+
+**Validation caps** (in `lib/validations/orchestration.ts`): per-attachment ≤ `MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` (~5 MB binary, Anthropic-safe); per-turn combined ≤ `MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS = 37_500_000` (~25 MB); max 10 attachments per turn. Combined cap enforced by `chatAttachmentsArraySchema.superRefine`.
+
+**Capability seeding.** Capability assignment lives on `AiProviderModel.capabilities` and is admin-curated. The 009-provider-models seed assigns `'vision'` to multimodal chat models across the seeded provider catalogue, and `'documents'` to the rows whose upstream provider accepts inline PDF input today — currently Anthropic Claude 4.x (native `document` block), OpenAI GPT-4o family + GPT-4.1 + GPT-5 (Chat Completions `file` content part, since late 2024), Azure GPT-4o (mirrors OpenAI), Bedrock Claude, and OpenRouter (best-effort — passes through to whichever upstream the auto-router picks). Gemini, Grok, Mistral and the other OpenAI-compatible hosts remain off until their adapters accept the relevant wire format. Operators can add or remove the capability per row from the matrix. Models without the required capability are rejected at the gate with `IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED` rather than silently dropped, so end-users get a clear "switch the model" prompt instead of an assistant that pretends to have read the attachment.
+
+**Form-level constraint (Phase 6).** The agent form's image and document toggles in the Model tab are disabled when the currently-selected model lacks the corresponding capability. The toggle's saved value is preserved across model swaps — switching back to a compatible model restores the operator's previous intent. Models that aren't in the provider-models matrix (registry-only entries) fall through to "enabled" so operators aren't locked out of working configurations the matrix hasn't been told about. The runtime gate is still the authoritative check.
+
+**Attachment retention:** none. Bytes flow request → provider → discard; only the user's text becomes a persisted `AiMessage`.
+
+**Cost tracking:** `CostOperation = 'vision'` rows on `AiCostLog`, flat per-attachment via `calculateAttachmentCost(imageCount, pdfCount)` — `IMAGE_USD_PER_IMAGE = 0.001275` and `PDF_USD_PER_PDF = 0.005`. Per-modality counts stamped into the row's metadata. One row per turn, fired right after the user message persists (before any LLM call) since the platform overhead is per-attachment, not per-completion. Per-token chat cost still rolls up under separate `chat` rows on the same conversation.
+
 ## Citations
 
 When the LLM grounds a response in retrieved knowledge, the handler accumulates a turn-level citations envelope and surfaces it through three channels:

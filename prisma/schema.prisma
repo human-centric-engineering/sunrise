@@ -186,6 +186,8 @@ model AiAgent {
   visibility                String   @default("internal") // "internal" | "public" | "invite_only"
   widgetConfig              Json? // per-agent embed-widget appearance + copy; see widgetConfigSchema in lib/validations/orchestration.ts. null = use DEFAULT_WIDGET_CONFIG.
   enableVoiceInput          Boolean  @default(false) // when true, surfaces a microphone control on chat surfaces (admin + embed) and accepts speech-to-text uploads. Effective state also depends on AiOrchestrationSettings.voiceInputGloballyEnabled.
+  enableImageInput          Boolean  @default(false) // when true, surfaces an attach-image control on chat surfaces (admin + embed) and accepts image attachments. Effective state also depends on AiOrchestrationSettings.imageInputGloballyEnabled and the resolved chat model carrying the `vision` capability.
+  enableDocumentInput       Boolean  @default(false) // when true, surfaces an attach-PDF control on chat surfaces (admin + embed) and accepts PDF attachments. Effective state also depends on AiOrchestrationSettings.documentInputGloballyEnabled and the resolved chat model carrying the `documents` capability.
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
   createdBy                 String
@@ -1006,6 +1008,8 @@ model AiOrchestrationSettings {
   escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
   embedAllowedOrigins        Json      @default("[]") // [string] — allowlist for the /approvals/:id/{approve,reject}/embed CORS scope
   voiceInputGloballyEnabled  Boolean   @default(true) // org-wide kill switch for the voice-input feature; when false, every agent's enableVoiceInput flag is treated as off regardless of its own value.
+  imageInputGloballyEnabled  Boolean   @default(true) // org-wide kill switch for image attachments on chat; when false, every agent's enableImageInput flag is treated as off regardless of its own value.
+  documentInputGloballyEnabled Boolean @default(true) // org-wide kill switch for PDF / document attachments on chat; when false, every agent's enableDocumentInput flag is treated as off regardless of its own value.
   createdAt                  DateTime  @default(now())
   updatedAt                  DateTime  @updatedAt
 

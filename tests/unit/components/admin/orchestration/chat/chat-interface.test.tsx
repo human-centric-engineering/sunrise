@@ -982,4 +982,347 @@ describe('ChatInterface', () => {
       expect(screen.getByText(/microphone unavailable/i)).toBeInTheDocument();
     });
   });
+
+  describe('Nested-form safety', () => {
+    it('Send button is type="button" (cannot submit a parent form)', () => {
+      // Regression: ChatInterface is mounted inside the AgentForm
+      // <form> on the agent edit page's Test tab. HTML5 collapses
+      // nested forms, so a type="submit" button here would submit the
+      // outer form — refreshing the page and bouncing the user back
+      // to the General tab. The button must be type="button".
+      render(<ChatInterface agentSlug="my-agent" />);
+      const send = screen.getByRole('button', { name: /send/i });
+      expect(send).toBeInstanceOf(HTMLButtonElement);
+      expect((send as HTMLButtonElement).type).toBe('button');
+    });
+
+    it('clicking Send inside a parent <form> does not trigger that form.onSubmit', async () => {
+      const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([startFrame('c', 'm'), contentFrame('ack'), doneFrame()]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={outerSubmit} data-testid="outer-form">
+          <ChatInterface agentSlug="my-agent" />
+        </form>
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      // Critical assertion: the outer form must NOT have been
+      // submitted (which would refresh the page in a real browser).
+      expect(outerSubmit).not.toHaveBeenCalled();
+    });
+
+    it('Enter-to-send inside a parent <form> does not trigger that form.onSubmit', async () => {
+      const outerSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([startFrame('c', 'm'), contentFrame('ack'), doneFrame()]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={outerSubmit}>
+          <ChatInterface agentSlug="my-agent" />
+        </form>
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello{Enter}');
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      expect(outerSubmit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Attachment input', () => {
+    it('does not render the attachment picker when neither toggle is on', () => {
+      render(<ChatInterface agentSlug="my-agent" />);
+      expect(screen.queryByRole('button', { name: /attach an image/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /attach a pdf/i })).not.toBeInTheDocument();
+    });
+
+    it('renders an image-only picker when only imageInputEnabled is true', () => {
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+      expect(screen.getByRole('button', { name: /attach an image/i })).toBeInTheDocument();
+    });
+
+    it('renders a PDF-only picker when only documentInputEnabled is true', () => {
+      render(<ChatInterface agentSlug="my-agent" documentInputEnabled />);
+      expect(screen.getByRole('button', { name: /attach a pdf/i })).toBeInTheDocument();
+    });
+
+    it('threads attachments into the chat POST body and clears input + picker', async () => {
+      // Capture the request body so we can assert the attachments
+      // array reached the endpoint. The stream resolves immediately so
+      // we observe the post-send state.
+      let captured: { attachments?: Array<{ name: string }>; message: string } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+        captured = init?.body ? JSON.parse(init.body as string) : null;
+        return {
+          ok: true,
+          body: makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('ok'), doneFrame()]),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      Object.defineProperty(URL, 'createObjectURL', {
+        writable: true,
+        value: vi.fn().mockReturnValue('blob:mock'),
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', { writable: true, value: vi.fn() });
+
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+
+      // Drop an image into the hidden file input.
+      const fileInput = screen.getByTestId('attachment-picker-input');
+      if (!(fileInput instanceof HTMLInputElement)) {
+        throw new Error('Expected HTMLInputElement');
+      }
+      const file = new File(['fake-png-bytes'], 'photo.png', { type: 'image/png' });
+      await user.upload(fileInput, file);
+
+      // Wait for the picker to register the attachment.
+      await waitFor(() => {
+        expect(screen.getByTestId('attachment-thumbnail-strip')).toBeInTheDocument();
+      });
+
+      // Type a prompt and send.
+      const textInput = screen.getByPlaceholderText(/type a message/i);
+      await user.type(textInput, 'describe this');
+      await user.click(screen.getByRole('button', { name: /^send$/i }));
+
+      // The POST body should carry the attachments array with our file.
+      await waitFor(() => {
+        expect(captured?.attachments?.[0]?.name).toBe('photo.png');
+        expect(captured?.message).toBe('describe this');
+      });
+
+      // Post-send: input cleared, thumbnail strip empty.
+      await waitFor(() => {
+        expect((textInput as HTMLInputElement).value).toBe('');
+        expect(screen.queryByTestId('attachment-thumbnail-strip')).not.toBeInTheDocument();
+      });
+    });
+
+    it('allows attachment-only sends (empty text + at least one attachment)', async () => {
+      let captured: { attachments?: unknown; message: string } | null = null;
+      const fetchMock = vi.fn().mockImplementation(async (_url, init) => {
+        captured = init?.body ? JSON.parse(init.body as string) : null;
+        return {
+          ok: true,
+          body: makeSseStream([startFrame('conv-1', 'msg-1'), contentFrame('ack'), doneFrame()]),
+        };
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      Object.defineProperty(URL, 'createObjectURL', {
+        writable: true,
+        value: vi.fn().mockReturnValue('blob:mock'),
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', { writable: true, value: vi.fn() });
+
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+
+      const fileInput = screen.getByTestId('attachment-picker-input');
+      if (!(fileInput instanceof HTMLInputElement)) {
+        throw new Error('Expected HTMLInputElement');
+      }
+      await user.upload(fileInput, new File(['fake-png'], 'a.png', { type: 'image/png' }));
+      await waitFor(() =>
+        expect(screen.getByTestId('attachment-thumbnail-strip')).toBeInTheDocument()
+      );
+
+      // Send without typing anything.
+      const send = screen.getByRole('button', { name: /^send$/i });
+      expect(send).not.toBeDisabled();
+      await user.click(send);
+
+      await waitFor(() => {
+        expect(captured?.message).toBe('');
+        expect(Array.isArray(captured?.attachments)).toBe(true);
+      });
+    });
+
+    it('keeps Send disabled when both text and attachments are empty', () => {
+      render(<ChatInterface agentSlug="my-agent" imageInputEnabled />);
+      const send = screen.getByRole('button', { name: /^send$/i });
+      expect(send).toBeDisabled();
+    });
+  });
+
+  // ─── localStorage persistence ──────────────────────────────────────────────
+  //
+  // The Test tab on the agent edit page persists its conversation per
+  // agent so navigating tabs (or briefly leaving the page) doesn't
+  // discard recent context. We exercise the persistence boundary
+  // here: hydration, save-on-settle, TTL expiry, sanitisation of
+  // approval cards, and the absent-key default.
+  describe('localStorage persistence', () => {
+    const KEY = 'agent-test-chat:agent-xyz';
+
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    it('rehydrates messages + conversationId from storage on mount', async () => {
+      window.localStorage.setItem(
+        KEY,
+        JSON.stringify({
+          savedAt: Date.now(),
+          conversationId: 'conv-restored',
+          messages: [
+            { role: 'user', content: 'earlier question' },
+            { role: 'assistant', content: 'earlier answer' },
+          ],
+        })
+      );
+
+      render(<ChatInterface agentSlug="my-agent" persistenceKey={KEY} />);
+
+      // Hydration runs in a post-mount effect, so the restored
+      // messages appear on the next render rather than synchronously.
+      await waitFor(() => {
+        expect(screen.getByText('earlier question')).toBeInTheDocument();
+        expect(screen.getByText('earlier answer')).toBeInTheDocument();
+      });
+    });
+
+    it('persists the conversation after a completed turn', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi back!'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface agentSlug="my-agent" persistenceKey={KEY} enableTypingAnimation={false} />
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        const raw = window.localStorage.getItem(KEY);
+        expect(raw).not.toBeNull();
+        const parsed = JSON.parse(raw as string) as {
+          conversationId: string | null;
+          messages: Array<{ role: string; content: string }>;
+        };
+        expect(parsed.conversationId).toBe('conv-1');
+        expect(parsed.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+        expect(parsed.messages[0].content).toBe('hello');
+        expect(parsed.messages[1].content).toBe('Hi back!');
+      });
+    });
+
+    it('discards a stored conversation older than the TTL', () => {
+      const TWENTY_FIVE_HOURS = 25 * 60 * 60 * 1000;
+      window.localStorage.setItem(
+        KEY,
+        JSON.stringify({
+          savedAt: Date.now() - TWENTY_FIVE_HOURS,
+          conversationId: 'conv-old',
+          messages: [{ role: 'user', content: 'ancient question' }],
+        })
+      );
+
+      render(<ChatInterface agentSlug="my-agent" persistenceKey={KEY} />);
+
+      expect(screen.queryByText('ancient question')).not.toBeInTheDocument();
+      // Stale blob is also pruned from storage so it doesn't linger.
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it('strips pendingApproval cards before persisting (workflow state lives server-side)', async () => {
+      const user = userEvent.setup();
+      const approval = {
+        executionId: 'exec-1',
+        stepId: 'step-approve',
+        title: 'Approve this?',
+        description: 'desc',
+      };
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        approvalRequiredFrame(approval),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface agentSlug="my-agent" persistenceKey={KEY} enableTypingAnimation={false} />
+      );
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'kick it off');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        const raw = window.localStorage.getItem(KEY);
+        expect(raw).not.toBeNull();
+        const parsed = JSON.parse(raw as string) as {
+          messages: Array<Record<string, unknown>>;
+        };
+        // Approval card is not in the persisted payload …
+        for (const msg of parsed.messages) {
+          expect(msg.pendingApproval).toBeUndefined();
+        }
+        // … but the user turn that kicked it off is still there.
+        expect(parsed.messages.some((m) => m.role === 'user' && m.content === 'kick it off')).toBe(
+          true
+        );
+      });
+    });
+
+    it('does not touch localStorage when persistenceKey is not provided', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('reply'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+      const getItemSpy = vi.spyOn(Storage.prototype, 'getItem');
+
+      render(<ChatInterface agentSlug="my-agent" enableTypingAnimation={false} />);
+
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('reply')).toBeInTheDocument();
+      });
+
+      // No reads or writes against the storage key namespace.
+      const writes = setItemSpy.mock.calls.filter(([k]) =>
+        String(k).startsWith('agent-test-chat:')
+      );
+      const reads = getItemSpy.mock.calls.filter(([k]) => String(k).startsWith('agent-test-chat:'));
+      expect(writes).toHaveLength(0);
+      expect(reads).toHaveLength(0);
+    });
+  });
 });

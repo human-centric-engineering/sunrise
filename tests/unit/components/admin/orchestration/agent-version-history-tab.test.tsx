@@ -47,8 +47,11 @@ vi.mock('@/lib/api/endpoints', () => ({
     ADMIN: {
       ORCHESTRATION: {
         agentVersions: (id: string) => `/api/v1/admin/orchestration/agents/${id}/versions`,
+        agentVersionById: (id: string, vId: string) =>
+          `/api/v1/admin/orchestration/agents/${id}/versions/${vId}`,
         agentVersionRestore: (id: string, vId: string) =>
           `/api/v1/admin/orchestration/agents/${id}/versions/${vId}/restore`,
+        agentById: (id: string) => `/api/v1/admin/orchestration/agents/${id}`,
       },
     },
   },
@@ -87,7 +90,17 @@ const VERSIONS = [
 describe('AgentVersionHistoryTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGet.mockResolvedValue(VERSIONS);
+    // The component fires two mount-time GETs (versions list + live
+    // agent state). Route the default mock by URL so existing tests
+    // that focus on the list still pass, and the agent fetch
+    // resolves to an empty live snapshot they don't care about.
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/versions?limit')) return Promise.resolve(VERSIONS);
+      if (/\/versions\/ver-/.test(url))
+        return Promise.resolve({ id: 'x', version: 0, snapshot: {} });
+      // /agents/:id — the live agent state.
+      return Promise.resolve({});
+    });
   });
 
   it('shows loading spinner on mount', () => {
@@ -283,6 +296,227 @@ describe('AgentVersionHistoryTab', () => {
     // APIClientError.message is shown verbatim; generic Error shows the fallback
     await waitFor(() => {
       expect(screen.getByText('Forbidden: insufficient permissions')).toBeInTheDocument();
+    });
+  });
+
+  // ─── Expandable diff ────────────────────────────────────────────────────────
+  //
+  // Snapshots capture PRE-update state (see the PATCH route writer),
+  // so for the row at index i:
+  //   • Before = versions[i].snapshot
+  //   • After  = versions[i-1].snapshot if a newer row exists,
+  //              else the LIVE agent state for the newest row.
+  describe('expandable diff', () => {
+    // Each row's snapshot is the state JUST BEFORE the save that
+    // created that row. The live agent state is what the most recent
+    // save (v3) wrote out.
+    const SNAPSHOTS: Record<string, { snapshot: Record<string, unknown> }> = {
+      'ver-3': {
+        // Pre-save-3 = post-save-2.
+        snapshot: {
+          model: 'claude-opus-4-6',
+          temperature: 0.9,
+          systemInstructions: 'You are concise and helpful.',
+        },
+      },
+      'ver-2': {
+        // Pre-save-2 = post-save-1.
+        snapshot: {
+          model: 'claude-sonnet-4-6',
+          temperature: 0.7,
+          systemInstructions: 'You are concise and helpful.',
+        },
+      },
+      'ver-1': {
+        // Pre-save-1 = initial post-create state.
+        snapshot: {
+          model: 'claude-sonnet-4-6',
+          temperature: 0.5,
+          systemInstructions: 'Initial system prompt.',
+        },
+      },
+    };
+
+    const LIVE_AGENT = {
+      // Post-save-3 — what the most recent save committed.
+      model: 'claude-opus-4-7',
+      temperature: 0.95,
+      systemInstructions: 'You are concise and helpful.',
+    };
+
+    function routeFetch(url: string): Promise<unknown> {
+      if (url.endsWith('/versions?limit=50')) return Promise.resolve(VERSIONS);
+      const detailMatch = url.match(/\/versions\/(ver-[^/]+)$/);
+      if (detailMatch) {
+        const id = detailMatch[1];
+        const detail = SNAPSHOTS[id];
+        if (!detail) return Promise.reject(new Error(`unknown version ${id}`));
+        return Promise.resolve({ id, version: 0, ...detail });
+      }
+      // Live agent endpoint — /agents/:id (no trailing /versions).
+      if (/\/agents\/[^/]+$/.test(url)) return Promise.resolve(LIVE_AGENT);
+      return Promise.reject(new Error(`unmatched URL: ${url}`));
+    }
+
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => routeFetch(url));
+    });
+
+    it('expands the newest row and diffs its snapshot against the LIVE agent state', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Field' })).toBeInTheDocument();
+        expect(screen.getByRole('columnheader', { name: 'Before' })).toBeInTheDocument();
+        expect(screen.getByRole('columnheader', { name: 'After' })).toBeInTheDocument();
+      });
+
+      // v3.snapshot.model (Before) = claude-opus-4-6
+      // live.model (After) = claude-opus-4-7
+      expect(screen.getByText('Model')).toBeInTheDocument();
+      expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+      expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument();
+      // Older-still values from ver-2 must NOT appear under v3's diff —
+      // regression guard for the "shifted by one save" bug.
+      expect(screen.queryByText('claude-sonnet-4-6')).not.toBeInTheDocument();
+    });
+
+    it('expands an older row and diffs against the next-newer snapshot', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v2')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Changed temperature'));
+
+      // v2.snapshot (Before) → v3.snapshot (After):
+      //   model: claude-sonnet-4-6 → claude-opus-4-6
+      //   temperature: 0.7 → 0.9
+      await waitFor(() => {
+        expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
+        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+      });
+      // Live state is NOT involved here — only adjacent snapshots.
+      expect(screen.queryByText('claude-opus-4-7')).not.toBeInTheDocument();
+    });
+
+    it('caches snapshots — each version snapshot is fetched at most once', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      // Expand v3 → fetches ver-3 (its own snapshot = Before).
+      // The "After" comes from the live agent fetch that already
+      // happened at mount, so no extra version fetch.
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+      await waitFor(() => {
+        const urls = mockGet.mock.calls.map(([u]) => String(u));
+        expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-3`);
+      });
+
+      // Expand v2 → fetches ver-2; ver-3 is already cached.
+      await user.click(screen.getByText('Changed temperature'));
+      await waitFor(() => {
+        const urls = mockGet.mock.calls.map(([u]) => String(u));
+        expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2`);
+      });
+
+      // Each version detail URL should appear at most once.
+      const detailCounts: Record<string, number> = {};
+      for (const [u] of mockGet.mock.calls) {
+        const m = String(u).match(/\/versions\/(ver-[^/]+)$/);
+        if (m) detailCounts[m[1]] = (detailCounts[m[1]] ?? 0) + 1;
+      }
+      for (const count of Object.values(detailCounts)) {
+        expect(count).toBe(1);
+      }
+    });
+
+    it('diffs the OLDEST row against the next-newer snapshot (initial → first save result)', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v1')).toBeInTheDocument();
+      });
+
+      // v1.snapshot (Before — initial pre-save-1 state)
+      // → v2.snapshot (After — post-save-1 state).
+      await user.click(screen.getByText('Configuration updated'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Before' })).toBeInTheDocument();
+        expect(screen.getByRole('columnheader', { name: 'After' })).toBeInTheDocument();
+      });
+      // temperature: 0.5 (v1) → 0.7 (v2)
+      expect(screen.getByText('0.5')).toBeInTheDocument();
+      expect(screen.getByText('0.7')).toBeInTheDocument();
+      // systemInstructions: 'Initial system prompt.' (v1) → 'You are concise…' (v2)
+      expect(screen.getByText('Initial system prompt.')).toBeInTheDocument();
+    });
+
+    it('collapses the row when clicked a second time', async () => {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      const trigger = screen.getByText('Updated model to claude-opus-4-6');
+      await user.click(trigger);
+
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Field' })).toBeInTheDocument();
+      });
+
+      await user.click(trigger);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows a snapshot error inline without breaking the rest of the list', async () => {
+      const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
+      mockGet.mockImplementation((url: string) => {
+        if (url.endsWith('/versions?limit=50')) return Promise.resolve(VERSIONS);
+        if (/\/versions\/ver-3$/.test(url)) {
+          return Promise.reject(
+            new MockAPIClientError('Snapshot is unavailable', 'NOT_FOUND', 404)
+          );
+        }
+        if (/\/agents\/[^/]+$/.test(url)) return Promise.resolve(LIVE_AGENT);
+        return Promise.resolve({ id: 'x', version: 0, snapshot: {} });
+      });
+
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('v3')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Updated model to claude-opus-4-6'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Snapshot is unavailable')).toBeInTheDocument();
+      });
+
+      // Other rows remain usable — the list fetch succeeded.
+      expect(screen.getByText('v2')).toBeInTheDocument();
     });
   });
 

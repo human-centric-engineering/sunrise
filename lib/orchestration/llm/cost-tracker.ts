@@ -45,6 +45,27 @@ export interface ComputedCost {
  */
 export const WHISPER_USD_PER_MINUTE = 0.006;
 
+/**
+ * Flat per-image attachment cost. Picked at OpenAI's low-detail tile
+ * price (~$0.001275 / image) — chosen because GPT-4o low-detail is the
+ * cheapest vision-capable endpoint among the seeded models and the
+ * point of this row is to track platform-level overhead, not the
+ * underlying token spend (which rolls up under the chat row).
+ *
+ * v2: promote to a per-row `pricePerImageUsd` column on
+ * `AiProviderModel` and resolve per model id when per-tile precision
+ * becomes worth the complexity.
+ */
+export const IMAGE_USD_PER_IMAGE = 0.001275;
+
+/**
+ * Flat per-PDF attachment cost. Anthropic charges ~$0.0048 per page
+ * for native PDF processing; we use a conservative single-page average
+ * for v1 (most worked examples — boiler plates, planning notices —
+ * are one to three pages).
+ */
+export const PDF_USD_PER_PDF = 0.005;
+
 /** Parameters for `logCost`. */
 export interface LogCostParams {
   agentId?: string;
@@ -62,6 +83,20 @@ export interface LogCostParams {
    * this field rather than the token counts.
    */
   durationMs?: number;
+  /**
+   * Image attachment count — required when `operation` is `'vision'`
+   * and the request carried any `image/*` attachments. Cost rolls up
+   * as `imageCount × IMAGE_USD_PER_IMAGE`. Stamped into the metadata
+   * column so analytics can split image vs PDF contribution.
+   */
+  imageCount?: number;
+  /**
+   * PDF / document attachment count — required when `operation` is
+   * `'vision'` and the request carried any `application/pdf`
+   * attachments. Cost rolls up as `pdfCount × PDF_USD_PER_PDF`.
+   * Stamped into the metadata column alongside `imageCount`.
+   */
+  pdfCount?: number;
   /** Explicit override; otherwise inferred from the model registry tier. */
   isLocal?: boolean;
   metadata?: Record<string, unknown>;
@@ -86,6 +121,24 @@ export function calculateTranscriptionCost(durationMs: number): ComputedCost {
     return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
   }
   const totalCostUsd = (durationMs / 60_000) * WHISPER_USD_PER_MINUTE;
+  return {
+    inputCostUsd: totalCostUsd,
+    outputCostUsd: 0,
+    totalCostUsd,
+    isLocal: false,
+  };
+}
+
+/**
+ * Compute the USD cost of an attachment-bearing chat turn given image
+ * and PDF counts. Flat per-attachment pricing for v1. Negative or
+ * non-finite counts collapse to zero so a buggy caller can't produce
+ * NaN cost rows.
+ */
+export function calculateAttachmentCost(imageCount: number, pdfCount: number): ComputedCost {
+  const safeImages = Number.isFinite(imageCount) && imageCount > 0 ? Math.floor(imageCount) : 0;
+  const safePdfs = Number.isFinite(pdfCount) && pdfCount > 0 ? Math.floor(pdfCount) : 0;
+  const totalCostUsd = safeImages * IMAGE_USD_PER_IMAGE + safePdfs * PDF_USD_PER_PDF;
   return {
     inputCostUsd: totalCostUsd,
     outputCostUsd: 0,
@@ -160,17 +213,30 @@ export function calculateCost(
  */
 export async function logCost(params: LogCostParams): Promise<AiCostLog | null> {
   const isTranscription = params.operation === 'transcription';
-  const cost = isTranscription
-    ? calculateTranscriptionCost(params.durationMs ?? 0)
-    : calculateCost(params.model, params.inputTokens, params.outputTokens);
+  const isVision = params.operation === 'vision';
+  let cost: ComputedCost;
+  if (isTranscription) {
+    cost = calculateTranscriptionCost(params.durationMs ?? 0);
+  } else if (isVision) {
+    cost = calculateAttachmentCost(params.imageCount ?? 0, params.pdfCount ?? 0);
+  } else {
+    cost = calculateCost(params.model, params.inputTokens, params.outputTokens);
+  }
   const isLocal = params.isLocal ?? cost.isLocal;
 
-  // Stamp duration into metadata for transcription rows so analytics can
-  // distinguish "no usage reported" (duration absent) from "0-second clip".
-  const metadata: Record<string, unknown> | undefined =
-    isTranscription && params.durationMs !== undefined
-      ? { ...(params.metadata ?? {}), durationMs: params.durationMs }
-      : params.metadata;
+  // Stamp operation-specific counters into metadata so analytics can
+  // split "no usage reported" from "0-byte / 0-attachment clip".
+  let metadata: Record<string, unknown> | undefined = params.metadata;
+  if (isTranscription && params.durationMs !== undefined) {
+    metadata = { ...(metadata ?? {}), durationMs: params.durationMs };
+  }
+  if (isVision) {
+    metadata = {
+      ...(metadata ?? {}),
+      imageCount: params.imageCount ?? 0,
+      pdfCount: params.pdfCount ?? 0,
+    };
+  }
 
   const data: Prisma.AiCostLogUncheckedCreateInput = {
     model: params.model,

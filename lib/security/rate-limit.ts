@@ -294,6 +294,26 @@ export const audioLimiter = createRateLimiter({
 });
 
 /**
+ * Rate limiter for chat turns carrying image / PDF attachments.
+ * Limit: 20 requests per minute per user (admin) or per embed token + IP (embed).
+ *
+ * Attachment-bearing turns are heavier than text-only chat (multi-MB
+ * payloads + larger token usage from vision tiles), so they get their
+ * own bucket. The cap is intentionally looser than audio (20 vs 10)
+ * because images don't trigger a separate Whisper billing call per
+ * upload; cost rolls up under the chat-completion row.
+ *
+ * Tokens should be keyed as `image:user:${userId}` for admin and
+ * `image:embed:${embedToken}:${clientIp}` for embed callers — matching
+ * the voice-input precedent so the namespaces are predictable.
+ */
+export const imageLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.IMAGE,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Chat stream limiter (admin) — 20 messages per minute per user ID.
  * Keyed on user ID (not IP) to catch runaway admin usage.
  */

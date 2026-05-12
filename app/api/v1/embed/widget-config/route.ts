@@ -18,7 +18,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { apiLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { resolveWidgetConfig } from '@/lib/validations/orchestration';
-import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getAudioProvider, hasModelWithCapability } from '@/lib/orchestration/llm/provider-manager';
 
 function corsHeaders(origin: string | null, allowedOrigins: string[]): Record<string, string> {
   const effectiveOrigin =
@@ -89,11 +89,20 @@ export async function GET(request: NextRequest): Promise<Response> {
   const [agent, settings] = await Promise.all([
     prisma.aiAgent.findUnique({
       where: { id: ctx.agentId },
-      select: { widgetConfig: true, enableVoiceInput: true },
+      select: {
+        widgetConfig: true,
+        enableVoiceInput: true,
+        enableImageInput: true,
+        enableDocumentInput: true,
+      },
     }),
     prisma.aiOrchestrationSettings.findUnique({
       where: { slug: 'global' },
-      select: { voiceInputGloballyEnabled: true },
+      select: {
+        voiceInputGloballyEnabled: true,
+        imageInputGloballyEnabled: true,
+        documentInputGloballyEnabled: true,
+      },
     }),
   ]);
 
@@ -119,10 +128,50 @@ export async function GET(request: NextRequest): Promise<Response> {
     }
   }
 
-  logger.debug('Widget config resolved', { agentSlug: ctx.agentSlug, voiceInputEnabled });
+  // Image / document input mirror voice's triple-gate. Capability
+  // existence is queried separately rather than collapsed into a single
+  // call so a deployment that only carries `'vision'`-capable models
+  // doesn't silently expose the PDF paperclip (which would error with
+  // PDF_NOT_SUPPORTED on click).
+  let imageInputEnabled = false;
+  if ((!settings || settings.imageInputGloballyEnabled !== false) && agent?.enableImageInput) {
+    try {
+      imageInputEnabled = await hasModelWithCapability('vision');
+    } catch (err) {
+      logger.warn('imageInputEnabled probe failed; defaulting to false', {
+        agentSlug: ctx.agentSlug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  let documentInputEnabled = false;
+  if (
+    (!settings || settings.documentInputGloballyEnabled !== false) &&
+    agent?.enableDocumentInput
+  ) {
+    try {
+      documentInputEnabled = await hasModelWithCapability('documents');
+    } catch (err) {
+      logger.warn('documentInputEnabled probe failed; defaulting to false', {
+        agentSlug: ctx.agentSlug,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  logger.debug('Widget config resolved', {
+    agentSlug: ctx.agentSlug,
+    voiceInputEnabled,
+    imageInputEnabled,
+    documentInputEnabled,
+  });
 
   return NextResponse.json(
-    { success: true, data: { config, voiceInputEnabled } },
+    {
+      success: true,
+      data: { config, voiceInputEnabled, imageInputEnabled, documentInputEnabled },
+    },
     { status: 200, headers }
   );
 }

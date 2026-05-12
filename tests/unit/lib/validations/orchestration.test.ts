@@ -2045,14 +2045,14 @@ describe('chatAttachmentSchema', () => {
     expect(() => chatAttachmentSchema.parse(validAttachment)).not.toThrow();
   });
 
-  it('rejects attachment data exceeding 10MB', () => {
-    const oversized = { ...validAttachment, data: 'x'.repeat(10_000_001) };
+  it('rejects attachment data exceeding the per-item cap (~5MB binary)', () => {
+    const oversized = { ...validAttachment, data: 'x'.repeat(7_500_001) };
     const result = chatAttachmentSchema.safeParse(oversized);
     expect(result.success).toBe(false);
   });
 
-  it('accepts attachment data at exactly 10MB', () => {
-    const atLimit = { ...validAttachment, data: 'x'.repeat(10_000_000) };
+  it('accepts attachment data at exactly the per-item cap (7.5M base64 chars)', () => {
+    const atLimit = { ...validAttachment, data: 'x'.repeat(7_500_000) };
     expect(() => chatAttachmentSchema.parse(atLimit)).not.toThrow();
   });
 

@@ -86,6 +86,33 @@ The form sends `enableVoiceInput: boolean` on the standard PATCH update. The tog
 
 The effective maximum recording length depends on the deployment platform — Sunrise caps at 25 MB (~50 minutes of Opus audio) but Vercel Hobby/Pro reject anything over 4.5 MB at the platform edge. See `.context/orchestration/embed.md#platform-body-size-limits` for the comparison table.
 
+### Enable image input
+
+Switch toggle (`AiAgent.enableImageInput`, default off). When on, the chat surfaces bound to this agent render a paperclip control in the input area for image attachments (JPEG, PNG, WebP, GIF):
+
+- `AgentTestChat` in the form's Test tab
+- Any embed widget bound to this agent
+
+Images are forwarded to the LLM as multimodal `ContentPart` entries and discarded after the turn — bytes are not persisted. Per-attachment cap ~5 MB binary (`MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` base64 chars); per-turn combined cap ~25 MB across all attachments; maximum of 10 attachments per turn.
+
+Three orthogonal gates must all pass before the LLM is called:
+
+1. This toggle (`agent.enableImageInput=true`)
+2. Org-wide switch `imageInputGloballyEnabled` in **Settings → Orchestration → Image & document input** (default on)
+3. The resolved chat model carries the `'vision'` capability — capability assignment lives on `AiProviderModel.capabilities` and is admin-curated. Open the provider-models matrix to see which seeded rows qualify.
+
+Mismatch produces a discrete SSE error code (`IMAGE_DISABLED` / `IMAGE_NOT_SUPPORTED`) so the chat surface can map to specific UI copy. A `CostOperation = 'vision'` row is written to `AiCostLog` on every successful turn that carried at least one image, with `imageCount` / `pdfCount` in metadata. Toggle changes are tracked in `VERSIONED_FIELDS` and produce a snapshot/restore audit entry.
+
+**Form-level constraint.** The toggle is disabled in the agent form when the currently-selected model lacks the `'vision'` capability — the description copy switches to "Switch to a `vision`-capable model in the Model tab to enable." The saved on/off value is preserved when disabled, so swapping back to a vision-capable model later restores the operator's previous intent. Models without a matrix row (registry-only entries) default-allow — the runtime gate is the authoritative check.
+
+### Enable document (PDF) input
+
+Switch toggle (`AiAgent.enableDocumentInput`, default off). Same architecture as image input but gates on the `'documents'` capability — operators control which provider-model rows carry it in the matrix. Native-PDF support varies by upstream provider; models without the capability are rejected at the gate with `PDF_NOT_SUPPORTED` rather than silently dropped, so the user gets a clear "switch the model" prompt instead of an LLM that pretends to have read the file.
+
+PDFs share the per-attachment and per-turn caps with images. The picker UI is the same paperclip control — `application/pdf` joins the `accept` list automatically when either toggle is on.
+
+**Form-level constraint.** Same as image input — when the selected model lacks `'documents'`, the toggle is disabled with copy directing the operator to the Model tab. Saved state is preserved across model swaps. The current seed carries `'documents'` on Anthropic Claude 4.x (incl. Bedrock), OpenAI GPT-4o family + GPT-4.1 + GPT-5, Azure GPT-4o, and OpenRouter (best-effort, route-dependent). Gemini, Grok, Mistral, Cohere, and other OpenAI-compatible providers remain off until their adapters accept the relevant PDF wire format.
+
 ### Connectivity check card
 
 **Component:** `<AgentTestCard>` at `components/admin/orchestration/agent-test-card.tsx`.

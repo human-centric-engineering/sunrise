@@ -1418,6 +1418,10 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 
 - C[ ] L[ ] M[ ] A[ ] — Edit an agent's `systemInstructions` 5 times → verify 5 `AiAgentVersion` rows.
 - C[ ] L[ ] M[ ] A[ ] — Open the version history → verify the diff between any two versions is readable.
+- C[ ] L[ ] M[ ] A[ ] — Edit a General-tab field (`description`, `isActive`, `name`, `slug`, `visibility`, `retentionDays`) → verify each change creates an `AiAgentVersion` row and that the field appears in the row's Before/After diff. Regression guard: these fields were excluded from versioning historically.
+- C[ ] L[ ] M[ ] A[ ] — Verify the row headline is tab-prefixed: a save that changed `description` and `temperature` should read `"General: Description · Model: Temperature"`, not `"description changed, temperature changed"`.
+- C[ ] L[ ] M[ ] A[ ] — Expand the newest version row → verify the "After" column reflects the **live agent state**, not the next-older snapshot (the most recent save's post-state lives on the agent row, not in any version snapshot).
+- C[ ] L[ ] M[ ] A[ ] — Restore an older version that previously had `description = "X"` and `isActive = false` → verify the live agent reverts both fields, not just behavioural ones.
 - C[ ] L[ ] M[ ] A[ ] — Clone an agent → verify all configuration including capabilities, knowledge scope, fallback chain, widgetConfig.
 - C[ ] L[ ] M[ ] A[ ] — Bulk-export 5 agents → verify the bundle.
 - C[ ] L[ ] M[ ] A[ ] — Compare two agents side-by-side → verify the comparison view.
@@ -1427,12 +1431,16 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 - C[ ] L[ ] M[ ] A[ ] — Spam-edit instructions to create 1000 versions → verify pagination and storage health.
 - C[ ] L[ ] M[ ] A[ ] — Compare an agent to itself → verify clean handling.
 - C[ ] L[ ] M[ ] A[ ] — Bulk-export with one agent referencing a deleted provider → verify the bundle still completes with a flag on the affected entity.
+- C[ ] L[ ] M[ ] A[ ] — No-op save (form submits unchanged values for every field) → verify NO version row is created. The PATCH route must compare new vs current per-field, not just check that the field was sent.
+- C[ ] L[ ] M[ ] A[ ] — Save with an unknown snapshot field (forward-compat — the snapshot writer was extended but the diff helper's tab map wasn't yet) → verify the field surfaces under an "Other:" group in the headline rather than vanishing.
 
 ### Edge cases
 
 - C[ ] L[ ] M[ ] A[ ] — Revert to a version where a referenced capability has since been deleted → verify clean error.
 - C[ ] L[ ] M[ ] A[ ] — Diff between two versions where one had `widgetConfig` and the other didn't → verify representation.
 - C[ ] L[ ] M[ ] A[ ] — Clone an agent whose `widgetConfig` is null → verify the clone has null too.
+- C[ ] L[ ] M[ ] A[ ] — Restore a version captured before a new versioned field existed (snapshot omits it) → verify the missing key is treated as unchanged on restore rather than overwriting the live value with `undefined`.
+- C[ ] L[ ] M[ ] A[ ] — Slug rename causes the new slug to collide with another agent's existing slug → verify the PATCH fails cleanly and no orphan version row is left behind (transaction guarantee).
 
 ---
 

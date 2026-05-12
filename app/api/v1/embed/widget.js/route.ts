@@ -62,6 +62,8 @@ export function GET(request: NextRequest): Response {
     .then(function (payload) {
       var server = payload && payload.success && payload.data && payload.data.config;
       var voiceInputEnabled = !!(payload && payload.success && payload.data && payload.data.voiceInputEnabled);
+      var imageInputEnabled = !!(payload && payload.success && payload.data && payload.data.imageInputEnabled);
+      var documentInputEnabled = !!(payload && payload.success && payload.data && payload.data.documentInputEnabled);
       var cfg = DEFAULTS;
       if (server) {
         cfg = {};
@@ -69,6 +71,8 @@ export function GET(request: NextRequest): Response {
         for (var k2 in server) cfg[k2] = server[k2];
       }
       cfg.voiceInputEnabled = voiceInputEnabled;
+      cfg.imageInputEnabled = imageInputEnabled;
+      cfg.documentInputEnabled = documentInputEnabled;
       mount(cfg);
     });
 
@@ -250,6 +254,43 @@ export function GET(request: NextRequest): Response {
         }
         .mic-btn[data-state="recording"] { background: #ef4444; color: #fff; border-color: #ef4444; }
         .mic-btn[data-state="transcribing"] { opacity: 0.6; cursor: wait; }
+        .attach-btn {
+          position: relative;
+          padding: 8px 10px; border: 1px solid var(--sw-border); border-radius: 8px;
+          background: var(--sw-input-bg); color: var(--sw-text); cursor: pointer;
+          font-size: 16px; line-height: 1; font-family: inherit; min-width: 36px;
+        }
+        .attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .attach-badge {
+          position: absolute; top: -6px; right: -6px;
+          background: var(--sw-primary); color: #fff;
+          font-size: 10px; font-weight: 600;
+          min-width: 16px; height: 16px; padding: 0 4px;
+          border-radius: 8px;
+          display: inline-flex; align-items: center; justify-content: center;
+          line-height: 1;
+        }
+        .attach-strip {
+          padding: 6px 12px; border-top: 1px solid var(--sw-border);
+          background: var(--sw-surface);
+          display: flex; flex-wrap: wrap; gap: 6px;
+        }
+        .attach-chip {
+          background: var(--sw-surface-muted);
+          border: 1px solid var(--sw-border); border-radius: 6px;
+          padding: 3px 6px; font-size: 11px;
+          display: inline-flex; align-items: center; gap: 4px;
+          max-width: 200px;
+        }
+        .attach-chip .name {
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          max-width: 140px;
+        }
+        .attach-chip button {
+          background: none; border: none; cursor: pointer; padding: 0 4px;
+          color: var(--sw-status); font-size: 12px; line-height: 1;
+        }
+        .attach-chip button:hover { color: var(--sw-text); }
         .voice-indicator {
           /* Sits above the input row whenever the user is recording. Lives
              outside .input-area so it doesn't fight the row's flex layout,
@@ -307,7 +348,10 @@ export function GET(request: NextRequest): Response {
             <span class="voice-elapsed">0:00</span>
           </div>
         </div>
+        <div class="attach-strip" style="display:none;"></div>
         <div class="input-area">
+          <button type="button" class="attach-btn" aria-label="Attach an image or PDF" style="display:none;">&#x1F4CE;<span class="attach-badge" style="display:none;">0</span></button>
+          <input type="file" class="attach-input" multiple hidden />
           <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
           <input type="text" />
           <button type="button" class="send-btn"></button>
@@ -334,6 +378,10 @@ export function GET(request: NextRequest): Response {
     var input = shadow.querySelector('.input-area input');
     var sendBtn = shadow.querySelector('.send-btn');
     var micBtn = shadow.querySelector('.mic-btn');
+    var attachBtn = shadow.querySelector('.attach-btn');
+    var attachInput = shadow.querySelector('.attach-input');
+    var attachBadge = attachBtn && attachBtn.querySelector('.attach-badge');
+    var attachStrip = shadow.querySelector('.attach-strip');
     var voiceErrEl = shadow.querySelector('.voice-error');
     var voiceIndicatorEl = shadow.querySelector('.voice-indicator');
     var voiceIndicatorHintEl = shadow.querySelector('.voice-indicator-hint');
@@ -692,6 +740,175 @@ export function GET(request: NextRequest): Response {
       micBtn.addEventListener('click', function () {
         if (voiceState === 'idle') startVoiceRecording();
         else if (voiceState === 'recording') stopVoiceRecording();
+      });
+    }
+
+    // ── Image / PDF attachments ───────────────────────────────────────
+    // Mirrors the picker contract from
+    // components/admin/orchestration/chat/attachment-picker-button.tsx
+    // but in shadow-DOM vanilla JS. Tracks an in-memory array of
+    // ChatAttachment entries, renders a chip strip on add, clears on
+    // send. Per-attachment and per-turn size caps mirror the server.
+    var MAX_PER_BYTES_BASE64 = 7500000;
+    var MAX_COMBINED_BYTES_BASE64 = 37500000;
+    var MAX_ATTACHMENTS = 10;
+    var pendingAttachments = []; // [{ id, attachment, file }]
+
+    function refreshAttachStrip() {
+      if (!attachStrip || !attachBadge) return;
+      if (pendingAttachments.length === 0) {
+        attachStrip.style.display = 'none';
+        attachStrip.innerHTML = '';
+        attachBadge.style.display = 'none';
+      } else {
+        attachStrip.style.display = '';
+        attachStrip.innerHTML = '';
+        for (var i = 0; i < pendingAttachments.length; i++) {
+          (function (entry) {
+            var chip = document.createElement('span');
+            chip.className = 'attach-chip';
+            var nameEl = document.createElement('span');
+            nameEl.className = 'name';
+            nameEl.textContent = entry.attachment.name;
+            chip.appendChild(nameEl);
+            var remove = document.createElement('button');
+            remove.type = 'button';
+            remove.setAttribute('aria-label', 'Remove ' + entry.attachment.name);
+            remove.textContent = '\\u00d7';
+            remove.addEventListener('click', function () {
+              for (var j = 0; j < pendingAttachments.length; j++) {
+                if (pendingAttachments[j].id === entry.id) {
+                  pendingAttachments.splice(j, 1);
+                  break;
+                }
+              }
+              refreshAttachStrip();
+            });
+            chip.appendChild(remove);
+            attachStrip.appendChild(chip);
+          })(pendingAttachments[i]);
+        }
+        attachBadge.style.display = '';
+        attachBadge.textContent = String(pendingAttachments.length);
+      }
+    }
+
+    function readFileBase64(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onerror = function () { reject(reader.error || new Error('read failed')); };
+        reader.onload = function () {
+          var result = reader.result || '';
+          var idx = String(result).indexOf(',');
+          resolve(idx >= 0 ? String(result).slice(idx + 1) : String(result));
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function handleAttachFiles(files) {
+      var arr = Array.prototype.slice.call(files);
+      if (arr.length === 0) return;
+      if (pendingAttachments.length + arr.length > MAX_ATTACHMENTS) {
+        showAttachError('You can attach at most ' + MAX_ATTACHMENTS + ' files per message.');
+        return;
+      }
+      // Build the allowed list from the per-toggle state so a user with
+      // only documentInputEnabled can't upload images, and vice versa.
+      // Mirrors the admin picker's acceptMime derivation.
+      var allowed = [];
+      if (cfg.imageInputEnabled) {
+        allowed.push('image/jpeg', 'image/png', 'image/gif', 'image/webp');
+      }
+      if (cfg.documentInputEnabled) allowed.push('application/pdf');
+      var combinedSize = 0;
+      for (var p = 0; p < pendingAttachments.length; p++) {
+        combinedSize += pendingAttachments[p].attachment.data.length;
+      }
+      var processed = 0;
+      function done() {
+        processed++;
+        if (processed === arr.length) refreshAttachStrip();
+      }
+      for (var i = 0; i < arr.length; i++) {
+        (function (file) {
+          if (allowed.indexOf(file.type) < 0) {
+            showAttachError(file.name + ': unsupported file type "' + file.type + '".');
+            done();
+            return;
+          }
+          readFileBase64(file).then(function (base64) {
+            if (!base64) { showAttachError(file.name + ': file is empty.'); done(); return; }
+            if (base64.length > MAX_PER_BYTES_BASE64) {
+              showAttachError(file.name + ': exceeds the per-attachment 5 MB limit.');
+              done();
+              return;
+            }
+            if (combinedSize + base64.length > MAX_COMBINED_BYTES_BASE64) {
+              showAttachError('Combined attachment size exceeds the 25 MB per-turn limit.');
+              done();
+              return;
+            }
+            combinedSize += base64.length;
+            pendingAttachments.push({
+              id: 'att-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+              attachment: { name: file.name, mediaType: file.type, data: base64 },
+              file: file,
+            });
+            done();
+          }).catch(function (err) {
+            showAttachError(file.name + ': ' + (err && err.message ? err.message : 'failed to read.'));
+            done();
+          });
+        })(arr[i]);
+      }
+    }
+
+    function showAttachError(msg) {
+      if (!voiceErrEl) return;
+      voiceErrEl.textContent = msg;
+      voiceErrEl.style.display = '';
+      setTimeout(function () {
+        // Only clear if the message is still ours — a voice error may
+        // have overwritten it in the meantime.
+        if (voiceErrEl.textContent === msg) {
+          voiceErrEl.textContent = '';
+          voiceErrEl.style.display = 'none';
+        }
+      }, 5000);
+    }
+
+    if (attachBtn && attachInput && (cfg.imageInputEnabled || cfg.documentInputEnabled)) {
+      var acceptMime = [];
+      if (cfg.imageInputEnabled) {
+        acceptMime.push('image/jpeg', 'image/png', 'image/gif', 'image/webp');
+      }
+      if (cfg.documentInputEnabled) acceptMime.push('application/pdf');
+      attachInput.setAttribute('accept', acceptMime.join(','));
+      // Set the button's aria-label to reflect what the picker actually
+      // accepts — paperclip with no descriptor would be ambiguous.
+      var attachLabel =
+        cfg.imageInputEnabled && cfg.documentInputEnabled
+          ? 'Attach an image or PDF'
+          : cfg.imageInputEnabled
+            ? 'Attach an image'
+            : 'Attach a PDF';
+      attachBtn.setAttribute('aria-label', attachLabel);
+      // capture="environment" prompts iOS/Android to offer the camera
+      // alongside the photo library. Desktop browsers ignore it. The
+      // attribute is set unconditionally; it's a hint, not a constraint.
+      attachInput.setAttribute('capture', 'environment');
+      attachBtn.style.display = '';
+      attachBtn.addEventListener('click', function () {
+        if (sending) return;
+        attachInput.click();
+      });
+      attachInput.addEventListener('change', function (e) {
+        if (e.target.files && e.target.files.length > 0) {
+          handleAttachFiles(e.target.files);
+        }
+        // Reset so the same file can be picked again next time.
+        e.target.value = '';
       });
     }
 
@@ -1126,20 +1343,36 @@ export function GET(request: NextRequest): Response {
 
     function send() {
       var msg = input.value.trim();
-      if (!msg || sending) return;
+      // Allow empty text when attachments are present — vision turns
+      // routinely just ask "what does this show?" with no text body.
+      if ((!msg && pendingAttachments.length === 0) || sending) return;
       sending = true;
       sendBtn.disabled = true;
       input.value = '';
-      addMsg('user', msg);
+      addMsg('user', msg || (pendingAttachments.length > 0 ? '[' + pendingAttachments.length + ' attachment(s)]' : ''));
       var assistantSpan = addMsg('assistant', '\\u2026');
 
       var controller = new AbortController();
       activeAbort = controller;
 
+      var requestBody = { message: msg, conversationId: conversationId || undefined };
+      if (pendingAttachments.length > 0) {
+        var attList = [];
+        for (var ai = 0; ai < pendingAttachments.length; ai++) {
+          attList.push(pendingAttachments[ai].attachment);
+        }
+        requestBody.attachments = attList;
+        // Clear the pending list immediately so a retry doesn't double-
+        // send. The strip refreshes after the network completes regardless
+        // of outcome.
+        pendingAttachments = [];
+        refreshAttachStrip();
+      }
+
       fetch(apiBase + '/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Embed-Token': token },
-        body: JSON.stringify({ message: msg, conversationId: conversationId || undefined }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       }).then(function(res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);

@@ -495,8 +495,27 @@ function toOpenAiParts(
       }
       return { type: 'image_url' as const, image_url: { url: part.source.url } };
     }
-    // Documents: for OpenAI, embed as text (OpenAI doesn't have native doc blocks)
     if (part.type === 'document') {
+      // PDFs use OpenAI's native `file` content part — Chat Completions
+      // gained inline PDF support in late 2024. The model reads both
+      // the text layer and renders each page as an image. 32 MB / 100-
+      // page inline cap; Sunrise's 5 MB per-attachment ceiling keeps
+      // us well below either limit, so no Files-API upload path is
+      // needed for v1.
+      if (part.source.mediaType === 'application/pdf') {
+        return {
+          type: 'file' as const,
+          file: {
+            filename: part.name,
+            file_data: `data:application/pdf;base64,${part.source.data}`,
+          },
+        };
+      }
+      // Non-PDF documents (txt/csv/md/docx): no native shape — decode
+      // the base64 as UTF-8 and emit as a text part. Works cleanly for
+      // text formats; docx round-trips as garbage but the picker only
+      // surfaces image + PDF MIMEs in v1, so this is a defensive
+      // fallback for callers that bypass the picker.
       const text = Buffer.from(part.source.data, 'base64').toString('utf-8');
       return { type: 'text' as const, text: `[Document: ${part.name}]\n${text}` };
     }

@@ -83,7 +83,7 @@ An agent is the primary deployment unit: a configured AI persona with model sele
 
 ### 1.2 Agent Lifecycle
 
-- **Versioning**: Instruction changes create `AiAgentVersion` records — full history with diff capability
+- **Versioning**: Every editable behavioural and operational field — General-tab metadata (`name`, `slug`, `description`, `isActive`, `visibility`, `retentionDays`), Model-tab config (provider, model, temperature, guard modes, attachment toggles, etc.), and Instructions-tab content (`systemInstructions`, knowledge categories, topic boundaries, brand voice) — is captured in `VERSIONED_FIELDS` and creates an `AiAgentVersion` row on change. Each row stores the **pre-update** state of every versioned field as a JSON snapshot plus a tab-prefixed `changeSummary` (e.g. `"General: Description · Model: Temperature, Model"`). "Restore to version N" rewrites the live agent back to that captured pre-update state. The version-history UI lazy-loads adjacent snapshots and renders a Before/After diff per save, using the live agent state as the "After" for the newest row (since the most recent save's post-update state lives on the agent row itself, not in any version snapshot).
 - **Cloning**: Duplicate an agent with all configuration for A/B experimentation
 - **Export/Import**: JSON serialisation for backup, migration, or sharing between environments
 - **Bulk operations**: Multi-agent export, comparison between agents
@@ -371,6 +371,31 @@ Both run on Node.js runtime (`runtime = 'nodejs'`, `maxDuration = 60`), enforce 
 **Browser-side guarantees.** A reusable `useVoiceRecording` hook owns the `MediaRecorder` lifecycle: runtime MIME selection (Opus → MP4 → browser default to cover Chrome/Firefox/Safari/iOS), a 3-minute client-side auto-stop so users don't upload audio that the server cap will reject, elapsed-time tracking, and clean teardown of the `MediaStream` on cancel/unmount. The `<MicButton>` wires this into `AgentTestChat`. The embed widget mirrors the same state machine in plain ES5 inside the Shadow DOM.
 
 **Permissions-Policy**: the admin app's response headers ship `microphone=(self)` so `getUserMedia()` resolves on the admin domain. The embed widget mounts on the partner site via `<script>` and inherits that site's policy — the platform cannot override it. Iframe embedders need `allow="microphone"` on the iframe element for the mic to function.
+
+### 6.7 Image and document input
+
+Image (JPEG/PNG/WebP/GIF) and PDF input on both chat surfaces — admin (`AgentTestChat`) and the third-party embed widget. Attachments are uploaded inline as base64-encoded `ChatAttachment` entries on the streaming-chat POST body, passed straight to the LLM as `ContentPart[]` (image and document parts), and discarded; the agent's text response is the only output persisted. Two independent toggles per modality gate the feature:
+
+- **Per-agent**: `AiAgent.enableImageInput` and `AiAgent.enableDocumentInput` (both default `false`) — opt-in per agent.
+- **Org-wide kill switches**: `AiOrchestrationSettings.imageInputGloballyEnabled` and `AiOrchestrationSettings.documentInputGloballyEnabled` (both default `true`) — flip off to disable that modality across every agent without editing each row.
+
+The effective state for image input is `agent.enableImageInput && settings.imageInputGloballyEnabled && resolvedModel.capabilities ⊇ ['vision']`; documents follow the same shape with `'documents'`. The widget-config endpoint also requires at least one vision-capable / documents-capable provider before exposing the attach affordance.
+
+**Capability gate.** Unlike voice (which routes to a second model via `getAudioProvider`), image and document understanding happen _inline_ on the chat model. `assertModelSupportsAttachments(providerSlug, modelId, kinds)` checks the resolved model's capabilities before `getProvider().chat(...)`. Mismatch raises `CAPABILITY_NOT_SUPPORTED`, surfaced as user-facing SSE `IMAGE_NOT_SUPPORTED` / `PDF_NOT_SUPPORTED` events with copy referencing model selection. No silent drops.
+
+**Capability naming.** `'vision'` (image input) and `'documents'` (PDF input) are distinct `MODEL_CAPABILITIES` values, both engine-invoked. They are not the same as `'image'`, which means image _generation_ (DALL·E, gpt-image, Imagen) and remains storage-only. Capability assignment lives on `AiProviderModel.capabilities` and is admin-curated; the 009-provider-models seed is the starting point but operators are free to add or remove either capability per row. See `prisma/seeds/009-provider-models.ts` for the current snapshot of which rows ship with each capability.
+
+**Multi-provider PDF transport.** Two PDF wire formats are wired today: Anthropic's native `document` block (used for Claude 4.x and Bedrock Claude) and OpenAI's Chat Completions `file` content part (used for GPT-4o family, GPT-4.1, GPT-5, Azure GPT-4o, and OpenRouter — best-effort for the last since OpenRouter routes through whichever upstream it picks). Other OpenAI-compatible providers (Gemini, Grok, Mistral, Cohere, Groq, Together, Fireworks, Meta, Alibaba, DeepSeek, Perplexity) remain off in the seed until their adapters accept either shape. Adding a provider whose native API uses a different transport (e.g. native Gemini `inlineData`) requires a dedicated provider class; the existing two-class abstraction (`AnthropicProvider`, `OpenAiCompatibleProvider`) covers everything else.
+
+**Agent-form toggle constraint.** The image and document toggles on the Model tab are disabled when the currently-selected model lacks the relevant capability. Saved state is preserved across model swaps so operator intent isn't lost on transient model changes. Models without a matrix row (registry-only entries) default-allow — the runtime gate is still the authoritative check.
+
+**Validation.** `chatAttachmentSchema` accepts `image/jpeg|png|gif|webp`, `application/pdf`, `text/plain`, `text/csv`, `text/markdown`, `.docx`. Per-attachment cap is `MAX_CHAT_ATTACHMENT_BASE64_CHARS = 7_500_000` (~5 MB binary, Anthropic-safe); per-turn combined cap is `MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS = 37_500_000` (~25 MB). `chatAttachmentsArraySchema` enforces both caps plus the existing 10-attachments-per-turn limit.
+
+**Cost tracking** (Phase 2). A new `CostOperation = 'vision'` writes per-row to `AiCostLog`. Flat per-attachment pricing for v1 (`IMAGE_USD_PER_IMAGE = 0.001275`, `PDF_USD_PER_PDF = 0.005`); the cost row's metadata records `imageCount` and `pdfCount` for per-modality analytics. Per-tile precision is deferred — current usage volumes don't justify the complexity.
+
+**Versioning.** `enableImageInput` and `enableDocumentInput` are tracked in `VERSIONED_FIELDS` on the agent PATCH route alongside `enableVoiceInput`, so flipping either toggle is captured in the agent version snapshot/restore audit.
+
+**Storage policy.** Pass-through only — image and PDF bytes never persist beyond the in-memory request body. `AiMessage` rows store the user's text alongside `[image]` / `[pdf]` placeholders; cost rows store counts in metadata, never bytes. Mirrors the voice-input precedent.
 
 ---
 

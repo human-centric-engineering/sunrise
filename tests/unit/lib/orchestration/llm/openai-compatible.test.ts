@@ -1040,6 +1040,116 @@ describe('toOpenAiParts — multimodal content-part mapping', () => {
     expect(text).toContain(docContent);
   });
 
+  it('maps PDF document part to a native `file` content block (not text)', async () => {
+    // Phase 6: OpenAI's Chat Completions API gained inline PDF support
+    // in late 2024 via `{ type: 'file', file: { filename, file_data } }`.
+    // Previously the provider decoded PDF bytes as UTF-8 and emitted a
+    // text block (garbage). This regression test locks in the correct
+    // native shape.
+    const pdfBytes = Buffer.from('%PDF-1.4\nfake pdf bytes').toString('base64');
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', mediaType: 'application/pdf', data: pdfBytes },
+              name: 'meter-reading.pdf',
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(1);
+    expect(msgContent[0]).toMatchObject({
+      type: 'file',
+      file: {
+        filename: 'meter-reading.pdf',
+        file_data: `data:application/pdf;base64,${pdfBytes}`,
+      },
+    });
+    // Critical: must NOT be a text part — that's the old broken path.
+    expect((msgContent[0] as { type: string }).type).not.toBe('text');
+  });
+
+  it('maps a mixed turn (text + image + PDF) preserving order and shapes', async () => {
+    const pdfBytes = Buffer.from('%PDF-1.4\nfake').toString('base64');
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Compare these:' },
+            {
+              type: 'image',
+              source: { type: 'base64', mediaType: 'image/png', data: 'imgdata' },
+            },
+            {
+              type: 'document',
+              source: { type: 'base64', mediaType: 'application/pdf', data: pdfBytes },
+              name: 'doc.pdf',
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent).toHaveLength(3);
+    expect((msgContent[0] as { type: string }).type).toBe('text');
+    expect((msgContent[1] as { type: string }).type).toBe('image_url');
+    expect((msgContent[2] as { type: string }).type).toBe('file');
+  });
+
+  it('still falls back to text part for non-PDF documents (text/plain)', async () => {
+    // Regression: only PDFs take the new `file` shape; txt/csv/md
+    // should still inline as text so they reach text-capable models.
+    const docContent = 'just plain text';
+    const docBase64 = Buffer.from(docContent).toString('base64');
+    chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+    const provider = makeProvider();
+
+    await provider.chat(
+      [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', mediaType: 'text/plain', data: docBase64 },
+              name: 'notes.txt',
+            },
+          ],
+        },
+      ],
+      { model: 'gpt-4o' }
+    );
+
+    const calledParams = chatCreateMock.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const msgContent = calledParams.messages[0]?.content as Array<Record<string, unknown>>;
+    expect(msgContent[0]).toMatchObject({ type: 'text' });
+    expect((msgContent[0] as { type: string; text: string }).text).toContain('notes.txt');
+  });
+
   it('maps unknown content part type to an empty text block (fallback)', async () => {
     // Arrange — inject a part type that does not match text | image | document
     chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));

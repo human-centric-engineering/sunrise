@@ -83,6 +83,8 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   escalationConfig: null,
   embedAllowedOrigins: [],
   voiceInputGloballyEnabled: true,
+  imageInputGloballyEnabled: true,
+  documentInputGloballyEnabled: true,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

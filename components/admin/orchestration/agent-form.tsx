@@ -40,7 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { AgentTestChat } from '@/components/admin/orchestration/agent-test-chat';
+import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instructions-history-panel';
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
@@ -79,6 +79,8 @@ const agentFormSchema = z.object({
   visibility: z.enum(['internal', 'public', 'invite_only']),
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
   enableVoiceInput: z.boolean(),
+  enableImageInput: z.boolean(),
+  enableDocumentInput: z.boolean(),
   fallbackProviders: z.array(z.string()),
   knowledgeCategories: z.string().optional(),
   topicBoundaries: z.string().optional(),
@@ -161,6 +163,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
       rateLimitRpm: agent?.rateLimitRpm ?? null,
       enableVoiceInput: agent?.enableVoiceInput ?? false,
+      enableImageInput: agent?.enableImageInput ?? false,
+      enableDocumentInput: agent?.enableDocumentInput ?? false,
       fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
       knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
       topicBoundaries: agent?.topicBoundaries?.join(', ') ?? '',
@@ -175,6 +179,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
   const currentInstructions = watch('systemInstructions');
   const currentIsActive = watch('isActive');
   const currentVoiceInput = watch('enableVoiceInput');
+  const currentImageInput = watch('enableImageInput');
+  const currentDocumentInput = watch('enableDocumentInput');
   const currentInputGuard = watch('inputGuardMode');
   const currentOutputGuard = watch('outputGuardMode');
   const currentCitationGuard = watch('citationGuardMode');
@@ -187,6 +193,28 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
   }, [currentName, slugTouched, isEdit, setValue]);
 
   const filteredModels = models?.filter((m) => m.provider === currentProvider) ?? [];
+
+  // Derive capability flags for the currently-selected model so we can
+  // pre-emptively disable image/document toggles when the model can't
+  // handle that modality. The runtime gate in `streaming-handler.ts` is
+  // still the authoritative check, but disabling the toggle in the
+  // form stops the operator from saving an unreachable configuration
+  // and getting a confusing SSE error at send time. The toggle's
+  // saved on/off VALUE is preserved across model swaps — if the
+  // operator switches back to a compatible model later, their intent
+  // is restored. Unknown capabilities (registry-only models that
+  // bypass the matrix) fall through to "enabled" so we don't lock
+  // operators out of working configurations.
+  const currentModelInfo = filteredModels.find((m) => m.id === currentModel);
+  const currentModelCapabilities = currentModelInfo?.capabilities;
+  // When capabilities are unknown (no matrix row) we default to
+  // enabled — let the runtime gate decide. When capabilities ARE
+  // known, the toggle is disabled iff the relevant capability is
+  // absent.
+  const supportsVision =
+    currentModelCapabilities === undefined || currentModelCapabilities.includes('vision');
+  const supportsDocuments =
+    currentModelCapabilities === undefined || currentModelCapabilities.includes('documents');
 
   // When provider changes, reset model if the current value doesn't belong to the new provider.
   useEffect(() => {
@@ -342,6 +370,13 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             Invite tokens
           </TabsTrigger>
           <TabsTrigger
+            value="embed"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
+          >
+            Embed
+          </TabsTrigger>
+          <TabsTrigger
             value="versions"
             disabled={!isEdit}
             title={!isEdit ? 'Save the agent first to view version history' : undefined}
@@ -354,13 +389,6 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             title={!isEdit ? 'Save the agent first to test a chat' : undefined}
           >
             Test
-          </TabsTrigger>
-          <TabsTrigger
-            value="embed"
-            disabled={!isEdit}
-            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
-          >
-            Embed
           </TabsTrigger>
         </TabsList>
 
@@ -812,6 +840,111 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             />
           </div>
 
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="enableImageInput">
+                Enable image input{' '}
+                <FieldHelp title="Image attachments on chat">
+                  When on, users see a paperclip control in this agent&apos;s chat surfaces (admin
+                  test panel and any embed widgets) and can attach images (JPEG, PNG, WebP, GIF) to
+                  their message. Images are forwarded to the LLM as multimodal parts and discarded
+                  after the turn — bytes are not persisted. Default: off.
+                  <br />
+                  <br />
+                  <strong>Requirements:</strong>
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      The platform-wide switch at{' '}
+                      <strong>
+                        Admin → Orchestration → Settings → Image input globally enabled
+                      </strong>{' '}
+                      must be on.
+                    </li>
+                    <li>
+                      The agent&apos;s resolved chat model must carry the <code>vision</code>{' '}
+                      capability. Open the provider-models matrix to see which seeded rows qualify —
+                      models without the capability return <code>IMAGE_NOT_SUPPORTED</code> at send
+                      time.
+                    </li>
+                    <li>
+                      Per-attachment cap: ~5 MB. Per-turn combined cap: ~25 MB. Max 10 attachments.
+                    </li>
+                  </ul>
+                </FieldHelp>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                {supportsVision ? (
+                  <>Lets users attach images to a turn. Requires a vision-capable model.</>
+                ) : (
+                  <>
+                    The current model doesn&apos;t support image input. Switch to a{' '}
+                    <code>vision</code>-capable model in the Model tab to enable.
+                  </>
+                )}
+              </p>
+            </div>
+            <Switch
+              id="enableImageInput"
+              checked={currentImageInput}
+              disabled={!supportsVision}
+              onCheckedChange={(v) => setValue('enableImageInput', v, { shouldDirty: true })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="space-y-0.5">
+              <Label htmlFor="enableDocumentInput">
+                Enable document (PDF) input{' '}
+                <FieldHelp title="PDF attachments on chat">
+                  When on, users can attach PDFs to a chat turn alongside images. PDFs are sent to
+                  the LLM as native document parts (no pre-extraction). Bytes are not persisted.
+                  Default: off.
+                  <br />
+                  <br />
+                  <strong>Requirements:</strong>
+                  <ul className="mt-1 list-disc pl-4">
+                    <li>
+                      The platform-wide switch at{' '}
+                      <strong>
+                        Admin → Orchestration → Settings → Document input globally enabled
+                      </strong>{' '}
+                      must be on.
+                    </li>
+                    <li>
+                      The agent&apos;s resolved chat model must carry the <code>documents</code>{' '}
+                      capability. Open the provider-models matrix to see which seeded rows qualify —
+                      models without the capability return <code>PDF_NOT_SUPPORTED</code>
+                      at send time.
+                    </li>
+                    <li>
+                      Per-attachment cap: ~5 MB. Counts against the same per-turn 25 MB combined cap
+                      as images.
+                    </li>
+                  </ul>
+                </FieldHelp>
+              </Label>
+              <p className="text-muted-foreground text-sm">
+                {supportsDocuments ? (
+                  <>
+                    Lets users attach PDFs to a turn. Requires a model with the{' '}
+                    <code>documents</code> capability.
+                  </>
+                ) : (
+                  <>
+                    The current model doesn&apos;t support PDF input. Switch to a model with the{' '}
+                    <code>documents</code> capability in the Model tab to enable.
+                  </>
+                )}
+              </p>
+            </div>
+            <Switch
+              id="enableDocumentInput"
+              checked={currentDocumentInput}
+              disabled={!supportsDocuments}
+              onCheckedChange={(v) => setValue('enableDocumentInput', v, { shouldDirty: true })}
+            />
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="maxHistoryTokens">
               Max history tokens{' '}
@@ -1064,9 +1197,16 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
           {isEdit && agent ? (
             <AgentCapabilitiesTab agentId={agent.id} />
           ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">
-                Save the agent first, then attach capabilities.
+            <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
+              <p>
+                <strong className="text-foreground">Capabilities</strong> are tools the agent can
+                call mid-conversation — e.g. search a knowledge base, look up an order, send an
+                email, hit an external API. The model picks them up automatically when a user&apos;s
+                message needs one.
+              </p>
+              <p>
+                Save the agent first, then come back to this tab to attach capabilities from the
+                catalogue.
               </p>
             </div>
           )}
@@ -1141,11 +1281,15 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
         {/* ================= TAB 7 — TEST ================= */}
         <TabsContent value="test" className="pt-4">
           {isEdit && agent ? (
-            <AgentTestChat
+            <ChatInterface
               agentSlug={agent.slug}
               agentId={agent.id}
               voiceInputEnabled={currentVoiceInput}
-              minHeight="min-h-[200px]"
+              imageInputEnabled={currentImageInput}
+              documentInputEnabled={currentDocumentInput}
+              showClearButton
+              persistenceKey={`agent-test-chat:${agent.id}`}
+              className="h-[500px]"
             />
           ) : (
             <div className="rounded-md border p-6 text-center text-sm">
@@ -1159,9 +1303,16 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
           {isEdit && agent ? (
             <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
           ) : (
-            <div className="rounded-md border p-6 text-center text-sm">
-              <p className="text-muted-foreground">
-                Save the agent first, then manage embed tokens.
+            <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
+              <p>
+                <strong className="text-foreground">Embed</strong> drops this agent onto a
+                third-party site as a floating chat widget. You generate an origin-scoped token,
+                paste a <code>&lt;script&gt;</code> snippet into the partner site&apos;s HTML, and
+                the widget loads in a Shadow DOM (no CSS clash with the host page).
+              </p>
+              <p>
+                Save the agent first to generate embed tokens and configure the widget&apos;s
+                appearance.
               </p>
             </div>
           )}

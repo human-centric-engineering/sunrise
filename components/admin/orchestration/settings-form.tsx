@@ -59,6 +59,8 @@ export interface OrchestrationSettings {
   maxMessagesPerConversation: number | null;
   escalationConfig?: EscalationConfig | null;
   voiceInputGloballyEnabled?: boolean;
+  imageInputGloballyEnabled?: boolean;
+  documentInputGloballyEnabled?: boolean;
 }
 
 export interface SettingsFormProps {
@@ -95,6 +97,9 @@ const settingsFormSchema = z.object({
   approvalDefaultAction: z.enum(APPROVAL_ACTIONS),
   // Voice input
   voiceInputGloballyEnabled: z.boolean(),
+  // Image / PDF attachments
+  imageInputGloballyEnabled: z.boolean(),
+  documentInputGloballyEnabled: z.boolean(),
   // Search
   keywordBoostWeight: nullableNumber.pipe(z.number().min(-0.2).max(0).nullable()),
   vectorWeight: nullableNumber.pipe(z.number().min(0.1).max(2.0).nullable()),
@@ -174,6 +179,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       approvalTimeout: toStr(initialSettings.defaultApprovalTimeoutMs),
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
       voiceInputGloballyEnabled: initialSettings.voiceInputGloballyEnabled ?? true,
+      imageInputGloballyEnabled: initialSettings.imageInputGloballyEnabled ?? true,
+      documentInputGloballyEnabled: initialSettings.documentInputGloballyEnabled ?? true,
       keywordBoostWeight: toStr(initialSettings.searchConfig?.keywordBoostWeight),
       vectorWeight: toStr(initialSettings.searchConfig?.vectorWeight),
       hybridEnabled: initialSettings.searchConfig?.hybridEnabled === true,
@@ -260,6 +267,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           defaultApprovalTimeoutMs: values.approvalTimeout,
           approvalDefaultAction: values.approvalDefaultAction,
           voiceInputGloballyEnabled: values.voiceInputGloballyEnabled,
+          imageInputGloballyEnabled: values.imageInputGloballyEnabled,
+          documentInputGloballyEnabled: values.documentInputGloballyEnabled,
           searchConfig,
           escalationConfig,
         },
@@ -412,6 +421,67 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                     transcribe endpoints reject with <code>VOICE_DISABLED</code>. Flip off for
                     incident response, compliance pause, or pre-launch sandboxing without editing
                     each agent.
+                  </FieldHelp>
+                </label>
+              )}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Image & document input ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Image & document input</CardTitle>
+          <p className="text-muted-foreground text-xs">
+            Org-wide kill switches for chat attachments (images and PDFs).
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Controller
+              name="imageInputGloballyEnabled"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Image input globally enabled
+                  <FieldHelp title="Org-wide image-attachment kill switch">
+                    Default: on. When off, every agent&apos;s individual{' '}
+                    <code>enableImageInput</code> toggle is treated as off — the paperclip control
+                    disappears from admin chat and embed widgets and chat endpoints reject any
+                    request that carries an <code>image/*</code> attachment with{' '}
+                    <code>IMAGE_DISABLED</code>. Flip off for incident response, compliance pause,
+                    or pre-launch sandboxing without editing each agent.
+                  </FieldHelp>
+                </label>
+              )}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Controller
+              name="documentInputGloballyEnabled"
+              control={control}
+              render={({ field }) => (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Document (PDF) input globally enabled
+                  <FieldHelp title="Org-wide PDF-attachment kill switch">
+                    Default: on. When off, every agent&apos;s individual{' '}
+                    <code>enableDocumentInput</code> toggle is treated as off — chat endpoints
+                    reject any request that carries an <code>application/pdf</code> attachment with{' '}
+                    <code>PDF_DISABLED</code>. Distinct from the image switch so an org can serve
+                    images without enabling native PDF parsing on any agent.
                   </FieldHelp>
                 </label>
               )}

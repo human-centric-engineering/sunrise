@@ -613,6 +613,24 @@ curl -X POST /api/v1/admin/orchestration/chat/transcribe \
   -F "agentId=cmjbv4i3x0..."
 ```
 
+### Image and PDF attachments on `POST /chat/stream`
+
+Image and PDF inputs share the streaming-chat endpoint rather than getting their own route. Attachments ride in the request body as `chatAttachmentsArraySchema` entries (`{ name, mediaType, data }`, base64-encoded). Three error codes specific to attachments can surface; magic-byte and rate-limit failures arrive as regular HTTP errors before SSE begins, while capability and toggle failures arrive as SSE `error` events.
+
+**Pre-stream HTTP errors** (returned via `errorResponse`):
+
+- `IMAGE_INVALID_TYPE` (415) — magic-byte validation rejected an `image/*` or `application/pdf` attachment. Body claims a MIME the bytes don't match. Both admin and consumer routes check this in front of `streamChat`.
+- 429 with rate-limit headers — `imageLimiter` exceeded (20 attachment-bearing requests / minute / user, keyed `image:user:${userId}`).
+
+**SSE error events** (terminal — emitted by `streaming-handler.ts`):
+
+- `IMAGE_DISABLED` — `agent.enableImageInput=false`, or `AiOrchestrationSettings.imageInputGloballyEnabled=false`.
+- `PDF_DISABLED` — `agent.enableDocumentInput=false`, or `AiOrchestrationSettings.documentInputGloballyEnabled=false`.
+- `IMAGE_NOT_SUPPORTED` — resolved chat model lacks the `'vision'` capability. Map: switch model.
+- `PDF_NOT_SUPPORTED` — resolved chat model lacks the `'documents'` capability. Map: switch to a model that carries `'documents'` (check the provider-models matrix).
+
+**Behaviour:** when at least one image or PDF passes the gates, a single `CostOperation = 'vision'` row is written to `AiCostLog` tagged to the agent with `metadata.imageCount` / `metadata.pdfCount`. Per-token chat cost rolls up under separate `chat` rows. Attachment bytes are not persisted — the chat handler only stores the user's text plus the assistant's response.
+
 ---
 
 ## Knowledge Base

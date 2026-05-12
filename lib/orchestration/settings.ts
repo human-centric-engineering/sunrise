@@ -91,6 +91,8 @@ export function hydrateSettings(row: {
   escalationConfig?: Prisma.JsonValue | null;
   embedAllowedOrigins?: Prisma.JsonValue | null;
   voiceInputGloballyEnabled?: boolean | null;
+  imageInputGloballyEnabled?: boolean | null;
+  documentInputGloballyEnabled?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -160,6 +162,8 @@ export function hydrateSettings(row: {
     // shape on the row type is defensive against pre-migration test
     // fixtures that omit the field entirely.
     voiceInputGloballyEnabled: row.voiceInputGloballyEnabled ?? true,
+    imageInputGloballyEnabled: row.imageInputGloballyEnabled ?? true,
+    documentInputGloballyEnabled: row.documentInputGloballyEnabled ?? true,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

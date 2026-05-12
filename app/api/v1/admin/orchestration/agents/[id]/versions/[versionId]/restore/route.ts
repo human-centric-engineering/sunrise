@@ -28,6 +28,10 @@ import {
 } from '@/lib/validations/orchestration';
 
 const versionSnapshotSchema = z.object({
+  name: z.string().optional(),
+  slug: z.string().optional(),
+  description: z.string().optional(),
+  isActive: z.boolean().optional(),
   systemInstructions: z.string().optional(),
   model: z.string().optional(),
   provider: z.string().optional(),
@@ -48,6 +52,8 @@ const versionSnapshotSchema = z.object({
   providerConfig: z.unknown().optional(),
   monthlyBudgetUsd: z.number().nullable().optional(),
   enableVoiceInput: z.boolean().optional(),
+  enableImageInput: z.boolean().optional(),
+  enableDocumentInput: z.boolean().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(
@@ -119,6 +125,10 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.systemInstructions = snapshot.systemInstructions;
     }
 
+    if (snapshot.name !== undefined) updateData.name = snapshot.name;
+    if (snapshot.slug !== undefined) updateData.slug = snapshot.slug;
+    if (snapshot.description !== undefined) updateData.description = snapshot.description;
+    if (snapshot.isActive !== undefined) updateData.isActive = snapshot.isActive;
     if (snapshot.model !== undefined) updateData.model = snapshot.model;
     if (snapshot.provider !== undefined) updateData.provider = snapshot.provider;
     if (snapshot.fallbackProviders !== undefined)
@@ -151,6 +161,10 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.monthlyBudgetUsd = snapshot.monthlyBudgetUsd;
     if (snapshot.enableVoiceInput !== undefined)
       updateData.enableVoiceInput = snapshot.enableVoiceInput;
+    if (snapshot.enableImageInput !== undefined)
+      updateData.enableImageInput = snapshot.enableImageInput;
+    if (snapshot.enableDocumentInput !== undefined)
+      updateData.enableDocumentInput = snapshot.enableDocumentInput;
 
     // Wrap in a transaction to prevent race conditions on version numbering
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {

@@ -165,19 +165,20 @@ Sliding window rate limiter with a pluggable backing store. Defaults to in-memor
 
 ### Pre-configured Limiters
 
-| Limiter                    | Limit        | Window     | Use Case                    |
-| -------------------------- | ------------ | ---------- | --------------------------- |
-| `authLimiter`              | 5 requests   | 1 minute   | Login, signup               |
-| `apiLimiter`               | 100 requests | 1 minute   | General API routes          |
-| `adminLimiter`             | 30 requests  | 1 minute   | Admin endpoints             |
-| `passwordResetLimiter`     | 3 requests   | 15 minutes | Password reset              |
-| `contactLimiter`           | 5 requests   | 1 hour     | Contact form submissions    |
-| `verificationEmailLimiter` | 3 requests   | 15 minutes | Email verification requests |
-| `acceptInviteLimiter`      | 5 requests   | 15 minutes | Invitation acceptance       |
-| `uploadLimiter`            | 10 requests  | 15 minutes | File uploads                |
-| `inviteLimiter`            | 10 requests  | 15 minutes | Sending invitations         |
-| `cspReportLimiter`         | 20 requests  | 1 minute   | CSP violation reports       |
-| `audioLimiter`             | 10 requests  | 1 minute   | Audio transcription (voice) |
+| Limiter                    | Limit        | Window     | Use Case                                    |
+| -------------------------- | ------------ | ---------- | ------------------------------------------- |
+| `authLimiter`              | 5 requests   | 1 minute   | Login, signup                               |
+| `apiLimiter`               | 100 requests | 1 minute   | General API routes                          |
+| `adminLimiter`             | 30 requests  | 1 minute   | Admin endpoints                             |
+| `passwordResetLimiter`     | 3 requests   | 15 minutes | Password reset                              |
+| `contactLimiter`           | 5 requests   | 1 hour     | Contact form submissions                    |
+| `verificationEmailLimiter` | 3 requests   | 15 minutes | Email verification requests                 |
+| `acceptInviteLimiter`      | 5 requests   | 15 minutes | Invitation acceptance                       |
+| `uploadLimiter`            | 10 requests  | 15 minutes | File uploads                                |
+| `inviteLimiter`            | 10 requests  | 15 minutes | Sending invitations                         |
+| `cspReportLimiter`         | 20 requests  | 1 minute   | CSP violation reports                       |
+| `audioLimiter`             | 10 requests  | 1 minute   | Audio transcription (voice)                 |
+| `imageLimiter`             | 20 requests  | 1 minute   | Chat turns carrying image / PDF attachments |
 
 ### Usage
 

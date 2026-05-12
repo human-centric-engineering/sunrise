@@ -32,6 +32,7 @@
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "smoke:hybrid-search": "tsx --env-file=.env.local scripts/smoke/knowledge-hybrid-search.ts",
     "smoke:transcribe": "tsx --env-file=.env.local scripts/smoke/transcribe.ts",
+    "smoke:vision": "tsx --env-file=.env.local scripts/smoke/vision.ts",
     "postinstall": "prisma generate",
     "prepare": "husky"
   },

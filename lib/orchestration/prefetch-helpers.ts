@@ -21,10 +21,18 @@ export interface ModelOption {
   id: string;
   /** Tier label used for the dropdown hint (`frontier`, `mid`, `budget`). */
   tier?: string;
+  /**
+   * Capability strings carried on the matrix row (e.g. `'vision'`,
+   * `'documents'`). Optional — populated only for DB-backed models
+   * (registry-only entries are unknown). The agent form uses this to
+   * disable image/document toggles when the selected model lacks the
+   * capability. The runtime gate is still the authoritative check.
+   */
+  capabilities?: string[];
 }
 
 interface ModelsResponse {
-  models: Array<{ provider: string; id: string; tier?: string }>;
+  models: Array<{ provider: string; id: string; tier?: string; capabilities?: string[] }>;
 }
 
 export async function getProviders(): Promise<AiProviderConfig[] | null> {

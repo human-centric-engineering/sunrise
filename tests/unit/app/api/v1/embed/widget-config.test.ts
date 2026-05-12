@@ -33,6 +33,7 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getAudioProvider: vi.fn(),
+  hasModelWithCapability: vi.fn(),
 }));
 
 vi.mock('@/lib/security/rate-limit', () => ({
@@ -53,7 +54,7 @@ vi.mock('@/lib/logging', () => ({
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { prisma } from '@/lib/db/client';
 import { apiLimiter } from '@/lib/security/rate-limit';
-import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getAudioProvider, hasModelWithCapability } from '@/lib/orchestration/llm/provider-manager';
 import { GET, OPTIONS } from '@/app/api/v1/embed/widget-config/route';
 import { DEFAULT_WIDGET_CONFIG } from '@/lib/validations/orchestration';
 
@@ -94,15 +95,20 @@ beforeEach(() => {
   // factories — so re-stub the defaults here every run rather than relying
   // on a once-only factory implementation that gets cleared.
   vi.mocked(getAudioProvider).mockResolvedValue(null);
+  vi.mocked(hasModelWithCapability).mockResolvedValue(false);
   // Mirror the route's `select` shape so a future select-clause expansion
   // (e.g. adding `isActive`) trips a typed-mock failure rather than silently
   // leaking `undefined` into the route's reads.
   vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
     widgetConfig: null,
     enableVoiceInput: false,
+    enableImageInput: false,
+    enableDocumentInput: false,
   } as never);
   vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
     voiceInputGloballyEnabled: true,
+    imageInputGloballyEnabled: true,
+    documentInputGloballyEnabled: true,
   } as never);
 });
 
@@ -241,6 +247,95 @@ describe('voiceInputEnabled in widget-config response', () => {
     const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
     const body = await parseJson<{ data: { voiceInputEnabled: boolean } }>(response);
     expect(body.data.voiceInputEnabled).toBe(true);
+  });
+});
+
+describe('imageInputEnabled in widget-config response', () => {
+  it('is false when agent toggle is off, even if vision-capable models exist', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableImageInput: false,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockResolvedValue(true);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { imageInputEnabled: boolean } }>(response);
+    expect(body.data.imageInputEnabled).toBe(false);
+  });
+
+  it('is false when global kill switch is off, even if agent toggle is on', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableImageInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      imageInputGloballyEnabled: false,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockResolvedValue(true);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { imageInputEnabled: boolean } }>(response);
+    expect(body.data.imageInputEnabled).toBe(false);
+  });
+
+  it('is false when no vision-capable provider is configured, even when both toggles are on', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableImageInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockImplementation(async (cap) => {
+      // documents stays true so we cleanly assert that the missing one
+      // (vision) flips imageInputEnabled to false on its own.
+      return cap === 'vision' ? false : true;
+    });
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { imageInputEnabled: boolean } }>(response);
+    expect(body.data.imageInputEnabled).toBe(false);
+  });
+
+  it('is true when all three conditions hold', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableImageInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockResolvedValue(true);
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { imageInputEnabled: boolean } }>(response);
+    expect(body.data.imageInputEnabled).toBe(true);
+  });
+});
+
+describe('documentInputEnabled in widget-config response', () => {
+  it('is true only when the documents capability is present', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableDocumentInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      documentInputGloballyEnabled: true,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockImplementation(async (cap) => cap === 'documents');
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { documentInputEnabled: boolean } }>(response);
+    expect(body.data.documentInputEnabled).toBe(true);
+  });
+
+  it('is false when only vision is available (asserts cap separation)', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      widgetConfig: null,
+      enableDocumentInput: true,
+    } as never);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      documentInputGloballyEnabled: true,
+    } as never);
+    vi.mocked(hasModelWithCapability).mockImplementation(async (cap) => cap === 'vision');
+    const response = await GET(makeGetRequest({ 'X-Embed-Token': VALID_TOKEN }));
+    const body = await parseJson<{ data: { documentInputEnabled: boolean } }>(response);
+    expect(body.data.documentInputEnabled).toBe(false);
   });
 });
 

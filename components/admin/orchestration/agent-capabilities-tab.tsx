@@ -193,6 +193,29 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-medium">Capabilities</h3>
+        <FieldHelp
+          title="About capabilities"
+          ariaLabel="About capabilities"
+          contentClassName="w-96 max-w-[calc(100vw-2rem)]"
+        >
+          <p>
+            Capabilities are tools the agent can call mid-conversation — functions like searching a
+            knowledge base, looking up an order, sending an email, or hitting an external API. The
+            model decides when to invoke them based on the user&apos;s message, calls them with
+            arguments it generates, and feeds the result back into its reply.
+          </p>
+          <p className="mt-2">
+            Attach the ones this agent needs from <strong>Available</strong> (right). Use the switch
+            on each <strong>Attached</strong> row to enable or disable a tool without detaching it.{' '}
+            <strong>Configure</strong> sets per-agent overrides (custom config, rate limit) that
+            merge over the capability&apos;s defaults at call time. New capabilities are created in
+            Admin → Orchestration → Capabilities.
+          </p>
+        </FieldHelp>
+      </div>
+
       {error && (
         <div className="border-destructive/50 bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-sm">
           {error}

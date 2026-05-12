@@ -78,6 +78,11 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
     maxContext: mapContextLengthToMax(row.contextLength),
     supportsTools: row.toolUse !== 'none',
     available: true,
+    // Surface capabilities so the agent form can pre-emptively disable
+    // toggles when the selected model lacks `'vision'` / `'documents'`.
+    // The capability gate is still the authoritative runtime check;
+    // this prop is for UX-level constraint only.
+    capabilities: row.capabilities,
   };
 }
 
