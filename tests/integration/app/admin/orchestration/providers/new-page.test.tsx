@@ -49,6 +49,24 @@ vi.mock('@/lib/orchestration/setup-state', () => ({
   getSetupState: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/llm/known-providers', () => ({
+  KNOWN_PROVIDERS: [
+    {
+      slug: 'anthropic',
+      name: 'Anthropic',
+      providerType: 'anthropic',
+      defaultBaseUrl: null,
+      apiKeyEnvVars: ['ANTHROPIC_API_KEY'],
+      isLocal: false,
+      suggestedDefaultChatModel: 'claude-sonnet-4-6',
+      suggestedRoutingModel: null,
+      suggestedReasoningModel: null,
+      suggestedEmbeddingModel: null,
+    },
+  ],
+  detectApiKeyEnvVar: vi.fn(() => 'ANTHROPIC_API_KEY'),
+}));
+
 // Imported after the vi.mock above so the page picks up the stub.
 import { getSetupState } from '@/lib/orchestration/setup-state';
 
