@@ -163,9 +163,12 @@ POST /api/v1/admin/orchestration/capabilities
   "functionDefinition": { /* same object as Step 1 */ },
   "requiresApproval": false,
   "rateLimit": 30,
+  "isIdempotent": false,
   "isActive": true
 }
 ```
+
+`isIdempotent` defaults to `false`. The orchestration engine's dispatch cache (`AiWorkflowStepDispatch`, keyed on `(executionId, stepId)`) deduplicates side effects on re-drive after a crash. Leave the default unless the capability is **provably safe to rerun** — a write that's already idempotent at the destination (PUT with the same key, an upstream API that handles `Idempotency-Key` headers itself). Misconfiguring `isIdempotent: true` on a destructive capability is documented as the "you marked it idempotent" admin trade-off.
 
 ### Step 4: Bind to an agent
 
@@ -221,7 +224,7 @@ interface CapabilityContext {
 }
 ```
 
-## Dispatch Pipeline (9 steps)
+## Dispatch Pipeline
 
 When `capabilityDispatcher.dispatch(slug, rawArgs, context)` is called:
 
@@ -230,38 +233,60 @@ When `capabilityDispatcher.dispatch(slug, rawArgs, context)` is called:
 3. **Registry lookup** — check DB registry; missing = `capability_inactive`
 4. **Agent binding** — load `AiAgentCapability` rows (5 min cache); disabled = `capability_disabled_for_agent`
 5. **Rate limit** — sliding window by `(slug, agentId)`; exceeded = `rate_limited`
-6. **Approval gate** — `requiresApproval: true` = `requires_approval` (handler never runs)
+6. **Approval gate** — `requiresApproval: true` = `requires_approval` (handler never runs; the chat surface renders an Approve / Reject card via `run_workflow` when wired)
 7. **Validate args** — run Zod schema; failure = `invalid_args`
 8. **Execute** — call handler; thrown errors = `execution_error`
-9. **Log cost** — fire-and-forget cost entry
+9. **Log cost** — fire-and-forget cost entry to `AiCostLog`
+
+**When dispatched inside a workflow `tool_call` step**, the engine also wraps this pipeline in the `AiWorkflowStepDispatch` cache: the first successful call is recorded; on re-drive after a crash, the cached result is returned without re-firing the handler. Capabilities with `isIdempotent: true` opt out of the cache. The cache is keyed on `(executionId, stepId)`.
+
+For `agent_call`, `orchestrator`, and `reflect` step types, the engine additionally records per-turn state to `currentStepTurns` so multi-turn loops resume cleanly after a crash without losing prior turns' work. Capability authors don't configure this directly but should know capabilities they author may be re-invoked under the cache umbrella.
 
 ## Safety Configuration
 
-| Level     | Field              | Purpose                                      |
-| --------- | ------------------ | -------------------------------------------- |
-| Base      | `requiresApproval` | Short-circuits dispatch — handler never runs |
-| Base      | `rateLimit`        | Calls/minute/agent; `null` = unlimited       |
-| Base      | `isActive`         | Global kill switch                           |
-| Per-agent | `isEnabled`        | Disable for specific agent                   |
-| Per-agent | `customRateLimit`  | Override base rate limit; `null` = use base  |
+| Level     | Field              | Purpose                                                                      |
+| --------- | ------------------ | ---------------------------------------------------------------------------- |
+| Base      | `requiresApproval` | Short-circuits dispatch — handler never runs                                 |
+| Base      | `rateLimit`        | Calls/minute/agent; `null` = unlimited                                       |
+| Base      | `isIdempotent`     | When `true`, opts out of the dispatch cache (destination handles dedup)      |
+| Base      | `isActive`         | Global kill switch                                                           |
+| Per-agent | `isEnabled`        | Disable for specific agent                                                   |
+| Per-agent | `customRateLimit`  | Override base rate limit; `null` = use base                                  |
+| Per-agent | `customConfig`     | Per-agent JSON config blob (recipe variants, allowlists, ${env:VAR} secrets) |
 
 Effective rate limit: `customRateLimit ?? rateLimit`.
 
+### Env-var resolution in `customConfig`
+
+Four named fields support the `${env:VAR}` template, resolved at call time so secrets never sit in the DB:
+
+- `call_external_api.forcedUrl`
+- `call_external_api.forcedHeaders`
+- workflow `external_call.url`
+- workflow `external_call.headers`
+
+Missing env var → `invalid_binding` for the capability path, `ExecutorError('missing_env_var')` for the workflow step. Rotation = change one env var, no binding edit. The admin Configure dialog displays `meta.warnings.missingEnvVars` so unset references are surfaced at save time (mirrors `apiKeyPresent` for providers).
+
 ## Built-in Capabilities (do not recreate)
 
-These 9 capabilities ship as `isSystem: true` — bind them to agents, never recreate:
+These 12 capabilities ship as `isSystem: true` — bind them to agents, never recreate:
 
-| Slug                         | Purpose                                  |
-| ---------------------------- | ---------------------------------------- |
-| `search_knowledge_base`      | Semantic search over documents           |
-| `get_pattern_detail`         | Full pattern content by number           |
-| `estimate_workflow_cost`     | Planning-grade USD cost estimate         |
-| `read_user_memory`           | Session memory access                    |
-| `write_user_memory`          | Session memory updates                   |
-| `escalate_to_human`          | Human-in-the-loop escalation             |
-| `apply_audit_changes`        | Apply approved model audit field changes |
-| `add_provider_models`        | Register new models from audit proposals |
-| `deactivate_provider_models` | Soft-delete deprecated provider models   |
+| Slug                         | Purpose                                                         |
+| ---------------------------- | --------------------------------------------------------------- |
+| `search_knowledge_base`      | Hybrid semantic + BM25 search over the knowledge base           |
+| `get_pattern_detail`         | Full pattern content by number                                  |
+| `estimate_workflow_cost`     | Planning-grade USD cost estimate                                |
+| `read_user_memory`           | Per-user persistent memory read                                 |
+| `write_user_memory`          | Per-user persistent memory write                                |
+| `escalate_to_human`          | Human-in-the-loop escalation (helpdesk webhook)                 |
+| `call_external_api`          | Recipe-driven HTTP integration (Postmark, Stripe, Slack, etc.)  |
+| `run_workflow`               | Chat agent triggers a workflow (with optional in-chat approval) |
+| `upload_to_storage`          | Upload base64 payloads to S3 / Vercel Blob / local              |
+| `apply_audit_changes`        | Apply approved model audit field changes                        |
+| `add_provider_models`        | Register new models from audit proposals                        |
+| `deactivate_provider_models` | Soft-delete deprecated provider models                          |
+
+**`call_external_api` is the canonical HTTP capability.** Before writing a new capability that wraps an HTTP endpoint, check `.context/orchestration/recipes/` — for email (Postmark / SendGrid / Resend / SES), chat (Slack / Discord), payments (Stripe / Adyen / Mollie), document rendering (Gotenberg), and calendar (Google / Outlook), a recipe-driven `call_external_api` binding gets the same outcome with zero new TypeScript. `call_external_api` also supports `multipart/form-data` bodies (mutually exclusive with `body`; incompatible with HMAC auth) for vendors like Gotenberg.
 
 ## Testing
 
