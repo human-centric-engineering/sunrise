@@ -185,7 +185,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
               : 'No tokens yet'}
           </p>
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button type="button" size="sm" onClick={() => setShowCreate(true)}>
           <Plus className="mr-1 h-3.5 w-3.5" />
           Create token
         </Button>
@@ -256,6 +256,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                     <td className="px-3 py-2">
                       {status === 'active' && (
                         <Button
+                          type="button"
                           variant="ghost"
                           size="sm"
                           onClick={() => void handleRevoke(t.id)}
@@ -342,10 +343,10 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>
+            <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleCreate()} disabled={creating}>
+            <Button type="button" onClick={() => void handleCreate()} disabled={creating}>
               {creating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

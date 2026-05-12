@@ -411,6 +411,7 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
                     </button>
                     {idx > 0 && (
                       <Button
+                        type="button"
                         variant="ghost"
                         size="sm"
                         className="shrink-0"

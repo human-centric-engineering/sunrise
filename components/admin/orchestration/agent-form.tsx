@@ -370,6 +370,13 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             Invite tokens
           </TabsTrigger>
           <TabsTrigger
+            value="embed"
+            disabled={!isEdit}
+            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
+          >
+            Embed
+          </TabsTrigger>
+          <TabsTrigger
             value="versions"
             disabled={!isEdit}
             title={!isEdit ? 'Save the agent first to view version history' : undefined}
@@ -382,13 +389,6 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             title={!isEdit ? 'Save the agent first to test a chat' : undefined}
           >
             Test
-          </TabsTrigger>
-          <TabsTrigger
-            value="embed"
-            disabled={!isEdit}
-            title={!isEdit ? 'Save the agent first to manage embed tokens' : undefined}
-          >
-            Embed
           </TabsTrigger>
         </TabsList>
 

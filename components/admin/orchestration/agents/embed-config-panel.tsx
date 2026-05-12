@@ -198,7 +198,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
               />
             </div>
           </div>
-          <Button size="sm" onClick={() => void handleCreate()} disabled={creating}>
+          <Button type="button" size="sm" onClick={() => void handleCreate()} disabled={creating}>
             <Plus className="mr-1 h-3 w-3" />
             {creating ? 'Creating...' : 'Create Token'}
           </Button>
@@ -232,6 +232,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
                       onClick={() => copyToClipboard(getSnippet(t.token), t.id)}
@@ -245,6 +246,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                       )}
                     </Button>
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
                       onClick={() => void handleToggle(t.id, !t.isActive)}
@@ -258,6 +260,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
                       )}
                     </Button>
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
                       onClick={() => void handleDelete(t.id)}
