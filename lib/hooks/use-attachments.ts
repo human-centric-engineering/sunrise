@@ -149,9 +149,23 @@ export function useAttachments(options: UseAttachmentsOptions = {}): UseAttachme
 
       const newEntries: AttachmentEntry[] = [];
 
+      // Revoke any object URLs minted so far in this batch and clear
+      // them from the tracking set. Called before every early return so
+      // a per-file validation failure on file N doesn't leave dangling
+      // blob URLs for files 1…N-1 until the component unmounts.
+      const rejectBatch = (message: string): void => {
+        for (const entry of newEntries) {
+          if (entry.previewUrl) {
+            URL.revokeObjectURL(entry.previewUrl);
+            objectUrlsRef.current.delete(entry.previewUrl);
+          }
+        }
+        setError(message);
+      };
+
       for (const file of incoming) {
         if (!allowedMimes.includes(file.type)) {
-          setError(
+          rejectBatch(
             `${file.name}: unsupported file type "${file.type}". Allowed: ${describeAllowed(allowedMimes)}.`
           );
           return;
@@ -159,11 +173,11 @@ export function useAttachments(options: UseAttachmentsOptions = {}): UseAttachme
         try {
           const base64 = await readFileAsBase64(file);
           if (base64.length === 0) {
-            setError(`${file.name}: file is empty.`);
+            rejectBatch(`${file.name}: file is empty.`);
             return;
           }
           if (base64.length > MAX_CHAT_ATTACHMENT_BASE64_CHARS) {
-            setError(
+            rejectBatch(
               `${file.name}: file exceeds the per-attachment 5 MB limit. Pick a smaller file or compress it.`
             );
             return;
@@ -181,7 +195,9 @@ export function useAttachments(options: UseAttachmentsOptions = {}): UseAttachme
             byteSize: file.size,
           });
         } catch (err) {
-          setError(`${file.name}: ${err instanceof Error ? err.message : 'failed to read file'}.`);
+          rejectBatch(
+            `${file.name}: ${err instanceof Error ? err.message : 'failed to read file'}.`
+          );
           return;
         }
       }
@@ -193,16 +209,9 @@ export function useAttachments(options: UseAttachmentsOptions = {}): UseAttachme
         attachments.reduce((sum, a) => sum + a.attachment.data.length, 0) +
         newEntries.reduce((sum, a) => sum + a.attachment.data.length, 0);
       if (combinedSize > MAX_CHAT_ATTACHMENT_COMBINED_BASE64_CHARS) {
-        setError(
+        rejectBatch(
           'Combined attachment size exceeds the per-turn 25 MB limit. Remove some files and try again.'
         );
-        // Revoke object URLs minted by this batch since we're rejecting it.
-        for (const entry of newEntries) {
-          if (entry.previewUrl) {
-            URL.revokeObjectURL(entry.previewUrl);
-            objectUrlsRef.current.delete(entry.previewUrl);
-          }
-        }
         return;
       }
 
