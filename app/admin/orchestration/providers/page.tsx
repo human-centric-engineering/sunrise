@@ -8,6 +8,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { KNOWN_PROVIDERS, detectApiKeyEnvVar } from '@/lib/orchestration/llm/known-providers';
 
 export const metadata: Metadata = {
   title: 'Providers · AI Orchestration',
@@ -42,6 +43,16 @@ async function getModels(): Promise<ModelRow[]> {
 
 export default async function ProvidersListPage() {
   const [providers, models] = await Promise.all([getProviders(), getModels()]);
+
+  // Server-side env scan. Hide the "Add provider" CTAs when no hosted
+  // provider has a matching env var, since the resulting config row
+  // can't authenticate at runtime — operators are pushed back to the
+  // amber banner's "set env var and restart" guidance instead. Ollama
+  // (isLocal) doesn't count; if the operator wants to add it they can
+  // still use the manual link in the banner.
+  const hasAnyEnvKey = KNOWN_PROVIDERS.filter((p) => !p.isLocal).some(
+    (p) => detectApiKeyEnvVar(p) !== null
+  );
 
   return (
     <div className="space-y-6">
@@ -78,7 +89,11 @@ export default async function ProvidersListPage() {
         </p>
       </header>
 
-      <ProvidersTabs initialProviders={providers} initialModels={models} />
+      <ProvidersTabs
+        initialProviders={providers}
+        initialModels={models}
+        hasAnyEnvKey={hasAnyEnvKey}
+      />
     </div>
   );
 }

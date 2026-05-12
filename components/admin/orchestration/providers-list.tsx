@@ -136,6 +136,13 @@ const refreshResponseSchema = z.object({
 
 export interface ProvidersListProps {
   initialProviders: ProviderRow[];
+  /**
+   * Server-detected presence of at least one hosted-provider env var.
+   * When false, the "Add provider" CTAs are hidden — a manually-added
+   * row would have no key to authenticate with. The no-keys banner
+   * still surfaces a manual link for Ollama / self-hosted cases.
+   */
+  hasAnyEnvKey?: boolean;
 }
 
 type StatusDot = 'green' | 'red' | 'grey' | 'testing';
@@ -164,7 +171,7 @@ interface ModelCountState {
   loading: boolean;
 }
 
-export function ProvidersList({ initialProviders }: ProvidersListProps) {
+export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: ProvidersListProps) {
   const router = useRouter();
   const [providers, setProviders] = useState<ProviderRow[]>(initialProviders);
 
@@ -567,12 +574,14 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
         <p className="text-muted-foreground text-sm">
           {providers.length} provider{providers.length === 1 ? '' : 's'} configured
         </p>
-        <Button asChild>
-          <Link href="/admin/orchestration/providers/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Add provider
-          </Link>
-        </Button>
+        {hasAnyEnvKey && (
+          <Button asChild>
+            <Link href="/admin/orchestration/providers/new">
+              <Plus className="mr-2 h-4 w-4" />
+              Add provider
+            </Link>
+          </Button>
+        )}
       </div>
 
       <ProviderDetectionsBanner
@@ -596,13 +605,19 @@ export function ProvidersList({ initialProviders }: ProvidersListProps) {
 
       {providers.length === 0 ? (
         <div className="rounded-md border border-dashed py-12 text-center">
-          <p className="text-muted-foreground text-sm">No providers configured yet.</p>
-          <Button asChild className="mt-4">
-            <Link href="/admin/orchestration/providers/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Add your first provider
-            </Link>
-          </Button>
+          <p className="text-muted-foreground text-sm">
+            {hasAnyEnvKey
+              ? 'No providers configured yet.'
+              : 'No providers configured. Add an LLM API key to your .env and restart the server to get started.'}
+          </p>
+          {hasAnyEnvKey && (
+            <Button asChild className="mt-4">
+              <Link href="/admin/orchestration/providers/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Add your first provider
+              </Link>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -194,6 +194,26 @@ describe('ProvidersList', () => {
       expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
     });
 
+    it('hides the Add provider CTAs when hasAnyEnvKey is false', () => {
+      // Operator landed on the providers page without setting any
+      // LLM API key. The amber no-keys banner already explains what
+      // to do; the "Add provider" buttons would just lead to a row
+      // that can't authenticate at runtime, so they're suppressed.
+      render(<ProvidersList initialProviders={[]} hasAnyEnvKey={false} />);
+
+      expect(
+        screen.queryByRole('link', { name: /add (your first )?provider/i })
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/add an llm api key to your \.env/i)).toBeInTheDocument();
+    });
+
+    it('shows the Add provider CTAs when hasAnyEnvKey is true', () => {
+      // Default behaviour for safety on callers that haven't migrated.
+      render(<ProvidersList initialProviders={[]} hasAnyEnvKey={true} />);
+
+      expect(screen.getByRole('link', { name: /add your first provider/i })).toBeInTheDocument();
+    });
+
     it('renders "N providers configured" count', () => {
       render(<ProvidersList initialProviders={THREE_PROVIDERS} />);
 
