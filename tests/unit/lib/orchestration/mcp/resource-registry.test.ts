@@ -173,9 +173,15 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleKnowledgeSearch).mockResolvedValue(makeResourceContent(row.uri));
 
-    const result = await readMcpResource('sunrise://knowledge/search');
+    const result = await readMcpResource('sunrise://knowledge/search', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
-    expect(handleKnowledgeSearch).toHaveBeenCalledWith('sunrise://knowledge/search', null);
+    expect(handleKnowledgeSearch).toHaveBeenCalledWith('sunrise://knowledge/search', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
     expect(result).not.toBeNull();
   });
 
@@ -184,9 +190,12 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleAgentList).mockResolvedValue(makeResourceContent(row.uri));
 
-    await readMcpResource('sunrise://agents');
+    await readMcpResource('sunrise://agents', { scopedAgentId: null, apiKeyId: 'key-1' });
 
-    expect(handleAgentList).toHaveBeenCalledWith('sunrise://agents', null);
+    expect(handleAgentList).toHaveBeenCalledWith('sunrise://agents', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
   });
 
   it('dispatches to pattern_detail handler', async () => {
@@ -197,9 +206,15 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handlePatternDetail).mockResolvedValue(makeResourceContent(row.uri));
 
-    await readMcpResource('sunrise://knowledge/patterns/1');
+    await readMcpResource('sunrise://knowledge/patterns/1', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
-    expect(handlePatternDetail).toHaveBeenCalledWith('sunrise://knowledge/patterns/1', null);
+    expect(handlePatternDetail).toHaveBeenCalledWith('sunrise://knowledge/patterns/1', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
   });
 
   it('dispatches to workflow_list handler', async () => {
@@ -207,9 +222,12 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleWorkflowList).mockResolvedValue(makeResourceContent(row.uri));
 
-    await readMcpResource('sunrise://workflows');
+    await readMcpResource('sunrise://workflows', { scopedAgentId: null, apiKeyId: 'key-1' });
 
-    expect(handleWorkflowList).toHaveBeenCalledWith('sunrise://workflows', null);
+    expect(handleWorkflowList).toHaveBeenCalledWith('sunrise://workflows', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
   });
 
   it('passes handlerConfig as record to the handler', async () => {
@@ -218,18 +236,23 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleKnowledgeSearch).mockResolvedValue(makeResourceContent(row.uri));
 
-    await readMcpResource('sunrise://knowledge/search');
+    await readMcpResource('sunrise://knowledge/search', { scopedAgentId: null, apiKeyId: 'key-1' });
 
-    expect(handleKnowledgeSearch).toHaveBeenCalledWith('sunrise://knowledge/search', {
-      maxResults: 5,
-    });
+    expect(handleKnowledgeSearch).toHaveBeenCalledWith(
+      'sunrise://knowledge/search',
+      { maxResults: 5 },
+      { scopedAgentId: null, apiKeyId: 'key-1' }
+    );
   });
 
   it('returns null and warns when no handler exists for resourceType', async () => {
     const row = makeResourceRow({ resourceType: 'unknown_type' });
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
 
-    const result = await readMcpResource('sunrise://knowledge/search');
+    const result = await readMcpResource('sunrise://knowledge/search', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toBeNull();
     expect(logger.warn).toHaveBeenCalled();
@@ -241,7 +264,10 @@ describe('readMcpResource', () => {
     // Pattern fallback also finds nothing
     vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([]);
 
-    const result = await readMcpResource('sunrise://knowledge/search');
+    const result = await readMcpResource('sunrise://knowledge/search', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toBeNull();
   });
@@ -250,7 +276,10 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([]);
 
-    const result = await readMcpResource('sunrise://unknown/resource');
+    const result = await readMcpResource('sunrise://unknown/resource', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toBeNull();
   });
@@ -266,9 +295,15 @@ describe('readMcpResource', () => {
       makeResourceContent('sunrise://knowledge/patterns/5')
     );
 
-    const result = await readMcpResource('sunrise://knowledge/patterns/5');
+    const result = await readMcpResource('sunrise://knowledge/patterns/5', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
-    expect(handlePatternDetail).toHaveBeenCalledWith('sunrise://knowledge/patterns/5', null);
+    expect(handlePatternDetail).toHaveBeenCalledWith('sunrise://knowledge/patterns/5', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
     expect(result).not.toBeNull();
   });
 
@@ -278,7 +313,10 @@ describe('readMcpResource', () => {
       makeResourceRow({ uri: 'sunrise://agents', resourceType: 'agent_list' }),
     ] as never);
 
-    const result = await readMcpResource('sunrise://completely/different/path');
+    const result = await readMcpResource('sunrise://completely/different/path', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toBeNull();
   });
@@ -288,7 +326,10 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleKnowledgeSearch).mockRejectedValue(new Error('handler boom'));
 
-    const result = await readMcpResource('sunrise://knowledge/search');
+    const result = await readMcpResource('sunrise://knowledge/search', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toEqual({
       uri: 'sunrise://knowledge/search',
@@ -310,7 +351,10 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([patternRow] as never);
     vi.mocked(handlePatternDetail).mockRejectedValue(new Error('pattern boom'));
 
-    const result = await readMcpResource('sunrise://knowledge/patterns/5');
+    const result = await readMcpResource('sunrise://knowledge/patterns/5', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toEqual({
       uri: 'sunrise://knowledge/patterns/5',
@@ -328,7 +372,7 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleKnowledgeSearch).mockRejectedValue('string error');
 
-    await readMcpResource('sunrise://knowledge/search');
+    await readMcpResource('sunrise://knowledge/search', { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(logger.error).toHaveBeenCalledWith(
       'MCP resource handler failed',
@@ -344,7 +388,10 @@ describe('readMcpResource', () => {
     });
     vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([noHandlerRow] as never);
 
-    const result = await readMcpResource('sunrise://knowledge/search');
+    const result = await readMcpResource('sunrise://knowledge/search', {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result).toBeNull();
   });
@@ -354,9 +401,12 @@ describe('readMcpResource', () => {
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(row as never);
     vi.mocked(handleAgentList).mockResolvedValue(makeResourceContent(row.uri));
 
-    await readMcpResource('sunrise://agents');
+    await readMcpResource('sunrise://agents', { scopedAgentId: null, apiKeyId: 'key-1' });
 
-    expect(handleAgentList).toHaveBeenCalledWith(expect.any(String), null);
+    expect(handleAgentList).toHaveBeenCalledWith(expect.any(String), null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
   });
 });
 

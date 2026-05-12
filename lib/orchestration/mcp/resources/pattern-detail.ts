@@ -12,7 +12,8 @@ import type { McpResourceContent } from '@/types/mcp';
 
 export async function handlePatternDetail(
   uri: string,
-  _config: Record<string, unknown> | null
+  _config: Record<string, unknown> | null,
+  _callContext: import('@/lib/orchestration/mcp/resource-registry').ResourceCallContext
 ): Promise<McpResourceContent> {
   const match = uri.match(/patterns\/(\d+)/);
   const patternNumber = match ? parseInt(match[1], 10) : null;

@@ -16,10 +16,19 @@ import { handlePatternDetail } from '@/lib/orchestration/mcp/resources/pattern-d
 import { handleAgentList } from '@/lib/orchestration/mcp/resources/agent-list';
 import { handleWorkflowList } from '@/lib/orchestration/mcp/resources/workflow-list';
 
+/** Auth-derived context passed from the protocol handler through to resource handlers. */
+export interface ResourceCallContext {
+  /** Bound agent for this API key, or null for unscoped service keys. */
+  scopedAgentId: string | null;
+  /** ID of the calling key — useful for audit-side logging inside handlers. */
+  apiKeyId: string;
+}
+
 /** Resource handler function signature */
 type ResourceHandler = (
   uri: string,
-  config: Record<string, unknown> | null
+  config: Record<string, unknown> | null,
+  callContext: ResourceCallContext
 ) => Promise<McpResourceContent>;
 
 /** Safely narrow a Prisma JsonValue to a record or null */
@@ -72,14 +81,17 @@ export async function listMcpResources(): Promise<McpResourceDefinition[]> {
  * Pattern-matches against registered resources. Returns null if the
  * URI doesn't match any enabled resource or if no handler exists.
  */
-export async function readMcpResource(uri: string): Promise<McpResourceContent | null> {
+export async function readMcpResource(
+  uri: string,
+  callContext: ResourceCallContext
+): Promise<McpResourceContent | null> {
   const row = await prisma.mcpExposedResource.findUnique({
     where: { uri },
   });
 
   if (!row || !row.isEnabled) {
     // Try pattern matching for parameterized URIs
-    return readMcpResourceByPattern(uri);
+    return readMcpResourceByPattern(uri, callContext);
   }
 
   const handler = HANDLERS[row.resourceType];
@@ -93,7 +105,7 @@ export async function readMcpResource(uri: string): Promise<McpResourceContent |
 
   try {
     const config = toRecordOrNull(row.handlerConfig);
-    return await handler(uri, config);
+    return await handler(uri, config, callContext);
   } catch (err) {
     logger.error('MCP resource handler failed', {
       uri,
@@ -113,7 +125,10 @@ export async function readMcpResource(uri: string): Promise<McpResourceContent |
  * For example, `sunrise://knowledge/patterns/5` matches a resource
  * with resourceType `pattern_detail`.
  */
-async function readMcpResourceByPattern(uri: string): Promise<McpResourceContent | null> {
+async function readMcpResourceByPattern(
+  uri: string,
+  callContext: ResourceCallContext
+): Promise<McpResourceContent | null> {
   const rows = await prisma.mcpExposedResource.findMany({
     where: { isEnabled: true },
   });
@@ -125,7 +140,7 @@ async function readMcpResourceByPattern(uri: string): Promise<McpResourceContent
       if (handler) {
         try {
           const config = toRecordOrNull(row.handlerConfig);
-          return await handler(uri, config);
+          return await handler(uri, config, callContext);
         } catch (err) {
           logger.error('MCP resource handler failed (pattern match)', {
             uri,

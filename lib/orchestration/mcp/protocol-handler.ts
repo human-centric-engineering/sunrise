@@ -155,7 +155,7 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
     case 'resources/read':
       requireInitialized(session);
       requireScope(auth, McpScope.RESOURCES_READ);
-      return handleResourcesRead(request.params);
+      return handleResourcesRead(request.params, auth);
 
     case 'prompts/list':
       requireInitialized(session);
@@ -259,7 +259,8 @@ async function handleResourcesTemplatesList(): Promise<{ resourceTemplates: unkn
 }
 
 async function handleResourcesRead(
-  params: Record<string, unknown> | undefined
+  params: Record<string, unknown> | undefined,
+  auth: import('@/types/mcp').McpAuthContext
 ): Promise<{ contents: unknown[] }> {
   const parsed = mcpResourceReadParamsSchema.safeParse(params);
   if (!parsed.success) {
@@ -269,7 +270,10 @@ async function handleResourcesRead(
     );
   }
 
-  const content = await readMcpResource(parsed.data.uri);
+  const content = await readMcpResource(parsed.data.uri, {
+    scopedAgentId: auth.scopedAgentId,
+    apiKeyId: auth.apiKeyId,
+  });
   if (!content) {
     throw new McpProtocolError(
       JsonRpcErrorCode.INVALID_PARAMS,

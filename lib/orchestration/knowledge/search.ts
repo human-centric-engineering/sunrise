@@ -73,6 +73,20 @@ export interface SearchFilters {
   categories?: string[];
   section?: string;
   documentId?: string;
+  /**
+   * Restrict to chunks belonging to any of these documents. Used by the agent
+   * knowledge-access resolver (Phase 2 of knowledge-access-control). When set
+   * together with `includeSystemScope: true`, system-scoped documents pass
+   * through regardless of whether they appear in this list — system docs are
+   * shared platform seed data and always visible.
+   */
+  documentIds?: string[];
+  /**
+   * When true, always include chunks from system-scoped documents in the
+   * result set, regardless of `documentIds`. Defaults to false to preserve
+   * the prior unfiltered behaviour for unrelated call sites.
+   */
+  includeSystemScope?: boolean;
   scope?: string;
 }
 
@@ -141,6 +155,23 @@ export async function searchKnowledge(
     params.push(filters.documentId);
     paramIdx++;
   }
+  if (filters?.documentIds && filters.documentIds.length > 0) {
+    const placeholders = filters.documentIds.map((_, i) => `$${paramIdx + i}`).join(', ');
+    // System-scoped docs pass through unconditionally when includeSystemScope is true —
+    // the resolver relies on this so seeded reference material stays visible to every
+    // RESTRICTED agent without explicit grants.
+    const docFilter = filters.includeSystemScope
+      ? `(c."documentId" IN (${placeholders}) OR d.scope = 'system')`
+      : `c."documentId" IN (${placeholders})`;
+    conditions.push(docFilter);
+    for (const id of filters.documentIds) {
+      params.push(id);
+      paramIdx++;
+    }
+  }
+  // `includeSystemScope` is intentionally a no-op when documentIds is empty —
+  // the caller wants either "no restrictions" (omit both) or "these docs ∪ system"
+  // (set both).
   if (filters?.scope) {
     conditions.push(`d.scope = $${paramIdx}`);
     params.push(filters.scope);

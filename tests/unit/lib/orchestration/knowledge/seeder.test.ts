@@ -141,13 +141,17 @@ describe('seedChunks', () => {
     vi.resetAllMocks();
     // New seeder upserts tags and document↔tag links; default no-op mocks keep tests
     // focused on the legacy assertions (chunk insert SQL, uploader resolution, etc.).
-    vi.mocked(prisma.knowledgeTag.upsert).mockImplementation((args: never) => {
+    (
+      vi.mocked(prisma.knowledgeTag.upsert) as unknown as {
+        mockImplementation: (fn: (args: unknown) => unknown) => void;
+      }
+    ).mockImplementation((args: unknown) => {
       const a = args as { where: { slug: string }; create: { slug: string; name: string } };
       return Promise.resolve({
         id: `tag-${a.where.slug}`,
         slug: a.where.slug,
         name: a.create?.name ?? a.where.slug,
-      } as never);
+      });
     });
     vi.mocked(prisma.aiKnowledgeDocumentTag.upsert).mockResolvedValue({} as never);
     vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue({} as never);

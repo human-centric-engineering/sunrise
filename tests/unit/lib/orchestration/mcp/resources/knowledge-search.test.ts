@@ -56,7 +56,10 @@ describe('handleKnowledgeSearch', () => {
   });
 
   it('returns empty results when no query is provided', async () => {
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.results).toEqual([]);
@@ -66,7 +69,10 @@ describe('handleKnowledgeSearch', () => {
   });
 
   it('returns empty results for a whitespace-only query', async () => {
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=   ', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=   ', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.results).toEqual([]);
@@ -77,7 +83,10 @@ describe('handleKnowledgeSearch', () => {
   it('calls searchKnowledge with the parsed query and limit 10', async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([]);
 
-    await handleKnowledgeSearch('sunrise://knowledge/search?q=agentic+patterns', null);
+    await handleKnowledgeSearch('sunrise://knowledge/search?q=agentic+patterns', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(searchKnowledge).toHaveBeenCalledWith('agentic patterns', undefined, 10);
   });
@@ -85,7 +94,10 @@ describe('handleKnowledgeSearch', () => {
   it('maps search results to simplified shape', async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([makeSearchResult()]);
 
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.results).toHaveLength(1);
@@ -102,7 +114,10 @@ describe('handleKnowledgeSearch', () => {
   it('returns mimeType application/json', async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([]);
 
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.mimeType).toBe('application/json');
   });
@@ -111,7 +126,10 @@ describe('handleKnowledgeSearch', () => {
     vi.mocked(searchKnowledge).mockResolvedValue([]);
 
     const uri = 'sunrise://knowledge/search?q=echo+test';
-    const result = await handleKnowledgeSearch(uri, null);
+    const result = await handleKnowledgeSearch(uri, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.uri).toBe(uri);
   });
@@ -123,7 +141,10 @@ describe('handleKnowledgeSearch', () => {
       makeSearchResult({ content: 'Third chunk', similarity: 0.7 }),
     ]);
 
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.results).toHaveLength(3);
@@ -136,7 +157,10 @@ describe('handleKnowledgeSearch', () => {
       makeSearchResult({ patternNumber: null, patternName: null, category: null }),
     ]);
 
-    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null);
+    const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.results[0].patternNumber).toBeNull();
@@ -149,7 +173,11 @@ describe('handleKnowledgeSearch', () => {
 
     // Should not throw with any config value
     await expect(
-      handleKnowledgeSearch('sunrise://knowledge/search?q=test', { maxResults: 5 })
+      handleKnowledgeSearch(
+        'sunrise://knowledge/search?q=test',
+        { maxResults: 5 },
+        { scopedAgentId: null, apiKeyId: 'key-1' }
+      )
     ).resolves.not.toThrow();
   });
 
@@ -160,7 +188,10 @@ describe('handleKnowledgeSearch', () => {
 
     // Act + Assert: handleKnowledgeSearch rejects with the same error
     await expect(
-      handleKnowledgeSearch('sunrise://knowledge/search?q=agents', null)
+      handleKnowledgeSearch('sunrise://knowledge/search?q=agents', null, {
+        scopedAgentId: null,
+        apiKeyId: 'key-1',
+      })
     ).rejects.toThrow('vector search failed');
   });
 });

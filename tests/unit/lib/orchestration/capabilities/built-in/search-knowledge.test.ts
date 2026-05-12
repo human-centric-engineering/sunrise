@@ -1,25 +1,33 @@
 /**
  * Tests for the SearchKnowledgeCapability built-in.
+ *
+ * Routing model (Phase 2 of knowledge-access-control):
+ *   - Capability calls `resolveAgentDocumentAccess(agentId)` exactly once per execute.
+ *   - When the resolver returns `{ mode: 'full' }`, no agent-level filter is added.
+ *   - When it returns `{ mode: 'restricted', documentIds, includeSystemScope }`, those
+ *     fields are propagated into the SearchFilters passed to `searchKnowledge`.
+ *
+ * The legacy `prisma.aiAgent.findUnique` lookup was removed when the resolver landed;
+ * these tests assert the new contract.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiAgent: { findUnique: vi.fn() },
-  },
-}));
-
 vi.mock('@/lib/orchestration/knowledge/search', () => ({
   searchKnowledge: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
+  resolveAgentDocumentAccess: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { prisma } = await import('@/lib/db/client');
 const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
+const { resolveAgentDocumentAccess } =
+  await import('@/lib/orchestration/knowledge/resolveAgentDocumentAccess');
 const { SearchKnowledgeCapability } =
   await import('@/lib/orchestration/capabilities/built-in/search-knowledge');
 const { CapabilityValidationError } =
@@ -27,7 +35,7 @@ const { CapabilityValidationError } =
 
 const context = { userId: 'u1', agentId: 'a1' };
 
-function makeChunk(overrides: Record<string, unknown> = {}) {
+function makeChunk(overrides: Record<string, unknown> = {}): unknown {
   return {
     chunk: {
       id: 'c1',
@@ -50,25 +58,19 @@ function makeChunk(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: agent with no category restrictions
-  vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
-    knowledgeCategories: [],
-  } as never);
+  // Default: agent has unrestricted access.
+  vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({ mode: 'full' });
 });
 
 describe('SearchKnowledgeCapability', () => {
-  it('calls searchKnowledge without filters when agent has no categories and no pattern_number', async () => {
+  it('calls searchKnowledge without filters when the resolver returns full access and no args are set', async () => {
     (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([makeChunk()]);
     const cap = new SearchKnowledgeCapability();
 
     const result = await cap.execute({ query: 'reason + act' }, context);
 
-    expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
-      where: { id: 'a1' },
-      select: { knowledgeCategories: true },
-    });
+    expect(resolveAgentDocumentAccess).toHaveBeenCalledWith('a1');
     expect(searchKnowledge).toHaveBeenCalledWith('reason + act', undefined, 10, 0.7);
-    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       results: [{ chunkId: 'c1', patternNumber: 1, similarity: 0.91 }],
@@ -84,10 +86,12 @@ describe('SearchKnowledgeCapability', () => {
     expect(searchKnowledge).toHaveBeenCalledWith('plan', { patternNumber: 7 }, 10, 0.7);
   });
 
-  it('passes agent knowledgeCategories as filter when agent has categories', async () => {
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
-      knowledgeCategories: ['billing', 'support'],
-    } as never);
+  it('passes documentIds + includeSystemScope when the resolver returns restricted access', async () => {
+    vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+      mode: 'restricted',
+      documentIds: ['doc-1', 'doc-2'],
+      includeSystemScope: true,
+    });
     (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const cap = new SearchKnowledgeCapability();
 
@@ -95,7 +99,7 @@ describe('SearchKnowledgeCapability', () => {
 
     expect(searchKnowledge).toHaveBeenCalledWith(
       'refund policy',
-      { categories: ['billing', 'support'] },
+      { documentIds: ['doc-1', 'doc-2'], includeSystemScope: true },
       10,
       0.7
     );
@@ -118,10 +122,12 @@ describe('SearchKnowledgeCapability', () => {
     );
   });
 
-  it('combines document_id with pattern_number and categories', async () => {
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
-      knowledgeCategories: ['legal'],
-    } as never);
+  it('combines pattern_number, document_id, and restricted document grants in one filter object', async () => {
+    vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+      mode: 'restricted',
+      documentIds: ['doc-legal'],
+      includeSystemScope: true,
+    });
     (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const cap = new SearchKnowledgeCapability();
 
@@ -139,41 +145,12 @@ describe('SearchKnowledgeCapability', () => {
       {
         patternNumber: 2,
         documentId: '550e8400-e29b-41d4-a716-446655440000',
-        categories: ['legal'],
+        documentIds: ['doc-legal'],
+        includeSystemScope: true,
       },
       10,
       0.7
     );
-  });
-
-  it('combines pattern_number and categories filters', async () => {
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
-      knowledgeCategories: ['engineering'],
-    } as never);
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    const cap = new SearchKnowledgeCapability();
-
-    await cap.execute({ query: 'architecture', pattern_number: 3 }, context);
-
-    expect(searchKnowledge).toHaveBeenCalledWith(
-      'architecture',
-      { patternNumber: 3, categories: ['engineering'] },
-      10,
-      0.7
-    );
-  });
-
-  it('gracefully handles missing agent (deleted mid-session)', async () => {
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([makeChunk()]);
-    const cap = new SearchKnowledgeCapability();
-
-    const result = await cap.execute({ query: 'anything' }, context);
-
-    // No category filter applied — search proceeds unfiltered
-    expect(searchKnowledge).toHaveBeenCalledWith('anything', undefined, 10, 0.7);
-    // test-review:accept tobe_true — boolean field `success` on CapabilityResult; structural assertion on capability outcome
-    expect(result.success).toBe(true);
   });
 
   it('returns { results: [] } when the search returns nothing (not an error)', async () => {
@@ -197,26 +174,21 @@ describe('SearchKnowledgeCapability', () => {
   });
 
   it('propagates searchKnowledge rejection when the vector store is unavailable', async () => {
-    // Arrange: agent lookup succeeds but the vector store throws
     const storeError = new Error('vector store unavailable');
     (searchKnowledge as ReturnType<typeof vi.fn>).mockRejectedValue(storeError);
     const cap = new SearchKnowledgeCapability();
 
-    // Act + Assert: error propagates out of execute()
     await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow(
       'vector store unavailable'
     );
   });
 
-  it('propagates DB errors from agent lookup when prisma.aiAgent.findUnique rejects', async () => {
-    // Arrange: DB throws before searchKnowledge is ever called
-    const dbError = new Error('connection timeout');
-    vi.mocked(prisma.aiAgent.findUnique).mockRejectedValue(dbError);
+  it('propagates errors from the resolver and never calls searchKnowledge', async () => {
+    const resolverError = new Error('connection timeout');
+    vi.mocked(resolveAgentDocumentAccess).mockRejectedValue(resolverError);
     const cap = new SearchKnowledgeCapability();
 
-    // Act + Assert: error propagates out of execute()
     await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow('connection timeout');
-    // searchKnowledge must not have been called
     expect(searchKnowledge).not.toHaveBeenCalled();
   });
 });
