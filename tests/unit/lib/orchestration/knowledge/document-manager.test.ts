@@ -272,10 +272,24 @@ describe('uploadDocument', () => {
 
     await uploadDocument('# Doc', 'doc.md', 'user-001');
 
-    expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith({
-      where: { id: 'doc-123' },
-      data: { status: 'ready', chunkCount: 2, metadata: { rawContent: '# Doc' } },
-    });
+    expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'doc-123' },
+        data: expect.objectContaining({
+          status: 'ready',
+          chunkCount: 2,
+          metadata: expect.objectContaining({
+            rawContent: '# Doc',
+            coverage: expect.objectContaining({
+              parsedChars: expect.any(Number),
+              chunkChars: expect.any(Number),
+              coveragePct: expect.any(Number),
+            }),
+            warnings: expect.any(Array),
+          }),
+        }),
+      })
+    );
   });
 
   it('skips embed and raw inserts when chunker returns empty array, updates to ready with chunkCount 0', async () => {
@@ -456,10 +470,22 @@ describe('rechunkDocument', () => {
     });
     // Raw inserts called for new chunks
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
-    // Final update to ready
+    // Final update to ready. Re-chunk now also writes a coverage metric
+    // and merged warnings list so the admin Chunks Inspector can show
+    // "X% of source text captured" — see lib/orchestration/knowledge/coverage.ts.
     expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { status: 'ready', chunkCount: 1 },
+        data: expect.objectContaining({
+          status: 'ready',
+          chunkCount: 1,
+          metadata: expect.objectContaining({
+            coverage: expect.objectContaining({
+              parsedChars: expect.any(Number),
+              chunkChars: expect.any(Number),
+              coveragePct: expect.any(Number),
+            }),
+          }),
+        }),
       })
     );
   });

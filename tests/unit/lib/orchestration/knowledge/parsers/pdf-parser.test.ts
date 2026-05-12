@@ -558,4 +558,74 @@ describe('parsePdf', () => {
       expect(result.pageInfo?.[1].hasText).toBe(true);
     });
   });
+
+  describe('Header/footer stripping', () => {
+    /**
+     * Build a page with a fake running header, a real body, and a "Page N"
+     * footer. The body is long enough to clear the scanned-suspect threshold
+     * so the page is treated as real content.
+     */
+    function pageWithHeaderFooter(num: number, body: string): string {
+      return `My Book Title\n${body}\nPage ${num}`;
+    }
+
+    it('removes lines that repeat as the top or bottom margin across many pages', async () => {
+      const pages = [
+        pageWithHeaderFooter(1, longPageText()),
+        pageWithHeaderFooter(2, longPageText()),
+        pageWithHeaderFooter(3, longPageText()),
+        pageWithHeaderFooter(4, longPageText()),
+      ];
+      mockGetText.mockResolvedValue(pagedResult(pages));
+      mockGetInfo.mockResolvedValue(infoResult(4));
+
+      const result = await parsePdf(fakeBuffer(), 'book.pdf');
+
+      // Every body section should be free of the running header/footer text.
+      for (const section of result.sections) {
+        expect(section.content).not.toContain('My Book Title');
+        expect(section.content).not.toMatch(/^Page \d+$/m);
+      }
+      expect(result.metadata.headersFootersStripped).toBeDefined();
+      expect(Number(result.metadata.headersFootersStripped)).toBeGreaterThan(0);
+    });
+
+    it('does not strip when there are fewer than 3 pages', async () => {
+      const pages = [
+        pageWithHeaderFooter(1, longPageText()),
+        pageWithHeaderFooter(2, longPageText()),
+      ];
+      mockGetText.mockResolvedValue(pagedResult(pages));
+      mockGetInfo.mockResolvedValue(infoResult(2));
+
+      const result = await parsePdf(fakeBuffer(), 'short.pdf');
+
+      // Header/footer text survives on a tiny doc — the heuristic is
+      // conservative and only triggers on books with enough pages to
+      // confidently identify a recurring pattern.
+      expect(result.fullText).toContain('My Book Title');
+      expect(result.metadata.headersFootersStripped).toBeUndefined();
+    });
+
+    it('keeps unique body lines intact even when they share words with the header', async () => {
+      const pages = [
+        pageWithHeaderFooter(
+          1,
+          `${longPageText(40)}\nMy Book Title is the subject of this chapter`
+        ),
+        pageWithHeaderFooter(2, longPageText()),
+        pageWithHeaderFooter(3, longPageText()),
+        pageWithHeaderFooter(4, longPageText()),
+      ];
+      mockGetText.mockResolvedValue(pagedResult(pages));
+      mockGetInfo.mockResolvedValue(infoResult(4));
+
+      const result = await parsePdf(fakeBuffer(), 'book.pdf');
+
+      // The bare "My Book Title" margin line gets stripped, but the body
+      // sentence that mentions the title verbatim should still survive
+      // because it's neither the first nor last non-blank line of its page.
+      expect(result.fullText).toContain('My Book Title is the subject of this chapter');
+    });
+  });
 });

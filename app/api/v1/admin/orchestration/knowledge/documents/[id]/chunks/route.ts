@@ -49,6 +49,20 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     },
   });
 
+  // Surface the coverage metric + warnings the chunk pipeline wrote into
+  // `document.metadata` (see lib/orchestration/knowledge/coverage.ts). The
+  // admin Chunks Inspector renders these so the operator can see at a
+  // glance how much of the parsed text actually made it into chunks.
+  const meta = (document.metadata ?? null) as Record<string, unknown> | null;
+  const coverage = (meta?.coverage ?? null) as {
+    parsedChars: number;
+    chunkChars: number;
+    coveragePct: number;
+  } | null;
+  const warnings = Array.isArray(meta?.warnings)
+    ? (meta.warnings as unknown[]).filter((w): w is string => typeof w === 'string')
+    : [];
+
   log.info('Document chunks fetched', { documentId: id, chunkCount: chunks.length });
-  return successResponse({ chunks });
+  return successResponse({ chunks, coverage, warnings });
 });

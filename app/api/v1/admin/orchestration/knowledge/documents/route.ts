@@ -228,6 +228,15 @@ export const POST = withAdminAuth(async (request, session) => {
       adminId: session.user.id,
     });
 
+    // Lift per-page diagnostics from the persisted metadata so the
+    // preview modal can render a per-page char-count list — the operator
+    // sees at a glance which pages came back light (likely scanned) and
+    // which captured plenty of text.
+    const previewMeta = (preview.document.metadata ?? null) as Record<string, unknown> | null;
+    const pages = Array.isArray(previewMeta?.pages)
+      ? (previewMeta.pages as Array<{ num: number; charCount: number; hasText: boolean }>)
+      : null;
+
     return successResponse(
       {
         document: preview.document,
@@ -243,6 +252,7 @@ export const POST = withAdminAuth(async (request, session) => {
           author: preview.author ?? null,
           sectionCount: preview.sectionCount,
           warnings: preview.warnings,
+          pages,
           requiresConfirmation: true,
         },
       },

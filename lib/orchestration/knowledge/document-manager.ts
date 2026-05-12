@@ -19,6 +19,7 @@ import {
   CSV_MAX_ROW_CHARS,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
+import { buildCoverageWarning, computeCoverage } from '@/lib/orchestration/knowledge/coverage';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
@@ -54,6 +55,20 @@ const documentMetadataSchema = z
      * newline). See `rechunkDocument` for the consuming path.
      */
     csvSections: z.array(csvSectionSchema).optional(),
+    /**
+     * Text-capture coverage written at chunk time. parsedChars / chunkChars
+     * are byte counts after trimming; coveragePct is chunkChars / parsedChars
+     * × 100, can exceed 100 because heading-aware chunking re-emits titles.
+     * Used by the admin UI to assure the operator that all source text was
+     * captured. See `lib/orchestration/knowledge/coverage.ts`.
+     */
+    coverage: z
+      .object({
+        parsedChars: z.number(),
+        chunkChars: z.number(),
+        coveragePct: z.number(),
+      })
+      .optional(),
   })
   .passthrough()
   .nullable();
@@ -224,18 +239,27 @@ export async function uploadDocument(
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
 
+    const coverage = computeCoverage(content, texts);
+    const coverageWarning = buildCoverageWarning(coverage);
+    const warnings = coverageWarning ? [coverageWarning] : [];
+
     // Insert chunks + update status atomically
     const updated = await executeTransaction(async (tx) => {
       await insertChunks(tx, document.id, chunks, embeddings, provenance);
       return await tx.aiKnowledgeDocument.update({
         where: { id: document.id },
-        data: { status: 'ready', chunkCount: chunks.length, metadata: { rawContent: content } },
+        data: {
+          status: 'ready',
+          chunkCount: chunks.length,
+          metadata: { rawContent: content, coverage, warnings },
+        },
       });
     });
 
     logger.info('Document uploaded successfully', {
       documentId: document.id,
       chunkCount: chunks.length,
+      coveragePct: coverage.coveragePct,
     });
 
     return updated;
@@ -423,6 +447,14 @@ async function uploadCsvFromParsed(
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
 
+    // Coverage is computed against the post-filter section text — the
+    // oversize-row skip warning above already accounts for dropped rows.
+    // Comparing against `parsed.fullText` would double-count that loss.
+    const acceptableText = acceptableSections.map((s) => s.content).join('\n');
+    const coverage = computeCoverage(acceptableText, texts);
+    const coverageWarning = buildCoverageWarning(coverage);
+    if (coverageWarning) parsed.warnings.push(coverageWarning);
+
     const updated = await executeTransaction(async (tx) => {
       await insertChunks(tx, document.id, chunks, embeddings, provenance);
       return await tx.aiKnowledgeDocument.update({
@@ -439,6 +471,7 @@ async function uploadCsvFromParsed(
             hasHeader: parsed.metadata.hasHeader,
             warnings: parsed.warnings,
             csvSections,
+            coverage,
           },
         },
       });
@@ -448,6 +481,7 @@ async function uploadCsvFromParsed(
       documentId: document.id,
       chunkCount: chunks.length,
       rowCount: parsed.metadata.rowCount,
+      coveragePct: coverage.coveragePct,
     });
 
     return updated;
@@ -675,6 +709,11 @@ export async function confirmPreview(
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
 
+    const coverage = computeCoverage(content, texts);
+    const coverageWarning = buildCoverageWarning(coverage);
+    const parserWarnings = metadata?.warnings ?? [];
+    const warnings = coverageWarning ? [...parserWarnings, coverageWarning] : parserWarnings;
+
     const updated = await executeTransaction(async (tx) => {
       await insertChunks(tx, documentId, chunks, embeddings, provenance);
       return await tx.aiKnowledgeDocument.update({
@@ -690,12 +729,13 @@ export async function confirmPreview(
             parsedTitle: metadata?.parsedTitle ?? null,
             parsedAuthor: metadata?.parsedAuthor ?? null,
             sectionCount: metadata?.sectionCount ?? null,
-            warnings: metadata?.warnings ?? [],
+            warnings,
             // Carry forward the per-page diagnostic the parser stored at
             // preview time, so any future page-picker UI keeps its data
             // after the admin confirms.
             pages: metadata?.pages ?? null,
             corrected: !!correctedContent,
+            coverage,
           },
         },
       });
@@ -704,6 +744,7 @@ export async function confirmPreview(
     logger.info('Document preview confirmed and processed', {
       documentId,
       chunkCount: chunks.length,
+      coveragePct: coverage.coveragePct,
     });
 
     return updated;
@@ -808,19 +849,38 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     const texts = chunks.map((c) => c.content);
     const { embeddings, provenance } = await embedBatch(texts);
 
+    // Coverage is recomputed against the same source the chunker ran on:
+    // for CSVs that's the joined row contents (matches the upload path);
+    // for everything else that's the resolved `content`.
+    const coverageSource = isCsv
+      ? (meta?.csvSections ?? []).map((s) => s.content).join('\n')
+      : content;
+    const coverage = computeCoverage(coverageSource, texts);
+    const coverageWarning = buildCoverageWarning(coverage);
+    const existingWarnings = (meta?.warnings ?? []).filter(
+      (w) => !w.startsWith('Only ') || !w.includes('% of the parsed text was captured')
+    );
+    const warnings = coverageWarning ? [...existingWarnings, coverageWarning] : existingWarnings;
+
+    // Spread existing metadata so re-chunk doesn't clobber rawContent,
+    // csvSections, pages, format, etc. — only the fields we're updating
+    // (warnings, coverage) need to change.
+    const nextMetadata = { ...(meta ?? {}), warnings, coverage };
+
     // Delete old chunks + insert new ones atomically
     const updated = await executeTransaction(async (tx) => {
       await tx.aiKnowledgeChunk.deleteMany({ where: { documentId } });
       await insertChunks(tx, documentId, chunks, embeddings, provenance);
       return await tx.aiKnowledgeDocument.update({
         where: { id: documentId },
-        data: { status: 'ready', chunkCount: chunks.length },
+        data: { status: 'ready', chunkCount: chunks.length, metadata: nextMetadata },
       });
     });
 
     logger.info('Document re-chunked successfully', {
       documentId,
       chunkCount: chunks.length,
+      coveragePct: coverage.coveragePct,
     });
 
     return updated;

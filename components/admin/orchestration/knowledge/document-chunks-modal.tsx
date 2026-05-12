@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { FileText } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileText } from 'lucide-react';
 import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 
 const chunksResponseSchema = z.object({
@@ -31,6 +32,15 @@ const chunksResponseSchema = z.object({
           estimatedTokens: z.number(),
         })
       ),
+      coverage: z
+        .object({
+          parsedChars: z.number(),
+          chunkChars: z.number(),
+          coveragePct: z.number(),
+        })
+        .nullable()
+        .optional(),
+      warnings: z.array(z.string()).optional(),
     })
     .optional(),
 });
@@ -47,6 +57,12 @@ interface ChunkData {
   estimatedTokens: number;
 }
 
+interface Coverage {
+  parsedChars: number;
+  chunkChars: number;
+  coveragePct: number;
+}
+
 interface DocumentChunksModalProps {
   documentId: string | null;
   documentName: string | null;
@@ -61,6 +77,8 @@ export function DocumentChunksModal({
   onOpenChange,
 }: DocumentChunksModalProps) {
   const [chunks, setChunks] = useState<ChunkData[]>([]);
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,6 +94,8 @@ export function DocumentChunksModal({
       }
       const body = chunksResponseSchema.parse(await res.json());
       setChunks(body.data?.chunks ?? []);
+      setCoverage(body.data?.coverage ?? null);
+      setWarnings(body.data?.warnings ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load chunks');
     } finally {
@@ -89,9 +109,13 @@ export function DocumentChunksModal({
     }
     if (!open) {
       setChunks([]);
+      setCoverage(null);
+      setWarnings([]);
       setError(null);
     }
   }, [open, documentId, fetchChunks]);
+
+  const coverageHealthy = coverage !== null && coverage.coveragePct >= 95;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -107,6 +131,69 @@ export function DocumentChunksModal({
               : 'Loading...'}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Coverage summary — assures the operator that all source text
+            made it into chunks. Green at ≥95%, amber below, with a help
+            popover explaining how the metric is computed. */}
+        {coverage !== null && (
+          <div
+            className={`flex items-start gap-2 rounded-md border p-3 text-xs ${
+              coverageHealthy
+                ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200'
+                : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'
+            }`}
+          >
+            {coverageHealthy ? (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            )}
+            <div className="flex-1">
+              <span className="font-medium">{coverage.coveragePct}% of source text captured</span>{' '}
+              <span className="opacity-80">
+                ({coverage.chunkChars.toLocaleString()} of {coverage.parsedChars.toLocaleString()}{' '}
+                chars)
+              </span>
+              <FieldHelp
+                title="Coverage metric"
+                ariaLabel="About the coverage metric"
+                contentClassName="w-80"
+              >
+                <p>
+                  Compares the total length of all stored chunks against the parsed source text fed
+                  into the chunker. A high value means everything we parsed made it into the
+                  knowledge base.
+                </p>
+                <p className="mt-2">
+                  <strong>Below 95%</strong> indicates the chunker dropped or trimmed content — most
+                  commonly an oversize CSV row above the per-row embedding cap, or a paragraph split
+                  that produced empty fragments.
+                </p>
+                <p className="mt-2">
+                  Coverage can exceed 100%: heading-aware chunking re-emits section titles inside
+                  each child chunk, so the sum of chunks is often slightly larger than the source.
+                </p>
+              </FieldHelp>
+            </div>
+          </div>
+        )}
+
+        {/* Document-level warnings (parser warnings + low-coverage notice). */}
+        {warnings.length > 0 && (
+          <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Ingestion warnings
+            </div>
+            <ul className="space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-300">
+              {warnings.map((w, i) => (
+                <li key={i} className="list-disc">
+                  {w}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="space-y-3">
           {loading && (
