@@ -576,6 +576,19 @@ export const listKnowledgeTagsQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().max(200).optional(),
 });
 
+/**
+ * Update knowledge document — admin mutation. Only mutable surface today is the
+ * tag list. Pass `tagIds: []` to clear all tags; omit the field to leave them
+ * untouched.
+ */
+export const updateKnowledgeDocumentSchema = z
+  .object({
+    tagIds: z.array(cuidSchema).max(50, 'At most 50 tags per document').optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
 // ============================================================================
 // Agent → Capability Pivot Schemas
 // ============================================================================

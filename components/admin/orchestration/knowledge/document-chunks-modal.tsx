@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, FileText } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, FileText, Save } from 'lucide-react';
 import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
+import { Label } from '@/components/ui/label';
+import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
 const chunksResponseSchema = z.object({
@@ -70,6 +74,13 @@ interface DocumentChunksModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
+interface TagRow {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+}
+
 export function DocumentChunksModal({
   documentId,
   documentName,
@@ -81,6 +92,14 @@ export function DocumentChunksModal({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Tag editor state — separate fetch from the chunks call because /chunks
+  // doesn't include doc-level metadata.
+  const [allTags, setAllTags] = useState<TagRow[]>([]);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [originalTagIds, setOriginalTagIds] = useState<string[]>([]);
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
 
   const fetchChunks = useCallback(async () => {
     if (!documentId) return;
@@ -103,17 +122,74 @@ export function DocumentChunksModal({
     }
   }, [documentId]);
 
+  const fetchTagsAndDoc = useCallback(async () => {
+    if (!documentId) return;
+    try {
+      const [tagsRes, docRes] = await Promise.all([
+        apiClient.get<{ data: TagRow[] }>(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=200`),
+        apiClient.get<{ document: { tagIds?: string[] } }>(
+          API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId)
+        ),
+      ]);
+      setAllTags(tagsRes?.data ?? []);
+      const current = docRes?.document?.tagIds ?? [];
+      setTagIds(current);
+      setOriginalTagIds(current);
+      setTagError(null);
+    } catch {
+      // Non-fatal: chunks view still works, tag editor just shows no options.
+    }
+  }, [documentId]);
+
   useEffect(() => {
     if (open && documentId) {
       void fetchChunks();
+      void fetchTagsAndDoc();
     }
     if (!open) {
       setChunks([]);
       setCoverage(null);
       setWarnings([]);
       setError(null);
+      setAllTags([]);
+      setTagIds([]);
+      setOriginalTagIds([]);
+      setTagError(null);
     }
-  }, [open, documentId, fetchChunks]);
+  }, [open, documentId, fetchChunks, fetchTagsAndDoc]);
+
+  const tagOptions = useMemo<MultiSelectOption[]>(
+    () =>
+      allTags.map((t) => ({
+        value: t.id,
+        label: t.name,
+        description: t.description ?? t.slug,
+      })),
+    [allTags]
+  );
+
+  const tagsDirty = useMemo(() => {
+    if (tagIds.length !== originalTagIds.length) return true;
+    const sortedA = [...tagIds].sort();
+    const sortedB = [...originalTagIds].sort();
+    return sortedA.some((v, i) => v !== sortedB[i]);
+  }, [tagIds, originalTagIds]);
+
+  async function saveTags(): Promise<void> {
+    if (!documentId) return;
+    setTagSaving(true);
+    setTagError(null);
+    try {
+      await apiClient.patch(API.ADMIN.ORCHESTRATION.knowledgeDocumentById(documentId), {
+        body: { tagIds },
+      });
+      setOriginalTagIds(tagIds);
+    } catch (err) {
+      setTagError(err instanceof APIClientError ? err.message : 'Failed to save tags');
+    } finally {
+      setTagSaving(false);
+    }
+  }
 
   const coverageHealthy = coverage !== null && coverage.coveragePct >= 95;
 
@@ -194,6 +270,62 @@ export function DocumentChunksModal({
             </ul>
           </div>
         )}
+
+        {/* Tag editor — apply or remove knowledge tags. Tags determine which
+            agents can search this doc (when an agent runs in restricted mode).
+            See lib/orchestration/knowledge/resolveAgentDocumentAccess.ts. */}
+        <div className="grid gap-2 rounded-md border p-3">
+          <Label htmlFor="doc-tags" className="text-sm">
+            Tags{' '}
+            <FieldHelp title="Knowledge tags">
+              <p>
+                Apply one or more tags so agents running in <em>Restricted</em> knowledge mode can
+                find this document. Manage the tag taxonomy under <em>Knowledge → Tags</em>.
+              </p>
+              <p className="mt-2">
+                System-scoped documents are always visible regardless of tags — tagging them is
+                still useful for filtering and organisation.
+              </p>
+            </FieldHelp>
+          </Label>
+          {allTags.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              No tags exist yet. Create some under <em>Knowledge → Tags</em>.
+            </p>
+          ) : (
+            <>
+              <MultiSelect
+                id="doc-tags"
+                value={tagIds}
+                onChange={setTagIds}
+                options={tagOptions}
+                placeholder="No tags applied"
+                emptyText="No matching tags."
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">
+                  {tagError ? (
+                    <span className="text-destructive">{tagError}</span>
+                  ) : tagsDirty ? (
+                    'Unsaved tag changes.'
+                  ) : (
+                    'Tag changes take effect immediately for all agents.'
+                  )}
+                </span>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    void saveTags();
+                  }}
+                  disabled={!tagsDirty || tagSaving}
+                >
+                  <Save className="mr-1.5 h-3.5 w-3.5" />
+                  {tagSaving ? 'Saving…' : 'Save tags'}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="space-y-3">
           {loading && (
