@@ -54,3 +54,19 @@ The chunker classifies chunk types (e.g., `pattern_overview`, `implementation`, 
 ## Seeding Is Idempotent But Embedding Is Not
 
 `seedChunks()` uses `chunkKey` for upsert — safe to run multiple times. But `POST /knowledge/embed` will re-embed chunks that already have embeddings if the provider or model has changed. This is usually fine but costs money.
+
+## Hybrid Search Key Is `bm25Weight`, Not `keywordWeight`
+
+A silent footgun. The settings JSON only honours the documented `SearchConfig` keys (`vectorWeight`, `bm25Weight`, `hybridEnabled`, `keywordBoostWeight`). Anything else is dropped on read. Setting `keywordWeight: 0.3` therefore has no effect — the resolver falls back to defaults and the admin sees vector-only behaviour. Check existing rows when migrating older config blobs.
+
+## Vector-Only Mode Is The Default
+
+`hybridEnabled: false` (or unset) keeps the legacy vector-only path with a small `keywordBoostWeight` (-0.02) for keyword-matching chunks. Turning on hybrid is a single-field flip but it changes the score scale — re-tune `vectorWeight` / `bm25Weight` if rankings shift unexpectedly after enabling.
+
+## Semantic Chunking Is Opt-In And Failure-Safe
+
+`semantic-chunker.ts` is a quality upgrade, not the default. The caller falls back to the structural splitter if the semantic chunker throws or returns empty (e.g. provider unreachable, text too short). Never block ingest on a semantic-chunking failure — the structural path is the safety net.
+
+## Embedding Model Resolution Is Dynamic
+
+There is no hardcoded "the embedding model" — `lib/orchestration/llm/embedding-models.ts` reads from DB-backed `AiProviderModel` rows tagged with `embedding` capability. Multiple embedding providers can coexist; the resolver picks one. Forks that ship with no embedding model registered will see `POST /knowledge/embed` fail until an embedding-capable model is activated.
