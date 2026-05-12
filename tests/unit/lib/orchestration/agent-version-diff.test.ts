@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   diffAgentSnapshots,
+  extractSnapshotFromAgent,
   formatSnapshotValue,
   labelForField,
 } from '@/lib/orchestration/agent-version-diff';
@@ -24,6 +25,34 @@ describe('labelForField', () => {
     // field lands before we add a hand-written label.
     expect(labelForField('someNewField')).toBe('Some New Field');
     expect(labelForField('xyz')).toBe('Xyz');
+  });
+});
+
+describe('extractSnapshotFromAgent', () => {
+  it('keeps only the snapshot-shape fields and drops everything else', () => {
+    const agent = {
+      id: 'agent-1',
+      name: 'My Agent',
+      slug: 'my-agent',
+      createdAt: new Date(),
+      model: 'claude-opus-4-7',
+      temperature: 0.7,
+      systemInstructions: 'be terse',
+      enableImageInput: true,
+    };
+    const out = extractSnapshotFromAgent(agent);
+    // Snapshot-shape fields survive…
+    expect(out).toEqual({
+      model: 'claude-opus-4-7',
+      temperature: 0.7,
+      systemInstructions: 'be terse',
+      enableImageInput: true,
+    });
+    // …non-snapshot fields are excluded so they don't read as
+    // changes when diffed against a version row's snapshot.
+    expect(out).not.toHaveProperty('name');
+    expect(out).not.toHaveProperty('slug');
+    expect(out).not.toHaveProperty('createdAt');
   });
 });
 

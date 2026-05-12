@@ -38,6 +38,47 @@ const FIELD_LABELS: Record<string, string> = {
   enableDocumentInput: 'Document input',
 };
 
+/**
+ * Whitelist of snapshot-shape fields. Used to extract the snapshot
+ * subset from a live `AiAgent` row, so the diff against the newest
+ * version row doesn't surface non-versioned columns like `name`,
+ * `slug`, or `createdAt` as spurious "changes". Keep in sync with
+ * the snapshot writer in
+ * `app/api/v1/admin/orchestration/agents/[id]/route.ts`.
+ */
+export const SNAPSHOT_FIELDS = [
+  'systemInstructions',
+  'model',
+  'provider',
+  'fallbackProviders',
+  'temperature',
+  'maxTokens',
+  'topicBoundaries',
+  'brandVoiceInstructions',
+  'metadata',
+  'knowledgeCategories',
+  'rateLimitRpm',
+  'visibility',
+  'inputGuardMode',
+  'outputGuardMode',
+  'citationGuardMode',
+  'maxHistoryTokens',
+  'retentionDays',
+  'providerConfig',
+  'monthlyBudgetUsd',
+  'enableVoiceInput',
+  'enableImageInput',
+  'enableDocumentInput',
+] as const;
+
+export function extractSnapshotFromAgent(agent: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of SNAPSHOT_FIELDS) {
+    if (k in agent) out[k] = agent[k];
+  }
+  return out;
+}
+
 /** Stable display order: most-meaningful fields first. */
 const FIELD_ORDER: string[] = [
   'model',

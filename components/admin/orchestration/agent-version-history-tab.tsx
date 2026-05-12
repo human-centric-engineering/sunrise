@@ -5,13 +5,25 @@
  *
  * Edit-mode tab showing the AiAgentVersion timeline. Each row displays
  * version number, change summary, creator, and date. Expand to see the
- * field-level diff against the previous version, and restore to roll
- * back the agent to that version.
+ * field-level diff for the save that created this row, and restore to
+ * roll back the agent to that point.
  *
- * Lazy-fetches versions on mount via GET /agents/:id/versions.
- * Snapshots are pulled on demand when a row is expanded, cached in
- * component state, and shared between this version's "after" view
- * and the next-older version's "before" view.
+ * Diff semantic: snapshots capture the PRE-update state (the state
+ * that was about to be overwritten — see the PATCH route's snapshot
+ * writer). So:
+ *
+ *   • A row's "Before" = `versions[i].snapshot` — the state that was
+ *     replaced by the save this row represents.
+ *   • A row's "After" = `versions[i-1].snapshot` if a newer version
+ *     row exists (the next save captured this state as its own
+ *     "before"), or the live agent state for the newest row (whose
+ *     save's post-update state lives on the agent row itself, not in
+ *     any version snapshot).
+ *
+ * Lazy-fetches versions on mount, plus the live agent (used as the
+ * newest row's "After"). Per-version snapshots are pulled on demand
+ * when a row is expanded and cached so the same blob serves as
+ * "Before" for row i and "After" for row i+1.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -36,6 +48,7 @@ import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import {
   diffAgentSnapshots,
+  extractSnapshotFromAgent,
   formatSnapshotValue,
   type FieldChange,
 } from '@/lib/orchestration/agent-version-diff';
@@ -103,11 +116,12 @@ function ValueCell({ value }: { value: unknown }) {
   );
 }
 
-function DiffTable({ changes, isInitial }: { changes: FieldChange[]; isInitial: boolean }) {
+function DiffTable({ changes }: { changes: FieldChange[] }) {
   if (changes.length === 0) {
     return (
       <p className="text-muted-foreground text-xs">
-        No field-level differences detected against the previous version.
+        No field-level differences detected for this save. (The change summary may be from a field
+        that isn&apos;t surfaced in the snapshot.)
       </p>
     );
   }
@@ -118,10 +132,8 @@ function DiffTable({ changes, isInitial }: { changes: FieldChange[]; isInitial: 
         <thead className="bg-muted/40">
           <tr>
             <th className="px-2 py-1.5 text-left font-medium">Field</th>
-            <th className="px-2 py-1.5 text-left font-medium">
-              {isInitial ? 'Initial value' : 'Before'}
-            </th>
-            {!isInitial && <th className="px-2 py-1.5 text-left font-medium">After</th>}
+            <th className="px-2 py-1.5 text-left font-medium">Before</th>
+            <th className="px-2 py-1.5 text-left font-medium">After</th>
           </tr>
         </thead>
         <tbody>
@@ -129,13 +141,11 @@ function DiffTable({ changes, isInitial }: { changes: FieldChange[]; isInitial: 
             <tr key={c.field} className="border-t align-top">
               <td className="px-2 py-1.5 font-medium whitespace-nowrap">{c.label}</td>
               <td className="px-2 py-1.5">
-                <ValueCell value={isInitial ? c.after : c.before} />
+                <ValueCell value={c.before} />
               </td>
-              {!isInitial && (
-                <td className="px-2 py-1.5">
-                  <ValueCell value={c.after} />
-                </td>
-              )}
+              <td className="px-2 py-1.5">
+                <ValueCell value={c.after} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -153,11 +163,18 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
   // Expansion + snapshot cache. Keyed by version id so a successful
-  // load is shared between consecutive rows: a row's "before"
-  // snapshot is the next-older row's "after" snapshot.
+  // load is shared between consecutive rows: a row's "after"
+  // snapshot (the next-newer row's pre-state) doubles as that
+  // newer row's "before" snapshot.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [snapshots, setSnapshots] = useState<Record<string, Record<string, unknown>>>({});
   const [rowState, setRowState] = useState<Record<string, ExpansionState>>({});
+
+  // Live agent state — used as the "After" for the newest version
+  // row, since the save that created v[N] left its result on the
+  // agent row itself rather than in any version snapshot.
+  const [liveSnapshot, setLiveSnapshot] = useState<Record<string, unknown> | null>(null);
+  const [liveSnapshotError, setLiveSnapshotError] = useState<string | null>(null);
 
   const fetchVersions = useCallback(async () => {
     setLoading(true);
@@ -176,9 +193,26 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
     }
   }, [agentId]);
 
+  const fetchLiveSnapshot = useCallback(async () => {
+    setLiveSnapshotError(null);
+    try {
+      const agent = await apiClient.get<Record<string, unknown>>(
+        API.ADMIN.ORCHESTRATION.agentById(agentId)
+      );
+      setLiveSnapshot(extractSnapshotFromAgent(agent));
+    } catch (err) {
+      setLiveSnapshotError(
+        err instanceof APIClientError
+          ? err.message
+          : 'Could not load current agent state for the latest diff.'
+      );
+    }
+  }, [agentId]);
+
   useEffect(() => {
     void fetchVersions();
-  }, [fetchVersions]);
+    void fetchLiveSnapshot();
+  }, [fetchVersions, fetchLiveSnapshot]);
 
   const handleRestore = useCallback(async () => {
     if (!restoreTarget) return;
@@ -191,6 +225,9 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
       );
       setRestoreTarget(null);
       void fetchVersions();
+      // The agent row was just rewritten by the restore — reload its
+      // live state so the newest row's "After" reflects reality.
+      void fetchLiveSnapshot();
       onRestored?.();
     } catch (err) {
       setRestoreError(
@@ -199,7 +236,7 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
     } finally {
       setRestoring(false);
     }
-  }, [restoreTarget, agentId, fetchVersions, onRestored]);
+  }, [restoreTarget, agentId, fetchVersions, fetchLiveSnapshot, onRestored]);
 
   /**
    * Fetch a single version's snapshot (idempotent — short-circuits
@@ -225,18 +262,21 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
   );
 
   const toggleExpand = useCallback(
-    (entry: VersionEntry, previousEntry: VersionEntry | null) => {
+    (entry: VersionEntry, newerNeighbour: VersionEntry | null) => {
       setExpanded((prev) => {
         const next = new Set(prev);
         if (next.has(entry.id)) {
           next.delete(entry.id);
         } else {
           next.add(entry.id);
-          // Kick off snapshot loads for this row and (if any) the
-          // older neighbour. Fire-and-forget: the effects below
-          // re-render once the data lands.
+          // Kick off snapshot loads for this row (its own snapshot is
+          // the "Before") and the newer neighbour (whose snapshot is
+          // the "After" for this row, since the newer save captured
+          // this row's post-state as its own pre-state). If there is
+          // no newer neighbour, the live agent state — already
+          // fetched on mount — provides the "After".
           void ensureSnapshot(entry.id);
-          if (previousEntry) void ensureSnapshot(previousEntry.id);
+          if (newerNeighbour) void ensureSnapshot(newerNeighbour.id);
         }
         return next;
       });
@@ -244,26 +284,37 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
     [ensureSnapshot]
   );
 
-  // Compute the diff for each expanded row from the cached snapshots.
-  // Memoised so we don't re-diff on unrelated re-renders.
+  // Compute the diff for each expanded row.
+  //
+  // Snapshots are PRE-update state, so for the row at index i:
+  //   • Before = versions[i].snapshot (the state that save i replaced).
+  //   • After  = versions[i-1].snapshot if a newer row exists (the
+  //               next save captured this row's post-state as its own
+  //               pre-state), else the live agent state for index 0.
   const diffByVersion = useMemo(() => {
     const out: Record<string, FieldChange[]> = {};
     for (let i = 0; i < versions.length; i++) {
       const entry = versions[i];
       if (!expanded.has(entry.id)) continue;
-      const afterSnap = snapshots[entry.id];
-      if (!afterSnap) continue;
-      // The list is newest-first, so the previous version is at i+1.
-      const previousEntry = versions[i + 1] ?? null;
-      const beforeSnap = previousEntry ? (snapshots[previousEntry.id] ?? null) : null;
-      // Don't render an empty diff until both snapshots have loaded —
-      // otherwise the very first paint would falsely declare "no
-      // changes" between the loaded "after" and an empty "before".
-      if (previousEntry && beforeSnap === null) continue;
+      const beforeSnap = snapshots[entry.id];
+      if (!beforeSnap) continue;
+
+      let afterSnap: Record<string, unknown> | null;
+      if (i === 0) {
+        // Newest row — "After" lives on the agent itself.
+        afterSnap = liveSnapshot;
+        if (afterSnap === null) continue;
+      } else {
+        const newerEntry = versions[i - 1];
+        const newerSnap = snapshots[newerEntry.id];
+        if (!newerSnap) continue;
+        afterSnap = newerSnap;
+      }
+
       out[entry.id] = diffAgentSnapshots(afterSnap, beforeSnap);
     }
     return out;
-  }, [versions, expanded, snapshots]);
+  }, [versions, expanded, snapshots, liveSnapshot]);
 
   if (loading) {
     return (
@@ -305,22 +356,25 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
         ) : (
           <ul className="divide-y text-sm">
             {versions.map((v, idx) => {
-              const previousEntry = versions[idx + 1] ?? null;
+              // Newer neighbour (the next save that captured this
+              // row's post-state). For the newest row (idx 0) this
+              // is null — the "After" comes from the live agent.
+              const newerNeighbour = idx > 0 ? versions[idx - 1] : null;
               const isOpen = expanded.has(v.id);
               const rowError = rowState[v.id]?.error ?? null;
               const rowLoading = rowState[v.id]?.loading ?? false;
-              const previousLoading = previousEntry
-                ? (rowState[previousEntry.id]?.loading ?? false)
+              const neighbourLoading = newerNeighbour
+                ? (rowState[newerNeighbour.id]?.loading ?? false)
                 : false;
+              const isNewest = idx === 0;
               const diff = diffByVersion[v.id];
-              const isInitial = !previousEntry;
 
               return (
                 <li key={v.id} className="py-3">
                   <div className="flex items-start justify-between gap-4">
                     <button
                       type="button"
-                      onClick={() => toggleExpand(v, previousEntry)}
+                      onClick={() => toggleExpand(v, newerNeighbour)}
                       aria-expanded={isOpen}
                       aria-controls={`version-diff-${v.id}`}
                       className="group hover:bg-muted/40 -mx-2 flex min-w-0 flex-1 items-start gap-2 rounded px-2 py-0.5 text-left"
@@ -376,13 +430,18 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
                           {rowError}
                         </p>
                       )}
-                      {(rowLoading || previousLoading) && !diff && (
+                      {isNewest && liveSnapshotError && (
+                        <p className="border-destructive/50 bg-destructive/5 text-destructive rounded border px-2 py-1 text-xs">
+                          {liveSnapshotError}
+                        </p>
+                      )}
+                      {(rowLoading || neighbourLoading || (isNewest && !liveSnapshot)) && !diff && (
                         <div className="text-muted-foreground flex items-center gap-2 text-xs">
                           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                           <span>Loading snapshot…</span>
                         </div>
                       )}
-                      {diff && <DiffTable changes={diff} isInitial={isInitial} />}
+                      {diff && <DiffTable changes={diff} />}
                     </div>
                   )}
                 </li>
