@@ -248,6 +248,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           providerConfig: current.providerConfig,
           monthlyBudgetUsd: current.monthlyBudgetUsd,
           enableVoiceInput: current.enableVoiceInput,
+          enableImageInput: current.enableImageInput,
+          enableDocumentInput: current.enableDocumentInput,
         };
 
         const changeSummary = changedVersionedFields.map((f) => `${f} changed`).join(', ');

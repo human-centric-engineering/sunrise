@@ -528,6 +528,35 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(snapshot).toHaveProperty('monthlyBudgetUsd', 50);
     });
 
+    it('captures the three attachment-input toggles in the snapshot', async () => {
+      // Toggles drive runtime behaviour (the chat handler refuses
+      // attachments when these are off), so they belong in the diff
+      // viewer. Regression guard against re-omitting them when the
+      // snapshot blob is extended in future.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({
+          enableVoiceInput: true,
+          enableImageInput: true,
+          enableDocumentInput: false,
+        }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableDocumentInput: true }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { enableDocumentInput: true }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      const snapshot = createCall.data.snapshot as Record<string, unknown>;
+      // Snapshot is of the PRE-update state, so we expect the values
+      // that were live on the agent before this PATCH ran.
+      expect(snapshot).toHaveProperty('enableVoiceInput', true);
+      expect(snapshot).toHaveProperty('enableImageInput', true);
+      expect(snapshot).toHaveProperty('enableDocumentInput', false);
+    });
+
     it('does NOT create a version snapshot for non-versioned field changes (name)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
