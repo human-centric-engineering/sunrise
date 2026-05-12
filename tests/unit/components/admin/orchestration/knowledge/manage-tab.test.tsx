@@ -412,6 +412,7 @@ describe('ManageTab', () => {
   // ── Embedding status indicators ───────────────────────────────────────────
 
   it('shows "All chunks embedded" when fully embedded', async () => {
+    const user = userEvent.setup();
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/embedding-status')) {
         return Promise.resolve({
@@ -428,6 +429,13 @@ describe('ManageTab', () => {
     await act(async () => {
       render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
     });
+
+    // When setup is complete the built-in panel auto-collapses and moves to
+    // the bottom of the page. Expand it before asserting on its body content.
+    const panelToggle = await screen.findByRole('button', {
+      name: /built-in: agentic design patterns/i,
+    });
+    await user.click(panelToggle);
 
     await waitFor(() => {
       expect(screen.getByText('All chunks embedded')).toBeInTheDocument();

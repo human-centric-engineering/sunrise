@@ -472,7 +472,7 @@ describe('KnowledgeView', () => {
       });
     });
 
-    it('all chunks embedded: button shows already-embedded tooltip and "All chunks embedded" label', async () => {
+    it('all chunks embedded: panel shows completion summary in collapsed state', async () => {
       mockFetch.mockImplementation((url: string) => {
         if (url.includes('embedding-status')) {
           return Promise.resolve({
@@ -485,11 +485,15 @@ describe('KnowledgeView', () => {
 
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
+      // When setup is complete the built-in panel auto-collapses and moves to
+      // the bottom of the page. The embed button is hidden inside the collapsed
+      // body. Assert on the collapsed-state summary and "Complete" indicator
+      // that the operator actually sees without expanding the panel.
       await waitFor(() => {
-        const btn = getEmbedButton();
-        expect(btn).toBeDisabled();
-        expect(btn).toHaveAttribute('title', 'All chunks are already embedded');
-        expect(screen.getByText('All chunks embedded')).toBeInTheDocument();
+        expect(
+          screen.getByText('Patterns loaded and embedded. Click to expand.')
+        ).toBeInTheDocument();
+        expect(screen.getByText('Complete')).toBeInTheDocument();
       });
     });
   });
