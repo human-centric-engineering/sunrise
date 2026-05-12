@@ -103,11 +103,15 @@ Three orthogonal gates must all pass before the LLM is called:
 
 Mismatch produces a discrete SSE error code (`IMAGE_DISABLED` / `IMAGE_NOT_SUPPORTED`) so the chat surface can map to specific UI copy. A `CostOperation = 'vision'` row is written to `AiCostLog` on every successful turn that carried at least one image, with `imageCount` / `pdfCount` in metadata. Toggle changes are tracked in `VERSIONED_FIELDS` and produce a snapshot/restore audit entry.
 
+**Form-level constraint.** The toggle is disabled in the agent form when the currently-selected model lacks the `'vision'` capability — the description copy switches to "Switch to a `vision`-capable model in the Model tab to enable." The saved on/off value is preserved when disabled, so swapping back to a vision-capable model later restores the operator's previous intent. Models without a matrix row (registry-only entries) default-allow — the runtime gate is the authoritative check.
+
 ### Enable document (PDF) input
 
 Switch toggle (`AiAgent.enableDocumentInput`, default off). Same architecture as image input but gates on the `'documents'` capability — operators control which provider-model rows carry it in the matrix. Native-PDF support varies by upstream provider; models without the capability are rejected at the gate with `PDF_NOT_SUPPORTED` rather than silently dropped, so the user gets a clear "switch the model" prompt instead of an LLM that pretends to have read the file.
 
 PDFs share the per-attachment and per-turn caps with images. The picker UI is the same paperclip control — `application/pdf` joins the `accept` list automatically when either toggle is on.
+
+**Form-level constraint.** Same as image input — when the selected model lacks `'documents'`, the toggle is disabled with copy directing the operator to the Model tab. Saved state is preserved across model swaps. The current seed carries `'documents'` on Anthropic Claude 4.x (incl. Bedrock), OpenAI GPT-4o family + GPT-4.1 + GPT-5, Azure GPT-4o, and OpenRouter (best-effort, route-dependent). Gemini, Grok, Mistral, Cohere, and other OpenAI-compatible providers remain off until their adapters accept the relevant PDF wire format.
 
 ### Connectivity check card
 
