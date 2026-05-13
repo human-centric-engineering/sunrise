@@ -2650,7 +2650,7 @@ export const createApiKeySchema = z.object({
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
 
 /** Citation shape stored on assistant message metadata. */
-const citationSchema = z.object({
+export const citationSchema = z.object({
   marker: z.number().int().positive(),
   chunkId: z.string(),
   documentId: z.string(),
