@@ -173,6 +173,11 @@ export function DocumentTagsModal({
             <Label className="text-sm">Tags</Label>
             <FieldHelp title="Knowledge tags">
               <p>
+                Tags control <em>which</em> docs an agent can search when its knowledge access is
+                set to <strong>Restricted</strong>. To improve <em>how</em> a doc ranks for a query,
+                see <em>Indexed keywords</em> on the Manage tab — that&apos;s a separate concept.
+              </p>
+              <p className="mt-2">
                 Manage the tag taxonomy under <em>Knowledge → Tags</em>. System-scoped documents are
                 visible to every agent regardless of tags — tagging them is still useful for
                 filtering and organisation.

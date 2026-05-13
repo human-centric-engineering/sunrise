@@ -45,6 +45,16 @@ interface BaseProps {
   id?: string;
   /** Accessible label for the trigger button (ties the popover to a form label via aria-labelledby). */
   ariaLabelledBy?: string;
+  /**
+   * Optional inline-create hook. When provided and the operator's search
+   * query doesn't match an existing option exactly, a "Create '<query>'"
+   * row appears at the top of the popover. Clicking it calls this function
+   * with the trimmed query string; the resolved option is auto-selected.
+   * Errors are surfaced inline; the popover stays open.
+   */
+  onCreate?: (label: string) => Promise<MultiSelectOption>;
+  /** Optional copy override for the inline-create row. Defaults to `Create "<query>"`. */
+  createLabel?: (query: string) => string;
 }
 
 interface StaticProps extends BaseProps {
@@ -77,6 +87,8 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
     maxVisibleChips = 6,
     id,
     ariaLabelledBy,
+    onCreate,
+    createLabel,
   } = props;
   const isAsync = 'loadOptions' in props && typeof props.loadOptions === 'function';
 
@@ -84,6 +96,8 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
   const [query, setQuery] = React.useState('');
   const [asyncOptions, setAsyncOptions] = React.useState<MultiSelectOption[]>([]);
   const [asyncLoading, setAsyncLoading] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
+  const [createError, setCreateError] = React.useState<string | null>(null);
 
   // Debounced async fetch.
   React.useEffect(() => {
@@ -122,6 +136,34 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
       onChange(value.filter((v) => v !== optionValue));
     } else {
       onChange([...value, optionValue]);
+    }
+  }
+
+  // Inline-create affordance: when the operator types a query that doesn't
+  // match any existing option (case-insensitive label match), surface a
+  // "Create '<query>'" row at the top. Clicking it hands the trimmed query
+  // to the consumer's onCreate hook; resolved option is auto-selected.
+  const trimmedQuery = query.trim();
+  const exactLabelMatch =
+    trimmedQuery.length > 0 &&
+    visibleOptions.some((o) => o.label.toLowerCase() === trimmedQuery.toLowerCase());
+  const canCreate = !!onCreate && trimmedQuery.length > 0 && !exactLabelMatch && !asyncLoading;
+
+  async function handleCreate(): Promise<void> {
+    if (!onCreate || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const created = await onCreate(trimmedQuery);
+      // Auto-select the new option. The consumer is responsible for
+      // refreshing the options list (or supplying selectedLabels in async
+      // mode) so the chip renders the right label after this.
+      if (!value.includes(created.value)) onChange([...value, created.value]);
+      setQuery('');
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create');
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -212,9 +254,29 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
           />
         </div>
         <div className="max-h-64 overflow-y-auto py-1">
+          {canCreate ? (
+            <button
+              type="button"
+              onClick={() => {
+                void handleCreate();
+              }}
+              disabled={creating}
+              className="hover:bg-muted/60 flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm font-medium disabled:cursor-not-allowed"
+            >
+              <span className="text-primary">+</span>
+              <span className="truncate">
+                {creating
+                  ? 'Creating…'
+                  : (createLabel?.(trimmedQuery) ?? `Create "${trimmedQuery}"`)}
+              </span>
+            </button>
+          ) : null}
+          {createError ? (
+            <p className="text-destructive border-b px-3 py-2 text-xs">{createError}</p>
+          ) : null}
           {asyncLoading ? (
             <div className="text-muted-foreground px-3 py-6 text-center text-sm">Loading…</div>
-          ) : visibleOptions.length === 0 ? (
+          ) : visibleOptions.length === 0 && !canCreate ? (
             <div className="text-muted-foreground px-3 py-6 text-center text-sm">{emptyText}</div>
           ) : (
             visibleOptions.map((option) => {

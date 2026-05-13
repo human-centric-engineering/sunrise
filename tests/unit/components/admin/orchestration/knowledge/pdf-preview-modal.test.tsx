@@ -140,7 +140,11 @@ describe('PdfPreviewModal', () => {
     });
   });
 
-  it('sends category when provided', async () => {
+  it('does not send a category field — tags are applied at upload time, not confirm', async () => {
+    // The legacy Category input was removed from the preview modal when the
+    // Tags/Keywords/Categories clarity pass landed. The preview-confirm flow
+    // now just confirms the extracted text and chunks it; tags get applied
+    // earlier on the upload zone (or later via the doc tags modal).
     const user = userEvent.setup();
     render(
       <PdfPreviewModal
@@ -151,8 +155,8 @@ describe('PdfPreviewModal', () => {
       />
     );
 
-    const categoryInput = screen.getByPlaceholderText(/e\.g\. sales/i);
-    await user.type(categoryInput, 'reports');
+    expect(screen.queryByPlaceholderText(/e\.g\. sales/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/category/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
 
@@ -161,7 +165,7 @@ describe('PdfPreviewModal', () => {
         (c) => typeof c[0] === 'string' && c[0].includes('/confirm')
       );
       const body = JSON.parse(call![1].body as string);
-      expect(body.category).toBe('reports');
+      expect(body.category).toBeUndefined();
     });
   });
 

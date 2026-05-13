@@ -2,7 +2,59 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/:id/enrich-keywords`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/tags`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
+
+## Tags, Indexed Keywords, and Categories
+
+Three concepts that look similar but do different things. The current model:
+
+| Concept              | Schema                                                                                     | Purpose                                                                                                                                     | Operator-editable?                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **Tags**             | `KnowledgeTag` + `AiKnowledgeDocumentTag` + `AiAgentKnowledgeTag` join tables              | Access control. A `RESTRICTED` agent searches docs carrying any of its granted tags.                                                        | Yes — Knowledge → Tags, upload zone, doc tags modal, agent form                         |
+| **Indexed Keywords** | `AiKnowledgeChunk.keywords` (comma-separated string per chunk)                             | BM25 ranking hints. Affects _how_ a chunk ranks for a query; never affects _who_ can see it.                                                | Indirectly — via metadata comments in markdown, or via the Enrich Keywords admin action |
+| **Categories**       | `AiKnowledgeDocument.category`, `AiKnowledgeChunk.category`, `AiAgent.knowledgeCategories` | **Deprecated.** Legacy access-control mechanism. No UI surfaces them; resolver ignores them. Pending drop in the Phase 6 cleanup migration. | No                                                                                      |
+
+### Tags
+
+Managed taxonomy. Each tag has a slug (stable cross-environment key), a name, and an optional description. Applied to documents at upload time via the upload zone's Tags picker, or after upload via the doc row's tags modal. Granted to agents on the agent form's Knowledge Access section.
+
+The resolver (`resolveAgentDocumentAccess` in `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts`) maps an agent's `knowledgeAccessMode` to an effective doc set:
+
+- `full` → no filter; all docs.
+- `restricted` → (docs explicitly granted) ∪ (docs carrying any granted tag) ∪ (system-scoped seed docs).
+
+Tags have no required semantic meaning — they're labels. "Internal", "HR-confidential", "Onboarding" are all valid. Operators can create tags inline from the upload zone (type a non-matching name → "Create '…'" row).
+
+### Indexed Keywords
+
+Per-chunk BM25 hints. Lives in `chunk.keywords` as a comma-separated string. Postgres maintains a generated `searchVector` column = `to_tsvector('english', content || ' ' || keywords)` indexed with a GIN index, used by the hybrid-search path (`search.ts:runHybridSearch`). The blended score is `vectorWeight × vector_score + bm25Weight × keyword_score`.
+
+**Important: BM25 indexes the content even when keywords is NULL.** Keywords are a precision dial, not the primary lexical signal. Most uploads have NULL keywords and search still works.
+
+Two sources today:
+
+1. **Markdown metadata comments** — `<!-- metadata: keywords="retry,backoff,timeout" -->` anywhere in a markdown doc. The chunker (`chunker.ts:parseMetadataComments`) reads these. **Only markdown is parsed this way** — DOCX, PDF, EPUB, and CSV uploads do not pick up metadata comments.
+2. **Enrich Keywords admin action** — `POST /knowledge/documents/:id/enrich-keywords` (see `lib/orchestration/knowledge/keyword-enricher.ts`). Runs an LLM over each chunk and writes 3–8 keyword phrases. Surfaced as a per-row button on the Manage tab. Costs are logged via `cost-tracker.ts`.
+
+The Manage tab's _Indexed keywords_ panel is a read-only diagnostic. It aggregates distinct keyword values across chunks so operators can spot duplicates / typos that hurt ranking.
+
+### Categories (deprecated)
+
+The `category` columns on `AiKnowledgeDocument` and `AiKnowledgeChunk`, plus the `knowledgeCategories: String[]` field on `AiAgent`, were the original access-scoping mechanism. They've been superseded by Tags. The resolver ignores them. No UI surface reads or writes them today, with two narrow exceptions:
+
+- The seeder still writes `chunk.category` from the bundled `chunks.json` metadata (cargo data; no consumer).
+- The `/knowledge/meta-tags` aggregator still returns category counts (unread by any UI).
+
+**Phase 6 cleanup** will drop:
+
+- `AiAgent.knowledgeCategories` column
+- `AiKnowledgeDocument.category` column
+- `AiKnowledgeChunk.category` column
+- The `categories[]` / `category` filters on `SearchFilters` in `search.ts`
+- The legacy `category` form field on `/documents` and `/documents/bulk` upload routes
+- The category half of `listMetaTags()`'s response
+
+Until that ships, code that touches these columns should treat them as write-only / inert.
 
 ## Module Layout
 
@@ -33,18 +85,21 @@ import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 // Upload text content (admin flow — content is a string)
 const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
 
-// Upload with explicit category (overrides any in-document metadata)
-const doc2 = await uploadDocument(markdownContent, 'playbook.md', userId, 'sales');
+// `category` is the deprecated legacy column — leave it `undefined` on new code.
+// To scope agent access, apply tags via the upload zone or the doc tags modal
+// and grant them on the agent form. See "Tags, Indexed Keywords, and Categories"
+// above.
 
 // Upload binary (EPUB/DOCX) — parsed then chunked automatically
-const doc3 = await uploadDocumentFromBuffer(epubBuffer, 'book.epub', userId, 'reference');
+const doc3 = await uploadDocumentFromBuffer(epubBuffer, 'book.epub', userId);
 
 // Upload PDF (requires preview → confirm flow)
 const preview = await previewDocument(pdfBuffer, 'report.pdf', userId);
 // Admin reviews preview.extractedText, optionally corrects it, then:
-const confirmed = await confirmPreview(preview.document.id, userId, correctedText, 'reports');
+const confirmed = await confirmPreview(preview.document.id, userId, correctedText);
 
-// List all category and keyword values across the knowledge base
+// Indexed-keyword diagnostic (currently still returns legacy category data too;
+// only the keywords half is surfaced in the UI as the Indexed keywords panel).
 const tags = await listMetaTags();
 // → { app: { categories: [...], keywords: [...] }, system: { categories: [...], keywords: [...] } }
 
@@ -94,17 +149,21 @@ The upload route (`POST /knowledge/documents`) supports multiple formats with fo
 | DOCX   | `.docx`                    | Parse → chunk → embed → store            | 50 MB    |
 | PDF    | `.pdf`                     | Parse → preview → admin confirms → chunk | 50 MB    |
 
-**Category resolution** (priority order):
+**Optional fields** the upload zone sends with the multipart body:
 
-1. Explicit `category` parameter (from the upload form)
+- `name` — overrides the filename-derived display name. Stored as `AiKnowledgeDocument.name`.
+- `tagIds[]` — repeated form field; each id is applied to the new document via the `AiKnowledgeDocumentTag` join table. The upload zone's tag picker supports inline-create when an operator types a non-matching name.
+- `category` — **deprecated.** Still accepted by the route for backwards compatibility and written to the `chunk.category` column. No UI sends it and no resolver reads it. Phase 6 removes the field and the column.
+
+The (defunct) **category resolution** order, if anything still passes `category`:
+
+1. Explicit `category` form field
 2. Document-level `<!-- metadata: category=... -->` comment (parsed by `extractDocumentCategory`)
 3. `null` — no category assigned
 
-When a document-level category is resolved, it propagates to any chunks that don't have their own category from section-level metadata comments.
-
 **Route details:**
 
-- **Multipart only** (`multipart/form-data`), `file` field + optional `category` field
+- **Multipart only** (`multipart/form-data`), `file` field + optional `name`, `tagIds[]`, `category` (deprecated)
 - **50 MB max** (`MAX_UPLOAD_BYTES` in the route)
 - **Extension whitelist**: `.md`, `.markdown`, `.txt`, `.epub`, `.docx`, `.pdf`
 - MIME type is advisory — the extension is the source of truth
@@ -138,27 +197,27 @@ Knowledge documents are **not per-user scoped**. `uploadedBy` is stored for audi
 
 **Section titles** for generic content without headings are derived from the chunk's first sentence (≤80 chars). Authored headings take precedence when present.
 
-## Categories and Meta-Tags
+## In-document metadata comments
 
-Documents and chunks support **category** and **keywords** metadata. Categories are a first-class field on `AiKnowledgeDocument` (with a database index) and on each `AiKnowledgeChunk`. Keywords are stored as comma-separated strings on chunks.
-
-### In-document metadata comments
-
-Authors can embed metadata in their markdown using HTML comments:
+Markdown authors can embed per-section keyword hints anywhere in a document using HTML comments:
 
 ```markdown
-<!-- metadata: category=sales, keywords="pricing,discounts,negotiation" -->
+<!-- metadata: keywords="pricing,discounts,negotiation" -->
 
 ## Section heading
 
-Content here inherits the metadata above...
+Content here inherits the metadata above…
 ```
 
-`parseMetadataComments(content)` (exported from `chunker.ts`) extracts these into a `Record<string, string>`. Supported tags: `category`, `keywords`. Tags are free-form — there is no fixed taxonomy. Case-sensitive: `Sales` ≠ `sales`.
+`parseMetadataComments(content)` (exported from `chunker.ts`) extracts these into a `Record<string, string>`. The only key the chunker reads today is `keywords`; comma-separated values, optionally double-quoted when the value itself contains commas.
 
-### Meta-tag discovery
+**Only markdown.** DOCX, PDF, EPUB, and CSV uploads do not pick up metadata comments — their parser pipelines go directly to chunking without the markdown comment-stripping pass. To set keywords on non-markdown uploads, use the **Enrich Keywords** admin action (below).
 
-`listMetaTags()` returns a `MetaTagSummary` with all distinct category and keyword values in use, grouped by document scope (`app` vs `system`), plus chunk and document counts for each. Used by the admin UI to show what tags exist (in separate collapsible sections) and power category autocomplete on the upload form (app categories only).
+A `category` key is still parsed for backwards compatibility with legacy docs but it has no functional effect — the resolver ignores chunk-level categories. Phase 6 removes this code path entirely.
+
+## Indexed-keyword discovery
+
+`listMetaTags()` returns a `MetaTagSummary` with distinct keyword values in use, grouped by document scope (`app` vs `system`), plus chunk and document counts for each. Surfaced by the Manage tab as the **Indexed keywords** diagnostic panel.
 
 ```typescript
 interface MetaTagSummary {
@@ -167,12 +226,20 @@ interface MetaTagSummary {
 }
 
 interface ScopedMetaTags {
-  categories: MetaTagEntry[]; // { value, chunkCount, documentCount }
-  keywords: MetaTagEntry[];
+  // Deprecated — populated for back-compat, not surfaced in any UI.
+  categories: MetaTagEntry[];
+  // The Indexed-keywords panel renders this.
+  keywords: MetaTagEntry[]; // { value, chunkCount, documentCount }
 }
 ```
 
-The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping uses `AiAgent.knowledgeCategories` (a string array) to filter which categories an agent can search.
+The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping is **not** done here — it lives on the `KnowledgeTag` model and `resolveAgentDocumentAccess` (see "Tags, Indexed Keywords, and Categories" at the top of this doc).
+
+## Enriching keywords post-upload
+
+`POST /knowledge/documents/:id/enrich-keywords` runs an LLM over each chunk of a document and writes 3–8 keyword phrases into `chunk.keywords`. Implemented in `lib/orchestration/knowledge/keyword-enricher.ts`. Surfaced as a per-row button on the Manage tab between Rechunk and Delete. Use it when an uploaded doc isn't ranking for queries whose vocabulary differs from the literal content (e.g., content says "exponential backoff after request failure" but operators ask about "retry policy" or "circuit breaker").
+
+Cost is logged via `cost-tracker.ts` under operation `knowledge.enrich_keywords` and shows up in the admin Costs view. The LLM call uses the configured `chat` default model (`getDefaultModelForTask('chat')`); operators can switch to a cheap utility model by editing `AiOrchestrationSettings.defaultModels.chat`.
 
 ## Search
 

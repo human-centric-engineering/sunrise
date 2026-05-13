@@ -20,6 +20,21 @@ interface TagRow {
   description?: string | null;
 }
 
+/**
+ * Mirror of the slug schema in `lib/validations/orchestration.ts`. Used by
+ * the inline-create-tag affordance: the operator types a human-readable
+ * name, we derive a slug client-side. Server-side validation is still the
+ * source of truth — if the derived slug collides we surface the error.
+ */
+function slugifyTagName(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
 const errorBodySchema = z
   .object({
     error: z.object({ message: z.string().optional() }).optional(),
@@ -434,31 +449,49 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               <span className="text-muted-foreground text-xs">(optional)</span>
               <FieldHelp title="Document tags" ariaLabel="What are document tags?">
                 <p>
-                  Tags are the managed taxonomy that scopes which agents can search this document.
-                  When an agent runs in <em>Restricted</em> knowledge mode, granting it a tag gives
-                  it access to every document carrying that tag.
+                  Tags scope which agents can search this document. When an agent runs in{' '}
+                  <em>Restricted</em> knowledge mode, granting it a tag gives it access to every
+                  document carrying that tag.
                 </p>
                 <p className="mt-2">
-                  Manage the tag list under the <em>Tags</em> tab. Leave blank if you only need this
-                  document visible to agents with full KB access.
+                  Pick from existing tags, or type a name that doesn&apos;t match anything to create
+                  a new one inline. Full tag admin lives under <em>Knowledge → Tags</em>.
+                </p>
+                <p className="mt-2">
+                  Tags control <em>which</em> docs an agent can search. To improve <em>how</em> a
+                  doc ranks for a query, see <em>Indexed keywords</em> on the Manage tab —
+                  that&apos;s a separate concept.
                 </p>
               </FieldHelp>
             </div>
-            {availableTags.length === 0 ? (
-              <p className="text-muted-foreground text-xs">
-                No tags exist yet. Create some under the <em>Tags</em> tab to scope agent access.
-              </p>
-            ) : (
-              <MultiSelect
-                value={tagIds}
-                onChange={setTagIds}
-                options={tagOptions}
-                placeholder="No tags applied"
-                emptyText="No matching tags."
-                disabled={uploading}
-                ariaLabelledBy="upload-tags-label"
-              />
-            )}
+            <MultiSelect
+              value={tagIds}
+              onChange={setTagIds}
+              options={tagOptions}
+              placeholder={
+                availableTags.length === 0 ? 'No tags yet — type to create one' : 'No tags applied'
+              }
+              emptyText="No matching tags. Type a new name to create one."
+              disabled={uploading}
+              ariaLabelledBy="upload-tags-label"
+              onCreate={async (name) => {
+                const created = await apiClient.post<TagRow>(
+                  API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS,
+                  {
+                    body: { slug: slugifyTagName(name), name },
+                  }
+                );
+                // Refresh availableTags so the new row appears in subsequent renders.
+                setAvailableTags((prev) =>
+                  prev.some((t) => t.id === created.id) ? prev : [...prev, created]
+                );
+                return {
+                  value: created.id,
+                  label: created.name,
+                  description: created.description ?? created.slug,
+                };
+              }}
+            />
           </div>
 
           {stagedFiles.length === 1 && stagedFiles[0].name.toLowerCase().endsWith('.pdf') && (
@@ -764,17 +797,39 @@ function UploadGuideBody(): ReactElement {
         actually have vectors stored.
       </p>
 
-      <p className="text-foreground mt-3 font-medium">Category</p>
+      <p className="text-foreground mt-3 font-medium">Tags</p>
       <p>
-        Assign a <strong>category</strong> when you upload to organise your knowledge. Categories
-        let you filter documents and — more importantly — let agents be scoped to only search
-        specific categories. For example, a sales agent can be restricted to &quot;sales&quot;
-        knowledge only.
+        Apply one or more <strong>tags</strong> when you upload. Tags are the access-control
+        taxonomy: an agent running in <em>Restricted</em> knowledge mode can search a document only
+        if it carries one of the tags granted to that agent. Tags also help with browsing and
+        filtering, but their primary job is scoping — &quot;which agents can see this&quot;.
       </p>
       <p className="mt-1">
-        You can also set category inside the document itself using an HTML comment:{' '}
-        <code className="text-xs">{'<!-- metadata: category=sales -->'}</code>. If you set a
-        category both here and inside the document, the one you type here takes priority.
+        Manage the tag list under <em>Knowledge → Tags</em>. You can also create a new tag inline
+        from the Tags picker on this upload form by typing a name that doesn&apos;t match an
+        existing one — a &quot;Create &lsquo;…&rsquo;&quot; row appears.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">Indexed Keywords</p>
+      <p>
+        Separate from tags, the system also indexes per-chunk <strong>keywords</strong> that feed
+        the BM25 component of hybrid search. Keywords affect <em>how</em> a chunk ranks for a query;
+        they never affect <em>who</em> can see it (tags do that).
+      </p>
+      <p className="mt-1">Keywords currently come from one of two sources:</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Metadata comments</strong> inside markdown documents (see below).
+        </li>
+        <li>
+          <strong>The Enrich Keywords action</strong> on the document table — runs an LLM over each
+          chunk and writes 3–8 keyword phrases. Use this when an uploaded doc doesn&apos;t rank well
+          for queries whose vocabulary doesn&apos;t literally appear in the content.
+        </li>
+      </ul>
+      <p className="mt-1 text-xs">
+        Most uploads have NULL keywords. That&apos;s fine — BM25 still indexes the chunk content
+        itself. Keywords are a precision dial, not a foundational signal.
       </p>
 
       <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
@@ -797,60 +852,21 @@ function UploadGuideBody(): ReactElement {
         see a warning naming those exact pages so you know what to fix.
       </p>
 
-      <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
+      <p className="text-foreground mt-3 font-medium">In-document metadata comments</p>
       <p>
-        You can embed metadata tags anywhere in a document using HTML comments. These are invisible
+        Markdown documents can embed keyword hints anywhere using HTML comments. These are invisible
         in rendered markdown but the system reads them during chunking.
       </p>
       <p className="mt-1 text-xs">
         <strong>Format:</strong>{' '}
-        <code>{'<!-- metadata: key=value, key2="value with commas" -->'}</code>
+        <code>{'<!-- metadata: keywords="retry,backoff,timeout" -->'}</code>
       </p>
       <p className="mt-1 text-xs">
-        <strong>Supported tags:</strong>
-      </p>
-      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-        <li>
-          <strong>category</strong> — groups content by topic (e.g. sales, engineering, onboarding).
-          Applied to every chunk in the section.
-        </li>
-        <li>
-          <strong>keywords</strong> — comma-separated terms that boost search relevance. Wrap in
-          quotes if the value contains commas: <code>{'keywords="retry,backoff,timeout"'}</code>
-        </li>
-      </ul>
-      <p className="mt-2 text-xs">
-        You can place metadata at the top of the document (applies globally) or before any section
-        heading (applies to that section only). Section-level tags override document-level ones.
-      </p>
-
-      <p className="text-foreground mt-3 font-medium">
-        Being free-form with meta-tags: flexibility vs. findability
-      </p>
-      <p>
-        Tags are <strong>completely free-form</strong> — there is no fixed list and you can use any
-        values you like. This is powerful but comes with a trade-off:
-      </p>
-      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-        <li>
-          <strong>Inconsistent naming hurts search.</strong> If some documents use &quot;sales&quot;
-          and others use &quot;Sales&quot;, &quot;selling&quot;, or &quot;revenue&quot;, filtering
-          by category becomes unreliable. The system treats these as different values.
-        </li>
-        <li>
-          <strong>Too many unique tags = no tags.</strong> If every document has a unique category,
-          you lose the ability to meaningfully filter. Categories work best with a small, consistent
-          vocabulary (5–15 values).
-        </li>
-        <li>
-          <strong>Keywords are more forgiving.</strong> Because keyword search is additive (more
-          keywords = more ways to find the content), inconsistency there matters less than with
-          categories. Use keywords liberally.
-        </li>
-      </ul>
-      <p className="mt-2 text-xs">
-        <strong>Recommendation:</strong> agree on a short list of categories before bulk uploading.
-        Check the &quot;Meta-tags in use&quot; panel to see what values already exist.
+        You can place the comment at the top of the document (applies globally) or before any
+        section heading (applies to that section only). Section-level metadata overrides
+        document-level. <strong>Only markdown is parsed this way</strong> — DOCX, PDF, EPUB, and CSV
+        uploads do not pick up metadata comments; use the <em>Enrich Keywords</em> action on the
+        document table after upload instead.
       </p>
 
       <p className="text-foreground mt-3 font-medium">Content quality tips</p>

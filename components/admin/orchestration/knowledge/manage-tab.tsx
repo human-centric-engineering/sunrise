@@ -724,25 +724,39 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             <FieldHelp
               title="Indexed keywords"
               ariaLabel="About indexed keywords"
-              contentClassName="w-80 max-h-80 overflow-y-auto"
+              contentClassName="w-96 max-h-96 overflow-y-auto"
             >
               <p>
                 Distinct keyword values found across knowledge-base chunks, with chunk and document
-                counts. Keywords feed the BM25 component of hybrid search: chunks whose keywords
-                match the query get a relevance boost on top of the vector score.
+                counts. Keywords feed the BM25 component of hybrid search — chunks whose keywords
+                match the query get a relevance boost added to the vector-similarity score. Keywords
+                affect <em>how</em> a chunk ranks for a query; they never affect <em>who</em> can
+                see it. (For access scoping, see Tags.)
               </p>
-              <p className="mt-2">
-                This is a <strong>diagnostic</strong>, not a configuration surface — you can&apos;t
-                edit keywords from here. They&apos;re extracted during ingestion (from frontmatter,
-                heading text, or explicit <code>keywords=...</code> metadata comments).
+              <p className="text-foreground mt-2 font-medium">How keywords are created</p>
+              <p>
+                This is a <strong>diagnostic</strong>, not a direct edit surface. Two sources today:
               </p>
-              <p className="mt-2">
-                <strong>To scope which documents an agent can search,</strong> use the <em>Tags</em>{' '}
-                tab.
+              <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+                <li>
+                  <strong>Metadata comments</strong> inside markdown documents — a chunker pass
+                  reads <code className="text-[10px]">{'<!-- metadata: keywords="..." -->'}</code>{' '}
+                  and writes the comma-separated value onto each chunk in scope. DOCX, PDF, EPUB,
+                  and CSV uploads don&apos;t go through this path, so keywords stay NULL by default.
+                </li>
+                <li>
+                  <strong>The Enrich Keywords action</strong> on each document row — runs an LLM
+                  over every chunk and writes 3–8 keyword phrases. Use this when an upload
+                  doesn&apos;t rank for queries whose vocabulary differs from the content.
+                </li>
+              </ul>
+              <p className="mt-2 text-xs">
+                Empty keywords are fine: BM25 still indexes the chunk content. Keywords are a
+                precision dial, not the primary lexical signal.
               </p>
-              <p className="mt-2">
-                <strong>App knowledge</strong> contains your uploaded documents.{' '}
-                <strong>System knowledge</strong> contains the built-in Agentic Design Patterns
+              <p className="mt-2 text-xs">
+                <strong>App knowledge</strong> = your uploaded documents.{' '}
+                <strong>System knowledge</strong> = the built-in Agentic Design Patterns reference
                 (read-only).
               </p>
             </FieldHelp>
