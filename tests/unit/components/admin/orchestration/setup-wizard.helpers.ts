@@ -33,6 +33,7 @@ export interface DetectionRowFixture {
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  primaryEnvVar?: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;

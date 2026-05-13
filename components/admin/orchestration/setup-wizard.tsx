@@ -425,6 +425,8 @@ interface DetectionRow {
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  /** First candidate env-var from the provider's catalog (set or not). */
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;
@@ -440,6 +442,9 @@ const detectionRowSchema: z.ZodType<DetectionRow> = z.object({
   providerType: z.enum(['anthropic', 'openai-compatible', 'voyage']),
   defaultBaseUrl: z.string().nullable(),
   apiKeyEnvVar: z.string().nullable(),
+  // .default(null) keeps older API responses (pre-primaryEnvVar) valid so
+  // we don't blow up the wizard during a rolling deploy.
+  primaryEnvVar: z.string().nullable().default(null),
   apiKeyPresent: z.boolean(),
   alreadyConfigured: z.boolean(),
   isLocal: z.boolean(),
@@ -519,8 +524,12 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   const candidateEnvVars = useMemo(
     () =>
       (detection ?? [])
-        .filter((d) => !d.isLocal && d.apiKeyEnvVar)
-        .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar! })),
+        // Use `primaryEnvVar` (always set for hosted providers) — the
+        // hint needs to show what the operator *could* set, so we
+        // can't filter on `apiKeyEnvVar`, which is null until the key
+        // is actually in env.
+        .filter((d) => !d.isLocal && d.primaryEnvVar)
+        .map((d) => ({ name: d.name, envVar: d.primaryEnvVar! })),
     [detection]
   );
 

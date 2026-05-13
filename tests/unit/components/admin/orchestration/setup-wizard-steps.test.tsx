@@ -103,7 +103,11 @@ describe('SetupWizard — step content', () => {
             name: 'Anthropic',
             providerType: 'anthropic',
             defaultBaseUrl: null,
-            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            // apiKeyEnvVar is null because the key isn't in env;
+            // primaryEnvVar carries the catalog hint so the warning
+            // can tell the operator which var to restore.
+            apiKeyEnvVar: null,
+            primaryEnvVar: 'ANTHROPIC_API_KEY',
             apiKeyPresent: false,
             alreadyConfigured: true,
             isLocal: false,

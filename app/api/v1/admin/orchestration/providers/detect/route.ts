@@ -36,6 +36,15 @@ interface KnownProviderDetection {
   defaultBaseUrl: string | null;
   /** Env-var name found in `process.env` (the *name*, never the value). */
   apiKeyEnvVar: string | null;
+  /**
+   * First env-var candidate from the provider's `apiKeyEnvVars` list,
+   * regardless of whether it's actually set. Lets the no-keys warning
+   * tell the operator *which* env var to add — `apiKeyEnvVar` is null
+   * in that case because nothing is detected, so it can't carry the
+   * hint. `null` only for local providers (Ollama) that don't take a
+   * key at all.
+   */
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   /** True if a provider row with this `providerType` already exists. */
   alreadyConfigured: boolean;
@@ -62,12 +71,14 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   const detected: KnownProviderDetection[] = KNOWN_PROVIDERS.map((p) => {
     const apiKeyEnvVar = p.isLocal ? null : detectApiKeyEnvVar(p);
+    const primaryEnvVar = p.isLocal ? null : (p.apiKeyEnvVars[0] ?? null);
     return {
       slug: p.slug,
       name: p.name,
       providerType: p.providerType,
       defaultBaseUrl: p.defaultBaseUrl,
       apiKeyEnvVar,
+      primaryEnvVar,
       apiKeyPresent: apiKeyEnvVar !== null,
       alreadyConfigured: existingSlugs.has(p.slug),
       isLocal: p.isLocal,
