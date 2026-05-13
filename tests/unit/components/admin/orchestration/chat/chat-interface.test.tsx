@@ -641,6 +641,74 @@ describe('ChatInterface', () => {
     expect(onCleared).toHaveBeenCalledOnce();
   });
 
+  // ─── Download transcript tests ─────────────────────────────────────────────
+
+  it('shows download button when showDownloadButton is true and messages exist', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello!'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" showDownloadButton />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /download transcript/i })).toBeInTheDocument();
+  });
+
+  it('does not show download button when no messages have been sent', () => {
+    render(<ChatInterface agentSlug="test-agent" showDownloadButton />);
+    expect(screen.queryByRole('button', { name: /download transcript/i })).not.toBeInTheDocument();
+  });
+
+  it('triggers a markdown blob download when the download button is clicked', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello!'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    render(
+      <ChatInterface agentSlug="test-agent" showDownloadButton downloadFilename="my-transcript" />
+    );
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /download transcript/i }));
+
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob;
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('text/markdown;charset=utf-8');
+    expect(clickSpy).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+
+    clickSpy.mockRestore();
+  });
+
   // ─── Thinking indicator tests ──────────────────────────────────────────────
 
   it('shows ThinkingIndicator in empty assistant bubble during streaming', async () => {

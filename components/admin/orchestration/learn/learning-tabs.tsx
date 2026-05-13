@@ -174,6 +174,9 @@ export function LearningTabs({
             // pivot between Patterns/Advisor/Quiz mid-conversation.
             // 24 h TTL is enforced inside ChatInterface.
             persistenceKey="learn:advisor"
+            showDownloadButton
+            showClearButton
+            downloadFilename="pattern-advisor-chat"
             className="h-[600px]"
           />
 
@@ -220,6 +223,9 @@ export function LearningTabs({
             onStreamComplete={handleQuizStreamComplete}
             showInlineTrace
             persistenceKey="learn:quiz"
+            showDownloadButton
+            showClearButton
+            downloadFilename="quiz-master-chat"
             className="h-[600px]"
           />
         </div>

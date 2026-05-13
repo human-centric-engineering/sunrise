@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, Send, Trash2 } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, Send, Trash2 } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -145,6 +145,19 @@ export interface ChatInterfaceProps {
   /** Fires after conversation is cleared. */
   onConversationCleared?: () => void;
   /**
+   * Show a "download transcript" button that serializes the current
+   * messages to a Markdown file. Default: false. Useful on long-running
+   * surfaces (Learn advisor/quiz) where the operator may want to keep a
+   * copy of the conversation. Citations and tool-call traces are
+   * included; attachment binaries are not.
+   */
+  showDownloadButton?: boolean;
+  /**
+   * Filename stem used for the downloaded transcript (no extension).
+   * Defaults to the `agentSlug` so each surface gets a distinct name.
+   */
+  downloadFilename?: string;
+  /**
    * When set, the conversation is persisted to `localStorage` under
    * this key after each turn settles and rehydrated on mount. Useful
    * for chat surfaces (e.g. the agent Test tab) where navigating
@@ -209,6 +222,60 @@ function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMess
   return updated;
 }
 
+/**
+ * Serialize the chat messages to a Markdown transcript. Includes
+ * citations and tool-call traces (where present) so downloaded
+ * transcripts retain the same diagnostic detail the operator saw on
+ * screen. Attachment binaries are not embedded — only a count chip.
+ */
+function serializeTranscript(
+  messages: ChatMessage[],
+  meta: { agentSlug: string; conversationId: string | null }
+): string {
+  const lines: string[] = [];
+  lines.push(`# Chat transcript — ${meta.agentSlug}`);
+  lines.push('');
+  lines.push(`- Exported: ${new Date().toISOString()}`);
+  if (meta.conversationId) lines.push(`- Conversation ID: ${meta.conversationId}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const msg of messages) {
+    const speaker = msg.role === 'user' ? 'User' : 'Assistant';
+    lines.push(`## ${speaker}`);
+    lines.push('');
+    if (msg.content) {
+      lines.push(msg.content);
+      lines.push('');
+    }
+    if (msg.attachmentCount && msg.attachmentCount > 0) {
+      lines.push(`_📎 ${msg.attachmentCount} attachment(s)_`);
+      lines.push('');
+    }
+    if (msg.citations && msg.citations.length > 0) {
+      lines.push('**Sources:**');
+      for (const c of msg.citations) {
+        const name = c.documentName ?? c.documentId;
+        const section = c.section ? ` — ${c.section}` : '';
+        lines.push(`- [${c.marker}] ${name}${section}`);
+      }
+      lines.push('');
+    }
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      lines.push('**Tool calls:**');
+      for (const t of msg.toolCalls) {
+        const status = t.success === false ? 'failed' : 'ok';
+        const ms = typeof t.latencyMs === 'number' ? ` (${t.latencyMs}ms)` : '';
+        lines.push(`- \`${t.slug}\` — ${status}${ms}`);
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function ChatInterface({
@@ -229,6 +296,8 @@ export function ChatInterface({
   typingAnimationOptions = { chunkSize: 2 },
   showClearButton = false,
   onConversationCleared,
+  showDownloadButton = false,
+  downloadFilename,
   persistenceKey,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -697,6 +766,22 @@ export function ChatInterface({
     onConversationCleared?.();
   }, [conversationId, typing, onConversationCleared]);
 
+  const handleDownload = useCallback(() => {
+    if (typeof window === 'undefined' || messages.length === 0) return;
+    const transcript = serializeTranscript(messages, { agentSlug, conversationId });
+    const blob = new Blob([transcript], { type: 'text/markdown;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const stem = downloadFilename ?? agentSlug;
+    const date = new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${stem}-${date}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }, [messages, agentSlug, conversationId, downloadFilename]);
+
   const handleSend = useCallback(
     (e?: { preventDefault?: () => void; stopPropagation?: () => void }) => {
       e?.preventDefault?.();
@@ -714,32 +799,47 @@ export function ChatInterface({
     <div className={cn('flex flex-col', embedded ? 'h-full' : 'h-[500px]', className)}>
       {/* Messages area */}
       <div className="relative flex-1 space-y-3 overflow-y-auto p-3">
-        {/* Clear button */}
-        {showClearButton && messages.length > 0 && !streaming && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
+        {/* Top-right action cluster — download and clear share a row. */}
+        {messages.length > 0 && !streaming && (showDownloadButton || showClearButton) && (
+          <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+            {showDownloadButton && (
               <Button
                 size="icon"
                 variant="ghost"
-                className="absolute top-2 right-2 z-10 h-7 w-7"
-                aria-label="Clear conversation"
+                className="h-7 w-7"
+                aria-label="Download transcript"
+                onClick={handleDownload}
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Download className="h-3.5 w-3.5" />
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will remove all messages. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+            )}
+            {showClearButton && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    aria-label="Clear conversation"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will remove all messages. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
         )}
 
         {showStarters && (
