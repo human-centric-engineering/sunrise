@@ -669,11 +669,7 @@ function BulkDeleteUnusedButton({
 
   const unused = tags.filter((t) => t.documentCount === 0 && t.agentCount === 0);
   if (unused.length === 0) {
-    return (
-      <span className="text-muted-foreground text-xs">
-        All tags are in use — nothing to bulk-clean.
-      </span>
-    );
+    return <span className="text-muted-foreground text-xs">All tags are in use.</span>;
   }
 
   async function run(): Promise<void> {
