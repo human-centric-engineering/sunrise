@@ -956,21 +956,33 @@ interface RawTagRow {
 }
 
 function mapTagRows(rows: RawTagRow[]): { app: MetaTagEntry[]; system: MetaTagEntry[] } {
-  const app: MetaTagEntry[] = [];
-  const system: MetaTagEntry[] = [];
+  // Merge by trimmed value within each scope: SQL trimming should already
+  // produce unique values, but a defensive merge here also collapses any
+  // stragglers (e.g. case-only variants from a future query change) so the
+  // UI never sees duplicate keys.
+  const appByValue = new Map<string, MetaTagEntry>();
+  const systemByValue = new Map<string, MetaTagEntry>();
   for (const r of rows) {
-    const entry = {
-      value: r.value.trim(),
-      chunkCount: Number(r.chunk_count),
-      documentCount: Number(r.doc_count),
-    };
-    if (r.scope === 'system') {
-      system.push(entry);
+    const value = r.value.trim();
+    if (!value) continue;
+    const bucket = r.scope === 'system' ? systemByValue : appByValue;
+    const existing = bucket.get(value);
+    if (existing) {
+      existing.chunkCount += Number(r.chunk_count);
+      existing.documentCount += Number(r.doc_count);
     } else {
-      app.push(entry);
+      bucket.set(value, {
+        value,
+        chunkCount: Number(r.chunk_count),
+        documentCount: Number(r.doc_count),
+      });
     }
   }
-  return { app, system };
+  const sortByChunk = (a: MetaTagEntry, b: MetaTagEntry) => b.chunkCount - a.chunkCount;
+  return {
+    app: Array.from(appByValue.values()).sort(sortByChunk),
+    system: Array.from(systemByValue.values()).sort(sortByChunk),
+  };
 }
 
 /**
@@ -980,24 +992,24 @@ function mapTagRows(rows: RawTagRow[]): { app: MetaTagEntry[]; system: MetaTagEn
 export async function listMetaTags(): Promise<MetaTagSummary> {
   const [categoryRows, keywordRows] = await Promise.all([
     prisma.$queryRaw<RawTagRow[]>`
-      SELECT d.scope, c.category AS value,
+      SELECT d.scope, TRIM(c.category) AS value,
              COUNT(*)::bigint AS chunk_count,
              COUNT(DISTINCT c."documentId")::bigint AS doc_count
       FROM ai_knowledge_chunk c
       JOIN ai_knowledge_document d ON d.id = c."documentId"
-      WHERE c.category IS NOT NULL AND c.category <> ''
-      GROUP BY d.scope, c.category
+      WHERE c.category IS NOT NULL AND TRIM(c.category) <> ''
+      GROUP BY d.scope, TRIM(c.category)
       ORDER BY chunk_count DESC
     `,
     prisma.$queryRaw<RawTagRow[]>`
-      SELECT d.scope, kw AS value,
+      SELECT d.scope, TRIM(kw) AS value,
              COUNT(*)::bigint AS chunk_count,
              COUNT(DISTINCT c."documentId")::bigint AS doc_count
       FROM ai_knowledge_chunk c
       JOIN ai_knowledge_document d ON d.id = c."documentId",
            LATERAL unnest(string_to_array(c.keywords, ',')) AS kw
-      WHERE c.keywords IS NOT NULL AND c.keywords <> ''
-      GROUP BY d.scope, kw
+      WHERE c.keywords IS NOT NULL AND TRIM(kw) <> ''
+      GROUP BY d.scope, TRIM(kw)
       ORDER BY chunk_count DESC
     `,
   ]);
