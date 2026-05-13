@@ -170,6 +170,10 @@ export function LearningTabs({
             // so the advisor's knowledge-base lookups and capability use
             // are visible to the operator.
             showInlineTrace
+            // Survive tab switches and reloads — operators routinely
+            // pivot between Patterns/Advisor/Quiz mid-conversation.
+            // 24 h TTL is enforced inside ChatInterface.
+            persistenceKey="learn:advisor"
             className="h-[600px]"
           />
 
@@ -215,6 +219,7 @@ export function LearningTabs({
             starterPrompts={QUIZ_PROMPTS}
             onStreamComplete={handleQuizStreamComplete}
             showInlineTrace
+            persistenceKey="learn:quiz"
             className="h-[600px]"
           />
         </div>
