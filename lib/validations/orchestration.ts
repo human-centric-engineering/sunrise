@@ -1727,6 +1727,15 @@ export const chatStreamRequestSchema = z.object({
 
   /** File attachments (images, documents) — max 10 per message, ~25 MB combined. */
   attachments: chatAttachmentsArraySchema.optional(),
+
+  /**
+   * Admin-only: when true, the streaming handler attaches a `trace` field
+   * to each `capability_result` event (validated args, latency, success)
+   * and persists a `toolCalls[]` array on the assistant message metadata.
+   * Defaults to false — consumer routes never set this, so internal
+   * arguments and scores cannot leak through public surfaces.
+   */
+  includeTrace: z.boolean().optional(),
 });
 
 /**
@@ -2676,6 +2685,25 @@ export const pendingApprovalSchema = z.object({
   rejectToken: z.string().min(1).max(2048),
 });
 
+/**
+ * Per-capability dispatch diagnostic, persisted on an assistant message
+ * as `MessageMetadata.toolCalls[]` when the chat request opts in via
+ * `includeTrace: true`. Mirrors the `ToolCallTrace` TypeScript type in
+ * `types/orchestration.ts`. Bounds (`slug` length, `errorCode` length,
+ * `resultPreview` length) are deliberately tight so the persisted JSON
+ * column stays well below the configured row-size budget even after a
+ * many-tool turn.
+ */
+export const toolCallTraceSchema = z.object({
+  slug: z.string().min(1).max(120),
+  arguments: z.unknown(),
+  latencyMs: z.number().nonnegative(),
+  costUsd: z.number().nonnegative().optional(),
+  success: z.boolean(),
+  errorCode: z.string().min(1).max(120).optional(),
+  resultPreview: z.string().max(2000).optional(),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2688,6 +2716,8 @@ export const messageMetadataSchema = z.object({
   costUsd: z.number().optional(),
   citations: z.array(citationSchema).optional(),
   pendingApproval: pendingApprovalSchema.optional(),
+  /** Per-tool dispatch diagnostics — admin-only, gated by `includeTrace`. */
+  toolCalls: z.array(toolCallTraceSchema).max(64).optional(),
 });
 
 // ============================================================================

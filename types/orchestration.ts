@@ -537,10 +537,23 @@ export type ChatEvent =
   | { type: 'start'; conversationId: string; messageId: string }
   | { type: 'content'; delta: string }
   | { type: 'status'; message: string }
-  | { type: 'capability_result'; capabilitySlug: string; result: unknown }
+  | {
+      type: 'capability_result';
+      capabilitySlug: string;
+      result: unknown;
+      /**
+       * Admin-only diagnostic payload — populated when the chat request
+       * sets `includeTrace: true`. Carries the validated arguments, the
+       * dispatch latency, success state and any error code so internal
+       * surfaces (learning lab, agent test tab, evaluation runner) can
+       * render an inline `<MessageTrace>` strip under the assistant turn.
+       * Omitted for consumer surfaces so tool arguments never leak.
+       */
+      trace?: ToolCallTrace;
+    }
   | {
       type: 'capability_results';
-      results: Array<{ capabilitySlug: string; result: unknown }>;
+      results: Array<{ capabilitySlug: string; result: unknown; trace?: ToolCallTrace }>;
     }
   | { type: 'warning'; code: string; message: string }
   | { type: 'content_reset'; reason: string }
@@ -548,6 +561,34 @@ export type ChatEvent =
   | { type: 'approval_required'; pendingApproval: PendingApproval }
   | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * Inline diagnostic captured per capability dispatch for admin chat
+ * surfaces. Mirrors what the dispatcher already records internally
+ * (args, latency, success) plus the resolved USD cost figure when the
+ * underlying `logCost` calculation is reusable.
+ *
+ * Persisted on the assistant message as `MessageMetadata.toolCalls` so
+ * the post-hoc conversation trace viewer can render the same component
+ * without recomputing from tool-role messages.
+ */
+export interface ToolCallTrace {
+  /** Capability slug, e.g. `search_knowledge_base`. */
+  slug: string;
+  /** Validated arguments the LLM passed to the capability. */
+  arguments: unknown;
+  /** Wall-clock dispatch duration. */
+  latencyMs: number;
+  /** USD cost attributed to this call when known; omitted otherwise. */
+  costUsd?: number;
+  success: boolean;
+  errorCode?: string;
+  /**
+   * Truncated stringified result for inline preview — kept compact so
+   * persisted JSON metadata stays well under Prisma's column budget.
+   */
+  resultPreview?: string;
+}
 
 /**
  * Carried on `approval_required` ChatEvent and persisted on
@@ -622,6 +663,14 @@ export interface MessageMetadata {
    * the underlying execution row reaches a terminal state.
    */
   pendingApproval?: PendingApproval;
+  /**
+   * Per-tool dispatch diagnostics aggregated across the assistant
+   * turn. Populated only when the chat request opts in via
+   * `includeTrace: true` (admin internal surfaces). Drives the inline
+   * `<MessageTrace>` strip both live (during streaming) and post-hoc
+   * (in the conversation trace viewer).
+   */
+  toolCalls?: ToolCallTrace[];
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
