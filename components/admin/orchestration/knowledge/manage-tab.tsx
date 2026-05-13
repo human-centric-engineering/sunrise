@@ -650,9 +650,43 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                       </span>
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
-                      <Tip label="Distinct BM25 keywords currently indexed across this document's chunks. Click the count to inspect and enrich.">
-                        <span>BM25 keywords</span>
-                      </Tip>
+                      <span className="inline-flex items-center justify-end gap-1">
+                        <Tip label="Distinct BM25 keywords currently indexed across this document's chunks. Click the count to inspect and enrich.">
+                          <span>BM25 keywords</span>
+                        </Tip>
+                        <FieldHelp
+                          title="What is BM25?"
+                          ariaLabel="About BM25 keyword ranking"
+                          contentClassName="w-96 max-h-96 overflow-y-auto"
+                        >
+                          <p>
+                            <strong>BM25</strong> (&ldquo;Best Matching 25&rdquo;) is a classic
+                            keyword-ranking algorithm — the same family that traditional search
+                            engines like Lucene and Elasticsearch use. It scores how well a chunk
+                            matches a query based on three signals: which query terms appear in the
+                            chunk, how often they appear, and how rare those terms are across the
+                            whole knowledge base (rarer terms count for more).
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">How it fits in here</p>
+                          <p>
+                            Sunrise uses <strong>hybrid search</strong>: a vector-similarity score
+                            (semantic meaning) blended with a BM25 score (lexical match). BM25 is
+                            good at exact-term recall — product codes, error IDs, acronyms — where
+                            the vector model might miss because the words don&apos;t carry semantic
+                            weight on their own.
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">What this column shows</p>
+                          <p>
+                            The count of <em>distinct</em> keyword phrases stored in{' '}
+                            <code>chunk.keywords</code> across this document. Postgres feeds those
+                            phrases (plus the chunk content) into a generated <code>tsvector</code>{' '}
+                            column that the BM25 path reads. <strong>0</strong> is fine — BM25 still
+                            indexes the raw content; keywords are a precision boost, not a
+                            requirement. Click the count (or &ldquo;Enrich&rdquo;) to inspect or
+                            regenerate them.
+                          </p>
+                        </FieldHelp>
+                      </span>
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
                       <Tip label="Percentage of the parsed source text that was captured in stored chunks. Click the document to see details.">
