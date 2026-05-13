@@ -83,7 +83,6 @@ const agentFormSchema = z.object({
   enableImageInput: z.boolean(),
   enableDocumentInput: z.boolean(),
   fallbackProviders: z.array(z.string()),
-  knowledgeCategories: z.string().optional(),
   knowledgeAccessMode: z.enum(['full', 'restricted']),
   knowledgeTagIds: z.array(z.string()),
   knowledgeDocumentIds: z.array(z.string()),
@@ -180,7 +179,6 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       enableImageInput: agent?.enableImageInput ?? false,
       enableDocumentInput: agent?.enableDocumentInput ?? false,
       fallbackProviders: (agent?.fallbackProviders as string[]) ?? [],
-      knowledgeCategories: agent?.knowledgeCategories?.join(', ') ?? '',
       knowledgeAccessMode:
         (agent?.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
       knowledgeTagIds: agent?.grantedTagIds ?? [],
@@ -275,12 +273,6 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
     const { knowledgeTagIds, knowledgeDocumentIds, ...rest } = data;
     const payload = {
       ...rest,
-      knowledgeCategories: rest.knowledgeCategories
-        ? rest.knowledgeCategories
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [],
       topicBoundaries: rest.topicBoundaries
         ? rest.topicBoundaries
             .split(',')
@@ -1279,7 +1271,6 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                       visibility: (fresh.visibility as AgentFormData['visibility']) ?? 'internal',
                       rateLimitRpm: fresh.rateLimitRpm ?? null,
                       fallbackProviders: fresh.fallbackProviders ?? [],
-                      knowledgeCategories: fresh.knowledgeCategories?.join(', ') ?? '',
                       knowledgeAccessMode:
                         (fresh.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
                       knowledgeTagIds: fresh.grantedTagIds ?? [],

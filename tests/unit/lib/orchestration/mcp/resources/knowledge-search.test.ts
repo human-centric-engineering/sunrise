@@ -17,7 +17,6 @@ function makeSearchResult(
     chunkType: string;
     patternNumber: number | null;
     patternName: string | null;
-    category: string | null;
     similarity: number;
   }> = {}
 ) {
@@ -39,7 +38,6 @@ function makeSearchResult(
       chunkType: 'overview',
       patternNumber: 1,
       patternName: 'Pattern One',
-      category: 'orchestration',
       ...overrides,
     },
     similarity: overrides.similarity ?? 0.95,
@@ -106,7 +104,6 @@ describe('handleKnowledgeSearch', () => {
       chunkType: 'overview',
       patternNumber: 1,
       patternName: 'Pattern One',
-      category: 'orchestration',
       similarity: 0.95,
     });
   });
@@ -154,7 +151,7 @@ describe('handleKnowledgeSearch', () => {
 
   it('handles null patternNumber and patternName in results', async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([
-      makeSearchResult({ patternNumber: null, patternName: null, category: null }),
+      makeSearchResult({ patternNumber: null, patternName: null }),
     ]);
 
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
@@ -165,7 +162,6 @@ describe('handleKnowledgeSearch', () => {
     const body = JSON.parse(result.text);
     expect(body.results[0].patternNumber).toBeNull();
     expect(body.results[0].patternName).toBeNull();
-    expect(body.results[0].category).toBeNull();
   });
 
   it('ignores the config parameter', async () => {

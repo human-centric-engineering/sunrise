@@ -139,7 +139,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
       expect(body.data.document.chunkCount).toBe(12);
     });
 
-    it('passes correctedContent and category to confirmPreview', async () => {
+    it('passes correctedContent to confirmPreview', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(confirmPreview).mockResolvedValue(makeConfirmedDoc() as never);
 
@@ -147,7 +147,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
         makeRequest(DOC_ID, {
           documentId: DOC_ID,
           correctedContent: 'Fixed text',
-          category: 'sales',
         }),
         makeParams(DOC_ID)
       );
@@ -155,8 +154,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
       expect(vi.mocked(confirmPreview)).toHaveBeenCalledWith(
         DOC_ID,
         expect.any(String),
-        'Fixed text',
-        'sales'
+        'Fixed text'
       );
     });
   });

@@ -910,12 +910,6 @@ describe('API Endpoints', () => {
       );
     });
 
-    it('KNOWLEDGE_META_TAGS equals expected path', () => {
-      expect(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS).toBe(
-        '/api/v1/admin/orchestration/knowledge/meta-tags'
-      );
-    });
-
     it('WEBHOOKS equals expected path', () => {
       expect(API.ADMIN.ORCHESTRATION.WEBHOOKS).toBe('/api/v1/admin/orchestration/webhooks');
     });

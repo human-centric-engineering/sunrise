@@ -1020,7 +1020,6 @@ export interface GraphData {
 export interface PatternSummary {
   patternNumber: number;
   patternName: string;
-  category: string | null;
   description: string | null;
   chunkCount: number;
 }

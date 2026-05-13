@@ -29,7 +29,6 @@ function makeChunk(overrides: Partial<AiKnowledgeChunk> = {}): AiKnowledgeChunk 
     chunkType: 'pattern_section',
     patternNumber: 1,
     patternName: 'Test Pattern',
-    category: null,
     section: 'how_it_works',
     keywords: null,
     estimatedTokens: 100,

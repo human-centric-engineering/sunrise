@@ -54,7 +54,6 @@ function makeChunk(overrides: Record<string, unknown> = {}) {
     chunkType: 'pattern',
     patternNumber: 1,
     patternName: 'Chain of Thought',
-    category: 'reasoning',
     section: 'overview',
     keywords: 'chain thought reasoning',
     estimatedTokens: 100,
@@ -149,20 +148,6 @@ describe('searchKnowledge', () => {
     expect(params[3]).toBe(7);
   });
 
-  it('should add category filter when provided', async () => {
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
-
-    await searchKnowledge('test', { category: 'reasoning' });
-
-    const [sql, ...params] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0] as [
-      string,
-      ...unknown[],
-    ];
-
-    expect(sql).toContain('category = $4');
-    expect(params[3]).toBe('reasoning');
-  });
-
   it('should add section filter when provided', async () => {
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
 
@@ -191,23 +176,21 @@ describe('searchKnowledge', () => {
     expect(params[3]).toBe('doc-42');
   });
 
-  it('should place keyword param at $9 when all 5 filters are provided', async () => {
+  it('should place keyword param at $8 when all 4 filters are provided', async () => {
     // Param layout:
     //   $1 = embeddingStr
     //   $2 = threshold
     //   $3 = limit
     //   $4 = chunkType
     //   $5 = patternNumber
-    //   $6 = category
-    //   $7 = section
-    //   $8 = documentId
-    //   $9 = keyword query
+    //   $6 = section
+    //   $7 = documentId
+    //   $8 = keyword query
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
 
     await searchKnowledge('test query', {
       chunkType: 'pattern',
       patternNumber: 1,
-      category: 'reasoning',
       section: 'overview',
       documentId: 'doc-1',
     });
@@ -217,16 +200,16 @@ describe('searchKnowledge', () => {
       ...unknown[],
     ];
 
-    // SQL should reference $9 for the keyword placeholder
-    expect(sql).toContain('$9');
+    // SQL should reference $8 for the keyword placeholder
+    expect(sql).toContain('$8');
 
-    // 11 params total: embeddingStr + threshold + limit + 5 filters + keyword + 2 boost weights
-    expect(params).toHaveLength(11);
+    // 10 params total: embeddingStr + threshold + limit + 4 filters + keyword + 2 boost weights
+    expect(params).toHaveLength(10);
 
-    // Keyword query at position 8, followed by boost weights
-    expect(params[8]).toBe('test query');
-    expect(typeof params[9]).toBe('number'); // kwBoostStrong
-    expect(typeof params[10]).toBe('number'); // kwBoost
+    // Keyword query at position 7, followed by boost weights
+    expect(params[7]).toBe('test query');
+    expect(typeof params[8]).toBe('number'); // kwBoostStrong
+    expect(typeof params[9]).toBe('number'); // kwBoost
   });
 
   it('should call embedText with the search query', async () => {
@@ -519,7 +502,6 @@ describe('listPatterns', () => {
       {
         patternNumber: 1,
         patternName: 'Chain of Thought',
-        category: 'Reasoning',
         _count: { id: 5 },
       },
     ] as never);
@@ -539,7 +521,6 @@ describe('listPatterns', () => {
     expect(result[0]).toEqual({
       patternNumber: 1,
       patternName: 'Chain of Thought',
-      category: 'Reasoning',
       description: 'A step-by-step reasoning pattern.',
       chunkCount: 5,
     });
@@ -547,8 +528,8 @@ describe('listPatterns', () => {
 
   it('should skip groups where patternNumber is null', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: null, patternName: null, category: null, _count: { id: 2 } },
-      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
+      { patternNumber: null, patternName: null, _count: { id: 2 } },
+      { patternNumber: 1, patternName: 'CoT', _count: { id: 3 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
@@ -560,7 +541,7 @@ describe('listPatterns', () => {
 
   it('should fallback patternName to "Pattern N" when group name is null', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 7, patternName: null, category: null, _count: { id: 1 } },
+      { patternNumber: 7, patternName: null, _count: { id: 1 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
@@ -571,7 +552,7 @@ describe('listPatterns', () => {
 
   it('should return null description when no overview chunk exists', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 2 } },
+      { patternNumber: 1, patternName: 'CoT', _count: { id: 2 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([] as never);
 
@@ -583,7 +564,7 @@ describe('listPatterns', () => {
   it('should return full first paragraph from TL;DR content (no truncation)', async () => {
     const longContent = 'A'.repeat(400);
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
+      { patternNumber: 1, patternName: 'CoT', _count: { id: 1 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany)
       .mockResolvedValueOnce([{ patternNumber: 1, content: longContent, metadata: null }] as never) // overviews
@@ -598,7 +579,7 @@ describe('listPatterns', () => {
   it('should return full first paragraph when falling back to overview', async () => {
     const longContent = 'A'.repeat(300);
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 1 } },
+      { patternNumber: 1, patternName: 'CoT', _count: { id: 1 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany)
       .mockResolvedValueOnce([{ patternNumber: 1, content: longContent, metadata: null }] as never) // overviews
@@ -612,8 +593,8 @@ describe('listPatterns', () => {
 
   it('should batch-fetch overviews and tldrs for multiple groups', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'CoT', category: 'Reasoning', _count: { id: 3 } },
-      { patternNumber: 2, patternName: 'ReAct', category: 'Action', _count: { id: 4 } },
+      { patternNumber: 1, patternName: 'CoT', _count: { id: 3 } },
+      { patternNumber: 2, patternName: 'ReAct', _count: { id: 4 } },
     ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findMany)
       .mockResolvedValueOnce([

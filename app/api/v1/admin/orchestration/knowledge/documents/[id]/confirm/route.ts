@@ -43,7 +43,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
-  const document = await confirmPreview(id, session.user.id, body.correctedContent, body.category);
+  const document = await confirmPreview(id, session.user.id, body.correctedContent);
 
   log.info('Document preview confirmed', {
     documentId: document.id,

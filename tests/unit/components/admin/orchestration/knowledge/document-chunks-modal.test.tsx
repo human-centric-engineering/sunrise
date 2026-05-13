@@ -24,7 +24,6 @@ const mockChunks = [
     patternNumber: 1,
     patternName: 'Chain of Thought',
     section: 'Overview',
-    category: 'patterns',
     keywords: 'reasoning,logic',
     estimatedTokens: 50,
   },
@@ -35,7 +34,6 @@ const mockChunks = [
     patternNumber: 1,
     patternName: 'Chain of Thought',
     section: 'Implementation',
-    category: 'patterns',
     keywords: null,
     estimatedTokens: 120,
   },
@@ -100,7 +98,6 @@ describe('DocumentChunksModal', () => {
     await waitFor(() => {
       expect(screen.getByText('pattern overview')).toBeInTheDocument();
       expect(screen.getByText('pattern section')).toBeInTheDocument();
-      expect(screen.getAllByText('patterns')).toHaveLength(2);
     });
   });
 

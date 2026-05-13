@@ -2,17 +2,25 @@
 
 Document ingestion, chunking, embeddings, and vector search for the agent knowledge base. Implemented in `lib/orchestration/knowledge/` — platform-agnostic (no `next/*` imports).
 
-**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/:id/enrich-keywords`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/tags`, `/meta-tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
+**HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/:id/enrich-keywords`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
 
-## Tags, Indexed Keywords, and Categories
+## Tags and Indexed Keywords
 
-Three concepts that look similar but do different things. The current model:
+Two concepts that look similar but do different things. The current model:
 
-| Concept              | Schema                                                                                     | Purpose                                                                                                                                     | Operator-editable?                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| **Tags**             | `KnowledgeTag` + `AiKnowledgeDocumentTag` + `AiAgentKnowledgeTag` join tables              | Access control. A `RESTRICTED` agent searches docs carrying any of its granted tags.                                                        | Yes — Knowledge → Tags, upload zone, doc tags modal, agent form                         |
-| **Indexed Keywords** | `AiKnowledgeChunk.keywords` (comma-separated string per chunk)                             | BM25 ranking hints. Affects _how_ a chunk ranks for a query; never affects _who_ can see it.                                                | Indirectly — via metadata comments in markdown, or via the Enrich Keywords admin action |
-| **Categories**       | `AiKnowledgeDocument.category`, `AiKnowledgeChunk.category`, `AiAgent.knowledgeCategories` | **Deprecated.** Legacy access-control mechanism. No UI surfaces them; resolver ignores them. Pending drop in the Phase 6 cleanup migration. | No                                                                                      |
+| Concept              | Schema                                                                        | Purpose                                                                                      | Operator-editable?                                                                      |
+| -------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **Tags**             | `KnowledgeTag` + `AiKnowledgeDocumentTag` + `AiAgentKnowledgeTag` join tables | Access control. A `RESTRICTED` agent searches docs carrying any of its granted tags.         | Yes — Knowledge → Tags, upload zone, doc tags modal, agent form                         |
+| **Indexed Keywords** | `AiKnowledgeChunk.keywords` (comma-separated string per chunk)                | BM25 ranking hints. Affects _how_ a chunk ranks for a query; never affects _who_ can see it. | Indirectly — via metadata comments in markdown, or via the Enrich Keywords admin action |
+
+> **History.** A third "Categories" concept (`AiKnowledgeDocument.category`,
+> `AiKnowledgeChunk.category`, `AiAgent.knowledgeCategories`) used to be the
+> primary access-scoping mechanism. It was superseded by Tags in Phase 1
+> (knowledge-access-control feature) and dropped entirely in Phase 6 —
+> columns, validation schemas, search filters, the `/meta-tags` aggregator,
+> and the backfill script all gone. The backup-bundle schema still accepts
+> the field on the wire (older v1 bundles still ship it) but it's ignored
+> on the write side.
 
 ### Tags
 
@@ -42,36 +50,18 @@ Two sources today:
 
 The Manage tab's _Indexed keywords_ panel is a read-only diagnostic. It aggregates distinct keyword values across chunks so operators can spot duplicates / typos that hurt ranking.
 
-### Categories (deprecated)
-
-The `category` columns on `AiKnowledgeDocument` and `AiKnowledgeChunk`, plus the `knowledgeCategories: String[]` field on `AiAgent`, were the original access-scoping mechanism. They've been superseded by Tags. The resolver ignores them. No UI surface reads or writes them today, with two narrow exceptions:
-
-- The seeder still writes `chunk.category` from the bundled `chunks.json` metadata (cargo data; no consumer).
-- The `/knowledge/meta-tags` aggregator still returns category counts (unread by any UI).
-
-**Phase 6 cleanup** will drop:
-
-- `AiAgent.knowledgeCategories` column
-- `AiKnowledgeDocument.category` column
-- `AiKnowledgeChunk.category` column
-- The `categories[]` / `category` filters on `SearchFilters` in `search.ts`
-- The legacy `category` form field on `/documents` and `/documents/bulk` upload routes
-- The category half of `listMetaTags()`'s response
-
-Until that ships, code that touches these columns should treat them as write-only / inert.
-
 ## Module Layout
 
-| File                  | Exports                                                                                                                                                 | Purpose                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `listMetaTags` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                                                           |
-| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                                                          |
-| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                                                        |
-| `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?) → Promise<Chunk[]>`, `chunkCsvDocument`, `parseMetadataComments`                                     | Markdown / DOCX / EPUB / confirmed-PDF → chunks. **Async** because generic sections route through the semantic chunker (see below) |
-| `semantic-chunker.ts` | `chunkBySemanticBreakpoints(text, options?)`, `splitSentences(text)`                                                                                    | Embedding-similarity splitter for generic prose. Called by `chunker.ts` when a section has no explicit headings                    |
-| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                               | Generates embeddings for text and chunk batches                                                                                    |
-| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                                                   |
-| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md))                                  |
+| File                  | Exports                                                                                                                                 | Purpose                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list                                                           |
+| `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                   | Vector + keyword search; single-pattern lookup; pattern list for explorer                                                          |
+| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                             | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                                                        |
+| `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?) → Promise<Chunk[]>`, `chunkCsvDocument`, `parseMetadataComments`                     | Markdown / DOCX / EPUB / confirmed-PDF → chunks. **Async** because generic sections route through the semantic chunker (see below) |
+| `semantic-chunker.ts` | `chunkBySemanticBreakpoints(text, options?)`, `splitSentences(text)`                                                                    | Embedding-similarity splitter for generic prose. Called by `chunker.ts` when a section has no explicit headings                    |
+| `embedder.ts`         | `embedText`, `embedBatch`                                                                                                               | Generates embeddings for text and chunk batches                                                                                    |
+| `url-fetcher.ts`      | `fetchDocumentFromUrl`                                                                                                                  | Fetches documents from URLs with SSRF protection and size limits                                                                   |
+| `parsers/`            | `parseDocument`, `requiresPreview`                                                                                                      | Multi-format parsing: TXT, EPUB, DOCX, PDF (see [document-ingestion.md](./document-ingestion.md))                                  |
 
 ## Quick Start
 
@@ -81,7 +71,6 @@ import {
   uploadDocumentFromBuffer,
   previewDocument,
   confirmPreview,
-  listMetaTags,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { searchKnowledge, getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
@@ -89,9 +78,8 @@ import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 // Upload text content (admin flow — content is a string)
 const doc = await uploadDocument(markdownContent, 'react-patterns.md', userId);
 
-// `category` is the deprecated legacy column — leave it `undefined` on new code.
-// To scope agent access, apply tags via the upload zone or the doc tags modal
-// and grant them on the agent form. See "Tags, Indexed Keywords, and Categories"
+// To scope agent access, apply tags via the upload zone or the doc tags
+// modal and grant them on the agent form. See "Tags and Indexed Keywords"
 // above.
 
 // Upload binary (EPUB/DOCX) — parsed then chunked automatically
@@ -101,11 +89,6 @@ const doc3 = await uploadDocumentFromBuffer(epubBuffer, 'book.epub', userId);
 const preview = await previewDocument(pdfBuffer, 'report.pdf', userId);
 // Admin reviews preview.extractedText, optionally corrects it, then:
 const confirmed = await confirmPreview(preview.document.id, userId, correctedText);
-
-// Indexed-keyword diagnostic (currently still returns legacy category data too;
-// only the keywords half is surfaced in the UI as the Indexed keywords panel).
-const tags = await listMetaTags();
-// → { app: { categories: [...], keywords: [...] }, system: { categories: [...], keywords: [...] } }
 
 // Vector search
 const results = await searchKnowledge(
@@ -157,17 +140,10 @@ The upload route (`POST /knowledge/documents`) supports multiple formats with fo
 
 - `name` — overrides the filename-derived display name. Stored as `AiKnowledgeDocument.name`.
 - `tagIds[]` — repeated form field; each id is applied to the new document via the `AiKnowledgeDocumentTag` join table. The upload zone's tag picker supports inline-create when an operator types a non-matching name.
-- `category` — **deprecated.** Still accepted by the route for backwards compatibility and written to the `chunk.category` column. No UI sends it and no resolver reads it. Phase 6 removes the field and the column.
-
-The (defunct) **category resolution** order, if anything still passes `category`:
-
-1. Explicit `category` form field
-2. Document-level `<!-- metadata: category=... -->` comment (parsed by `extractDocumentCategory`)
-3. `null` — no category assigned
 
 **Route details:**
 
-- **Multipart only** (`multipart/form-data`), `file` field + optional `name`, `tagIds[]`, `category` (deprecated)
+- **Multipart only** (`multipart/form-data`), `file` field + optional `name`, `tagIds[]`
 - **50 MB max** (`MAX_UPLOAD_BYTES` in the route)
 - **Extension whitelist**: `.md`, `.markdown`, `.txt`, `.epub`, `.docx`, `.pdf`
 - MIME type is advisory — the extension is the source of truth
@@ -217,8 +193,6 @@ Content here inherits the metadata above…
 
 **Only markdown.** DOCX, PDF, EPUB, and CSV uploads do not pick up metadata comments — their parser pipelines go directly to chunking without the markdown comment-stripping pass. To set keywords on non-markdown uploads, use the **Enrich Keywords** admin action (below).
 
-A `category` key is still parsed for backwards compatibility with legacy docs but it has no functional effect — the resolver ignores chunk-level categories. Phase 6 removes this code path entirely.
-
 ## Indexed-keyword discovery
 
 `listMetaTags()` returns a `MetaTagSummary` with distinct keyword values in use, grouped by document scope (`app` vs `system`), plus chunk and document counts for each. Surfaced by the Manage tab as the **Indexed keywords** diagnostic panel.
@@ -247,7 +221,7 @@ Cost is logged via `cost-tracker.ts` under operation `knowledge.enrich_keywords`
 
 ## Search
 
-`searchKnowledge(query, filters?, limit?, threshold?)` ranks knowledge-base chunks via pgvector cosine distance, with two modes selected by `searchConfig.hybridEnabled` on the orchestration settings singleton. Filters support `chunkType`, `patternNumber`, `category`, `categories` (array), `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
+`searchKnowledge(query, filters?, limit?, threshold?)` ranks knowledge-base chunks via pgvector cosine distance, with two modes selected by `searchConfig.hybridEnabled` on the orchestration settings singleton. Filters support `chunkType`, `patternNumber`, `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
 
 Results are ranked chunks with their parent document metadata — the admin search route (`POST /knowledge/search`) surfaces this directly. POST (not GET) because the filter payload can contain arbitrary text and we don't want query bodies in URL logs.
 

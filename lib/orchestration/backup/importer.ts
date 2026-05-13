@@ -59,8 +59,7 @@ export async function importOrchestrationConfig(
 
     // v1 → v2 compatibility: when the backup is v1 (no `knowledgeTags`) but an
     // agent carries non-empty `knowledgeCategories`, infer tag slugs from those
-    // strings so the new resolver model has something to work with. Same
-    // backfill logic as scripts/backfill-knowledge-tags.ts.
+    // strings so the new resolver model has something to work with.
     function slugifyFor(input: string): string {
       return input
         .trim()
@@ -114,7 +113,6 @@ export async function importOrchestrationConfig(
             visibility: agent.visibility,
             isActive: agent.isActive,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            knowledgeCategories: agent.knowledgeCategories,
             knowledgeAccessMode: agent.knowledgeAccessMode,
             topicBoundaries: agent.topicBoundaries,
             brandVoiceInstructions: agent.brandVoiceInstructions,

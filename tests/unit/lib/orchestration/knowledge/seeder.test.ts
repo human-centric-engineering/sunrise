@@ -369,18 +369,17 @@ describe('seedChunks', () => {
     expect(sql).not.toContain('::vector');
 
     // Positional params: [sql, $1=chunkKey, $2=docId, $3=content,
-    //   $4=chunkType, $5=patternNumber, $6=patternName, $7=category,
-    //   $8=section, $9=keywords, $10=estimatedTokens, $11=metadata]
+    //   $4=chunkType, $5=patternNumber, $6=patternName,
+    //   $7=section, $8=keywords, $9=estimatedTokens, $10=metadata]
     expect(call[1]).toBe(chunk.id); // chunkKey
     expect(call[2]).toBe(doc.id); // documentId
     expect(call[3]).toBe(chunk.content); // content
     expect(call[4]).toBe(chunk.metadata.type); // chunkType
     expect(call[5]).toBe(chunk.metadata.pattern_number); // patternNumber
     expect(call[6]).toBe(chunk.metadata.pattern_name); // patternName
-    expect(call[7]).toBe(chunk.metadata.category); // category
-    expect(call[8]).toBe(chunk.metadata.section_title); // section
-    expect(call[9]).toBe(chunk.metadata.keywords); // keywords
-    expect(call[10]).toBe(chunk.estimated_tokens); // estimatedTokens
+    expect(call[7]).toBe(chunk.metadata.section_title); // section
+    expect(call[8]).toBe(chunk.metadata.keywords); // keywords
+    expect(call[9]).toBe(chunk.estimated_tokens); // estimatedTokens
   });
 
   it('propagates file read errors', async () => {
@@ -430,9 +429,8 @@ describe('seedChunks', () => {
     const call = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
     expect(call[5]).toBeNull(); // patternNumber
     expect(call[6]).toBeNull(); // patternName
-    expect(call[7]).toBeNull(); // category
-    expect(call[8]).toBeNull(); // section
-    expect(call[9]).toBeNull(); // keywords
+    expect(call[7]).toBeNull(); // section
+    expect(call[8]).toBeNull(); // keywords
   });
 });
 

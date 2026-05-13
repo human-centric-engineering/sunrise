@@ -9,7 +9,6 @@
  * - deleteDocument: cascade-delete via Prisma relation
  * - rechunkDocument: load existing chunks, reconstruct content, re-process
  * - listDocuments: ordered list of all knowledge base documents
- * - listMetaTags: category/keyword aggregations grouped by scope
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -75,11 +74,7 @@ vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
 
 import { prisma } from '@/lib/db/client';
 _prismaMock = prisma;
-import {
-  chunkCsvDocument,
-  chunkMarkdownDocument,
-  parseMetadataComments,
-} from '@/lib/orchestration/knowledge/chunker';
+import { chunkCsvDocument, chunkMarkdownDocument } from '@/lib/orchestration/knowledge/chunker';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbedBatchResult } from '@/lib/orchestration/knowledge/embedder';
 import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/parsers';
@@ -91,7 +86,6 @@ import {
   deleteDocument,
   rechunkDocument,
   listDocuments,
-  listMetaTags,
 } from '@/lib/orchestration/knowledge/document-manager';
 
 // --- Helpers ---
@@ -113,7 +107,6 @@ interface ChunkShape {
   chunkType: string;
   patternNumber: number;
   patternName: string;
-  category: string;
   section: string;
   keywords: string;
   estimatedTokens: number;
@@ -126,7 +119,6 @@ function makeChunk(overrides: Partial<ChunkShape> = {}): ChunkShape {
     chunkType: 'pattern',
     patternNumber: 1,
     patternName: 'Test Pattern',
-    category: 'orchestration',
     section: 'Overview',
     keywords: 'ai,agent',
     estimatedTokens: 120,
@@ -194,7 +186,6 @@ describe('uploadDocument', () => {
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',
-        category: null,
       },
     });
   });
@@ -732,156 +723,6 @@ describe('listDocuments', () => {
   });
 });
 
-describe('listMetaTags', () => {
-  beforeEach(() => vi.resetAllMocks());
-
-  it('returns categories and keywords grouped by scope', async () => {
-    vi.mocked(prisma.$queryRaw)
-      .mockResolvedValueOnce([
-        { scope: 'app', value: 'sales', chunk_count: BigInt(10), doc_count: BigInt(2) },
-        { scope: 'system', value: 'patterns', chunk_count: BigInt(5), doc_count: BigInt(1) },
-      ] as never)
-      .mockResolvedValueOnce([
-        { scope: 'app', value: 'pricing', chunk_count: BigInt(3), doc_count: BigInt(1) },
-        { scope: 'system', value: 'reasoning', chunk_count: BigInt(7), doc_count: BigInt(1) },
-      ] as never);
-
-    const result = await listMetaTags();
-
-    expect(result.app.categories).toEqual([{ value: 'sales', chunkCount: 10, documentCount: 2 }]);
-    expect(result.system.categories).toEqual([
-      { value: 'patterns', chunkCount: 5, documentCount: 1 },
-    ]);
-    expect(result.app.keywords).toEqual([{ value: 'pricing', chunkCount: 3, documentCount: 1 }]);
-    expect(result.system.keywords).toEqual([
-      { value: 'reasoning', chunkCount: 7, documentCount: 1 },
-    ]);
-  });
-
-  it('returns empty arrays for both scopes when no meta-tags exist', async () => {
-    vi.mocked(prisma.$queryRaw)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([] as never);
-
-    const result = await listMetaTags();
-
-    expect(result.app).toEqual({ categories: [], keywords: [] });
-    expect(result.system).toEqual({ categories: [], keywords: [] });
-  });
-
-  it('trims whitespace from tag values', async () => {
-    vi.mocked(prisma.$queryRaw)
-      .mockResolvedValueOnce([
-        { scope: 'app', value: '  sales  ', chunk_count: BigInt(1), doc_count: BigInt(1) },
-      ] as never)
-      .mockResolvedValueOnce([] as never);
-
-    const result = await listMetaTags();
-
-    expect(result.app.categories[0].value).toBe('sales');
-  });
-});
-
-describe('uploadDocument with category', () => {
-  beforeEach(() => vi.resetAllMocks());
-
-  it('stores explicit category on the document record', async () => {
-    const content = '# Hello';
-    const createdDoc = makeDocument({ status: 'processing' });
-    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
-
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-
-    await uploadDocument(content, 'test.md', 'user-1', 'sales');
-
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ category: 'sales' }),
-      })
-    );
-  });
-
-  it('extracts category from document metadata when not provided explicitly', async () => {
-    const content = '<!-- metadata: category=engineering -->\n# Hello';
-    const createdDoc = makeDocument({ status: 'processing' });
-    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
-
-    vi.mocked(parseMetadataComments).mockReturnValue({ category: 'engineering' });
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-
-    await uploadDocument(content, 'test.md', 'user-1');
-
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ category: 'engineering' }),
-      })
-    );
-  });
-
-  it('sets category to null when no explicit category and no document metadata', async () => {
-    const content = '# No metadata here';
-    const createdDoc = makeDocument({ status: 'processing' });
-    const updatedDoc = makeDocument({ status: 'ready', chunkCount: 0 });
-
-    vi.mocked(parseMetadataComments).mockReturnValue({});
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockResolvedValue([]);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-
-    await uploadDocument(content, 'test.md', 'user-1');
-
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ category: null }),
-      })
-    );
-  });
-
-  it('does not override existing chunk category when document category is set', async () => {
-    const content = '# Hello';
-    const createdDoc = makeDocument({ id: 'doc-cat2', status: 'processing' });
-    const updatedDoc = makeDocument({ id: 'doc-cat2', status: 'ready', chunkCount: 1 });
-    // Chunk already has its own category
-    const chunk = makeChunk({ category: 'existing-category' });
-
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockResolvedValue([chunk]);
-    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-
-    await uploadDocument(content, 'test.md', 'user-1', 'override-cat');
-
-    // chunk.category was 'existing-category' — it should NOT be overwritten
-    const rawInsertCall = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
-    expect(rawInsertCall[8]).toBe('existing-category');
-  });
-
-  it('propagates document-level category to chunks that have no category', async () => {
-    const content = '# Hello';
-    const createdDoc = makeDocument({ id: 'doc-cat', status: 'processing' });
-    const updatedDoc = makeDocument({ id: 'doc-cat', status: 'ready', chunkCount: 1 });
-    const chunk = makeChunk({ category: null as unknown as string });
-
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(createdDoc as never);
-    vi.mocked(chunkMarkdownDocument).mockResolvedValue([chunk]);
-    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(updatedDoc as never);
-
-    await uploadDocument(content, 'test.md', 'user-1', 'sales');
-
-    // The chunk's category should have been set to 'sales'
-    const rawInsertCall = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
-    // category is the 8th parameter (index 8) in the raw SQL
-    expect(rawInsertCall[8]).toBe('sales');
-  });
-});
-
 // ─── uploadDocumentFromBuffer ─────────────────────────────────────────────────
 
 describe('uploadDocumentFromBuffer', () => {
@@ -1142,27 +983,6 @@ describe('uploadDocumentFromBuffer — CSV row-level chunking', () => {
     expect(updateCall.data).toEqual(
       expect.objectContaining({ status: 'failed', errorMessage: 'embedding api down' })
     );
-  });
-
-  it('applies a category override to chunks that have no category set', async () => {
-    vi.mocked(requiresPreview).mockReturnValue(false);
-    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue(csvParsed(1));
-    const chunk = makeChunk({ chunkType: 'csv_row' });
-    chunk.category = '';
-    vi.mocked(chunkCsvDocument).mockReturnValue([chunk]);
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
-      makeDocument({ status: 'processing' }) as never
-    );
-    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1]]));
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
-    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
-      makeDocument({ status: 'ready', chunkCount: 1 }) as never
-    );
-
-    await uploadDocumentFromBuffer(Buffer.from('a,b\n1,2\n'), 'data.csv', 'user-1', 'finance');
-
-    expect(chunk.category).toBe('finance');
   });
 
   it('drops rows over the embedding-API size limit and surfaces a warning naming them', async () => {

@@ -154,7 +154,6 @@ export const POST = withAdminAuth(async (request, session) => {
         visibility: body.visibility ?? 'internal',
         rateLimitRpm: body.rateLimitRpm ?? null,
         fallbackProviders: body.fallbackProviders ?? [],
-        knowledgeCategories: body.knowledgeCategories ?? [],
         topicBoundaries: body.topicBoundaries ?? [],
         brandVoiceInstructions: body.brandVoiceInstructions ?? null,
         enableVoiceInput: body.enableVoiceInput ?? false,

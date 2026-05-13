@@ -180,9 +180,9 @@ Final text to close out the section with enough content.
 
   // ── Metadata comment propagation ─────────────────────────────────────────
 
-  it('should parse document-level metadata comments and set category on chunks', async () => {
+  it('should parse document-level metadata comments and set keywords on chunks', async () => {
     const content = `
-<!-- metadata: category=core, keywords=retry-backoff -->
+<!-- metadata: keywords=retry-backoff -->
 
 ## 1. Retry Pattern
 
@@ -195,14 +195,13 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
-      expect(chunk.category).toBe('core');
       expect(chunk.keywords).toBe('retry-backoff');
     }
   });
 
   it('should preserve comma-containing values when the value is double-quoted', async () => {
     const content = `
-<!-- metadata: category=core, keywords="retry,backoff,circuit-breaker" -->
+<!-- metadata: keywords="retry,backoff,circuit-breaker" -->
 
 ## 1. Retry Pattern
 
@@ -215,7 +214,6 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
-      expect(chunk.category).toBe('core');
       // Previously the parser split on `,` before `=`, truncating to just "retry".
       // With quote-aware splitting the full value is preserved and quotes are stripped.
       expect(chunk.keywords).toBe('retry,backoff,circuit-breaker');
@@ -242,7 +240,7 @@ Enough text here to satisfy the minimum token requirement for this pattern secti
 
   it('should strip metadata comments from chunk content', async () => {
     const content = `
-<!-- metadata: category=core -->
+<!-- metadata: keywords=core -->
 
 ## 1. Circuit Breaker
 
@@ -259,13 +257,13 @@ This section describes the pattern in enough detail to pass the minimum token th
     }
   });
 
-  it('should allow section-level metadata to override document-level metadata', async () => {
+  it('should allow section-level metadata comments to override document-level metadata', async () => {
     const content = `
-<!-- metadata: category=global -->
+<!-- metadata: keywords=global -->
 
 ## 1. Fallback Pattern
 
-<!-- metadata: category=resilience, keywords=fallback -->
+<!-- metadata: keywords=resilience -->
 
 ### Problem
 
@@ -274,10 +272,9 @@ Enough text here to satisfy the minimum token requirement for proper chunk sizin
 
     const chunks = await chunkMarkdownDocument(content, 'doc');
 
-    // Section-level metadata should override the document-level category
-    const hasResilienceCategory = chunks.some((c) => c.category === 'resilience');
-    // test-review:accept tobe_true — boolean result of Array.some(); structural assertion verifying section-level category override
-    expect(hasResilienceCategory).toBe(true);
+    // Section-level metadata should override the document-level keywords
+    // test-review:accept tobe_true — Array.some() boolean result; structural assertion
+    expect(chunks.some((c) => c.keywords === 'resilience')).toBe(true);
   });
 
   // ── Normalize: merge tiny sections ───────────────────────────────────────
@@ -694,7 +691,6 @@ describe('chunkCsvDocument', () => {
   it('sets category and keywords to null on every chunk', async () => {
     const parsed = csvParsed(10);
     const chunks = chunkCsvDocument(parsed, 'x');
-    expect(chunks.every((c) => c.category === null)).toBe(true);
     expect(chunks.every((c) => c.keywords === null)).toBe(true);
   });
 

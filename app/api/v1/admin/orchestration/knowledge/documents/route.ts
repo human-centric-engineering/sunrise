@@ -88,8 +88,9 @@ async function applyDocumentTags(documentId: string, tagIds: string[]): Promise<
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 /**
  * Pre-parse body cap. Adds 4 KB of headroom over `MAX_UPLOAD_BYTES` for
- * multipart boundaries plus the optional `category` form field. Rejects
- * with 413 `FILE_TOO_LARGE` before `request.formData()` allocates memory.
+ * multipart boundaries plus a handful of small text form fields (title,
+ * tags). Rejects with 413 `FILE_TOO_LARGE` before `request.formData()`
+ * allocates memory.
  */
 const MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 4 * 1024;
 const MAX_LINE_COUNT = 100_000;
@@ -111,7 +112,7 @@ function getExtension(name: string): string {
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const { searchParams } = new URL(request.url);
-  const { page, limit, status, scope, category, q } = validateQueryParams(
+  const { page, limit, status, scope, q } = validateQueryParams(
     searchParams,
     listDocumentsQuerySchema
   );
@@ -120,7 +121,6 @@ export const GET = withAdminAuth(async (request, _session) => {
   const where: Prisma.AiKnowledgeDocumentWhereInput = {};
   if (status) where.status = status;
   if (scope) where.scope = scope;
-  if (category) where.category = category;
   if (q) {
     where.OR = [
       { name: { contains: q, mode: 'insensitive' } },
@@ -238,13 +238,6 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  // Optional category from form field (legacy free-text — kept while
-  // chunk.category still exists; Phase 6 drops it). Tags are the canonical
-  // organisation surface.
-  const categoryField = formData.get('category');
-  const category =
-    typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
-
   // Optional display name override — when set, replaces the filename-derived
   // doc name. Trimmed; empty strings fall back to the filename.
   const nameField = formData.get('name');
@@ -275,7 +268,6 @@ export const POST = withAdminAuth(async (request, session) => {
       content,
       file.name,
       session.user.id,
-      category,
       undefined,
       displayName
     );
@@ -285,7 +277,6 @@ export const POST = withAdminAuth(async (request, session) => {
       documentId: document.id,
       fileName: file.name,
       sizeBytes: file.size,
-      category: document.category ?? 'none',
       tagsApplied,
       adminId: session.user.id,
     });
@@ -362,7 +353,6 @@ export const POST = withAdminAuth(async (request, session) => {
     buffer,
     file.name,
     session.user.id,
-    category,
     undefined,
     displayName
   );
@@ -373,7 +363,6 @@ export const POST = withAdminAuth(async (request, session) => {
     fileName: file.name,
     format: ext,
     sizeBytes: file.size,
-    category: document.category ?? 'none',
     tagsApplied,
     adminId: session.user.id,
   });

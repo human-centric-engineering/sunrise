@@ -104,7 +104,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             retentionDays: source.retentionDays,
             visibility: source.visibility,
             rateLimitRpm: source.rateLimitRpm,
-            knowledgeCategories: source.knowledgeCategories,
             knowledgeAccessMode: source.knowledgeAccessMode,
             topicBoundaries: source.topicBoundaries,
             brandVoiceInstructions: source.brandVoiceInstructions,

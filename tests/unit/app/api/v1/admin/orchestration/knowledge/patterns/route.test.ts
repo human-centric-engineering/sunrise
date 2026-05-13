@@ -79,7 +79,6 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns', () => {
       {
         patternNumber: 1,
         patternName: 'Chain',
-        category: 'Reasoning',
         description: 'Step-by-step.',
         chunkCount: 5,
       },
@@ -131,7 +130,6 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns/:number', () => {
           chunkType: 'pattern_overview',
           patternNumber: 1,
           patternName: 'Chain',
-          category: 'Reasoning',
           section: 'overview',
           keywords: null,
           estimatedTokens: 50,

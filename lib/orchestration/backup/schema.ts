@@ -21,13 +21,20 @@ const agentBackupSchema = z.object({
   visibility: z.string(),
   isActive: z.boolean(),
   metadata: z.unknown().nullable(),
-  knowledgeCategories: z.array(z.string()),
+  /**
+   * `knowledgeCategories` was the legacy free-text scoping field on AiAgent.
+   * Dropped in Phase 6 of knowledge-access-control. Older bundles (v1, pre-
+   * Phase 1) still carry it on the wire — accepted here for backwards-compat
+   * reading, ignored on the write side. The v1→v2 importer backfill that
+   * synthesised tags from these strings still uses the value when present.
+   */
+  knowledgeCategories: z.array(z.string()).optional().default([]),
   /**
    * v2: knowledge access mode + cross-environment grant slugs. v1 backups omit
    * these — the importer treats missing values as `'full'` mode with empty
-   * grants, preserving the legacy behaviour where free-text categories drove
-   * scoping. The importer also runs the v1→v2 backfill (look up tags by slug)
-   * when knowledgeCategories is populated and the new fields are absent.
+   * grants, preserving the legacy behaviour. The importer also runs the
+   * v1→v2 backfill (look up tags by slug) when `knowledgeCategories` is
+   * populated and the new fields are absent.
    */
   knowledgeAccessMode: z.enum(['full', 'restricted']).optional().default('full'),
   grantedTagSlugs: z.array(z.string()).optional().default([]),

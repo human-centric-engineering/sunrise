@@ -21,7 +21,6 @@ function makeChunk(
     chunkType: string;
     section: string | null;
     patternName: string | null;
-    category: string | null;
   }> = {}
 ) {
   return {
@@ -29,7 +28,6 @@ function makeChunk(
     chunkType: 'overview',
     section: 'Introduction',
     patternName: 'Agent Loop',
-    category: 'orchestration',
     ...overrides,
   };
 }
@@ -129,7 +127,6 @@ describe('handlePatternDetail', () => {
           chunkType: true,
           section: true,
           patternName: true,
-          category: true,
         },
       })
     );
@@ -160,7 +157,6 @@ describe('handlePatternDetail', () => {
     const body = JSON.parse(result.text);
     expect(body.patternNumber).toBe(1);
     expect(body.patternName).toBe('Agent Loop');
-    expect(body.category).toBe('orchestration');
     expect(body.sections).toHaveLength(1);
     expect(body.sections[0]).toEqual({
       section: 'Overview',
@@ -169,10 +165,10 @@ describe('handlePatternDetail', () => {
     });
   });
 
-  it('derives patternName and category from the first chunk', async () => {
+  it('derives patternName from the first chunk', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
-      makeChunk({ patternName: 'First Pattern', category: 'design' }),
-      makeChunk({ patternName: 'Should be ignored', category: 'other', section: 'Details' }),
+      makeChunk({ patternName: 'First Pattern' }),
+      makeChunk({ patternName: 'Should be ignored', section: 'Details' }),
     ] as never);
 
     const result = await handlePatternDetail('sunrise://knowledge/patterns/2', null, {
@@ -182,7 +178,6 @@ describe('handlePatternDetail', () => {
 
     const body = JSON.parse(result.text);
     expect(body.patternName).toBe('First Pattern');
-    expect(body.category).toBe('design');
   });
 
   it('maps all chunks to sections array', async () => {

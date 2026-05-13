@@ -853,7 +853,6 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
         'brandVoiceInstructions',
         'provider',
         'fallbackProviders',
-        'knowledgeCategories',
         'rateLimitRpm',
         'visibility',
         'inputGuardMode',

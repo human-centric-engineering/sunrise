@@ -64,7 +64,6 @@ export async function handleKnowledgeSearch(
     chunkType: r.chunk.chunkType,
     patternNumber: r.chunk.patternNumber,
     patternName: r.chunk.patternName,
-    category: r.chunk.category,
     similarity: r.similarity,
   }));
 

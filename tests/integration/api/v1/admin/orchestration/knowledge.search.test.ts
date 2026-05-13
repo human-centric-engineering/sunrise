@@ -145,7 +145,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
           query: 'parallel agent patterns',
           chunkType: 'pattern_overview',
           patternNumber: 4,
-          category: 'orchestration',
           limit: 5,
         })
       );
@@ -155,7 +154,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
         expect.objectContaining({
           chunkType: 'pattern_overview',
           patternNumber: 4,
-          category: 'orchestration',
         }),
         5
       );

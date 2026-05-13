@@ -174,7 +174,6 @@ model AiAgent {
   maxTokens                 Int      @default(4096)
   monthlyBudgetUsd          Float?
   metadata                  Json?
-  knowledgeCategories       String[] @default([]) // DEPRECATED — legacy free-text category filter. Replaced by knowledgeAccessMode + AiAgentKnowledgeTag + AiAgentKnowledgeDocument. Backfilled in Phase 1, dropped in Phase 6.
   knowledgeAccessMode       String   @default("full") // "full" = unrestricted KB access (default — preserves prior behaviour). "restricted" = effective doc set is (granted docs) ∪ (docs in any granted tag) ∪ (docs with scope = 'system').
   topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
   brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
@@ -687,7 +686,6 @@ model AiKnowledgeDocument {
   chunkCount   Int      @default(0)
   status       String // "processing", "ready", "failed"
   scope        String   @default("app") // "system" | "app"
-  category     String? // user-assigned or extracted from document metadata
   sourceUrl    String? // URL the document was fetched from (null = manual upload)
   errorMessage String?  @db.Text
   metadata     Json? // format-specific metadata, preview data for pending_review docs
@@ -704,7 +702,6 @@ model AiKnowledgeDocument {
   @@index([uploadedBy])
   @@index([status])
   @@index([scope])
-  @@index([category])
   @@index([fileHash])
   @@map("ai_knowledge_document")
 }
@@ -721,7 +718,6 @@ model AiKnowledgeChunk {
   chunkType         String // "pattern_section", "pattern_overview", "glossary", etc.
   patternNumber     Int?
   patternName       String?
-  category          String?
   section           String?
   keywords          String?                      @db.Text
   estimatedTokens   Int?
@@ -736,11 +732,10 @@ model AiKnowledgeChunk {
   @@index([documentId])
   @@index([chunkType])
   @@index([patternNumber])
-  @@index([category])
   @@map("ai_knowledge_chunk")
 }
 
-// Managed taxonomy of knowledge "tags" — replaces the legacy free-text knowledgeCategories[] on AiAgent.
+// Managed taxonomy of knowledge "tags" — replaced the legacy free-text `knowledgeCategories[]` on AiAgent (dropped in Phase 6).
 // Many-to-many at both ends: tags ↔ documents (via AiKnowledgeDocumentTag) and tags ↔ agents (via AiAgentKnowledgeTag).
 model KnowledgeTag {
   id          String   @id @default(cuid())

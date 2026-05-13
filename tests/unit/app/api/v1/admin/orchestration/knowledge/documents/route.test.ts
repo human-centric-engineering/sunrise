@@ -229,22 +229,6 @@ describe('Knowledge Documents API', () => {
       );
     });
 
-    it('filters by category', async () => {
-      // Arrange
-      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(0);
-
-      // Act
-      await GET(makeGetRequest('?category=product'));
-
-      // Assert: where clause includes category
-      expect(prisma.aiKnowledgeDocument.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ category: 'product' }),
-        })
-      );
-    });
-
     it('applies text search (q param) using OR on name and fileName', async () => {
       // Arrange
       vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([]);
@@ -321,39 +305,18 @@ describe('Knowledge Documents API', () => {
       expect(json.data.document.id).toBe('doc-txt-001');
     });
 
-    it('passes category to uploadDocument when category form field is provided', async () => {
-      // Arrange
-      vi.mocked(uploadDocument).mockResolvedValue({ ...mockDocument, category: 'faq' } as never);
-
-      // Act
-      await POST(makeFileRequest('faq.md', '# FAQ', 'text/markdown', { category: 'faq' }));
-
-      // Assert: category passed to service
-      // uploadDocument signature is (content, fileName, userId, category, sourceUrl, displayName).
-      // sourceUrl + displayName are undefined for plain uploads from the admin form.
-      expect(uploadDocument).toHaveBeenCalledWith(
-        expect.any(String),
-        'faq.md',
-        ADMIN_ID,
-        'faq',
-        undefined,
-        undefined
-      );
-    });
-
-    it('uploads without category when category field is empty', async () => {
-      // Arrange
+    it('uploads passing only the standard fields (no category form field exists)', async () => {
       vi.mocked(uploadDocument).mockResolvedValue(mockDocument as never);
 
-      // Act
-      await POST(makeFileRequest('guide.md', '# Hello', 'text/markdown', { category: '  ' }));
+      await POST(makeFileRequest('guide.md', '# Hello', 'text/markdown'));
 
-      // Assert: category is undefined (whitespace trimmed to nothing)
+      // uploadDocument signature is (content, fileName, userId, sourceUrl, displayName).
+      // The category form field was dropped in Phase 6; sourceUrl + displayName
+      // are undefined for plain uploads from the admin form.
       expect(uploadDocument).toHaveBeenCalledWith(
         expect.any(String),
         'guide.md',
         ADMIN_ID,
-        undefined,
         undefined,
         undefined
       );

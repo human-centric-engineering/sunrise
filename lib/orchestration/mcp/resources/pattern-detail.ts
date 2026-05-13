@@ -34,7 +34,6 @@ export async function handlePatternDetail(
       chunkType: true,
       section: true,
       patternName: true,
-      category: true,
     },
   });
 
@@ -52,7 +51,6 @@ export async function handlePatternDetail(
     text: JSON.stringify({
       patternNumber,
       patternName: chunks[0].patternName,
-      category: chunks[0].category,
       sections: chunks.map((c) => ({
         section: c.section,
         chunkType: c.chunkType,

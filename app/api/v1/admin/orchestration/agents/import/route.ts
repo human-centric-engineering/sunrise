@@ -134,7 +134,9 @@ export const POST = withAdminAuth(async (request, session) => {
         maxHistoryTokens: bundled.maxHistoryTokens ?? null,
         retentionDays: bundled.retentionDays ?? null,
         visibility: bundled.visibility ?? 'internal',
-        knowledgeCategories: bundled.knowledgeCategories ?? [],
+        // `knowledgeCategories` is dropped in Phase 6 — older bundles still
+        // include it on the wire (the import schema keeps the field optional
+        // for that reason) but we don't write it anywhere.
         topicBoundaries: bundled.topicBoundaries ?? [],
         brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
         widgetConfig: (bundled.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,

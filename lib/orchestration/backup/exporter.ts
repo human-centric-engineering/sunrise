@@ -27,7 +27,6 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         visibility: true,
         isActive: true,
         metadata: true,
-        knowledgeCategories: true,
         knowledgeAccessMode: true,
         topicBoundaries: true,
         brandVoiceInstructions: true,
@@ -141,6 +140,10 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
       // The DB column is `String`; coerce to the strict enum the backup schema wants.
       knowledgeAccessMode:
         knowledgeAccessMode === 'restricted' ? ('restricted' as const) : ('full' as const),
+      // `knowledgeCategories` was dropped from the DB in Phase 6 but the
+      // backup schema keeps the field on the wire for older importers
+      // that still read it. Always emit empty.
+      knowledgeCategories: [] as string[],
       grantedTagSlugs: grantedTags.map((g) => g.tag.slug),
       grantedDocumentHashes: grantedDocuments.map((g) => g.document.fileHash),
     };

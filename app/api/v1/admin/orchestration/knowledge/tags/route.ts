@@ -4,9 +4,9 @@
  * GET  /api/v1/admin/orchestration/knowledge/tags  — paginated list with optional `q` search
  * POST /api/v1/admin/orchestration/knowledge/tags  — create a new tag
  *
- * Tags drive the agent knowledge-access resolver — replacing the legacy free-text
- * `AiAgent.knowledgeCategories` column with a managed taxonomy. See
- * `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts`.
+ * Tags drive the agent knowledge-access resolver — the managed taxonomy that
+ * replaced the legacy free-text `knowledgeCategories[]` column on AiAgent
+ * (dropped in Phase 6). See `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts`.
  *
  * Authentication: Admin role required.
  */

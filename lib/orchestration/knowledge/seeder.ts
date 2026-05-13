@@ -48,16 +48,15 @@ const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
  * Phase 1 — Seed chunks into the knowledge base (no embeddings).
  *
  * Creates one `AiKnowledgeDocument` named "Agentic Design Patterns" containing
- * every chunk in chunks.json (patterns + reference material). Each distinct
- * `chunk.category` becomes a managed `KnowledgeTag`, applied to the document
- * via the doc↔tag join — so agents in restricted-knowledge mode can be granted
- * a subset of tags and the resolver will surface this document when any of
- * those tags match.
+ * every chunk in chunks.json (patterns + reference material). One managed
+ * `KnowledgeTag` (`agentic-design-patterns`) is applied to the document via
+ * the doc↔tag join, so agents in restricted-knowledge mode that hold this
+ * tag can search the bundled patterns.
  *
- * History: an earlier iteration split this into one-doc-per-pattern. That
- * fragmented the KB list into 22 rows ("Pattern 1: Prompt Chaining", "Pattern
- * 2: Routing", …) and degraded the manage-tab UX. Reverted to one doc; the
- * tags still carry the per-category slicing.
+ * History: an earlier iteration split this into one-doc-per-pattern and
+ * lifted every `chunk.category` into a separate tag. That fragmented the
+ * KB list into 22 rows and produced 10+ redundant tags pointing at the same
+ * doc, so it was reverted — one doc, one tag.
  *
  * Idempotent: skips if the document already exists with chunks. Failed
  * seed attempts are cleaned up and re-seeded.
@@ -129,11 +128,11 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     await prisma.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content,
-        "chunkType", "patternNumber", "patternName", category,
+        "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3,
-        $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+        $4, $5, $6, $7, $8, $9, $10::jsonb
       )`,
       chunk.id,
       document.id,
@@ -141,7 +140,6 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       chunk.metadata.type,
       chunk.metadata.pattern_number ?? null,
       chunk.metadata.pattern_name ?? null,
-      chunk.metadata.category ?? null,
       chunk.metadata.section_title ?? chunk.metadata.section ?? null,
       chunk.metadata.keywords ?? null,
       chunk.estimated_tokens,

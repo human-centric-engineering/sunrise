@@ -55,10 +55,9 @@ export default async function KnowledgeTagsPage(): Promise<React.ReactElement> {
             contentClassName="w-96 max-h-80 overflow-y-auto"
           >
             <p>
-              Tags are a managed taxonomy applied to knowledge-base documents. They replace the
-              older free-text <em>knowledgeCategories</em> column on the agent record and let you
-              scope an agent&apos;s knowledge access by tag instead of typing category names by
-              hand.
+              Tags are a managed taxonomy applied to knowledge-base documents. They let you scope an
+              agent&apos;s knowledge access to a deliberate subset of the library instead of giving
+              every agent access to everything.
             </p>
             <p className="text-foreground mt-2 font-medium">How they work</p>
             <p>

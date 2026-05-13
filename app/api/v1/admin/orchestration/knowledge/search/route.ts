@@ -27,8 +27,8 @@ export const POST = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, knowledgeSearchSchema);
 
-  const { query, limit, chunkType, patternNumber, category, scope, agentId } = body;
-  const filters: SearchFilters = { chunkType, patternNumber, category, scope };
+  const { query, limit, chunkType, patternNumber, scope, agentId } = body;
+  const filters: SearchFilters = { chunkType, patternNumber, scope };
 
   // Preview-as-agent: route the search through the resolver when `agentId` is
   // supplied so the admin sees what that agent would see. Without it the

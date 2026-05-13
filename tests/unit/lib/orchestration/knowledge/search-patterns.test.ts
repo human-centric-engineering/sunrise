@@ -46,8 +46,8 @@ describe('listPatterns', () => {
 
   it('returns pattern summaries from grouped chunks', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 5 } },
-      { patternNumber: 2, patternName: 'Router', category: 'Routing', _count: { id: 3 } },
+      { patternNumber: 1, patternName: 'Chain', _count: { id: 5 } },
+      { patternNumber: 2, patternName: 'Router', _count: { id: 3 } },
     ] as never);
 
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
@@ -61,10 +61,14 @@ describe('listPatterns', () => {
     expect(result[1].patternNumber).toBe(2);
   });
 
-  it('deduplicates patterns with multiple categories', async () => {
+  it('merges chunk counts when groupBy returns duplicate pattern rows', async () => {
+    // Defensive merge: groupBy keys on (patternNumber, patternName) so a
+    // single patternNumber under two different patternName values would
+    // produce two rows. We sum the chunk counts and keep the first
+    // non-null patternName.
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 3 } },
-      { patternNumber: 1, patternName: 'Chain', category: 'Composition', _count: { id: 2 } },
+      { patternNumber: 1, patternName: 'Chain', _count: { id: 3 } },
+      { patternNumber: 1, patternName: 'Chain (alt)', _count: { id: 2 } },
     ] as never);
 
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
@@ -74,12 +78,12 @@ describe('listPatterns', () => {
     expect(result).toHaveLength(1);
     expect(result[0].patternNumber).toBe(1);
     expect(result[0].chunkCount).toBe(5); // 3 + 2 merged
-    expect(result[0].category).toBe('Reasoning'); // keeps first
+    expect(result[0].patternName).toBe('Chain'); // first non-null wins
   });
 
   it('uses fallback name when patternName is null', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 99, patternName: null, category: null, _count: { id: 1 } },
+      { patternNumber: 99, patternName: null, _count: { id: 1 } },
     ] as never);
 
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
@@ -91,7 +95,7 @@ describe('listPatterns', () => {
 
   it('prefers TL;DR description over overview', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 5 } },
+      { patternNumber: 1, patternName: 'Chain', _count: { id: 5 } },
     ] as never);
 
     vi.mocked(prisma.aiKnowledgeChunk.findMany)
@@ -118,8 +122,8 @@ describe('listPatterns', () => {
 
   it('skips groups with null patternNumber', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: null, patternName: null, category: null, _count: { id: 2 } },
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 5 } },
+      { patternNumber: null, patternName: null, _count: { id: 2 } },
+      { patternNumber: 1, patternName: 'Chain', _count: { id: 5 } },
     ] as never);
 
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
@@ -128,19 +132,6 @@ describe('listPatterns', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].patternNumber).toBe(1);
-  });
-
-  it('keeps first non-null category when merging duplicates', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
-      { patternNumber: 1, patternName: 'Chain', category: null, _count: { id: 2 } },
-      { patternNumber: 1, patternName: 'Chain', category: 'Reasoning', _count: { id: 3 } },
-    ] as never);
-
-    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
-
-    const result = await listPatterns();
-
-    expect(result[0].category).toBe('Reasoning');
   });
 });
 

@@ -135,7 +135,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.metadata = body.metadata as Prisma.InputJsonValue;
   }
   if (body.isActive !== undefined) data.isActive = body.isActive;
-  if (body.knowledgeCategories !== undefined) data.knowledgeCategories = body.knowledgeCategories;
   if (body.knowledgeAccessMode !== undefined) data.knowledgeAccessMode = body.knowledgeAccessMode;
   if (body.topicBoundaries !== undefined) data.topicBoundaries = body.topicBoundaries;
   if (body.brandVoiceInstructions !== undefined)
@@ -196,7 +195,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'brandVoiceInstructions',
     'provider',
     'fallbackProviders',
-    'knowledgeCategories',
     'knowledgeAccessMode',
     'rateLimitRpm',
     'visibility',
@@ -221,7 +219,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // summary. Now we compare against `current`:
   //   - Primitive equality for scalars
   //   - Shallow elementwise for string[] (fallbackProviders,
-  //     knowledgeCategories, topicBoundaries — all string arrays)
+  //     topicBoundaries)
   //   - JSON-stringify for the Prisma `Json` columns (providerConfig,
   //     metadata) which round-trip as plain values
   const isFieldChanged = (newValue: unknown, currentValue: unknown): boolean => {
@@ -296,7 +294,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           topicBoundaries: current.topicBoundaries,
           brandVoiceInstructions: current.brandVoiceInstructions,
           metadata: current.metadata,
-          knowledgeCategories: current.knowledgeCategories,
           knowledgeAccessMode: current.knowledgeAccessMode,
           grantedTagIds: currentGrantedTagIds,
           grantedDocumentIds: currentGrantedDocumentIds,

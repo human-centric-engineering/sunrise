@@ -69,8 +69,6 @@ async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
 export interface SearchFilters {
   chunkType?: string;
   patternNumber?: number;
-  category?: string;
-  categories?: string[];
   section?: string;
   documentId?: string;
   /**
@@ -131,19 +129,6 @@ export async function searchKnowledge(
     conditions.push(`c."patternNumber" = $${paramIdx}`);
     params.push(filters.patternNumber);
     paramIdx++;
-  }
-  if (filters?.category) {
-    conditions.push(`c.category = $${paramIdx}`);
-    params.push(filters.category);
-    paramIdx++;
-  }
-  if (filters?.categories && filters.categories.length > 0) {
-    const placeholders = filters.categories.map((_, i) => `$${paramIdx + i}`).join(', ');
-    conditions.push(`c.category IN (${placeholders})`);
-    for (const cat of filters.categories) {
-      params.push(cat);
-      paramIdx++;
-    }
   }
   if (filters?.section) {
     conditions.push(`c.section = $${paramIdx}`);
@@ -219,7 +204,6 @@ async function runVectorOnlySearch({
       c."chunkType",
       c."patternNumber",
       c."patternName",
-      c.category,
       c.section,
       c.keywords,
       c."estimatedTokens",
@@ -317,7 +301,6 @@ async function runHybridSearch({
         c."chunkType",
         c."patternNumber",
         c."patternName",
-        c.category,
         c.section,
         c.keywords,
         c."estimatedTokens",
@@ -387,7 +370,6 @@ function pickChunk(row: AiKnowledgeChunk): AiKnowledgeChunk {
     chunkType: row.chunkType,
     patternNumber: row.patternNumber,
     patternName: row.patternName,
-    category: row.category,
     section: row.section,
     keywords: row.keywords,
     estimatedTokens: row.estimatedTokens,
@@ -431,7 +413,7 @@ function firstParagraph(content: string | null | undefined): string | null {
  */
 export async function listPatterns(): Promise<PatternSummary[]> {
   const groups = await prisma.aiKnowledgeChunk.groupBy({
-    by: ['patternNumber', 'patternName', 'category'],
+    by: ['patternNumber', 'patternName'],
     where: { patternNumber: { not: null } },
     _count: { id: true },
     orderBy: { patternNumber: 'asc' },
@@ -460,24 +442,19 @@ export async function listPatterns(): Promise<PatternSummary[]> {
   const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
   const tldrByPattern = new Map(tldrChunks.map((c) => [c.patternNumber, c]));
 
-  // Deduplicate by patternNumber — groupBy includes category in the key so
-  // a pattern with chunks in different categories would produce duplicate rows.
-  const merged = new Map<
-    number,
-    { patternName: string | null; category: string | null; chunkCount: number }
-  >();
+  // Deduplicate by patternNumber — groupBy already returns one row per
+  // (patternNumber, patternName) so we just merge chunk counts if a single
+  // pattern has rows under multiple `patternName` strings (rare; defensive).
+  const merged = new Map<number, { patternName: string | null; chunkCount: number }>();
   for (const group of groups) {
     if (group.patternNumber === null) continue;
     const existing = merged.get(group.patternNumber);
     if (existing) {
       existing.chunkCount += group._count.id;
-      // Keep the first non-null values
       existing.patternName ??= group.patternName;
-      existing.category ??= group.category;
     } else {
       merged.set(group.patternNumber, {
         patternName: group.patternName,
-        category: group.category,
         chunkCount: group._count.id,
       });
     }
@@ -485,7 +462,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
 
   const summaries: PatternSummary[] = [];
 
-  for (const [patternNumber, { patternName, category, chunkCount }] of merged) {
+  for (const [patternNumber, { patternName, chunkCount }] of merged) {
     const overviewChunk = overviewByPattern.get(patternNumber) ?? null;
     const tldrChunk = tldrByPattern.get(patternNumber) ?? null;
 
@@ -495,7 +472,6 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     summaries.push({
       patternNumber,
       patternName: patternName ?? `Pattern ${patternNumber}`,
-      category,
       description,
       chunkCount,
     });

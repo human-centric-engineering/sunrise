@@ -136,11 +136,6 @@ export const createAgentSchema = z.object({
 
   visibility: agentVisibilitySchema.default('internal'),
 
-  knowledgeCategories: z
-    .array(z.string().max(100, 'Category must be less than 100 characters'))
-    .max(50, 'At most 50 knowledge categories')
-    .default([]),
-
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').default([]),
 
   brandVoiceInstructions: z
@@ -252,11 +247,6 @@ export const updateAgentSchema = z.object({
     .optional(),
 
   visibility: agentVisibilitySchema.optional(),
-
-  knowledgeCategories: z
-    .array(z.string().max(100))
-    .max(50, 'At most 50 knowledge categories')
-    .optional(),
 
   knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
 
@@ -822,7 +812,10 @@ const bundledAgentSchema = z.object({
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
-  knowledgeCategories: z.array(z.string().max(100)).max(50).default([]),
+  // `knowledgeCategories` was the legacy free-text scoping field on AiAgent.
+  // Dropped in Phase 6; backup bundles produced from older code still carry
+  // it, so we accept (and ignore) the field for backwards-compat reading.
+  knowledgeCategories: z.array(z.string()).optional(),
   topicBoundaries: z.array(z.string().max(200)).max(50).default([]),
   brandVoiceInstructions: z.string().max(10000).nullable().optional(),
   // widgetConfig is opaque on the wire (z.unknown) — the receiving side
@@ -1128,8 +1121,6 @@ export const knowledgeSearchSchema = z.object({
   chunkType: chunkTypeSchema.optional(),
 
   patternNumber: z.coerce.number().int().positive().optional(),
-
-  category: z.string().max(100).optional(),
 
   scope: documentScopeSchema.optional(),
 
@@ -1818,7 +1809,6 @@ export const clearConversationsBodySchema = z
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(['pending', 'processing', 'ready', 'failed', 'pending_review']).optional(),
   scope: documentScopeSchema.optional(),
-  category: z.string().max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -2749,8 +2739,6 @@ export const confirmDocumentPreviewSchema = z.object({
   documentId: cuidSchema,
   /** Optionally supply edited/corrected text to replace the parsed content. */
   correctedContent: z.string().max(5_000_000, 'Content must be less than 5 MB').optional(),
-  /** Optional category override. */
-  category: z.string().max(100).optional(),
 });
 
 export type ConfirmDocumentPreviewInput = z.infer<typeof confirmDocumentPreviewSchema>;
