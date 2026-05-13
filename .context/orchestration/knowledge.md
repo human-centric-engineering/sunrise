@@ -204,9 +204,6 @@ interface MetaTagSummary {
 }
 
 interface ScopedMetaTags {
-  // Deprecated — populated for back-compat, not surfaced in any UI.
-  categories: MetaTagEntry[];
-  // The Indexed-keywords panel renders this.
   keywords: MetaTagEntry[]; // { value, chunkCount, documentCount }
 }
 ```

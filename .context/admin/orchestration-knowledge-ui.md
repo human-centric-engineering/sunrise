@@ -58,7 +58,7 @@ Delete uses an inline "Delete? Yes / No" confirmation pattern rather than a sepa
 A modal (`DocumentChunksModal`) that displays all chunks for a document. Triggered by clicking a document name in the table. Shows:
 
 - Sequential chunk list with index numbers
-- Chunk type and category badges
+- Chunk type badge
 - Estimated token count per chunk
 - Content in a scrollable monospace pre block
 - Keywords as small outline badges
@@ -123,7 +123,7 @@ Opened automatically after a PDF upload. Displays:
 
 ### Indexed keywords panel
 
-Read-only diagnostic. Displayed below the upload zone when any indexed keywords exist in either scope. Fetched from `GET /knowledge/meta-tags` on mount; only the `keywords` half of the response is rendered (the `categories` half is legacy data that will go away in Phase 6). Grouped by scope into two collapsible sections:
+Read-only diagnostic. Displayed below the upload zone when any indexed keywords exist in either scope. Fetched from `GET /knowledge/meta-tags` on mount. Grouped by scope into two collapsible sections:
 
 - **App knowledge** (expanded by default) — keywords from user-uploaded documents.
 - **System knowledge** (collapsed by default) — keywords from the built-in Agentic Design Patterns reference. Read-only.
