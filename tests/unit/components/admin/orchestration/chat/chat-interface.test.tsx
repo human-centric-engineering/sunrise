@@ -1408,4 +1408,162 @@ describe('ChatInterface', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+  // ─── Inline trace (admin diagnostic strip) ───────────────────────────────────
+
+  describe('showInlineTrace', () => {
+    function capabilityFrameWithTrace(
+      slug: string,
+      result: unknown,
+      trace: Record<string, unknown>
+    ): string {
+      return `event: capability_result\ndata: ${JSON.stringify({ capabilitySlug: slug, result, trace })}\n\n`;
+    }
+
+    it('sends includeTrace: true on the POST body when enabled', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+      expect(body.includeTrace).toBe(true);
+    });
+
+    it('omits includeTrace from the POST body by default', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+      expect(body.includeTrace).toBeUndefined();
+    });
+
+    it('renders the MessageTrace strip when a trace-bearing capability_result arrives', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        capabilityFrameWithTrace(
+          'search_knowledge_base',
+          { success: true },
+          {
+            slug: 'search_knowledge_base',
+            arguments: { query: 'reset password' },
+            latencyMs: 215,
+            success: true,
+            resultPreview: '{"results":[]}',
+          }
+        ),
+        contentFrame('Done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-trace')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 tool');
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('215ms');
+    });
+
+    it('does not render the MessageTrace strip when showInlineTrace is false even if trace arrives', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        capabilityFrameWithTrace(
+          'search_knowledge_base',
+          { success: true },
+          {
+            slug: 'search_knowledge_base',
+            arguments: {},
+            latencyMs: 50,
+            success: true,
+          }
+        ),
+        contentFrame('Done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // Wait for streaming to settle before asserting absence.
+      await waitFor(() => {
+        expect(screen.getByText('Done.')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
+    });
+
+    it('aggregates traces from a parallel capability_results batch', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        `event: capability_results\ndata: ${JSON.stringify({
+          results: [
+            {
+              capabilitySlug: 'a',
+              result: { success: true },
+              trace: { slug: 'a', arguments: {}, latencyMs: 30, success: true },
+            },
+            {
+              capabilitySlug: 'b',
+              result: { success: false, error: { code: 'oops', message: 'bad' } },
+              trace: {
+                slug: 'b',
+                arguments: {},
+                latencyMs: 30,
+                success: false,
+                errorCode: 'oops',
+              },
+            },
+          ],
+        })}\n\n`,
+        contentFrame('All done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-trace')).toHaveTextContent('2 tools');
+      });
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 failed');
+    });
+  });
 });

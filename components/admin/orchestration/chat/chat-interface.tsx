@@ -43,11 +43,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
+import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat-events';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
-import type { Citation, PendingApproval } from '@/types/orchestration';
+import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import type { Citation, PendingApproval, ToolCallTrace } from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
 import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
@@ -121,6 +123,17 @@ export interface ChatInterfaceProps {
   embedded?: boolean;
   /** Fires when a `capability_result` event arrives. */
   onCapabilityResult?: (slug: string, result: unknown) => void;
+  /**
+   * Admin-only: when true, the request opts into per-capability trace
+   * annotations and the chat renders an inline `<MessageTrace>` strip
+   * under each assistant message (tool slug, args, latency, success).
+   * Default `false` so consumer use of this component (if any future
+   * surface reuses it) keeps the redacted wire shape.
+   *
+   * Render this only inside admin route groups — the strip exposes
+   * raw tool arguments and internal slugs.
+   */
+  showInlineTrace?: boolean;
   /** Fires with the full assistant text when streaming completes. */
   onStreamComplete?: (fullText: string) => void;
   /** Enable token-by-token typing animation. Default: true (terminal feel). */
@@ -157,6 +170,12 @@ interface ChatMessage {
    * when a `run_workflow` capability paused on a `human_approval` step. */
   pendingApproval?: PendingApproval;
   /**
+   * Per-capability dispatch diagnostics accumulated across the turn —
+   * populated when the chat surface enables `showInlineTrace`. Drives
+   * the `<MessageTrace>` strip rendered under the assistant bubble.
+   */
+  toolCalls?: ToolCallTrace[];
+  /**
    * Number of attachments the user submitted with this turn. Rendered
    * as a small "📎 N file(s)" chip below the bubble so attachment-only
    * sends don't read as an empty message.
@@ -169,6 +188,25 @@ interface PersistedChatState {
   savedAt: number;
   conversationId: string | null;
   messages: ChatMessage[];
+}
+
+/**
+ * Append per-capability traces to the in-flight assistant message at
+ * the tail of the message list. No-op when the tail is not an
+ * assistant message — this can happen on the first capability_result
+ * of a turn before any text has streamed, but the assistant placeholder
+ * is always appended at send-time so the guard is a defensive belt.
+ */
+function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMessage[] {
+  if (traces.length === 0) return prev;
+  const updated = [...prev];
+  const last = updated[updated.length - 1];
+  if (!last || last.role !== 'assistant') return prev;
+  updated[updated.length - 1] = {
+    ...last,
+    toolCalls: [...(last.toolCalls ?? []), ...traces],
+  };
+  return updated;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -185,6 +223,7 @@ export function ChatInterface({
   className,
   embedded = false,
   onCapabilityResult,
+  showInlineTrace = false,
   onStreamComplete,
   enableTypingAnimation = true,
   typingAnimationOptions = { chunkSize: 2 },
@@ -411,6 +450,7 @@ export function ChatInterface({
               contextType,
               contextId,
               ...(submittedAttachments.length > 0 ? { attachments: submittedAttachments } : {}),
+              ...(showInlineTrace ? { includeTrace: true } : {}),
             }),
           });
 
@@ -484,6 +524,16 @@ export function ChatInterface({
                 if (typeof slug === 'string') {
                   onCapabilityResult?.(slug, parsed.data.result);
                 }
+                if (showInlineTrace) {
+                  // Re-validate through the typed parser so we never hand
+                  // unknown server payloads into UI state — the new
+                  // `trace` shape only flows when admin clients opted in.
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'capability_result' && typed.trace) {
+                    const trace = typed.trace;
+                    setMessages((prev) => appendToolTrace(prev, [trace]));
+                  }
+                }
               } else if (
                 parsed.type === 'capability_results' &&
                 Array.isArray(parsed.data.results)
@@ -499,6 +549,17 @@ export function ChatInterface({
                       (r as Record<string, unknown>).capabilitySlug as string,
                       (r as Record<string, unknown>).result
                     );
+                  }
+                }
+                if (showInlineTrace) {
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'capability_results') {
+                    const traces = typed.results
+                      .map((entry) => entry.trace)
+                      .filter((t): t is ToolCallTrace => t !== undefined);
+                    if (traces.length > 0) {
+                      setMessages((prev) => appendToolTrace(prev, traces));
+                    }
                   }
                 }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
@@ -731,6 +792,9 @@ export function ChatInterface({
                         pendingApproval={msg.pendingApproval}
                         onResolved={(_action, followup) => sendFollowupWhenIdle(followup)}
                       />
+                    )}
+                    {showInlineTrace && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <MessageTrace toolCalls={msg.toolCalls} />
                     )}
                     {/* Inline status during streaming — shown below content */}
                     {streaming && msg.content && i === messages.length - 1 && status && (

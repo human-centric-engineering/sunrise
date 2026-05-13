@@ -1302,6 +1302,10 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
               documentInputEnabled={currentDocumentInput}
               showClearButton
               persistenceKey={`agent-test-chat:${agent.id}`}
+              // Internal test surface — surface tool-call diagnostics
+              // so the author can see exactly which capabilities the
+              // model invoked and inspect their arguments.
+              showInlineTrace
               className="h-[500px]"
             />
           ) : (

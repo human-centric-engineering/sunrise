@@ -166,6 +166,10 @@ export function LearningTabs({
             contextId={contextId}
             starterPrompts={ADVISOR_PROMPTS}
             onStreamComplete={handleStreamComplete}
+            // Admin learning surface — show inline tool-call diagnostics
+            // so the advisor's knowledge-base lookups and capability use
+            // are visible to the operator.
+            showInlineTrace
             className="h-[600px]"
           />
 
@@ -210,6 +214,7 @@ export function LearningTabs({
             embedded
             starterPrompts={QUIZ_PROMPTS}
             onStreamComplete={handleQuizStreamComplete}
+            showInlineTrace
             className="h-[600px]"
           />
         </div>
