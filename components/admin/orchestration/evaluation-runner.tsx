@@ -56,6 +56,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
+import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat-events';
+import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import type { ToolCallTrace } from '@/types/orchestration';
 import {
   type Annotation,
   CATEGORIES,
@@ -109,6 +112,12 @@ interface ChatMessage {
     relevance: number | null;
     reasoning?: JudgeReasoning;
   };
+  /**
+   * Per-capability dispatch diagnostics for the assistant turn —
+   * populated from `capability_result.trace` frames. Drives the
+   * inline `<MessageTrace>` strip rendered under the bubble.
+   */
+  toolCalls?: ToolCallTrace[];
 }
 
 interface MetricSummary {
@@ -307,6 +316,10 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
             conversationId: conversationId ?? undefined,
             contextType: 'evaluation',
             contextId: evaluation.id,
+            // Evaluation runner is an admin-only surface — opt into the
+            // diagnostic trace so reviewers see why each turn was
+            // produced (which capabilities, with what args, latency).
+            includeTrace: true,
           }),
         });
 
@@ -338,6 +351,34 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
             } else if (parsed.type === 'content' && typeof parsed.data.delta === 'string') {
               const delta = parsed.data.delta;
               typing.appendDelta(delta);
+            } else if (
+              parsed.type === 'capability_result' ||
+              parsed.type === 'capability_results'
+            ) {
+              // Re-validate through the typed parser so we never push
+              // raw server payloads into UI state. The parser also
+              // discards malformed `trace` shapes silently.
+              const typed = parseChatStreamEvent(block);
+              const traces: ToolCallTrace[] = [];
+              if (typed?.type === 'capability_result' && typed.trace) {
+                traces.push(typed.trace);
+              } else if (typed?.type === 'capability_results') {
+                for (const entry of typed.results) {
+                  if (entry.trace) traces.push(entry.trace);
+                }
+              }
+              if (traces.length > 0) {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (!last || last.role !== 'assistant') return prev;
+                  updated[updated.length - 1] = {
+                    ...last,
+                    toolCalls: [...(last.toolCalls ?? []), ...traces],
+                  };
+                  return updated;
+                });
+              }
             } else if (parsed.type === 'error') {
               typing.flush();
               setChatError('The agent ran into a problem. Check the server logs for details.');
@@ -823,6 +864,9 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
                           </span>
                         )}
                       </>
+                    )}
+                    {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <MessageTrace toolCalls={msg.toolCalls} />
                     )}
                   </div>
                 </div>
