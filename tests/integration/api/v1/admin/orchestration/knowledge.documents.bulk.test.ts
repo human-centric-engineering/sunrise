@@ -58,6 +58,18 @@ vi.mock('@/lib/orchestration/knowledge/document-manager', () => ({
   uploadDocumentFromBuffer: vi.fn(),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiKnowledgeDocumentTag: {
+      createMany: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
+  invalidateAllAgentAccess: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
   requiresPreview: vi.fn((name: string) => name.toLowerCase().endsWith('.pdf')),
 }));
@@ -81,6 +93,8 @@ import {
   uploadDocumentFromBuffer,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { prisma } from '@/lib/db/client';
+import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -447,6 +461,123 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/bulk', () => {
       }>(response);
       expect(data.data.results[0].status).toBe('error');
       expect(data.data.results[0].error).toBe('S3 unavailable');
+    });
+  });
+
+  describe('formData parse failure', () => {
+    it('returns 400 when request.formData() throws', async () => {
+      // Arrange: simulate a malformed multipart body
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const badRequest = {
+        method: 'POST',
+        headers: new Headers(),
+        formData: () => Promise.reject(new Error('bad multipart')),
+        url: 'http://localhost:3000/api/v1/admin/orchestration/knowledge/documents/bulk',
+      } as unknown as import('next/server').NextRequest;
+
+      const response = await POST(badRequest);
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('tagIds parameter (bulk tag application)', () => {
+    const TAG_ID = 'cmjbv4i3x00003wsloputgwut';
+
+    it('applies tag grants for a successfully uploaded file', async () => {
+      // Arrange: valid tag ID on the form
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockResolvedValue({ count: 1 } as never);
+
+      const fd = makeFormDataWithFiles([
+        new File(['# Hello'], 'notes.md', { type: 'text/markdown' }),
+      ]);
+      fd.append('tagIds', TAG_ID);
+
+      const response = await POST(makePostRequest(fd));
+
+      expect(response.status).toBe(201);
+      // Tag createMany must be called for the uploaded document
+      expect(vi.mocked(prisma.aiKnowledgeDocumentTag.createMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [{ documentId: 'doc-1', tagId: TAG_ID }],
+          skipDuplicates: true,
+        })
+      );
+    });
+
+    it('invalidates agent access cache when tags are applied to successful uploads', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockResolvedValue({ count: 1 } as never);
+
+      const fd = makeFormDataWithFiles([
+        new File(['# Hello'], 'notes.md', { type: 'text/markdown' }),
+      ]);
+      fd.append('tagIds', TAG_ID);
+
+      await POST(makePostRequest(fd));
+
+      // Cache must be evicted so agents pick up new tag grants immediately
+      expect(vi.mocked(invalidateAllAgentAccess)).toHaveBeenCalled();
+    });
+
+    it('does NOT invalidate cache when no files succeed (even with tagIds)', async () => {
+      // Arrange: only unsupported files so no success rows
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const fd = makeFormDataWithFiles([
+        new File(['binary'], 'malware.exe', { type: 'application/octet-stream' }),
+      ]);
+      fd.append('tagIds', TAG_ID);
+
+      await POST(makePostRequest(fd));
+
+      // No success → cache should NOT be touched
+      expect(vi.mocked(invalidateAllAgentAccess)).not.toHaveBeenCalled();
+    });
+
+    it('silently ignores invalid tag IDs (not valid CUIDs)', async () => {
+      // Route strips invalid tag IDs from the list — no DB call should occur
+      // for 'bad-id' since it fails cuidSchema validation.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const fd = makeFormDataWithFiles([
+        new File(['# Hello'], 'notes.md', { type: 'text/markdown' }),
+      ]);
+      fd.append('tagIds', 'bad-id');
+
+      const response = await POST(makePostRequest(fd));
+
+      // Upload succeeds even with invalid tag ID stripped
+      expect(response.status).toBe(201);
+      // No tag writes because the invalid ID was dropped
+      expect(vi.mocked(prisma.aiKnowledgeDocumentTag.createMany)).not.toHaveBeenCalled();
+    });
+
+    it('survives a non-fatal tag createMany failure', async () => {
+      // Tag writes are best-effort; the upload still returns 201
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockRejectedValue(
+        new Error('FK violation')
+      );
+
+      const fd = makeFormDataWithFiles([
+        new File(['# Hello'], 'notes.md', { type: 'text/markdown' }),
+      ]);
+      fd.append('tagIds', TAG_ID);
+
+      const response = await POST(makePostRequest(fd));
+
+      expect(response.status).toBe(201);
+      const data = await parseJson<{
+        data: { results: Array<{ status: string }> };
+      }>(response);
+      // File was still processed successfully before the tag write failed
+      expect(data.data.results[0].status).toBe('success');
     });
   });
 });

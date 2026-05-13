@@ -803,6 +803,150 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
     });
   });
 
+  describe('GET with non-empty grant arrays', () => {
+    it('flattens grantedTags and grantedDocuments into id arrays in the GET response', async () => {
+      // The GET handler maps grantedTags → grantedTagIds and grantedDocuments → grantedDocumentIds.
+      // The .map() callbacks on lines 69-70 of the source only execute when the arrays are non-empty.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({
+          grantedTags: [{ tagId: 'tag-1' }, { tagId: 'tag-2' }],
+          grantedDocuments: [{ documentId: 'doc-1' }],
+        }) as never
+      );
+
+      const response = await GET(makeRequest(), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { grantedTagIds: string[]; grantedDocumentIds: string[] };
+      }>(response);
+      expect(data.data.grantedTagIds).toEqual(['tag-1', 'tag-2']);
+      expect(data.data.grantedDocumentIds).toEqual(['doc-1']);
+    });
+  });
+
+  describe('Grant updates (grantedTagIds and grantedDocumentIds)', () => {
+    // These tests need a custom transaction mock that includes knowledge-grant models.
+    // We use mockImplementationOnce so the custom tx doesn't bleed into subsequent tests.
+
+    it('updates tag grants when grantedTagIds is provided', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent({ grantedTags: [], grantedDocuments: [] });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+
+      let deleteManyTagsCalled = false;
+      let createManyTagsCalled = false;
+
+      vi.mocked(prisma.$transaction).mockImplementationOnce(
+        async (fn: (tx: never) => Promise<unknown>) => {
+          const tx = {
+            aiAgentKnowledgeTag: {
+              deleteMany: vi.fn(() => {
+                deleteManyTagsCalled = true;
+                return Promise.resolve({ count: 0 });
+              }),
+              createMany: vi.fn(() => {
+                createManyTagsCalled = true;
+                return Promise.resolve({ count: 1 });
+              }),
+            },
+            aiAgentKnowledgeDocument: {
+              deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+              createMany: vi.fn().mockResolvedValue({ count: 0 }),
+            },
+            aiAgentVersion: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({}),
+            },
+            aiAgent: {
+              update: vi.fn().mockResolvedValue(makeAgent()),
+            },
+          };
+          return fn(tx as never);
+        }
+      );
+
+      const TAG_ID = 'cmjbv4i3x00003wsloputgwut';
+      const response = await PATCH(
+        makeRequest('PATCH', { grantedTagIds: [TAG_ID] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(deleteManyTagsCalled).toBe(true);
+      expect(createManyTagsCalled).toBe(true);
+    });
+
+    it('reads existing document grants correctly when current has grantedDocuments', async () => {
+      // Line 97 of the source maps current.grantedDocuments — only exercised when
+      // the agent already has document grants in the DB.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent({
+        grantedTags: [{ tagId: 'tag-existing' }],
+        grantedDocuments: [{ documentId: 'doc-existing' }],
+      });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      // PATCH with a field that won't trigger grant changes to keep the mock simple
+      const response = await PATCH(
+        makeRequest('PATCH', { name: 'New Name' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('updates document grants when grantedDocumentIds is provided', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const current = makeAgent({ grantedTags: [], grantedDocuments: [] });
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(current as never);
+
+      let deleteManyDocsCalled = false;
+      let createManyDocsCalled = false;
+
+      vi.mocked(prisma.$transaction).mockImplementationOnce(
+        async (fn: (tx: never) => Promise<unknown>) => {
+          const tx = {
+            aiAgentKnowledgeTag: {
+              deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+              createMany: vi.fn().mockResolvedValue({ count: 0 }),
+            },
+            aiAgentKnowledgeDocument: {
+              deleteMany: vi.fn(() => {
+                deleteManyDocsCalled = true;
+                return Promise.resolve({ count: 0 });
+              }),
+              createMany: vi.fn(() => {
+                createManyDocsCalled = true;
+                return Promise.resolve({ count: 1 });
+              }),
+            },
+            aiAgentVersion: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({}),
+            },
+            aiAgent: {
+              update: vi.fn().mockResolvedValue(makeAgent()),
+            },
+          };
+          return fn(tx as never);
+        }
+      );
+
+      const DOC_ID = 'cmjbv4i3x00003wsloputgwud';
+      const response = await PATCH(
+        makeRequest('PATCH', { grantedDocumentIds: [DOC_ID] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(deleteManyDocsCalled).toBe(true);
+      expect(createManyDocsCalled).toBe(true);
+    });
+  });
+
   describe('Snapshot completeness — every versioned field is captured', () => {
     // Belt-and-braces: when any versioned field changes, the snapshot
     // must include the pre-update value of every other versioned field
@@ -877,6 +1021,93 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
   });
 });
 
+describe('PATCH /api/v1/admin/orchestration/agents/:id — system agent protections', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
+  });
+
+  it('returns 403 when trying to deactivate a system agent', async () => {
+    // Arrange: system agent exists
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
+
+    const response = await PATCH(makeRequest('PATCH', { isActive: false }), makeParams(AGENT_ID));
+
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(data.success).toBe(false);
+    expect(data.error.code).toBe('FORBIDDEN');
+  });
+
+  it('returns 403 when trying to change the slug of a system agent', async () => {
+    // Arrange: system agent with slug locked
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({ isSystem: true, slug: 'system-agent' }) as never
+    );
+
+    const response = await PATCH(
+      makeRequest('PATCH', { slug: 'different-slug' }),
+      makeParams(AGENT_ID)
+    );
+
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(data.error.code).toBe('FORBIDDEN');
+  });
+
+  it('returns 403 when trying to change system instructions of a system agent', async () => {
+    // Arrange: system agent with instructions locked
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({ isSystem: true, systemInstructions: 'System instructions.' }) as never
+    );
+
+    const response = await PATCH(
+      makeRequest('PATCH', { systemInstructions: 'Modified instructions.' }),
+      makeParams(AGENT_ID)
+    );
+
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(data.error.code).toBe('FORBIDDEN');
+  });
+
+  it('allows PATCH of non-protected fields on a system agent (e.g. description)', async () => {
+    // Arrange: system agent allows description changes
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
+    vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+      makeAgent({ isSystem: true, description: 'Updated desc' }) as never
+    );
+
+    const response = await PATCH(
+      makeRequest('PATCH', { description: 'Updated desc' }),
+      makeParams(AGENT_ID)
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('does not trigger slug-protection when slug is the same as current', async () => {
+    // Edge case: sending the same slug value should not be blocked
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({ isSystem: true, slug: 'test-agent' }) as never
+    );
+    vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ isSystem: true }) as never);
+
+    const response = await PATCH(
+      makeRequest('PATCH', { slug: 'test-agent' }),
+      makeParams(AGENT_ID)
+    );
+
+    // No error — same slug is allowed
+    expect(response.status).toBe(200);
+  });
+});
+
 describe('DELETE /api/v1/admin/orchestration/agents/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -942,6 +1173,28 @@ describe('DELETE /api/v1/admin/orchestration/agents/:id', () => {
       const response = await DELETE(makeRequest('DELETE'), makeParams(AGENT_ID));
 
       expect(response.status).toBe(404);
+    });
+
+    it('returns 403 when trying to delete a system agent', async () => {
+      // System agents are protected — they cannot be soft-deleted via DELETE
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ isSystem: true }) as never
+      );
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data.error.code).toBe('FORBIDDEN');
+    });
+
+    it('returns 400 for invalid CUID on DELETE', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(INVALID_ID));
+
+      expect(response.status).toBe(400);
     });
   });
 });

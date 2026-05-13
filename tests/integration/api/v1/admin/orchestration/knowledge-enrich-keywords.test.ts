@@ -66,7 +66,10 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { enrichDocumentKeywords } from '@/lib/orchestration/knowledge/keyword-enricher';
+import {
+  enrichDocumentKeywords,
+  NoChunksToEnrichError,
+} from '@/lib/orchestration/knowledge/keyword-enricher';
 import { NoDefaultModelConfiguredError } from '@/lib/orchestration/llm/settings-resolver';
 import { adminLimiter } from '@/lib/security/rate-limit';
 
@@ -237,6 +240,38 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/enrich-keywor
 
       await POST(makeRequest(), makeParams(DOC_ID));
       expect(vi.mocked(adminLimiter.check)).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('NoChunksToEnrichError handling', () => {
+    it('returns 409 when enrichDocumentKeywords throws NoChunksToEnrichError', async () => {
+      // This branch covers when the enricher itself detects no chunks at runtime
+      // (distinct from the pre-check on chunkCount === 0 above, which guards
+      // against a race condition between the document-load and the enrich call).
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue(
+        makeDocument({ chunkCount: 2 }) as never
+      );
+      vi.mocked(enrichDocumentKeywords).mockRejectedValue(
+        new NoChunksToEnrichError('No enrichable chunks found for document')
+      );
+
+      const response = await POST(makeRequest(), makeParams(DOC_ID));
+      expect(response.status).toBe(409);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('CONFLICT');
+    });
+
+    it('re-throws unexpected errors (propagates non-enricher errors)', async () => {
+      // If the enricher throws something that is not a known error class,
+      // the route re-throws it — withAdminAuth catches it and returns 500.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue(makeDocument() as never);
+      vi.mocked(enrichDocumentKeywords).mockRejectedValue(new Error('unexpected db error'));
+
+      const response = await POST(makeRequest(), makeParams(DOC_ID));
+      expect(response.status).toBe(500);
     });
   });
 });

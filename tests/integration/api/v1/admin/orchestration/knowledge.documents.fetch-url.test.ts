@@ -63,6 +63,18 @@ vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
   requiresPreview: vi.fn((name: string) => name.toLowerCase().endsWith('.pdf')),
 }));
 
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiKnowledgeDocumentTag: {
+      createMany: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
+  invalidateAllAgentAccess: vi.fn(),
+}));
+
 vi.mock('@/lib/api/context', () => ({
   getRouteLogger: vi.fn(() =>
     Promise.resolve({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
@@ -79,6 +91,8 @@ import {
   uploadDocumentFromBuffer,
 } from '@/lib/orchestration/knowledge/document-manager';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { prisma } from '@/lib/db/client';
+import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -296,6 +310,78 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
       // withAdminAuth catches unhandled errors and returns a 500 response
       const response = await POST(makePostRequest({ url: VALID_URL }));
       expect(response.status).toBe(500);
+    });
+  });
+
+  describe('Tag application (tagIds param)', () => {
+    const TAG_ID = 'cmjbv4i3x00003wsloputgwut';
+
+    it('applies tag grants when tagIds are provided', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockResolvedValue({ count: 1 } as never);
+
+      const response = await POST(makePostRequest({ url: VALID_URL, tagIds: [TAG_ID] }));
+
+      // Assert: tag join row was created
+      expect(vi.mocked(prisma.aiKnowledgeDocumentTag.createMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [{ documentId: 'doc-1', tagId: TAG_ID }],
+          skipDuplicates: true,
+        })
+      );
+      expect(response.status).toBe(201);
+    });
+
+    it('invalidates agent access cache after tagging', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockResolvedValue({ count: 1 } as never);
+
+      await POST(makePostRequest({ url: VALID_URL, tagIds: [TAG_ID] }));
+
+      // Resolver cache must be evicted so agents pick up new tag grants immediately
+      expect(vi.mocked(invalidateAllAgentAccess)).toHaveBeenCalled();
+    });
+
+    it('does not apply tags when tagIds array is empty', async () => {
+      // Arrange: no tagIds
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest({ url: VALID_URL }));
+
+      // No tag join rows should be written
+      expect(vi.mocked(prisma.aiKnowledgeDocumentTag.createMany)).not.toHaveBeenCalled();
+      expect(vi.mocked(invalidateAllAgentAccess)).not.toHaveBeenCalled();
+    });
+
+    it('succeeds even when tag createMany throws (best-effort non-fatal)', async () => {
+      // Arrange: tag write fails but the document upload already succeeded
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockRejectedValue(
+        new Error('FK violation')
+      );
+
+      const response = await POST(makePostRequest({ url: VALID_URL, tagIds: [TAG_ID] }));
+
+      // Upload still returns 201 — tag failure is non-fatal
+      expect(response.status).toBe(201);
+    });
+
+    it('includes tagsApplied count in logAdminAction metadata', async () => {
+      // Arrange
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocumentTag.createMany).mockResolvedValue({ count: 2 } as never);
+
+      await POST(
+        makePostRequest({ url: VALID_URL, tagIds: [TAG_ID, 'cmjbv4i3x00003wsloputgwu2'] })
+      );
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ tagsApplied: 2 }),
+        })
+      );
     });
   });
 });
