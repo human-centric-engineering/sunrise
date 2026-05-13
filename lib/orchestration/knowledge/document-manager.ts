@@ -15,7 +15,6 @@ import { logger } from '@/lib/logging';
 import {
   chunkCsvDocument,
   chunkMarkdownDocument,
-  parseMetadataComments,
   CSV_MAX_ROW_CHARS,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
@@ -118,13 +117,13 @@ async function insertChunks(
     await tx.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content, embedding,
-        "chunkType", "patternNumber", "patternName", category,
+        "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata,
         "embeddingModel", "embeddingProvider", "embeddedAt"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
-        $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-        $13, $14, $15
+        $5, $6, $7, $8, $9, $10, $11::jsonb,
+        $12, $13, $14
       )`,
       chunk.id,
       documentId,
@@ -133,7 +132,6 @@ async function insertChunks(
       chunk.chunkType,
       chunk.patternNumber,
       chunk.patternName,
-      chunk.category,
       chunk.section,
       chunk.keywords,
       chunk.estimatedTokens,
@@ -143,15 +141,6 @@ async function insertChunks(
       provenance.embeddedAt
     );
   }
-}
-
-/**
- * Extract a document-level category from metadata comments.
- * Looks for `<!-- metadata: category=... -->` at the top level.
- */
-function extractDocumentCategory(content: string): string | null {
-  const meta = parseMetadataComments(content);
-  return meta['category'] || null;
 }
 
 /**
@@ -183,18 +172,20 @@ function rebuildCsvParsedFromSections(
  * @param content - Raw document content (markdown)
  * @param fileName - Original file name
  * @param userId - ID of the uploading user
- * @param category - Optional category (overrides any in-document metadata)
  * @returns The created document record
  */
 export async function uploadDocument(
   content: string,
   fileName: string,
   userId: string,
-  category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(content).digest('hex');
-  const name = fileName.replace(/\.[^.]+$/, '');
+  // Use the operator-supplied display name when present; otherwise fall back
+  // to the filename without extension.
+  const fallbackName = fileName.replace(/\.[^.]+$/, '');
+  const name = displayName?.trim() || fallbackName;
 
   logger.info('Uploading document', { fileName, fileHash, userId });
 
@@ -211,9 +202,6 @@ export async function uploadDocument(
     return existing;
   }
 
-  // Resolve category: explicit param → document-level metadata → null
-  const resolvedCategory = category || extractDocumentCategory(content) || null;
-
   // Create document record with processing status
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
@@ -221,7 +209,6 @@ export async function uploadDocument(
       fileName,
       fileHash,
       scope: 'app',
-      category: resolvedCategory,
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
@@ -231,15 +218,6 @@ export async function uploadDocument(
   try {
     // Chunk the document
     const chunks = await chunkMarkdownDocument(content, name, document.id);
-
-    // If a document-level category was set, apply it to chunks that have none
-    if (resolvedCategory) {
-      for (const chunk of chunks) {
-        if (!chunk.category) {
-          chunk.category = resolvedCategory;
-        }
-      }
-    }
 
     if (chunks.length === 0) {
       await prisma.aiKnowledgeDocument.update({
@@ -302,7 +280,6 @@ export async function uploadDocument(
  * @param buffer - Raw file content
  * @param fileName - Original file name (extension determines parser)
  * @param userId - ID of the uploading user
- * @param category - Optional category override
  * @returns The created document record
  * @throws Error if the format requires preview (use previewDocument instead)
  */
@@ -310,8 +287,8 @@ export async function uploadDocumentFromBuffer(
   buffer: Buffer,
   fileName: string,
   userId: string,
-  category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   if (requiresPreview(fileName)) {
     throw new Error(
@@ -331,7 +308,7 @@ export async function uploadDocumentFromBuffer(
   // CSV uses row-level chunking via chunkCsvDocument (not the markdown
   // chunker), so it bypasses uploadDocument and runs the full lifecycle here.
   if (parsed.metadata.format === 'csv') {
-    return uploadCsvFromParsed(parsed, buffer, fileName, userId, category, sourceUrl);
+    return uploadCsvFromParsed(parsed, buffer, fileName, userId, sourceUrl, displayName);
   }
 
   // For markdown files, use the raw text directly (the markdown chunker
@@ -340,7 +317,7 @@ export async function uploadDocumentFromBuffer(
   const ext = extname(fileName).toLowerCase();
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
-  return uploadDocument(content, fileName, userId, category, sourceUrl);
+  return uploadDocument(content, fileName, userId, sourceUrl, displayName);
 }
 
 /**
@@ -356,11 +333,12 @@ async function uploadCsvFromParsed(
   buffer: Buffer,
   fileName: string,
   userId: string,
-  category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(buffer).digest('hex');
-  const name = fileName.replace(/\.[^.]+$/, '');
+  const fallbackName = fileName.replace(/\.[^.]+$/, '');
+  const name = displayName?.trim() || fallbackName;
 
   logger.info('Uploading CSV document', { fileName, fileHash, userId });
 
@@ -381,7 +359,6 @@ async function uploadCsvFromParsed(
       fileName,
       fileHash,
       scope: 'app',
-      category: category ?? null,
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
@@ -419,12 +396,6 @@ async function uploadCsvFromParsed(
 
     const filteredParsed = { ...parsed, sections: acceptableSections };
     const chunks = chunkCsvDocument(filteredParsed, name, document.id);
-
-    if (category) {
-      for (const chunk of chunks) {
-        if (!chunk.category) chunk.category = category;
-      }
-    }
 
     // Persist the parsed sections verbatim. Re-chunking reads this back
     // (see `rechunkDocument`) instead of `split('\n')`-ing a joined string,
@@ -662,14 +633,12 @@ export async function previewDocument(
  * @param documentId - ID of the document in 'pending_review' status
  * @param userId - ID of the confirming user (must match the uploader)
  * @param correctedContent - Optional corrected text to replace the parsed content
- * @param category - Optional category override
  * @returns The updated document record (status = 'ready')
  */
 export async function confirmPreview(
   documentId: string,
   userId: string,
-  correctedContent?: string,
-  category?: string
+  correctedContent?: string
 ): Promise<AiKnowledgeDocument> {
   const document = await prisma.aiKnowledgeDocument.findFirst({
     where: { id: documentId, uploadedBy: userId, status: 'pending_review' },
@@ -699,19 +668,11 @@ export async function confirmPreview(
   // First update status to processing
   await prisma.aiKnowledgeDocument.update({
     where: { id: documentId },
-    data: { status: 'processing', category: category ?? document.category },
+    data: { status: 'processing' },
   });
 
   try {
     const chunks = await chunkMarkdownDocument(content, document.name, documentId);
-
-    if (category) {
-      for (const chunk of chunks) {
-        if (!chunk.category) {
-          chunk.category = category;
-        }
-      }
-    }
 
     if (chunks.length === 0) {
       return await prisma.aiKnowledgeDocument.update({
@@ -920,86 +881,4 @@ export async function listDocuments(): Promise<AiKnowledgeDocument[]> {
   return prisma.aiKnowledgeDocument.findMany({
     orderBy: { createdAt: 'desc' },
   });
-}
-
-/** A single meta-tag value with usage count */
-export interface MetaTagEntry {
-  value: string;
-  chunkCount: number;
-  documentCount: number;
-}
-
-/** Meta-tags for a single scope (app or system) */
-export interface ScopedMetaTags {
-  categories: MetaTagEntry[];
-  keywords: MetaTagEntry[];
-}
-
-/** Summary of all meta-tags grouped by knowledge base scope */
-export interface MetaTagSummary {
-  app: ScopedMetaTags;
-  system: ScopedMetaTags;
-}
-
-interface RawTagRow {
-  scope: string;
-  value: string;
-  chunk_count: bigint;
-  doc_count: bigint;
-}
-
-function mapTagRows(rows: RawTagRow[]): { app: MetaTagEntry[]; system: MetaTagEntry[] } {
-  const app: MetaTagEntry[] = [];
-  const system: MetaTagEntry[] = [];
-  for (const r of rows) {
-    const entry = {
-      value: r.value.trim(),
-      chunkCount: Number(r.chunk_count),
-      documentCount: Number(r.doc_count),
-    };
-    if (r.scope === 'system') {
-      system.push(entry);
-    } else {
-      app.push(entry);
-    }
-  }
-  return { app, system };
-}
-
-/**
- * List all distinct meta-tag values (categories and keywords) across chunks,
- * grouped by document scope (app vs system), with chunk and document counts.
- */
-export async function listMetaTags(): Promise<MetaTagSummary> {
-  const [categoryRows, keywordRows] = await Promise.all([
-    prisma.$queryRaw<RawTagRow[]>`
-      SELECT d.scope, c.category AS value,
-             COUNT(*)::bigint AS chunk_count,
-             COUNT(DISTINCT c."documentId")::bigint AS doc_count
-      FROM ai_knowledge_chunk c
-      JOIN ai_knowledge_document d ON d.id = c."documentId"
-      WHERE c.category IS NOT NULL AND c.category <> ''
-      GROUP BY d.scope, c.category
-      ORDER BY chunk_count DESC
-    `,
-    prisma.$queryRaw<RawTagRow[]>`
-      SELECT d.scope, kw AS value,
-             COUNT(*)::bigint AS chunk_count,
-             COUNT(DISTINCT c."documentId")::bigint AS doc_count
-      FROM ai_knowledge_chunk c
-      JOIN ai_knowledge_document d ON d.id = c."documentId",
-           LATERAL unnest(string_to_array(c.keywords, ',')) AS kw
-      WHERE c.keywords IS NOT NULL AND c.keywords <> ''
-      GROUP BY d.scope, kw
-      ORDER BY chunk_count DESC
-    `,
-  ]);
-
-  const cats = mapTagRows(categoryRows);
-  const kws = mapTagRows(keywordRows);
-
-  return {
-    app: { categories: cats.app, keywords: kws.app },
-    system: { categories: cats.system, keywords: kws.system },
-  };
 }

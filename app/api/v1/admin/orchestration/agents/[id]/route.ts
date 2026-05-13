@@ -26,6 +26,7 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { logger } from '@/lib/logging';
 import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
+import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import {
   systemInstructionsHistorySchema,
   updateAgentSchema,
@@ -50,11 +51,27 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const { id: rawId } = await params;
   const id = parseAgentId(rawId);
 
-  const agent = await prisma.aiAgent.findUnique({ where: { id } });
+  const agent = await prisma.aiAgent.findUnique({
+    where: { id },
+    include: {
+      grantedTags: { select: { tagId: true } },
+      grantedDocuments: { select: { documentId: true } },
+    },
+  });
   if (!agent) throw new NotFoundError(`Agent ${id} not found`);
 
+  // Flatten the join-row arrays into id arrays for the form. The include is
+  // always set in the query above, but defensive defaults keep tests that mock
+  // findUnique with a partial shape from blowing up at runtime.
+  const { grantedTags, grantedDocuments, ...rest } = agent;
+  const response = {
+    ...rest,
+    grantedTagIds: (grantedTags ?? []).map((g) => g.tagId),
+    grantedDocumentIds: (grantedDocuments ?? []).map((g) => g.documentId),
+  };
+
   log.info('Agent fetched', { agentId: id });
-  return successResponse(agent);
+  return successResponse(response);
 });
 
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -66,8 +83,19 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const { id: rawId } = await params;
   const id = parseAgentId(rawId);
 
-  const current = await prisma.aiAgent.findUnique({ where: { id } });
+  const current = await prisma.aiAgent.findUnique({
+    where: { id },
+    include: {
+      grantedTags: { select: { tagId: true } },
+      grantedDocuments: { select: { documentId: true } },
+    },
+  });
   if (!current) throw new NotFoundError(`Agent ${id} not found`);
+
+  const currentGrantedTagIds = (current.grantedTags ?? []).map((g) => g.tagId).sort();
+  const currentGrantedDocumentIds = (current.grantedDocuments ?? [])
+    .map((g) => g.documentId)
+    .sort();
 
   const body = await validateRequestBody(request, updateAgentSchema);
 
@@ -107,7 +135,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.metadata = body.metadata as Prisma.InputJsonValue;
   }
   if (body.isActive !== undefined) data.isActive = body.isActive;
-  if (body.knowledgeCategories !== undefined) data.knowledgeCategories = body.knowledgeCategories;
+  if (body.knowledgeAccessMode !== undefined) data.knowledgeAccessMode = body.knowledgeAccessMode;
   if (body.topicBoundaries !== undefined) data.topicBoundaries = body.topicBoundaries;
   if (body.brandVoiceInstructions !== undefined)
     data.brandVoiceInstructions = body.brandVoiceInstructions;
@@ -167,7 +195,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'brandVoiceInstructions',
     'provider',
     'fallbackProviders',
-    'knowledgeCategories',
+    'knowledgeAccessMode',
     'rateLimitRpm',
     'visibility',
     'inputGuardMode',
@@ -191,7 +219,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // summary. Now we compare against `current`:
   //   - Primitive equality for scalars
   //   - Shallow elementwise for string[] (fallbackProviders,
-  //     knowledgeCategories, topicBoundaries — all string arrays)
+  //     topicBoundaries)
   //   - JSON-stringify for the Prisma `Json` columns (providerConfig,
   //     metadata) which round-trip as plain values
   const isFieldChanged = (newValue: unknown, currentValue: unknown): boolean => {
@@ -217,12 +245,32 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       isFieldChanged(data[f], (current as unknown as Record<string, unknown>)[f])
   );
 
+  // Grant changes don't go through the `data` object (they're join-row writes),
+  // but they're versioned in the snapshot so callers can roll them back. Detect
+  // sorted-array equality to avoid spurious version bumps on no-op reorder.
+  function arraysEqualUnordered(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const sortedA = [...a].sort();
+    const sortedB = [...b].sort();
+    for (let i = 0; i < sortedA.length; i++) {
+      if (sortedA[i] !== sortedB[i]) return false;
+    }
+    return true;
+  }
+  const tagGrantsChanged =
+    body.grantedTagIds !== undefined &&
+    !arraysEqualUnordered(body.grantedTagIds, currentGrantedTagIds);
+  const docGrantsChanged =
+    body.grantedDocumentIds !== undefined &&
+    !arraysEqualUnordered(body.grantedDocumentIds, currentGrantedDocumentIds);
+  const grantsChanged = tagGrantsChanged || docGrantsChanged;
+
   try {
     // Auto-create version snapshot if versioned fields changed.
     // Both the snapshot and the update run inside a transaction so an
     // update failure doesn't leave an orphaned version entry.
     const agent = await prisma.$transaction(async (tx) => {
-      if (changedVersionedFields.length > 0) {
+      if (changedVersionedFields.length > 0 || grantsChanged) {
         // Get next version number
         const lastVersion = await tx.aiAgentVersion.findFirst({
           where: { agentId: id },
@@ -246,7 +294,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           topicBoundaries: current.topicBoundaries,
           brandVoiceInstructions: current.brandVoiceInstructions,
           metadata: current.metadata,
-          knowledgeCategories: current.knowledgeCategories,
+          knowledgeAccessMode: current.knowledgeAccessMode,
+          grantedTagIds: currentGrantedTagIds,
+          grantedDocumentIds: currentGrantedDocumentIds,
           rateLimitRpm: current.rateLimitRpm,
           visibility: current.visibility,
           inputGuardMode: current.inputGuardMode,
@@ -261,7 +311,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           enableDocumentInput: current.enableDocumentInput,
         };
 
-        const changeSummary = buildChangeSummary(changedVersionedFields);
+        const summaryFields = [
+          ...changedVersionedFields,
+          ...(tagGrantsChanged ? (['grantedTagIds'] as const) : []),
+          ...(docGrantsChanged ? (['grantedDocumentIds'] as const) : []),
+        ];
+        const changeSummary = buildChangeSummary(summaryFields);
 
         await tx.aiAgentVersion.create({
           data: {
@@ -276,12 +331,38 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         log.info('Agent version snapshot created', {
           agentId: id,
           version: nextVersion,
-          changes: changedVersionedFields,
+          changes: summaryFields,
         });
+      }
+
+      // Replace tag grants if the body provided a new list.
+      if (body.grantedTagIds !== undefined) {
+        await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: id } });
+        if (body.grantedTagIds.length > 0) {
+          await tx.aiAgentKnowledgeTag.createMany({
+            data: body.grantedTagIds.map((tagId) => ({ agentId: id, tagId })),
+            skipDuplicates: true,
+          });
+        }
+      }
+      // Replace document grants if the body provided a new list.
+      if (body.grantedDocumentIds !== undefined) {
+        await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: id } });
+        if (body.grantedDocumentIds.length > 0) {
+          await tx.aiAgentKnowledgeDocument.createMany({
+            data: body.grantedDocumentIds.map((documentId) => ({ agentId: id, documentId })),
+            skipDuplicates: true,
+          });
+        }
       }
 
       return tx.aiAgent.update({ where: { id }, data });
     });
+
+    // Evict the resolver cache so the next chat turn sees the new grants.
+    if (grantsChanged || body.knowledgeAccessMode !== undefined) {
+      invalidateAgentAccess(id);
+    }
 
     log.info('Agent updated', {
       agentId: id,

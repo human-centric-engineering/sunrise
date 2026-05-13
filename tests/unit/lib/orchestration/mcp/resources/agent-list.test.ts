@@ -48,7 +48,7 @@ describe('handleAgentList', () => {
   it('queries aiAgent with isActive=true filter', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    await handleAgentList(TEST_URI, null);
+    await handleAgentList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -60,7 +60,7 @@ describe('handleAgentList', () => {
   it('orders results by name ascending', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    await handleAgentList(TEST_URI, null);
+    await handleAgentList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -72,7 +72,7 @@ describe('handleAgentList', () => {
   it('selects only safe fields (no system instructions or config)', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    await handleAgentList(TEST_URI, null);
+    await handleAgentList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -90,7 +90,10 @@ describe('handleAgentList', () => {
   it('returns mimeType application/json', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.mimeType).toBe('application/json');
   });
@@ -98,7 +101,10 @@ describe('handleAgentList', () => {
   it('echoes the URI back in the result', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.uri).toBe(TEST_URI);
   });
@@ -106,7 +112,10 @@ describe('handleAgentList', () => {
   it('returns empty agents array when no active agents exist', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.agents).toEqual([]);
@@ -115,7 +124,10 @@ describe('handleAgentList', () => {
   it('maps agents to the response body correctly', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeAgent()] as never);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.agents).toHaveLength(1);
@@ -134,7 +146,10 @@ describe('handleAgentList', () => {
       makeAgent({ name: 'Agent B', slug: 'agent-b' }),
     ] as never);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.agents).toHaveLength(2);
@@ -146,7 +161,10 @@ describe('handleAgentList', () => {
       makeAgent({ description: null }),
     ] as never);
 
-    const result = await handleAgentList(TEST_URI, null);
+    const result = await handleAgentList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.agents[0].description).toBeNull();
@@ -155,6 +173,8 @@ describe('handleAgentList', () => {
   it('ignores the config parameter', async () => {
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
 
-    await expect(handleAgentList(TEST_URI, { someConfig: 'value' })).resolves.not.toThrow();
+    await expect(
+      handleAgentList(TEST_URI, { someConfig: 'value' }, { scopedAgentId: null, apiKeyId: 'key-1' })
+    ).resolves.not.toThrow();
   });
 });

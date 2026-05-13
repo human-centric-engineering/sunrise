@@ -55,9 +55,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const source = await prisma.aiAgent.findUnique({
     where: { id },
-    include: { capabilities: true },
+    include: {
+      capabilities: true,
+      grantedTags: { select: { tagId: true } },
+      grantedDocuments: { select: { documentId: true } },
+    },
   });
   if (!source) throw new NotFoundError(`Agent ${id} not found`);
+
+  const sourceTagIds = (source.grantedTags ?? []).map((g) => g.tagId);
+  const sourceDocumentIds = (source.grantedDocuments ?? []).map((g) => g.documentId);
 
   // Cloning a system agent is allowed — the clone gets isSystem: false
   // (set explicitly below), so it's a safe copy with no special privileges.
@@ -97,7 +104,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             retentionDays: source.retentionDays,
             visibility: source.visibility,
             rateLimitRpm: source.rateLimitRpm,
-            knowledgeCategories: source.knowledgeCategories,
+            knowledgeAccessMode: source.knowledgeAccessMode,
             topicBoundaries: source.topicBoundaries,
             brandVoiceInstructions: source.brandVoiceInstructions,
             widgetConfig: (source.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
@@ -111,6 +118,22 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
               agentId: agent.id,
               capabilityId: cap.capabilityId,
             })),
+          });
+        }
+
+        // Carry over the source's knowledge-access grants so the clone is
+        // immediately usable with the same scope. If the operator wants
+        // different grants they can edit the clone afterwards.
+        if (sourceTagIds.length > 0) {
+          await tx.aiAgentKnowledgeTag.createMany({
+            data: sourceTagIds.map((tagId) => ({ agentId: agent.id, tagId })),
+            skipDuplicates: true,
+          });
+        }
+        if (sourceDocumentIds.length > 0) {
+          await tx.aiAgentKnowledgeDocument.createMany({
+            data: sourceDocumentIds.map((documentId) => ({ agentId: agent.id, documentId })),
+            skipDuplicates: true,
           });
         }
 

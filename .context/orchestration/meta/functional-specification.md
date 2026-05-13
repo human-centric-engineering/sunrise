@@ -69,21 +69,21 @@ lib/orchestration/           ← Platform-agnostic core (NO Next.js imports)
 
 An agent is the primary deployment unit: a configured AI persona with model selection, behaviour parameters, attached capabilities, knowledge scope, and budget constraints.
 
-| Property                    | Purpose                                             |
-| --------------------------- | --------------------------------------------------- |
-| `name` / `slug`             | Human and machine identifiers                       |
-| `systemInstructions`        | Persona, behaviour rules, domain context            |
-| `model` / `provider`        | LLM model and provider selection                    |
-| `temperature` / `maxTokens` | Generation parameters                               |
-| `monthlyBudgetUsd`          | Per-agent spend cap with 80% warning threshold      |
-| `fallbackProviders`         | Ordered failover chain (up to 5 providers)          |
-| `knowledgeCategories`       | Scoped knowledge base access                        |
-| `capabilities`              | Attached tools the agent can invoke                 |
-| `visibility`                | Access control: `internal`, `public`, `invite_only` |
+| Property                       | Purpose                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------ |
+| `name` / `slug`                | Human and machine identifiers                                                  |
+| `systemInstructions`           | Persona, behaviour rules, domain context                                       |
+| `model` / `provider`           | LLM model and provider selection                                               |
+| `temperature` / `maxTokens`    | Generation parameters                                                          |
+| `monthlyBudgetUsd`             | Per-agent spend cap with 80% warning threshold                                 |
+| `fallbackProviders`            | Ordered failover chain (up to 5 providers)                                     |
+| `knowledgeAccessMode` + grants | Scoped knowledge base access (`full` / `restricted` × tag and document grants) |
+| `capabilities`                 | Attached tools the agent can invoke                                            |
+| `visibility`                   | Access control: `internal`, `public`, `invite_only`                            |
 
 ### 1.2 Agent Lifecycle
 
-- **Versioning**: Every editable behavioural and operational field — General-tab metadata (`name`, `slug`, `description`, `isActive`, `visibility`, `retentionDays`), Model-tab config (provider, model, temperature, guard modes, attachment toggles, etc.), and Instructions-tab content (`systemInstructions`, knowledge categories, topic boundaries, brand voice) — is captured in `VERSIONED_FIELDS` and creates an `AiAgentVersion` row on change. Each row stores the **pre-update** state of every versioned field as a JSON snapshot plus a tab-prefixed `changeSummary` (e.g. `"General: Description · Model: Temperature, Model"`). "Restore to version N" rewrites the live agent back to that captured pre-update state. The version-history UI lazy-loads adjacent snapshots and renders a Before/After diff per save, using the live agent state as the "After" for the newest row (since the most recent save's post-update state lives on the agent row itself, not in any version snapshot).
+- **Versioning**: Every editable behavioural and operational field — General-tab metadata (`name`, `slug`, `description`, `isActive`, `visibility`, `retentionDays`), Model-tab config (provider, model, temperature, guard modes, attachment toggles, etc.), Knowledge-tab config (`knowledgeAccessMode`, tag grants, document grants), and Instructions-tab content (`systemInstructions`, topic boundaries, brand voice) — is captured in `VERSIONED_FIELDS` and creates an `AiAgentVersion` row on change. Each row stores the **pre-update** state of every versioned field as a JSON snapshot plus a tab-prefixed `changeSummary` (e.g. `"General: Description · Model: Temperature, Model"`). "Restore to version N" rewrites the live agent back to that captured pre-update state. The version-history UI lazy-loads adjacent snapshots and renders a Before/After diff per save, using the live agent state as the "After" for the newest row (since the most recent save's post-update state lives on the agent row itself, not in any version snapshot).
 - **Cloning**: Duplicate an agent with all configuration for A/B experimentation
 - **Export/Import**: JSON serialisation for backup, migration, or sharing between environments
 - **Bulk operations**: Multi-agent export, comparison between agents
@@ -419,13 +419,13 @@ Multi-format document processing pipeline:
 - **CSV chunking**: Dedicated `chunkCsvDocument` emits one `csv_row` chunk per data row (or batched groups for very large files); content is the pipe-joined `Header: Value | Header: Value` rendering
 - **Vector embeddings**: Stored in `AiKnowledgeChunk` with pgvector (`vector(1536)`)
 - **Embedding providers**: Voyage AI (recommended), OpenAI, Ollama
-- **Category tagging**: Documents assigned categories for agent-scoped retrieval
+- **Tag taxonomy**: Documents carry `KnowledgeTag` grants; agents in `restricted` mode see only documents whose tags they've been granted (union with explicit per-document grants and system-scoped seed docs). Resolved per query by `resolveAgentDocumentAccess`, cached 60 s per agent.
 
 ### 7.3 Search
 
 - **Hybrid retrieval (default)**: BM25-flavoured (`ts_rank_cd` over a generated `tsvector` column with a GIN index) blended with pgvector cosine similarity via admin-tunable `vectorWeight` × vector + `bm25Weight` × keyword weights, gated by `searchConfig.hybridEnabled`. Three-segment score breakdown surfaced through the API.
 - **Vector-only mode**: Preserved as the legacy fallback when hybrid is disabled
-- **Agent scoping**: `knowledgeCategories` on agent restricts which chunks are searchable
+- **Agent scoping**: `knowledgeAccessMode` on agent (`full` / `restricted`) combined with `KnowledgeTag` grants and per-document grants restricts which chunks are searchable, resolved per query by `resolveAgentDocumentAccess` with a 60 s LRU cache and invalidated on grant mutations
 - **Search configuration**: Tunable via global settings (vector weight, BM25 weight, result count, hybrid on/off)
 - **Knowledge graph**: Relationship mapping between documents and concepts
 

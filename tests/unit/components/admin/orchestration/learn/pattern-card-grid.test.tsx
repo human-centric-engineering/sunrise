@@ -26,21 +26,18 @@ const MOCK_PATTERNS: PatternSummary[] = [
   {
     patternNumber: 1,
     patternName: 'Chain of Thought',
-    category: 'Reasoning',
     description: 'Step-by-step reasoning for complex tasks.',
     chunkCount: 5,
   },
   {
     patternNumber: 2,
     patternName: 'Tree of Thoughts',
-    category: 'Reasoning',
     description: 'Explores multiple reasoning paths.',
     chunkCount: 8,
   },
   {
     patternNumber: 3,
     patternName: 'ReAct',
-    category: 'Action',
     description: null,
     chunkCount: 1,
   },
@@ -55,14 +52,6 @@ describe('PatternCardGrid', () => {
     expect(screen.getByText('Chain of Thought')).toBeInTheDocument();
     expect(screen.getByText('Tree of Thoughts')).toBeInTheDocument();
     expect(screen.getByText('ReAct')).toBeInTheDocument();
-  });
-
-  it('renders category labels when present', () => {
-    render(<PatternCardGrid patterns={MOCK_PATTERNS} />);
-
-    // Two patterns share the Reasoning category
-    expect(screen.getAllByText('Reasoning')).toHaveLength(2);
-    expect(screen.getByText('Action')).toBeInTheDocument();
   });
 
   it('renders pattern number badges', () => {

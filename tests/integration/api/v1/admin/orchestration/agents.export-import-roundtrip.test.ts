@@ -107,7 +107,6 @@ function makeDbAgent() {
     maxHistoryTokens: 8000,
     retentionDays: 60,
     visibility: 'invite_only',
-    knowledgeCategories: ['finance', 'legal'],
     topicBoundaries: ['politics'],
     brandVoiceInstructions: 'Be formal and concise.',
     createdBy: 'admin-1',
@@ -230,7 +229,6 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(created.maxHistoryTokens).toBe(8000);
     expect(created.retentionDays).toBe(60);
     expect(created.visibility).toBe('invite_only');
-    expect(created.knowledgeCategories).toEqual(['finance', 'legal']);
     expect(created.topicBoundaries).toEqual(['politics']);
     expect(created.brandVoiceInstructions).toBe('Be formal and concise.');
 

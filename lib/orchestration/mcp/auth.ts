@@ -100,6 +100,7 @@ export async function authenticateMcpRequest(
     createdBy: key.createdBy,
     clientIp,
     userAgent,
+    scopedAgentId: key.scopedAgentId,
   };
 }
 

@@ -59,7 +59,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       patternNumber: true,
       patternName: true,
       section: true,
-      category: true,
       keywords: true,
       estimatedTokens: true,
     },

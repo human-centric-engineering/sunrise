@@ -98,6 +98,13 @@ export const CostOperation = {
    * platform charges for serving the modality.
    */
   VISION: 'vision',
+  /**
+   * Post-upload BM25 keyword enrichment on a knowledge document — runs
+   * a chat completion per chunk to generate 3–8 keyword phrases. Split
+   * from the regular `chat` operation so the Costs admin can show how
+   * much operators have spent on this opt-in enrichment.
+   */
+  KNOWLEDGE_ENRICH_KEYWORDS: 'knowledge.enrich_keywords',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 
@@ -704,6 +711,18 @@ export type AiCapabilityListItem = AiCapability & {
   _agents: CapabilityAgentRef[];
 };
 
+/** Enriched knowledge-tag row returned by the list endpoint. */
+export interface KnowledgeTagListItem {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  documentCount: number;
+  agentCount: number;
+}
+
 /** Agent with its capabilities loaded */
 export type AgentWithCapabilities = AiAgent & {
   capabilities: Array<{
@@ -728,6 +747,34 @@ export type WorkflowWithExecutions = AiWorkflow & {
 /** Knowledge document with chunk count */
 export type DocumentWithChunks = AiKnowledgeDocument & {
   chunks: AiKnowledgeChunk[];
+};
+
+/**
+ * Lightweight tag reference returned inline on each document by the admin
+ * documents list endpoint. The full KnowledgeTag row carries description and
+ * timestamps; the table only needs id/slug/name to render chips.
+ */
+export interface DocumentTagRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+/**
+ * Shape returned by `GET /admin/orchestration/knowledge/documents` for each
+ * row. Same as the Prisma row plus inline tags (flattened from the join
+ * table) so the admin table can render tag chips without a per-row fetch.
+ */
+export type KnowledgeDocumentListItem = AiKnowledgeDocument & {
+  tags?: DocumentTagRef[];
+  /**
+   * Distinct BM25 keyword count across this document's chunks. Computed
+   * server-side via `string_to_array` + `unnest` on
+   * `AiKnowledgeChunk.keywords`. Drives the "BM25 keywords" column on
+   * the admin documents table; clicking opens a modal that lists the
+   * keywords and offers post-upload enrichment.
+   */
+  distinctKeywordCount?: number;
 };
 
 /** Evaluation session with logs */
@@ -973,7 +1020,6 @@ export interface GraphData {
 export interface PatternSummary {
   patternNumber: number;
   patternName: string;
-  category: string | null;
   description: string | null;
   chunkCount: number;
 }

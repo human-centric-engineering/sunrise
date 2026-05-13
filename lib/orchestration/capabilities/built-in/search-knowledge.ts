@@ -8,8 +8,9 @@
  */
 
 import { z } from 'zod';
-import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
+import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type {
   CapabilityContext,
@@ -85,14 +86,10 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
-    // Load agent's knowledge category restrictions
-    const agent = await prisma.aiAgent.findUnique({
-      where: { id: context.agentId },
-      select: { knowledgeCategories: true },
-    });
-    const agentCategories = agent?.knowledgeCategories ?? [];
+    // Resolve the effective document-access set for this agent (full KB or a doc-id
+    // allowlist, with system-scoped seed material always passing through).
+    const access = await resolveAgentDocumentAccess(context.agentId);
 
-    // Build filters combining user args and agent-level category scoping
     const filters: SearchFilters = {};
     if (args.pattern_number !== undefined) {
       filters.patternNumber = args.pattern_number;
@@ -100,8 +97,26 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
     if (args.document_id !== undefined) {
       filters.documentId = args.document_id;
     }
-    if (agentCategories.length > 0) {
-      filters.categories = agentCategories;
+    if (access.mode === 'restricted') {
+      // Defense in depth on the LLM-supplied `document_id` filter. The SQL
+      // builder already AND-s this against the access set (`documentId = X`
+      // intersected with `documentId IN (grants) OR scope = 'system'`), so an
+      // out-of-scope lookup returns zero rows. But silently empty results
+      // mask the boundary from operators — refusing the tool call here makes
+      // the attempt visible in logs and gives the LLM a structured signal so
+      // it can retry without the filter.
+      if (args.document_id !== undefined && !access.documentIds.includes(args.document_id)) {
+        logger.warn('search_knowledge_base: document_id outside agent access set', {
+          agentId: context.agentId,
+          requestedDocumentId: args.document_id,
+        });
+        return this.error(
+          'Document is not accessible to this agent. Drop the document_id filter or search by query alone.',
+          'forbidden_document'
+        );
+      }
+      filters.documentIds = access.documentIds;
+      filters.includeSystemScope = access.includeSystemScope;
     }
 
     const results = await searchKnowledge(

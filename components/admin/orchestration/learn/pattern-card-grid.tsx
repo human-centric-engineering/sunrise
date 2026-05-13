@@ -37,7 +37,6 @@ export function PatternCardGrid({ patterns }: PatternCardGridProps) {
                   {p.patternNumber}
                 </Badge>
               </div>
-              {p.category && <span className="text-muted-foreground text-xs">{p.category}</span>}
             </CardHeader>
             <CardContent className="flex-1">
               {p.description && (

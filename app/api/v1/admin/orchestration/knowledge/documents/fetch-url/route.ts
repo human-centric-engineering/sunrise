@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
@@ -23,10 +24,13 @@ import {
 } from '@/lib/orchestration/knowledge/document-manager';
 import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { cuidSchema } from '@/lib/validations/common';
 
 const fetchUrlSchema = z.object({
   url: z.string().url().max(2000),
   category: z.string().max(100).optional(),
+  tagIds: z.array(cuidSchema).max(50).optional(),
 });
 
 export const POST = withAdminAuth(async (request, session) => {
@@ -70,13 +74,30 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
+  // Apply tag grants (best-effort: a tag deleted mid-upload doesn't fail the
+  // import — operator can re-tag from the chunks modal).
+  const tagIds = body.tagIds ?? [];
+  let tagsApplied = 0;
+  if (tagIds.length > 0) {
+    try {
+      const result = await prisma.aiKnowledgeDocumentTag.createMany({
+        data: tagIds.map((tagId) => ({ documentId: document.id, tagId })),
+        skipDuplicates: true,
+      });
+      tagsApplied = result.count;
+      invalidateAllAgentAccess();
+    } catch {
+      // Non-fatal.
+    }
+  }
+
   logAdminAction({
     userId: session.user.id,
     action: 'knowledge_document.create',
     entityType: 'knowledge_document',
     entityId: document.id,
     entityName: document.name,
-    metadata: { sourceUrl: body.url, fileName: fetched.fileName },
+    metadata: { sourceUrl: body.url, fileName: fetched.fileName, tagsApplied },
     clientIp: clientIP,
   });
 
@@ -84,6 +105,7 @@ export const POST = withAdminAuth(async (request, session) => {
     url: body.url,
     documentId: document.id,
     fileName: fetched.fileName,
+    tagsApplied,
   });
 
   return successResponse(document, undefined, { status: 201 });

@@ -61,6 +61,7 @@ interface DetectionRow {
   providerType: string;
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;
@@ -142,10 +143,17 @@ describe('GET /api/v1/admin/orchestration/providers/detect', () => {
       expect(data.data.detected.length).toBeGreaterThan(0);
 
       // Every cloud row reports apiKeyPresent: false; local rows are always false too.
+      // `primaryEnvVar` should still be populated for cloud rows so the
+      // no-keys warning can hint at which env var to set.
       for (const row of data.data.detected) {
         expect(row.apiKeyPresent).toBe(false);
         if (row.isLocal) {
           expect(row.apiKeyEnvVar).toBeNull();
+          expect(row.primaryEnvVar).toBeNull();
+        } else {
+          expect(row.apiKeyEnvVar).toBeNull();
+          expect(typeof row.primaryEnvVar).toBe('string');
+          expect(row.primaryEnvVar).not.toBe('');
         }
       }
     });

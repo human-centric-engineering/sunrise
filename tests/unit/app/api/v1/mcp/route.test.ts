@@ -27,6 +27,7 @@ const mockAuthContext = {
   createdBy: 'admin-1',
   clientIp: '127.0.0.1',
   userAgent: 'test-agent',
+  scopedAgentId: null,
 };
 
 const mockServerState = {

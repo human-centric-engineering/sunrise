@@ -8,14 +8,32 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
+import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 
-const categoriesResponseSchema = z.object({
-  data: z
-    .object({ app: z.object({ categories: z.array(z.object({ value: z.string() })) }).optional() })
-    .optional(),
-});
+interface TagRow {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+}
+
+/**
+ * Mirror of the slug schema in `lib/validations/orchestration.ts`. Used by
+ * the inline-create-tag affordance: the operator types a human-readable
+ * name, we derive a slug client-side. Server-side validation is still the
+ * source of truth — if the derived slug collides we surface the error.
+ */
+function slugifyTagName(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
 
 const errorBodySchema = z
   .object({
@@ -100,39 +118,29 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
-  const [category, setCategory] = useState('');
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [availableTags, setAvailableTags] = useState<TagRow[]>([]);
   const [extractTables, setExtractTables] = useState(false);
-  const [existingCategories, setExistingCategories] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  // Operator-supplied display name for the document. Defaults to the file
+  // stem so existing behaviour is preserved; only sent to the server when the
+  // operator actually edits it.
+  const [displayName, setDisplayName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const categoryRef = useRef<HTMLDivElement>(null);
 
-  // Fetch existing categories for suggestions
+  // Load the managed tag taxonomy once so the picker can offer it. apiClient
+  // unwraps the envelope, so the generic type is the inner data shape.
   useEffect(() => {
-    async function fetchCategories() {
+    async function fetchTags(): Promise<void> {
       try {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
-        if (!res.ok) return;
-        const body = categoriesResponseSchema.parse(await res.json());
-        if (body.data?.app?.categories) {
-          setExistingCategories(body.data.app.categories.map((c) => c.value));
-        }
+        const tags = await apiClient.get<TagRow[]>(
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS}?limit=100`
+        );
+        setAvailableTags(Array.isArray(tags) ? tags : []);
       } catch {
-        // Supplementary — ignore failures
+        // Supplementary — picker just shows an empty list if this fails.
       }
     }
-    void fetchCategories();
-  }, []);
-
-  // Close suggestions on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (categoryRef.current && !categoryRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    void fetchTags();
   }, []);
 
   const validateFile = useCallback((file: File): string | null => {
@@ -172,6 +180,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             setError('Maximum 10 files per batch');
             return prev;
           }
+          // Seed the display-name input from the first staged file when
+          // staging starts empty. The operator can edit before uploading.
+          if (prev.length === 0 && combined.length > 0) {
+            setDisplayName(combined[0].name.replace(/\.[^.]+$/, ''));
+          }
           return combined;
         });
       }
@@ -190,8 +203,16 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       if (stagedFiles.length === 1) {
         const formData = new FormData();
         formData.append('file', stagedFiles[0]);
-        if (category.trim()) {
-          formData.append('category', category.trim());
+        // FormData supports repeated keys; the server collects via getAll('tagIds').
+        for (const tagId of tagIds) {
+          formData.append('tagIds', tagId);
+        }
+        // Only send `name` when the operator actually edited it — empty or
+        // unchanged means the server falls back to the filename-derived name.
+        const trimmedName = displayName.trim();
+        const filenameDefault = stagedFiles[0].name.replace(/\.[^.]+$/, '');
+        if (trimmedName && trimmedName !== filenameDefault) {
+          formData.append('name', trimmedName);
         }
         const isPdf = stagedFiles[0].name.toLowerCase().endsWith('.pdf');
         if (isPdf && extractTables) {
@@ -216,7 +237,8 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
           onPdfPreview
         ) {
           setStagedFiles([]);
-          setCategory('');
+          setTagIds([]);
+          setDisplayName('');
           onPdfPreview({
             document: responseBody.data.document,
             preview: responseBody.data.preview,
@@ -225,7 +247,8 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         }
 
         setStagedFiles([]);
-        setCategory('');
+        setTagIds([]);
+        setDisplayName('');
         onUploadComplete();
         return;
       }
@@ -235,8 +258,8 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       for (const file of stagedFiles) {
         formData.append('files', file);
       }
-      if (category.trim()) {
-        formData.append('category', category.trim());
+      for (const tagId of tagIds) {
+        formData.append('tagIds', tagId);
       }
 
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}/bulk`, {
@@ -270,14 +293,15 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       }
 
       setStagedFiles([]);
-      setCategory('');
+      setTagIds([]);
+      setDisplayName('');
       onUploadComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [stagedFiles, category, extractTables, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, tagIds, displayName, extractTables, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -298,10 +322,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
     [stageFiles]
   );
 
-  const filteredSuggestions = existingCategories.filter(
-    (c) =>
-      c.toLowerCase().includes(category.toLowerCase()) && c.toLowerCase() !== category.toLowerCase()
-  );
+  const tagOptions: MultiSelectOption[] = availableTags.map((t) => ({
+    value: t.id,
+    label: t.name,
+    description: t.description ?? t.slug,
+  }));
 
   return (
     <div className="space-y-3">
@@ -387,56 +412,91 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             </Button>
           )}
 
-          <div ref={categoryRef} className="relative space-y-1">
+          {stagedFiles.length === 1 ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1">
+                <label htmlFor="upload-display-name" className="text-xs font-medium">
+                  Title
+                </label>
+                <span className="text-muted-foreground text-xs">(optional)</span>
+                <FieldHelp title="Document title" ariaLabel="What is the document title?">
+                  <p>
+                    The display name shown in the document list. Defaults to the filename without
+                    its extension — edit if you want something more readable.
+                  </p>
+                  <p className="mt-2">
+                    Doesn&apos;t affect search; it&apos;s purely for browsing in the admin and the
+                    citation panels that surface document names.
+                  </p>
+                </FieldHelp>
+              </div>
+              <Input
+                id="upload-display-name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={stagedFiles[0].name.replace(/\.[^.]+$/, '')}
+                disabled={uploading}
+                className="h-8 text-sm"
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-1">
             <div className="flex items-center gap-1">
-              <label htmlFor="upload-category" className="text-xs font-medium">
-                Category
-              </label>
+              <span id="upload-tags-label" className="text-xs font-medium">
+                Tags
+              </span>
               <span className="text-muted-foreground text-xs">(optional)</span>
-              <FieldHelp title="Document category" ariaLabel="What is the document category?">
+              <FieldHelp title="Document tags" ariaLabel="What are document tags?">
                 <p>
-                  Assigns this document to a category so it can be filtered in search and scoped to
-                  specific agents. If left blank, the system will look for a{' '}
-                  <code className="text-xs">{'<!-- metadata: category=... -->'}</code> comment
-                  inside the document.
+                  Tags scope which agents can search this document. When an agent runs in{' '}
+                  <em>Restricted</em> knowledge mode, granting it a tag gives it access to every
+                  document carrying that tag.
                 </p>
                 <p className="mt-2">
-                  Use an existing category from the suggestions to keep things consistent, or type a
-                  new one. Categories are case-sensitive — &quot;Sales&quot; and &quot;sales&quot;
-                  are treated as different values.
+                  Pick from existing tags, or type a name that doesn&apos;t match anything to create
+                  a new one inline. Full tag admin lives under <em>Knowledge → Tags</em>.
+                </p>
+                <p className="mt-2">
+                  Tags control <em>which</em> docs an agent can search. To improve <em>how</em> a
+                  doc ranks for a query, see <em>Indexed keywords</em> on the Manage tab —
+                  that&apos;s a separate concept.
                 </p>
               </FieldHelp>
             </div>
-            <Input
-              id="upload-category"
-              placeholder="e.g. sales, engineering, onboarding"
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => setShowSuggestions(true)}
+            <MultiSelect
+              value={tagIds}
+              onChange={setTagIds}
+              options={tagOptions}
+              placeholder={
+                availableTags.length === 0 ? 'No tags yet — type to create one' : 'No tags applied'
+              }
+              emptyText="No matching tags. Type a new name to create one."
               disabled={uploading}
-              className="h-8 text-sm"
+              ariaLabelledBy="upload-tags-label"
+              createSupportsDescription
+              onCreate={async (name, description) => {
+                const created = await apiClient.post<TagRow>(
+                  API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS,
+                  {
+                    body: {
+                      slug: slugifyTagName(name),
+                      name,
+                      ...(description ? { description } : {}),
+                    },
+                  }
+                );
+                // Refresh availableTags so the new row appears in subsequent renders.
+                setAvailableTags((prev) =>
+                  prev.some((t) => t.id === created.id) ? prev : [...prev, created]
+                );
+                return {
+                  value: created.id,
+                  label: created.name,
+                  description: created.description ?? created.slug,
+                };
+              }}
             />
-            {showSuggestions && filteredSuggestions.length > 0 && (
-              <div className="bg-popover border-border absolute top-full z-10 mt-1 w-full rounded-md border shadow-md">
-                {filteredSuggestions.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className="hover:bg-accent w-full px-3 py-1.5 text-left text-sm"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setCategory(suggestion);
-                      setShowSuggestions(false);
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           {stagedFiles.length === 1 && stagedFiles[0].name.toLowerCase().endsWith('.pdf') && (
@@ -491,7 +551,8 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               size="sm"
               onClick={() => {
                 setStagedFiles([]);
-                setCategory('');
+                setTagIds([]);
+                setDisplayName('');
                 setExtractTables(false);
                 setError(null);
               }}
@@ -524,7 +585,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
       />
 
       {/* Fetch from URL */}
-      <FetchFromUrl category={category} onFetchComplete={onUploadComplete} />
+      <FetchFromUrl tagIds={tagIds} onFetchComplete={onUploadComplete} />
 
       {error && <p className="text-destructive text-sm">{error}</p>}
     </div>
@@ -534,10 +595,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 // ─── Fetch from URL sub-component ──────────────────────────────────────────
 
 function FetchFromUrl({
-  category,
+  tagIds,
   onFetchComplete,
 }: {
-  category: string;
+  tagIds: string[];
   onFetchComplete: () => void;
 }): ReactElement {
   const [url, setUrl] = useState('');
@@ -554,7 +615,7 @@ function FetchFromUrl({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: url.trim(),
-          category: category.trim() || undefined,
+          ...(tagIds.length > 0 ? { tagIds } : {}),
         }),
       });
       if (!res.ok) {
@@ -741,17 +802,39 @@ function UploadGuideBody(): ReactElement {
         actually have vectors stored.
       </p>
 
-      <p className="text-foreground mt-3 font-medium">Category</p>
+      <p className="text-foreground mt-3 font-medium">Tags</p>
       <p>
-        Assign a <strong>category</strong> when you upload to organise your knowledge. Categories
-        let you filter documents and — more importantly — let agents be scoped to only search
-        specific categories. For example, a sales agent can be restricted to &quot;sales&quot;
-        knowledge only.
+        Apply one or more <strong>tags</strong> when you upload. Tags are the access-control
+        taxonomy: an agent running in <em>Restricted</em> knowledge mode can search a document only
+        if it carries one of the tags granted to that agent. Tags also help with browsing and
+        filtering, but their primary job is scoping — &quot;which agents can see this&quot;.
       </p>
       <p className="mt-1">
-        You can also set category inside the document itself using an HTML comment:{' '}
-        <code className="text-xs">{'<!-- metadata: category=sales -->'}</code>. If you set a
-        category both here and inside the document, the one you type here takes priority.
+        Manage the tag list under <em>Knowledge → Tags</em>. You can also create a new tag inline
+        from the Tags picker on this upload form by typing a name that doesn&apos;t match an
+        existing one — a &quot;Create &lsquo;…&rsquo;&quot; row appears.
+      </p>
+
+      <p className="text-foreground mt-3 font-medium">Indexed Keywords</p>
+      <p>
+        Separate from tags, the system also indexes per-chunk <strong>keywords</strong> that feed
+        the BM25 component of hybrid search. Keywords affect <em>how</em> a chunk ranks for a query;
+        they never affect <em>who</em> can see it (tags do that).
+      </p>
+      <p className="mt-1">Keywords currently come from one of two sources:</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
+        <li>
+          <strong>Metadata comments</strong> inside markdown documents (see below).
+        </li>
+        <li>
+          <strong>The Enrich Keywords action</strong> on the document table — runs an LLM over each
+          chunk and writes 3–8 keyword phrases. Use this when an uploaded doc doesn&apos;t rank well
+          for queries whose vocabulary doesn&apos;t literally appear in the content.
+        </li>
+      </ul>
+      <p className="mt-1 text-xs">
+        Most uploads have NULL keywords. That&apos;s fine — BM25 still indexes the chunk content
+        itself. Keywords are a precision dial, not a foundational signal.
       </p>
 
       <p className="text-foreground mt-3 font-medium">How to structure your documents</p>
@@ -774,60 +857,21 @@ function UploadGuideBody(): ReactElement {
         see a warning naming those exact pages so you know what to fix.
       </p>
 
-      <p className="text-foreground mt-3 font-medium">In-document metadata tags</p>
+      <p className="text-foreground mt-3 font-medium">In-document metadata comments</p>
       <p>
-        You can embed metadata tags anywhere in a document using HTML comments. These are invisible
+        Markdown documents can embed keyword hints anywhere using HTML comments. These are invisible
         in rendered markdown but the system reads them during chunking.
       </p>
       <p className="mt-1 text-xs">
         <strong>Format:</strong>{' '}
-        <code>{'<!-- metadata: key=value, key2="value with commas" -->'}</code>
+        <code>{'<!-- metadata: keywords="retry,backoff,timeout" -->'}</code>
       </p>
       <p className="mt-1 text-xs">
-        <strong>Supported tags:</strong>
-      </p>
-      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-        <li>
-          <strong>category</strong> — groups content by topic (e.g. sales, engineering, onboarding).
-          Applied to every chunk in the section.
-        </li>
-        <li>
-          <strong>keywords</strong> — comma-separated terms that boost search relevance. Wrap in
-          quotes if the value contains commas: <code>{'keywords="retry,backoff,timeout"'}</code>
-        </li>
-      </ul>
-      <p className="mt-2 text-xs">
-        You can place metadata at the top of the document (applies globally) or before any section
-        heading (applies to that section only). Section-level tags override document-level ones.
-      </p>
-
-      <p className="text-foreground mt-3 font-medium">
-        Being free-form with meta-tags: flexibility vs. findability
-      </p>
-      <p>
-        Tags are <strong>completely free-form</strong> — there is no fixed list and you can use any
-        values you like. This is powerful but comes with a trade-off:
-      </p>
-      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs">
-        <li>
-          <strong>Inconsistent naming hurts search.</strong> If some documents use &quot;sales&quot;
-          and others use &quot;Sales&quot;, &quot;selling&quot;, or &quot;revenue&quot;, filtering
-          by category becomes unreliable. The system treats these as different values.
-        </li>
-        <li>
-          <strong>Too many unique tags = no tags.</strong> If every document has a unique category,
-          you lose the ability to meaningfully filter. Categories work best with a small, consistent
-          vocabulary (5–15 values).
-        </li>
-        <li>
-          <strong>Keywords are more forgiving.</strong> Because keyword search is additive (more
-          keywords = more ways to find the content), inconsistency there matters less than with
-          categories. Use keywords liberally.
-        </li>
-      </ul>
-      <p className="mt-2 text-xs">
-        <strong>Recommendation:</strong> agree on a short list of categories before bulk uploading.
-        Check the &quot;Meta-tags in use&quot; panel to see what values already exist.
+        You can place the comment at the top of the document (applies globally) or before any
+        section heading (applies to that section only). Section-level metadata overrides
+        document-level. <strong>Only markdown is parsed this way</strong> — DOCX, PDF, EPUB, and CSV
+        uploads do not pick up metadata comments; use the <em>Enrich Keywords</em> action on the
+        document table after upload instead.
       </p>
 
       <p className="text-foreground mt-3 font-medium">Content quality tips</p>

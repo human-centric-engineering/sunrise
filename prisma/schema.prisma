@@ -174,7 +174,7 @@ model AiAgent {
   maxTokens                 Int      @default(4096)
   monthlyBudgetUsd          Float?
   metadata                  Json?
-  knowledgeCategories       String[] @default([]) // knowledge base category filter — empty = all
+  knowledgeAccessMode       String   @default("full") // "full" = unrestricted KB access (default — preserves prior behaviour). "restricted" = effective doc set is (granted docs) ∪ (docs in any granted tag) ∪ (docs with scope = 'system').
   topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
   brandVoiceInstructions    String?  @db.Text // brand voice prompt appended to system instructions
   rateLimitRpm              Int? // per-agent rate limit (requests per minute); null = use global default
@@ -195,16 +195,19 @@ model AiAgent {
   updatedAt                 DateTime @updatedAt
 
   // Relations
-  creator       User                  @relation("AiAgentCreator", fields: [createdBy], references: [id])
-  capabilities  AiAgentCapability[]
-  conversations AiConversation[]
-  userMemories  AiUserMemory[]
-  evaluations   AiEvaluationSession[]
-  costLogs      AiCostLog[]
-  inviteTokens  AiAgentInviteToken[]
-  versions      AiAgentVersion[]
-  embedTokens   AiAgentEmbedToken[]
-  experiments   AiExperiment[]
+  creator          User                       @relation("AiAgentCreator", fields: [createdBy], references: [id])
+  capabilities     AiAgentCapability[]
+  conversations    AiConversation[]
+  userMemories     AiUserMemory[]
+  evaluations      AiEvaluationSession[]
+  costLogs         AiCostLog[]
+  inviteTokens     AiAgentInviteToken[]
+  versions         AiAgentVersion[]
+  embedTokens      AiAgentEmbedToken[]
+  experiments      AiExperiment[]
+  grantedDocuments AiAgentKnowledgeDocument[]
+  grantedTags      AiAgentKnowledgeTag[]
+  mcpApiKeys       McpApiKey[]
 
   @@index([createdBy])
   @@index([provider])
@@ -287,7 +290,7 @@ model AiCapability {
   // tool_call executor skips the dispatch cache for idempotent capabilities,
   // avoiding an unnecessary write per call. Default false: assume side effects
   // until the author opts in. See `lib/orchestration/engine/dispatch-cache.ts`.
-  isIdempotent      Boolean @default(false)
+  isIdempotent       Boolean @default(false)
   isActive           Boolean @default(true)
   isSystem           Boolean @default(false)
   metadata           Json?
@@ -683,7 +686,6 @@ model AiKnowledgeDocument {
   chunkCount   Int      @default(0)
   status       String // "processing", "ready", "failed"
   scope        String   @default("app") // "system" | "app"
-  category     String? // user-assigned or extracted from document metadata
   sourceUrl    String? // URL the document was fetched from (null = manual upload)
   errorMessage String?  @db.Text
   metadata     Json? // format-specific metadata, preview data for pending_review docs
@@ -692,13 +694,14 @@ model AiKnowledgeDocument {
   updatedAt    DateTime @updatedAt
 
   // Relations
-  uploader User               @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
-  chunks   AiKnowledgeChunk[]
+  uploader    User                       @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
+  chunks      AiKnowledgeChunk[]
+  tags        AiKnowledgeDocumentTag[]
+  agentGrants AiAgentKnowledgeDocument[]
 
   @@index([uploadedBy])
   @@index([status])
   @@index([scope])
-  @@index([category])
   @@index([fileHash])
   @@map("ai_knowledge_document")
 }
@@ -715,7 +718,6 @@ model AiKnowledgeChunk {
   chunkType         String // "pattern_section", "pattern_overview", "glossary", etc.
   patternNumber     Int?
   patternName       String?
-  category          String?
   section           String?
   keywords          String?                      @db.Text
   estimatedTokens   Int?
@@ -730,8 +732,65 @@ model AiKnowledgeChunk {
   @@index([documentId])
   @@index([chunkType])
   @@index([patternNumber])
-  @@index([category])
   @@map("ai_knowledge_chunk")
+}
+
+// Managed taxonomy of knowledge "tags" — replaced the legacy free-text `knowledgeCategories[]` on AiAgent (dropped in Phase 6).
+// Many-to-many at both ends: tags ↔ documents (via AiKnowledgeDocumentTag) and tags ↔ agents (via AiAgentKnowledgeTag).
+model KnowledgeTag {
+  id          String   @id @default(cuid())
+  slug        String   @unique // stable cross-environment key (used in backup/export)
+  name        String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents AiKnowledgeDocumentTag[]
+  agents    AiAgentKnowledgeTag[]
+
+  @@map("knowledge_tag")
+}
+
+// Join table: which documents carry which tags
+model AiKnowledgeDocumentTag {
+  documentId String
+  tagId      String
+  createdAt  DateTime @default(now())
+
+  document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  tag      KnowledgeTag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, tagId])
+  @@index([tagId])
+  @@map("ai_knowledge_document_tag")
+}
+
+// Join table: which agents may access which documents (only consulted when AiAgent.knowledgeAccessMode = 'restricted')
+model AiAgentKnowledgeDocument {
+  agentId    String
+  documentId String
+  createdAt  DateTime @default(now())
+
+  agent    AiAgent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, documentId])
+  @@index([documentId])
+  @@map("ai_agent_knowledge_document")
+}
+
+// Join table: which agents may access docs tagged with which tags
+model AiAgentKnowledgeTag {
+  agentId   String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  agent AiAgent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tag   KnowledgeTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, tagId])
+  @@index([tagId])
+  @@map("ai_agent_knowledge_tag")
 }
 
 // Testing sessions for agents
@@ -989,29 +1048,29 @@ model AiApiKey {
 /// Upserted lazily on the first `GET /api/v1/admin/orchestration/settings`
 /// call; never touched by the seeder so admin edits survive deploys.
 model AiOrchestrationSettings {
-  id                         String    @id @default(cuid())
-  slug                       String    @unique @default("global")
-  defaultModels              Json // { routing: string, chat: string, reasoning: string, embeddings: string }
-  globalMonthlyBudgetUsd     Float?
-  searchConfig               Json? // { keywordBoostWeight: number, vectorWeight: number }
-  lastSeededAt               DateTime?
-  defaultApprovalTimeoutMs   Int? // ms before auto-action on approval gates; null = no timeout
-  approvalDefaultAction      String?   @default("deny") // "deny" or "allow"
-  inputGuardMode             String?   @default("log_only") // "log_only", "warn_and_continue", "block"
-  outputGuardMode            String?   @default("log_only") // "log_only", "warn_and_continue", "block"
-  citationGuardMode          String?   @default("log_only") // "log_only", "warn_and_continue", "block"
-  webhookRetentionDays       Int?
-  costLogRetentionDays       Int?
-  auditLogRetentionDays      Int?
-  maxConversationsPerUser    Int?
-  maxMessagesPerConversation Int?
-  escalationConfig           Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
-  embedAllowedOrigins        Json      @default("[]") // [string] — allowlist for the /approvals/:id/{approve,reject}/embed CORS scope
-  voiceInputGloballyEnabled  Boolean   @default(true) // org-wide kill switch for the voice-input feature; when false, every agent's enableVoiceInput flag is treated as off regardless of its own value.
-  imageInputGloballyEnabled  Boolean   @default(true) // org-wide kill switch for image attachments on chat; when false, every agent's enableImageInput flag is treated as off regardless of its own value.
-  documentInputGloballyEnabled Boolean @default(true) // org-wide kill switch for PDF / document attachments on chat; when false, every agent's enableDocumentInput flag is treated as off regardless of its own value.
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  id                           String    @id @default(cuid())
+  slug                         String    @unique @default("global")
+  defaultModels                Json // { routing: string, chat: string, reasoning: string, embeddings: string }
+  globalMonthlyBudgetUsd       Float?
+  searchConfig                 Json? // { keywordBoostWeight: number, vectorWeight: number }
+  lastSeededAt                 DateTime?
+  defaultApprovalTimeoutMs     Int? // ms before auto-action on approval gates; null = no timeout
+  approvalDefaultAction        String?   @default("deny") // "deny" or "allow"
+  inputGuardMode               String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  outputGuardMode              String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  citationGuardMode            String?   @default("log_only") // "log_only", "warn_and_continue", "block"
+  webhookRetentionDays         Int?
+  costLogRetentionDays         Int?
+  auditLogRetentionDays        Int?
+  maxConversationsPerUser      Int?
+  maxMessagesPerConversation   Int?
+  escalationConfig             Json? // { emailAddresses, webhookUrl?, notifyOnPriority }
+  embedAllowedOrigins          Json      @default("[]") // [string] — allowlist for the /approvals/:id/{approve,reject}/embed CORS scope
+  voiceInputGloballyEnabled    Boolean   @default(true) // org-wide kill switch for the voice-input feature; when false, every agent's enableVoiceInput flag is treated as off regardless of its own value.
+  imageInputGloballyEnabled    Boolean   @default(true) // org-wide kill switch for image attachments on chat; when false, every agent's enableImageInput flag is treated as off regardless of its own value.
+  documentInputGloballyEnabled Boolean   @default(true) // org-wide kill switch for PDF / document attachments on chat; when false, every agent's enableDocumentInput flag is treated as off regardless of its own value.
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
   @@map("ai_orchestration_settings")
 }
@@ -1172,6 +1231,7 @@ model McpApiKey {
   keyHash           String    @unique // SHA-256 hash of the API key
   keyPrefix         String // first 8 chars for UI identification (e.g. "smcp_a1b2")
   scopes            String[] // e.g. ["tools:list", "tools:execute", "resources:read"]
+  scopedAgentId     String? // when non-null, MCP calls via this key are scoped to that agent (resources see only that agent's knowledge grants). When null, the key is an explicit "unscoped service key" with system-wide access.
   isActive          Boolean   @default(true)
   expiresAt         DateTime?
   lastUsedAt        DateTime?
@@ -1181,12 +1241,14 @@ model McpApiKey {
   updatedAt         DateTime  @updatedAt
 
   // Relations
-  creator   User          @relation("McpApiKeyCreator", fields: [createdBy], references: [id])
-  auditLogs McpAuditLog[]
+  creator     User          @relation("McpApiKeyCreator", fields: [createdBy], references: [id])
+  scopedAgent AiAgent?      @relation(fields: [scopedAgentId], references: [id], onDelete: SetNull)
+  auditLogs   McpAuditLog[]
 
   @@index([keyHash])
   @@index([createdBy])
   @@index([isActive])
+  @@index([scopedAgentId])
   @@map("mcp_api_key")
 }
 

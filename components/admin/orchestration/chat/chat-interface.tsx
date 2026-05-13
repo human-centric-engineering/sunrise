@@ -24,7 +24,7 @@
  * @see components/admin/orchestration/chat/thinking-indicator.tsx
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Send, Trash2 } from 'lucide-react';
 
 import {
@@ -39,7 +39,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
@@ -203,9 +203,21 @@ export function ChatInterface({
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentsControlRef = useRef<{ clear: () => void } | null>(null);
   const attachmentsEnabled = imageInputEnabled || documentInputEnabled;
+
+  // Auto-resize the message textarea to fit its content, capped at the
+  // max-height set on the element. `useLayoutEffect` runs before paint so
+  // the user never sees the textarea flash to scrollHeight then collapse.
+  // Reset to 'auto' first so the textarea shrinks back when the user
+  // deletes lines; the browser then reports the natural scrollHeight.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
   // Tracks the previous `streaming` value so we can detect the
   // true → false transition and refocus the input. Restoring focus only
   // on transition (not every render) avoids stealing focus from
@@ -775,14 +787,25 @@ export function ChatInterface({
         component robust whether mounted standalone or nested.
       */}
       <div className="flex flex-col gap-2 border-t p-3">
-        <div className="flex gap-2">
-          <Input
+        <div className="flex items-end gap-2">
+          <Textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a message..."
             disabled={streaming}
+            rows={1}
+            // Auto-grows up to ~8 lines (160px). The autosize effect
+            // below resets and recomputes height on every value change.
+            // `resize-none` hides the manual drag handle so the textarea
+            // looks like a single-line input that just happens to grow.
+            className="max-h-[160px] min-h-[36px] resize-none py-2 leading-snug"
             onKeyDown={(e) => {
+              // Skip Enter-to-send while an IME composition is in
+              // progress (Japanese/Chinese input). The composition
+              // confirmation also dispatches Enter; treating it as
+              // "send" would drop the in-progress glyph.
+              if (e.nativeEvent.isComposing) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 e.stopPropagation();

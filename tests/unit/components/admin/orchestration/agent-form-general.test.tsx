@@ -166,6 +166,7 @@ describe('AgentForm — General tab', () => {
         systemInstructionsHistory: [],
         metadata: {},
         knowledgeCategories: [],
+        knowledgeAccessMode: 'full',
         topicBoundaries: [],
         brandVoiceInstructions: null,
         rateLimitRpm: null,

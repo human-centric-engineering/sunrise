@@ -136,11 +136,6 @@ export const createAgentSchema = z.object({
 
   visibility: agentVisibilitySchema.default('internal'),
 
-  knowledgeCategories: z
-    .array(z.string().max(100, 'Category must be less than 100 characters'))
-    .max(50, 'At most 50 knowledge categories')
-    .default([]),
-
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').default([]),
 
   brandVoiceInstructions: z
@@ -253,9 +248,24 @@ export const updateAgentSchema = z.object({
 
   visibility: agentVisibilitySchema.optional(),
 
-  knowledgeCategories: z
-    .array(z.string().max(100))
-    .max(50, 'At most 50 knowledge categories')
+  knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
+
+  /**
+   * IDs of `KnowledgeTag` rows this agent may search (only consulted when
+   * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
+   * route leaves the join rows untouched; pass `[]` to clear all tag grants.
+   */
+  grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
+
+  /**
+   * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
+   * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
+   * untouched; pass `[]` to clear them. System-scoped docs always pass through
+   * the resolver — granting them explicitly is unnecessary.
+   */
+  grantedDocumentIds: z
+    .array(cuidSchema)
+    .max(1000, 'At most 1000 document grants per agent')
     .optional(),
 
   topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
@@ -510,6 +520,66 @@ export const listCapabilitiesQuerySchema = paginationQuerySchema.extend({
 });
 
 // ============================================================================
+// Knowledge Tag Schemas (knowledge-access-control)
+// ============================================================================
+
+/**
+ * Slug for a KnowledgeTag — lowercase alphanumeric + hyphens, used as the stable
+ * cross-environment identifier in backups and as the API path key.
+ */
+const knowledgeTagSlugSchema = z
+  .string()
+  .trim()
+  .min(1, 'Slug is required')
+  .max(64, 'Slug must be 64 chars or less')
+  .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with hyphens only');
+
+const knowledgeTagNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Name is required')
+  .max(120, 'Name must be 120 chars or less');
+
+const knowledgeTagDescriptionSchema = z
+  .string()
+  .trim()
+  .max(500, 'Description must be 500 chars or less')
+  .optional();
+
+export const createKnowledgeTagSchema = z.object({
+  slug: knowledgeTagSlugSchema,
+  name: knowledgeTagNameSchema,
+  description: knowledgeTagDescriptionSchema,
+});
+
+export const updateKnowledgeTagSchema = z
+  .object({
+    slug: knowledgeTagSlugSchema.optional(),
+    name: knowledgeTagNameSchema.optional(),
+    description: knowledgeTagDescriptionSchema,
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export const listKnowledgeTagsQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(200).optional(),
+});
+
+/**
+ * Update knowledge document — admin mutation. Only mutable surface today is the
+ * tag list. Pass `tagIds: []` to clear all tags; omit the field to leave them
+ * untouched.
+ */
+export const updateKnowledgeDocumentSchema = z
+  .object({
+    tagIds: z.array(cuidSchema).max(50, 'At most 50 tags per document').optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+// ============================================================================
 // Agent → Capability Pivot Schemas
 // ============================================================================
 
@@ -742,7 +812,10 @@ const bundledAgentSchema = z.object({
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
-  knowledgeCategories: z.array(z.string().max(100)).max(50).default([]),
+  // `knowledgeCategories` was the legacy free-text scoping field on AiAgent.
+  // Dropped in Phase 6; backup bundles produced from older code still carry
+  // it, so we accept (and ignore) the field for backwards-compat reading.
+  knowledgeCategories: z.array(z.string()).optional(),
   topicBoundaries: z.array(z.string().max(200)).max(50).default([]),
   brandVoiceInstructions: z.string().max(10000).nullable().optional(),
   // widgetConfig is opaque on the wire (z.unknown) — the receiving side
@@ -1049,9 +1122,14 @@ export const knowledgeSearchSchema = z.object({
 
   patternNumber: z.coerce.number().int().positive().optional(),
 
-  category: z.string().max(100).optional(),
-
   scope: documentScopeSchema.optional(),
+
+  /**
+   * When set, route the search through the agent's knowledge-access resolver
+   * so the admin sees results as that agent would. Acts as a preview tool —
+   * lets operators verify their tag/doc grants without spinning up a chat.
+   */
+  agentId: cuidSchema.optional(),
 
   limit: z.coerce
     .number()
@@ -1731,7 +1809,6 @@ export const clearConversationsBodySchema = z
 export const listDocumentsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(['pending', 'processing', 'ready', 'failed', 'pending_review']).optional(),
   scope: documentScopeSchema.optional(),
-  category: z.string().max(100).optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -2662,8 +2739,6 @@ export const confirmDocumentPreviewSchema = z.object({
   documentId: cuidSchema,
   /** Optionally supply edited/corrected text to replace the parsed content. */
   correctedContent: z.string().max(5_000_000, 'Content must be less than 5 MB').optional(),
-  /** Optional category override. */
-  category: z.string().max(100).optional(),
 });
 
 export type ConfirmDocumentPreviewInput = z.infer<typeof confirmDocumentPreviewSchema>;

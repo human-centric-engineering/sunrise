@@ -69,10 +69,23 @@ async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
 export interface SearchFilters {
   chunkType?: string;
   patternNumber?: number;
-  category?: string;
-  categories?: string[];
   section?: string;
   documentId?: string;
+  /**
+   * Restrict to chunks belonging to any of these documents. Used by the agent
+   * knowledge-access resolver. **The presence of this field (even as `[]`)
+   * is significant** — it switches the search into "restricted mode" and
+   * makes `includeSystemScope` meaningful. An empty array means "no granted
+   * docs"; combined with `includeSystemScope: true` it collapses the search
+   * to system-scoped seed docs only. Omit the field entirely for unrestricted
+   * search.
+   */
+  documentIds?: string[];
+  /**
+   * When true, include chunks from system-scoped documents alongside the
+   * `documentIds` allowlist. Only meaningful when `documentIds` is set.
+   */
+  includeSystemScope?: boolean;
   scope?: string;
 }
 
@@ -118,19 +131,6 @@ export async function searchKnowledge(
     params.push(filters.patternNumber);
     paramIdx++;
   }
-  if (filters?.category) {
-    conditions.push(`c.category = $${paramIdx}`);
-    params.push(filters.category);
-    paramIdx++;
-  }
-  if (filters?.categories && filters.categories.length > 0) {
-    const placeholders = filters.categories.map((_, i) => `$${paramIdx + i}`).join(', ');
-    conditions.push(`c.category IN (${placeholders})`);
-    for (const cat of filters.categories) {
-      params.push(cat);
-      paramIdx++;
-    }
-  }
   if (filters?.section) {
     conditions.push(`c.section = $${paramIdx}`);
     params.push(filters.section);
@@ -140,6 +140,28 @@ export async function searchKnowledge(
     conditions.push(`c."documentId" = $${paramIdx}`);
     params.push(filters.documentId);
     paramIdx++;
+  }
+  // Document-scope filter. The presence of `documentIds` (even when empty)
+  // signals an explicit restriction — the resolver passes `documentIds: []`
+  // for a restricted agent with zero grants, and that MUST collapse the
+  // search to system-scoped seed docs (or nothing) rather than falling back
+  // to an unfiltered KB. Skipping this clause on `length === 0` was the
+  // empty-grants bypass — fixed by emitting an explicit predicate in every
+  // case where the caller passes the array.
+  if (filters?.documentIds !== undefined) {
+    if (filters.documentIds.length === 0) {
+      conditions.push(filters.includeSystemScope ? `d.scope = 'system'` : `FALSE`);
+    } else {
+      const placeholders = filters.documentIds.map((_, i) => `$${paramIdx + i}`).join(', ');
+      const docFilter = filters.includeSystemScope
+        ? `(c."documentId" IN (${placeholders}) OR d.scope = 'system')`
+        : `c."documentId" IN (${placeholders})`;
+      conditions.push(docFilter);
+      for (const id of filters.documentIds) {
+        params.push(id);
+        paramIdx++;
+      }
+    }
   }
   if (filters?.scope) {
     conditions.push(`d.scope = $${paramIdx}`);
@@ -188,7 +210,6 @@ async function runVectorOnlySearch({
       c."chunkType",
       c."patternNumber",
       c."patternName",
-      c.category,
       c.section,
       c.keywords,
       c."estimatedTokens",
@@ -286,7 +307,6 @@ async function runHybridSearch({
         c."chunkType",
         c."patternNumber",
         c."patternName",
-        c.category,
         c.section,
         c.keywords,
         c."estimatedTokens",
@@ -356,7 +376,6 @@ function pickChunk(row: AiKnowledgeChunk): AiKnowledgeChunk {
     chunkType: row.chunkType,
     patternNumber: row.patternNumber,
     patternName: row.patternName,
-    category: row.category,
     section: row.section,
     keywords: row.keywords,
     estimatedTokens: row.estimatedTokens,
@@ -400,7 +419,7 @@ function firstParagraph(content: string | null | undefined): string | null {
  */
 export async function listPatterns(): Promise<PatternSummary[]> {
   const groups = await prisma.aiKnowledgeChunk.groupBy({
-    by: ['patternNumber', 'patternName', 'category'],
+    by: ['patternNumber', 'patternName'],
     where: { patternNumber: { not: null } },
     _count: { id: true },
     orderBy: { patternNumber: 'asc' },
@@ -429,24 +448,19 @@ export async function listPatterns(): Promise<PatternSummary[]> {
   const overviewByPattern = new Map(overviewChunks.map((c) => [c.patternNumber, c]));
   const tldrByPattern = new Map(tldrChunks.map((c) => [c.patternNumber, c]));
 
-  // Deduplicate by patternNumber — groupBy includes category in the key so
-  // a pattern with chunks in different categories would produce duplicate rows.
-  const merged = new Map<
-    number,
-    { patternName: string | null; category: string | null; chunkCount: number }
-  >();
+  // Deduplicate by patternNumber — groupBy already returns one row per
+  // (patternNumber, patternName) so we just merge chunk counts if a single
+  // pattern has rows under multiple `patternName` strings (rare; defensive).
+  const merged = new Map<number, { patternName: string | null; chunkCount: number }>();
   for (const group of groups) {
     if (group.patternNumber === null) continue;
     const existing = merged.get(group.patternNumber);
     if (existing) {
       existing.chunkCount += group._count.id;
-      // Keep the first non-null values
       existing.patternName ??= group.patternName;
-      existing.category ??= group.category;
     } else {
       merged.set(group.patternNumber, {
         patternName: group.patternName,
-        category: group.category,
         chunkCount: group._count.id,
       });
     }
@@ -454,7 +468,7 @@ export async function listPatterns(): Promise<PatternSummary[]> {
 
   const summaries: PatternSummary[] = [];
 
-  for (const [patternNumber, { patternName, category, chunkCount }] of merged) {
+  for (const [patternNumber, { patternName, chunkCount }] of merged) {
     const overviewChunk = overviewByPattern.get(patternNumber) ?? null;
     const tldrChunk = tldrByPattern.get(patternNumber) ?? null;
 
@@ -464,7 +478,6 @@ export async function listPatterns(): Promise<PatternSummary[]> {
     summaries.push({
       patternNumber,
       patternName: patternName ?? `Pattern ${patternNumber}`,
-      category,
       description,
       chunkCount,
     });

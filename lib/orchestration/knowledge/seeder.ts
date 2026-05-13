@@ -47,13 +47,19 @@ const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
 /**
  * Phase 1 — Seed chunks into the knowledge base (no embeddings).
  *
- * Creates an AiKnowledgeDocument record named "Agentic Design Patterns"
- * and inserts all chunks with embedding=null. Document status is set to
- * 'ready' because the content is immediately usable by the Learning UI.
+ * Creates one `AiKnowledgeDocument` named "Agentic Design Patterns" containing
+ * every chunk in chunks.json (patterns + reference material). One managed
+ * `KnowledgeTag` (`agentic-design-patterns`) is applied to the document via
+ * the doc↔tag join, so agents in restricted-knowledge mode that hold this
+ * tag can search the bundled patterns.
  *
- * Idempotent: skips if the document already exists with chunks.
- * If a previous attempt left a failed record with no chunks, it is
- * cleaned up and re-seeded.
+ * History: an earlier iteration split this into one-doc-per-pattern and
+ * lifted every `chunk.category` into a separate tag. That fragmented the
+ * KB list into 22 rows and produced 10+ redundant tags pointing at the same
+ * doc, so it was reverted — one doc, one tag.
+ *
+ * Idempotent: skips if the document already exists with chunks. Failed
+ * seed attempts are cleaned up and re-seeded.
  *
  * @param chunksJsonPath - Absolute path to the chunks.json file
  */
@@ -122,11 +128,11 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     await prisma.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content,
-        "chunkType", "patternNumber", "patternName", category,
+        "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3,
-        $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+        $4, $5, $6, $7, $8, $9, $10::jsonb
       )`,
       chunk.id,
       document.id,
@@ -134,7 +140,6 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       chunk.metadata.type,
       chunk.metadata.pattern_number ?? null,
       chunk.metadata.pattern_name ?? null,
-      chunk.metadata.category ?? null,
       chunk.metadata.section_title ?? chunk.metadata.section ?? null,
       chunk.metadata.keywords ?? null,
       chunk.estimated_tokens,
@@ -145,6 +150,47 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
         source: chunk.metadata.source ?? null,
       })
     );
+  }
+
+  // Apply a single tag for the seeded patterns. We deliberately don't lift
+  // every chunk.category into a separate tag — that gave us 10 redundant
+  // tags all pointing at the same doc, which was the operator complaint
+  // that drove the revert. One tag, one doc.
+  const seedTag = await prisma.knowledgeTag.upsert({
+    where: { slug: 'agentic-design-patterns' },
+    create: {
+      slug: 'agentic-design-patterns',
+      name: 'Agentic Design Patterns',
+      description:
+        'Built-in reference: the 21 agentic design patterns and supporting material. Grant this tag to any agent that should be able to consult the patterns playbook.',
+    },
+    update: {},
+  });
+  await prisma.aiKnowledgeDocumentTag.upsert({
+    where: { documentId_tagId: { documentId: document.id, tagId: seedTag.id } },
+    create: { documentId: document.id, tagId: seedTag.id },
+    update: {},
+  });
+
+  // Bidirectional safety net: grant this tag to any built-in system agent
+  // that depends on the patterns knowledge (pattern-advisor, quiz-master).
+  // The agent seeds also try to apply the tag — whichever order the
+  // operator runs them, the grant ends up present. Idempotent.
+  const systemAgents = await prisma.aiAgent.findMany({
+    where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
+    select: { id: true, slug: true },
+  });
+  for (const agent of systemAgents) {
+    await prisma.aiAgentKnowledgeTag.upsert({
+      where: { agentId_tagId: { agentId: agent.id, tagId: seedTag.id } },
+      create: { agentId: agent.id, tagId: seedTag.id },
+      update: {},
+    });
+  }
+  if (systemAgents.length > 0) {
+    logger.info('Granted patterns tag to system agents', {
+      slugs: systemAgents.map((a) => a.slug),
+    });
   }
 
   // Record the seed timestamp on the settings singleton (upsert to handle
@@ -158,6 +204,7 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
     documentId: document.id,
     chunkCount: chunks.length,
+    tag: 'agentic-design-patterns',
   });
 }
 

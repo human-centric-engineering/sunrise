@@ -12,25 +12,25 @@ The server page fetches documents from `GET /api/v1/admin/orchestration/knowledg
 
 ## Components
 
-| Component                 | Type   | File                                                                     | Purpose                                                                     |
-| ------------------------- | ------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| `KnowledgeView`           | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`            | Tabbed layout (Manage / Explore / Visualize / Errors)                       |
-| `ManageTab`               | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`                | Document table, seed/rechunk/delete, meta-tag panel                         |
-| `DocumentUploadZone`      | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`      | Staged file upload with category input                                      |
-| `PdfPreviewModal`         | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`         | Review/correct PDF extraction before chunking                               |
-| `DocumentChunksModal`     | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`     | View all chunks for a document                                              |
-| `ExploreTab`              | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`               | Vector search testing interface                                             |
-| `VisualizeTab`            | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`             | Interactive knowledge graph (Structure / Embedded views) + view-toggle host |
-| `EmbeddingProjectionView` | Client | `components/admin/orchestration/knowledge/embedding-projection-view.tsx` | 2D scatter of UMAP-projected chunk embeddings (the "Embedding space" view)  |
-| `ErrorsTab`               | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`                | Failed document recovery                                                    |
-| `CompareProvidersModal`   | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx`   | Embedding model comparison table with guide                                 |
-| `EmbeddingStatusBanner`   | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx`   | Warning banner when embeddings are incomplete                               |
+| Component                 | Type   | File                                                                     | Purpose                                                                           |
+| ------------------------- | ------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `KnowledgeView`           | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`            | Tabbed layout (Manage / Explore / Visualize / Errors)                             |
+| `ManageTab`               | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`                | Document table, seed / rechunk / enrich-keywords / delete, Indexed keywords panel |
+| `DocumentUploadZone`      | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`      | Staged file upload with title + tags (inline-create)                              |
+| `PdfPreviewModal`         | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`         | Review/correct PDF extraction before chunking                                     |
+| `DocumentChunksModal`     | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`     | View all chunks for a document                                                    |
+| `ExploreTab`              | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`               | Vector search testing interface                                                   |
+| `VisualizeTab`            | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`             | Interactive knowledge graph (Structure / Embedded views) + view-toggle host       |
+| `EmbeddingProjectionView` | Client | `components/admin/orchestration/knowledge/embedding-projection-view.tsx` | 2D scatter of UMAP-projected chunk embeddings (the "Embedding space" view)        |
+| `ErrorsTab`               | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`                | Failed document recovery                                                          |
+| `CompareProvidersModal`   | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx`   | Embedding model comparison table with guide                                       |
+| `EmbeddingStatusBanner`   | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx`   | Warning banner when embeddings are incomplete                                     |
 
 ## Features
 
 ### Document list
 
-Table with columns: name (clickable → chunks viewer), category badge, status badge, chunk count, **coverage**, created date, actions. Documents with a category show a secondary badge; documents without show "—". The Coverage column shows the post-chunking text-capture percentage from `document.metadata.coverage.coveragePct`. Green (≥ 95%) indicates all parsed text was captured; amber indicates content was likely dropped. Older documents without a coverage metric show `—`; rechunking computes it. Status badge colors:
+Table with columns: name (clickable → chunks viewer), tag count chip (clickable → tags modal), status badge, chunk count, **coverage**, created date, actions. The tag chip shows `N tag(s)` when any are applied and a `+ Add` affordance when none are; both open the document's tags modal. The Coverage column shows the post-chunking text-capture percentage from `document.metadata.coverage.coveragePct`. Green (≥ 95%) indicates all parsed text was captured; amber indicates content was likely dropped. Older documents without a coverage metric show `—`; rechunking computes it. Status badge colors:
 
 | Status           | Badge variant | Label        |
 | ---------------- | ------------- | ------------ |
@@ -42,12 +42,14 @@ Table with columns: name (clickable → chunks viewer), category badge, status b
 
 ### Document actions
 
-| Action  | Condition                      | Endpoint                                           |
-| ------- | ------------------------------ | -------------------------------------------------- |
-| Rechunk | Non-seeded, not pending_review | `POST /documents/:id/rechunk`                      |
-| Review  | `pending_review` status        | Opens chunks viewer                                |
-| Delete  | Non-seeded                     | `DELETE /documents/:id` (with inline confirm)      |
-| View    | Click document name            | Opens chunks modal via `GET /documents/:id/chunks` |
+| Action          | Condition                      | Endpoint                                                                                   |
+| --------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| Rechunk         | Non-seeded, not pending_review | `POST /documents/:id/rechunk`                                                              |
+| Enrich keywords | Non-seeded, not pending_review | `POST /documents/:id/enrich-keywords` (LLM-summarises each chunk into 3–8 keyword phrases) |
+| Review          | `pending_review` status        | Opens chunks viewer                                                                        |
+| Delete          | Non-seeded                     | `DELETE /documents/:id` (with inline confirm)                                              |
+| View            | Click document name            | Opens chunks modal via `GET /documents/:id/chunks`                                         |
+| Edit tags       | Click tag count chip           | Opens tags modal — picks from existing tags                                                |
 
 Delete uses an inline "Delete? Yes / No" confirmation pattern rather than a separate modal.
 
@@ -56,7 +58,7 @@ Delete uses an inline "Delete? Yes / No" confirmation pattern rather than a sepa
 A modal (`DocumentChunksModal`) that displays all chunks for a document. Triggered by clicking a document name in the table. Shows:
 
 - Sequential chunk list with index numbers
-- Chunk type and category badges
+- Chunk type badge
 - Estimated token count per chunk
 - Content in a scrollable monospace pre block
 - Keywords as small outline badges
@@ -78,14 +80,15 @@ The panel renders near the top of the page while setup is in progress. Once both
 
 ### File upload (staged flow)
 
-Staged upload: drop/select one or more files → files are staged (not uploaded yet) → optionally assign a category → click Upload. Maximum 10 files per batch.
+Staged upload: drop/select one or more files → files are staged (not uploaded yet) → optionally edit the title and apply tags → click Upload. Maximum 10 files per batch.
 
 1. **Drag-and-drop zone** with file input fallback (supports `multiple`). Client-side validation: max 50 MB per file, `.md` / `.markdown` / `.txt` / `.epub` / `.docx` / `.pdf`
-2. **Staged preview** shows file names with sizes, and a category text input with autocomplete (populated from `GET /knowledge/meta-tags`)
-3. **Upload button** — single file posts multipart `FormData` to `POST /knowledge/documents`; multiple files use `POST /knowledge/documents/bulk`
-4. **Clear button** (×) unstages all files without uploading
+2. **Staged preview** shows file names with sizes. For single-file uploads, a **Title** input appears (seeded from the filename stem; sent as `name` only when edited).
+3. **Tags picker** — a `MultiSelect` bound to `KnowledgeTag` rows fetched from `GET /knowledge/tags`. Operators can pick from existing tags or type a name that doesn't match anything to create a new tag inline (the picker fires `POST /knowledge/tags` and auto-selects the result). Submitted as repeated `tagIds` form fields.
+4. **Upload button** — single file posts multipart `FormData` to `POST /knowledge/documents`; multiple files use `POST /knowledge/documents/bulk`
+5. **Clear button** (×) unstages all files without uploading
 
-**PDF flow:** When a PDF is uploaded, the API returns a preview response. The upload zone calls `onPdfPreview` which opens the `PdfPreviewModal` for review.
+**PDF flow:** When a PDF is uploaded, the API returns a preview response. The upload zone calls `onPdfPreview` which opens the `PdfPreviewModal` for review. The preview modal does **not** offer a tags input — apply tags at upload time on the upload zone (the doc row's tags modal also works post-confirm).
 
 ### Chunking settings
 
@@ -104,7 +107,7 @@ Plus the split hierarchy: paragraph → line → sentence → fixed-width window
 Values are sourced from `lib/orchestration/knowledge/chunker-config.ts` (a
 server-free constants file) so the UI can never drift from the runtime.
 
-**Inline upload explainer.** Above the drop zone an `<aside>` card carries a one-paragraph summary of how upload works (parse → chunk into ~50–800-token pieces → embed into 1,536-dim vectors → graph nodes) with a **Read full guide** popover that opens the complete guide body. The same guide body is also wired to the (ⓘ) `<FieldHelp>` next to the "Upload Document" heading — hoisted into a shared `<UploadGuideBody />` component so a future edit lands in one place. The guide covers: the parse → chunk → embed pipeline; what you'll see in the graph (nodes/edges, per-document-size chunk-count examples, the 500-chunk graph-collapse threshold); category usage; in-document metadata comment format; content quality tips; large-document guidance; supported formats.
+**Inline upload explainer.** Above the drop zone an `<aside>` card carries a one-paragraph summary of how upload works (parse → chunk into ~50–800-token pieces → embed into 1,536-dim vectors → graph nodes) with a **Read full guide** popover that opens the complete guide body. The same guide body is also wired to the (ⓘ) `<FieldHelp>` next to the "Upload Document" heading — hoisted into a shared `<UploadGuideBody />` component so a future edit lands in one place. The guide covers: the parse → chunk → embed pipeline; what you'll see in the graph (nodes/edges, per-document-size chunk-count examples, the 500-chunk graph-collapse threshold); Tags vs Indexed Keywords (access vs ranking); the `<!-- metadata: keywords="…" -->` format for markdown uploads; content quality tips; large-document guidance; supported formats.
 
 ### PDF preview modal
 
@@ -113,23 +116,23 @@ Opened automatically after a PDF upload. Displays:
 - Document metadata (title, author, section count)
 - Extraction warnings (amber callout box)
 - Editable textarea with extracted text (for correcting OCR errors)
-- Optional category input
 - Confirm & Chunk button → calls `POST /documents/:id/confirm`
 - Discard button → calls `DELETE /documents/:id`
 - Page-coverage banner: `X% of pages produced text (N of M pages, K chars total)` green/amber — pre-chunking signal. Below 95% indicates scanned pages.
 - Per-page extraction bar strip: one bar per page, height proportional to char count, amber for scanned-suspect pages
 
-### Meta-tags panel
+### Indexed keywords panel
 
-Displayed below the upload zone when any categories or keywords exist in either scope. Fetched from `GET /knowledge/meta-tags` on mount. The response is grouped by scope (`app` vs `system`), rendered as two collapsible sections:
+Read-only diagnostic. Displayed below the upload zone when any indexed keywords exist in either scope. Fetched from `GET /knowledge/meta-tags` on mount. Grouped by scope into two collapsible sections:
 
-- **App knowledge** (expanded by default) — tags from user-uploaded documents. These are the tags admins manage for consistency.
-- **System knowledge** (collapsed by default) — tags from the built-in Agentic Design Patterns. Read-only reference.
+- **App knowledge** (expanded by default) — keywords from user-uploaded documents.
+- **System knowledge** (collapsed by default) — keywords from the built-in Agentic Design Patterns reference. Read-only.
 
-Each section shows:
+Each section shows keywords as outline badges, first 30 visible. A "Show all N keywords" / "Show less" toggle reveals the rest. Tooltips show chunk/document counts per keyword.
 
-- **Categories** — secondary badges with tooltip showing chunk/document counts
-- **Keywords** — outline badges, first 30 visible. A "Show all N keywords" / "Show less" toggle reveals the rest.
+The panel's purpose is **diagnostic only** — to spot duplicates / typos that hurt BM25 ranking. To actually set keywords on a document, see the **Enrich keywords** per-row action on the document table, or use `<!-- metadata: keywords="…" -->` HTML comments in markdown source.
+
+Tags (the access-control concept) have their own dedicated tab — Knowledge → Tags — not surfaced here.
 
 ### Explore tab
 

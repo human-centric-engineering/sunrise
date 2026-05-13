@@ -270,4 +270,41 @@ describe('useLocalStorage', () => {
 
     setSpy.mockRestore();
   });
+
+  it('ignores storage events from a non-localStorage storageArea', () => {
+    // Arrange: hook watching 'k.area'
+    const { result } = renderHook(() => useLocalStorage<string>('k.area', 'initial'));
+
+    // Act: dispatch a storage event where storageArea is sessionStorage (not localStorage)
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: 'k.area',
+          newValue: JSON.stringify('should-be-ignored'),
+          storageArea: window.sessionStorage,
+        })
+      );
+    });
+
+    // Assert: state unchanged because storageArea filter rejected the event
+    expect(result.current[0]).toBe('initial');
+  });
+
+  it('ignores storage events with a null key', () => {
+    // Arrange: dispatch a storage event with key=null (broadcast clear)
+    const { result } = renderHook(() => useLocalStorage<string>('k.nullkey', 'initial'));
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: null,
+          newValue: JSON.stringify('ignored'),
+          storageArea: window.localStorage,
+        })
+      );
+    });
+
+    // Assert: state unchanged — key mismatch filters out the event
+    expect(result.current[0]).toBe('initial');
+  });
 });

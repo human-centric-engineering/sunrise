@@ -101,7 +101,6 @@ export const POST = withAdminAuth(async (request, session) => {
         maxHistoryTokens: agent.maxHistoryTokens,
         retentionDays: agent.retentionDays,
         visibility: visibilitySchema.parse(agent.visibility),
-        knowledgeCategories: agent.knowledgeCategories,
         topicBoundaries: agent.topicBoundaries,
         brandVoiceInstructions: agent.brandVoiceInstructions,
         widgetConfig: jsonRecord.parse(agent.widgetConfig),

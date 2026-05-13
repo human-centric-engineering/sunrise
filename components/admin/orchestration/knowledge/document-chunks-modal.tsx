@@ -27,7 +27,6 @@ const chunksResponseSchema = z.object({
           patternNumber: z.number().nullable(),
           patternName: z.string().nullable(),
           section: z.string().nullable(),
-          category: z.string().nullable(),
           keywords: z.string().nullable(),
           estimatedTokens: z.number(),
         })
@@ -52,7 +51,6 @@ interface ChunkData {
   patternNumber: number | null;
   patternName: string | null;
   section: string | null;
-  category: string | null;
   keywords: string | null;
   estimatedTokens: number;
 }
@@ -212,11 +210,6 @@ export function DocumentChunksModal({
                     <Badge variant="outline" className="text-xs">
                       {chunk.chunkType.replace(/_/g, ' ')}
                     </Badge>
-                    {chunk.category && (
-                      <Badge variant="secondary" className="text-xs">
-                        {chunk.category}
-                      </Badge>
-                    )}
                     {chunk.section && (
                       <span className="text-muted-foreground text-xs">{chunk.section}</span>
                     )}

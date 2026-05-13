@@ -27,6 +27,10 @@ describe('KNOWLEDGE_TABS', () => {
     expect(KNOWLEDGE_TABS.MANAGE).toBe('manage');
   });
 
+  it('has TAGS value "tags"', () => {
+    expect(KNOWLEDGE_TABS.TAGS).toBe('tags');
+  });
+
   it('has EXPLORE value "explore"', () => {
     expect(KNOWLEDGE_TABS.EXPLORE).toBe('explore');
   });
@@ -39,21 +43,22 @@ describe('KNOWLEDGE_TABS', () => {
     expect(KNOWLEDGE_TABS.ERRORS).toBe('errors');
   });
 
-  it('contains exactly 4 entries', () => {
-    expect(Object.keys(KNOWLEDGE_TABS)).toHaveLength(4);
+  it('contains exactly 5 entries (added Tags when knowledge-access-control shipped)', () => {
+    expect(Object.keys(KNOWLEDGE_TABS)).toHaveLength(5);
   });
 });
 
 describe('KNOWLEDGE_TAB_VALUES', () => {
-  it('contains all four tab string values', () => {
+  it('contains all five tab string values', () => {
     expect(KNOWLEDGE_TAB_VALUES).toContain('manage');
+    expect(KNOWLEDGE_TAB_VALUES).toContain('tags');
     expect(KNOWLEDGE_TAB_VALUES).toContain('explore');
     expect(KNOWLEDGE_TAB_VALUES).toContain('visualize');
     expect(KNOWLEDGE_TAB_VALUES).toContain('errors');
   });
 
-  it('has length 4', () => {
-    expect(KNOWLEDGE_TAB_VALUES).toHaveLength(4);
+  it('has length 5', () => {
+    expect(KNOWLEDGE_TAB_VALUES).toHaveLength(5);
   });
 
   it('contains no duplicates', () => {

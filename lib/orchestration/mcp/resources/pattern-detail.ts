@@ -12,7 +12,8 @@ import type { McpResourceContent } from '@/types/mcp';
 
 export async function handlePatternDetail(
   uri: string,
-  _config: Record<string, unknown> | null
+  _config: Record<string, unknown> | null,
+  _callContext: import('@/lib/orchestration/mcp/resource-registry').ResourceCallContext
 ): Promise<McpResourceContent> {
   const match = uri.match(/patterns\/(\d+)/);
   const patternNumber = match ? parseInt(match[1], 10) : null;
@@ -33,7 +34,6 @@ export async function handlePatternDetail(
       chunkType: true,
       section: true,
       patternName: true,
-      category: true,
     },
   });
 
@@ -51,7 +51,6 @@ export async function handlePatternDetail(
     text: JSON.stringify({
       patternNumber,
       patternName: chunks[0].patternName,
-      category: chunks[0].category,
       sections: chunks.map((c) => ({
         section: c.section,
         chunkType: c.chunkType,

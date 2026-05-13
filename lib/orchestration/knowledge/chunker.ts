@@ -25,7 +25,6 @@ export interface Chunk {
   chunkType: string;
   patternNumber: number | null;
   patternName: string | null;
-  category: string | null;
   section: string | null;
   keywords: string | null;
   estimatedTokens: number;
@@ -338,7 +337,6 @@ function chunkPatternSection(
       chunkType: section.header ? 'pattern_section' : 'pattern_overview',
       patternNumber,
       patternName,
-      category: commentMetadata['category'] ?? null,
       section: section.header || 'overview',
       keywords: commentMetadata['keywords'] ?? null,
       estimatedTokens: estimateTokens(section.combinedContent),
@@ -448,7 +446,6 @@ async function chunkGenericSection(
             chunkType,
             patternNumber: null,
             patternName: null,
-            category: commentMetadata['category'] ?? null,
             section: header || derivedTitle,
             keywords: commentMetadata['keywords'] ?? null,
             estimatedTokens: estimateTokens(combinedContent),
@@ -498,7 +495,6 @@ async function chunkGenericSection(
       chunkType,
       patternNumber: null,
       patternName: null,
-      category: commentMetadata['category'] ?? null,
       section: section.header || header || derivedTitle,
       keywords: commentMetadata['keywords'] ?? null,
       estimatedTokens: estimateTokens(section.combinedContent),
@@ -644,7 +640,6 @@ export function chunkCsvDocument(
         chunkType: 'csv_row',
         patternNumber: null,
         patternName: null,
-        category: null,
         section: section.title,
         keywords: null,
         estimatedTokens: estimateTokens(section.content),
@@ -662,7 +657,6 @@ export function chunkCsvDocument(
         chunkType: 'csv_row',
         patternNumber: null,
         patternName: null,
-        category: null,
         section: `Rows ${start}–${end}`,
         keywords: null,
         estimatedTokens: estimateTokens(content),

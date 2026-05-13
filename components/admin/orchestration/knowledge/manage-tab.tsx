@@ -9,12 +9,19 @@ import {
   RefreshCw,
   Sparkles,
   Sprout,
-  Tag,
   Trash2,
+  Upload,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
 import { z } from 'zod';
@@ -27,27 +34,7 @@ import {
   MIN_CHUNK_TOKENS,
 } from '@/lib/orchestration/knowledge/chunker-config';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
-
-const metaTagEntrySchema = z.object({
-  value: z.string(),
-  chunkCount: z.number(),
-  documentCount: z.number(),
-});
-
-const scopedMetaTagsSchema = z.object({
-  categories: z.array(metaTagEntrySchema),
-  keywords: z.array(metaTagEntrySchema),
-});
-
-const metaTagsResponseSchema = z.object({
-  data: z
-    .object({
-      app: scopedMetaTagsSchema,
-      system: scopedMetaTagsSchema,
-    })
-    .optional(),
-});
+import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 const embeddingStatusResponseSchema = z.object({
   data: z
@@ -72,6 +59,8 @@ const errorBodySchema = z
 
 import { CompareProvidersModal } from '@/components/admin/orchestration/knowledge/compare-providers-modal';
 import { DocumentChunksModal } from '@/components/admin/orchestration/knowledge/document-chunks-modal';
+import { DocumentKeywordsModal } from '@/components/admin/orchestration/knowledge/document-keywords-modal';
+import { DocumentTagsModal } from '@/components/admin/orchestration/knowledge/document-tags-modal';
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import type { PdfPreviewData } from '@/components/admin/orchestration/knowledge/document-upload-zone';
 import { EmbeddingStatusBanner } from '@/components/admin/orchestration/knowledge/embedding-status-banner';
@@ -95,24 +84,6 @@ interface EmbeddingStatus {
   hasActiveProvider: boolean;
 }
 
-interface MetaTagEntry {
-  value: string;
-  chunkCount: number;
-  documentCount: number;
-}
-
-interface ScopedMetaTags {
-  categories: MetaTagEntry[];
-  keywords: MetaTagEntry[];
-}
-
-interface MetaTagSummary {
-  app: ScopedMetaTags;
-  system: ScopedMetaTags;
-}
-
-const KEYWORD_COLLAPSED_LIMIT = 30;
-
 /**
  * Extract the coverage metric the chunk pipeline writes to document
  * metadata (see lib/orchestration/knowledge/coverage.ts). Returns null
@@ -128,101 +99,8 @@ function readCoverage(metadata: unknown): { coveragePct: number } | null {
   return typeof pct === 'number' ? { coveragePct: pct } : null;
 }
 
-function MetaTagSection({
-  title,
-  scope,
-  defaultOpen,
-  showAllKeywords,
-  onToggleKeywords,
-}: {
-  title: string;
-  scope: ScopedMetaTags;
-  defaultOpen: boolean;
-  showAllKeywords: boolean;
-  onToggleKeywords: () => void;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const hasCats = scope.categories.length > 0;
-  const hasKws = scope.keywords.length > 0;
-  const visibleKeywords = showAllKeywords
-    ? scope.keywords
-    : scope.keywords.slice(0, KEYWORD_COLLAPSED_LIMIT);
-
-  return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1 text-left text-xs font-medium"
-      >
-        <ChevronDown
-          className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`}
-        />
-        {title}
-        <span className="text-muted-foreground font-normal">
-          ({scope.categories.length} categories, {scope.keywords.length} keywords)
-        </span>
-      </button>
-
-      {open && (
-        <div className="space-y-2 pl-5">
-          {hasCats && (
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                Categories ({scope.categories.length})
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {scope.categories.map((tag) => (
-                  <Tip
-                    key={tag.value}
-                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
-                  >
-                    <Badge variant="secondary" className="text-xs">
-                      {tag.value}
-                      <span className="text-muted-foreground ml-1">({tag.chunkCount})</span>
-                    </Badge>
-                  </Tip>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {hasKws && (
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                Keywords ({scope.keywords.length})
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {visibleKeywords.map((tag) => (
-                  <Tip
-                    key={tag.value}
-                    label={`${tag.chunkCount} chunks across ${tag.documentCount} document${tag.documentCount === 1 ? '' : 's'}`}
-                  >
-                    <Badge variant="outline" className="text-xs">
-                      {tag.value}
-                    </Badge>
-                  </Tip>
-                ))}
-              </div>
-              {scope.keywords.length > KEYWORD_COLLAPSED_LIMIT && (
-                <button
-                  type="button"
-                  onClick={onToggleKeywords}
-                  className="text-primary text-xs hover:underline"
-                >
-                  {showAllKeywords ? 'Show less' : `Show all ${scope.keywords.length} keywords`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface ManageTabProps {
-  documents: AiKnowledgeDocument[];
+  documents: KnowledgeDocumentListItem[];
   onRefresh: () => void;
 }
 
@@ -234,11 +112,11 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
   const [rechunkError, setRechunkError] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [viewKeywordsId, setViewKeywordsId] = useState<string | null>(null);
+  const [viewKeywordsName, setViewKeywordsName] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
-  const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
-  const [showAllAppKeywords, setShowAllAppKeywords] = useState(false);
-  const [showAllSystemKeywords, setShowAllSystemKeywords] = useState(false);
   const [pdfPreview, setPdfPreview] = useState<PdfPreviewData | null>(null);
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -246,21 +124,14 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [viewChunksId, setViewChunksId] = useState<string | null>(null);
   const [viewChunksName, setViewChunksName] = useState<string | null>(null);
+  // Separate state so the Tags chip on a row opens the tag editor directly,
+  // not the chunks list — two modals, one job each.
+  const [editTagsId, setEditTagsId] = useState<string | null>(null);
+  const [editTagsName, setEditTagsName] = useState<string | null>(null);
   const [setupPreference, setSetupPreference] = useLocalStorage<'open' | 'closed' | null>(
     'orchestration.knowledge.builtin-patterns-panel',
     null
   );
-
-  const fetchMetaTags = useCallback(async () => {
-    try {
-      const res = await fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_META_TAGS);
-      if (!res.ok) return;
-      const body = metaTagsResponseSchema.parse(await res.json());
-      if (body.data?.app && body.data?.system) setMetaTags(body.data);
-    } catch {
-      // Supplementary — ignore failures
-    }
-  }, []);
 
   const fetchEmbeddingStatus = useCallback(async () => {
     try {
@@ -287,8 +158,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   useEffect(() => {
     void fetchEmbeddingStatus();
     void fetchLastSeededAt();
-    void fetchMetaTags();
-  }, [fetchEmbeddingStatus, fetchLastSeededAt, fetchMetaTags]);
+  }, [fetchEmbeddingStatus, fetchLastSeededAt]);
 
   const handleSeed = useCallback(async () => {
     setSeeding(true);
@@ -373,7 +243,6 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           return;
         }
         onRefresh();
-        void fetchMetaTags();
         void fetchEmbeddingStatus();
       } catch {
         setDeleteError('Network error — could not reach the server.');
@@ -382,25 +251,28 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         setDeleteConfirmId(null);
       }
     },
-    [onRefresh, fetchMetaTags, fetchEmbeddingStatus]
+    [onRefresh, fetchEmbeddingStatus]
   );
 
   const handlePdfPreview = useCallback((data: PdfPreviewData) => {
+    // Close the upload dialog so the PDF preview gets a single, unstacked
+    // modal context. The operator returns to the document list (with the
+    // preview overlay) rather than the upload zone behind the preview.
+    setUploadOpen(false);
     setPdfPreview(data);
     setPdfPreviewOpen(true);
   }, []);
+
+  const handleUploadComplete = useCallback(() => {
+    setUploadOpen(false);
+    onRefresh();
+  }, [onRefresh]);
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
-
-  const hasAppTags =
-    metaTags !== null && (metaTags.app.categories.length > 0 || metaTags.app.keywords.length > 0);
-  const hasSystemTags =
-    metaTags !== null &&
-    (metaTags.system.categories.length > 0 || metaTags.system.keywords.length > 0);
 
   // Built-in setup panel: collapsed by default once setup is complete (chunks loaded
   // and all embedded). Manual user preference (open/closed) wins over the auto rule.
@@ -649,161 +521,25 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         </span>
       </div>
 
-      {/* Built-in setup renders near the top while still in progress so it
-          stays in the operator's path of attention. Once setupComplete, it
-          falls to the bottom of the page (see end of this component) since
-          it's already done and shouldn't take prime real estate. */}
-      {!setupComplete && builtInPanel}
-
-      <DocumentUploadZone onUploadComplete={onRefresh} onPdfPreview={handlePdfPreview} />
-
-      {/* Chunking settings — accessed via an ⓘ button underneath the upload
-          zone. The popover surfaces both the live values and the advice for
-          when to change them. Values come from `chunker-config.ts` so they
-          can never drift from what the runtime uses. */}
-      <div className="text-muted-foreground -mt-4 flex items-center gap-1.5 text-xs">
-        <span>Chunking settings</span>
-        <FieldHelp
-          title="Chunking settings"
-          ariaLabel="About the chunking settings"
-          contentClassName="w-96 max-h-96 overflow-y-auto"
-        >
-          <p>
-            These values control how documents are split into chunks before embedding. They are{' '}
-            <strong>code-level constants</strong> today — there is no admin UI to change them. The
-            values below are what the runtime actually uses, read directly from{' '}
-            <code>lib/orchestration/knowledge/chunker-config.ts</code>.
-          </p>
-
-          <dl className="bg-muted/40 mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-md p-2 text-xs">
-            <div>
-              <dt className="text-muted-foreground">Min chunk size</dt>
-              <dd className="font-medium">{MIN_CHUNK_TOKENS} tokens</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Max chunk size</dt>
-              <dd className="font-medium">{MAX_CHUNK_TOKENS} tokens</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Token estimate</dt>
-              <dd className="font-medium">~{CHARS_PER_TOKEN_ESTIMATE} chars / token</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">CSV row cap</dt>
-              <dd className="font-medium">{CSV_MAX_ROW_CHARS.toLocaleString()} chars</dd>
-            </div>
-          </dl>
-
-          <p className="text-foreground mt-3 font-medium">Chunk size (min/max tokens)</p>
-          <p>
-            The chunker aims for chunks between <strong>{MIN_CHUNK_TOKENS}</strong> and{' '}
-            <strong>{MAX_CHUNK_TOKENS}</strong> tokens. Below the min, neighbouring sections merge;
-            above the max, sections split. <strong>Smaller chunks</strong> = sharper similarity
-            match (good for FAQs, glossaries); <strong>larger chunks</strong> = more surrounding
-            context per match (good for long-form prose, legal text).
-          </p>
-          <p className="text-foreground mt-2 font-medium">Token estimation</p>
-          <p>
-            Tokens are approximated as <strong>~{CHARS_PER_TOKEN_ESTIMATE}</strong> characters per
-            token (a common rule of thumb for English). The chunker doesn&apos;t call the embedding
-            provider&apos;s tokenizer — it&apos;s a heuristic.
-          </p>
-          <p className="text-foreground mt-2 font-medium">Split hierarchy</p>
-          <p>
-            When a section exceeds the max, the chunker tries to split it cleanly in this order:{' '}
-            <strong>paragraph → line → sentence → fixed-width window</strong>. The last tier is the
-            safety net that guarantees no chunk ever exceeds the cap, at the cost of cutting
-            mid-sentence.
-          </p>
-          <p className="text-foreground mt-2 font-medium">CSV per-row cap</p>
-          <p>
-            CSV uploads chunk one row per chunk. Rows above{' '}
-            <strong>{CSV_MAX_ROW_CHARS.toLocaleString()}</strong> characters are dropped before
-            embedding (they exceed every embedding API&apos;s input limit) and named in the document
-            warnings.
-          </p>
-          <p className="text-foreground mt-2 font-medium">When to change these</p>
-          <p>
-            Rarely. Defaults work well for OpenAI, Voyage, and Ollama embeddings. Consider a change
-            only if (a) you switch to a smaller-context embedding model, (b) your documents are
-            uniformly very short or very long, or (c) coverage on most documents is consistently
-            low.
-          </p>
-        </FieldHelp>
-      </div>
-
-      {/* Meta-tags in use */}
-      {metaTags && (hasAppTags || hasSystemTags) && (
-        <div className="space-y-3 rounded-lg border p-4">
-          <div className="flex items-center gap-1.5">
-            <Tag className="text-muted-foreground h-4 w-4" />
-            <h3 className="text-sm font-medium">Meta-tags in use</h3>
-            <FieldHelp
-              title="Meta-tags in use"
-              ariaLabel="About meta-tags"
-              contentClassName="w-80 max-h-80 overflow-y-auto"
-            >
-              <p>
-                This panel shows all category and keyword values found across your knowledge base
-                chunks, separated by scope. Use it to check for consistency before uploading new
-                documents.
-              </p>
-              <p className="mt-2">
-                <strong>App knowledge</strong> contains your uploaded documents.{' '}
-                <strong>System knowledge</strong> contains the built-in Agentic Design Patterns
-                (read-only).
-              </p>
-              <p className="mt-2">
-                <strong>Categories</strong> are best kept to a small, consistent set (5–15 values).
-                Agents can be configured to only search specific categories, so inconsistent naming
-                (e.g. &quot;sales&quot; vs &quot;Sales&quot; vs &quot;selling&quot;) means some
-                content won&apos;t be found.
-              </p>
-              <p className="mt-2">
-                <strong>Keywords</strong> are more forgiving — they boost search relevance
-                additively, so having many unique keywords is fine. Duplicates or near-duplicates
-                are less harmful here.
-              </p>
-              <p className="mt-2">
-                Tags are completely <strong>free-form</strong> — you can use any values. But the
-                trade-off is that there&apos;s no automatic normalisation. &quot;Sales&quot; and
-                &quot;sales&quot; are treated as different values. Agree on naming conventions
-                before bulk uploading.
-              </p>
-            </FieldHelp>
-          </div>
-
-          {hasAppTags && (
-            <MetaTagSection
-              title="App knowledge"
-              scope={metaTags.app}
-              defaultOpen
-              showAllKeywords={showAllAppKeywords}
-              onToggleKeywords={() => setShowAllAppKeywords((v) => !v)}
-            />
-          )}
-
-          {hasSystemTags && (
-            <MetaTagSection
-              title="System knowledge"
-              scope={metaTags.system}
-              defaultOpen={false}
-              showAllKeywords={showAllSystemKeywords}
-              onToggleKeywords={() => setShowAllSystemKeywords((v) => !v)}
-            />
-          )}
-        </div>
-      )}
-
-      {/* Document list */}
+      {/* Documents table sits directly under the explainer so operators
+          land on their library first. The Upload action lives in a
+          dialog (see end of this component) — keeping the inline drop
+          zone here would push the table out of the first viewport. */}
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Documents ({documents.length})</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">Documents ({documents.length})</h3>
+          <Button onClick={() => setUploadOpen(true)} size="sm">
+            <Upload className="mr-1.5 h-3.5 w-3.5" />
+            Upload document
+          </Button>
+        </div>
 
         {documents.length === 0 ? (
           <div className="text-muted-foreground rounded-lg border border-dashed p-8 text-center">
             <p className="text-sm">No documents yet.</p>
             <p className="mt-1 text-xs">
-              Upload a file or load the built-in patterns to get started.
+              Use the <strong>Upload document</strong> button above to add your own files, or load
+              the <strong>Built-in: Agentic Design Patterns</strong> reference from the panel below.
             </p>
           </div>
         ) : (
@@ -820,8 +556,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                       </Tip>
                     </th>
                     <th className="px-4 py-2 text-left font-medium">
-                      <Tip label="Document category for filtering and agent scoping">
-                        <span>Category</span>
+                      <Tip label="Knowledge tags applied to this document — click a chip (or the document name) to edit. Tags determine which restricted-mode agents can search the document.">
+                        <span>Tags</span>
                       </Tip>
                     </th>
                     <th className="px-4 py-2 text-left font-medium">
@@ -830,9 +566,127 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                       </Tip>
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
-                      <Tip label="Number of text chunks this document was split into for vector search">
-                        <span>Chunks</span>
-                      </Tip>
+                      <span className="inline-flex items-center justify-end gap-1">
+                        <Tip label="Number of text chunks this document was split into for vector search">
+                          <span>Chunks</span>
+                        </Tip>
+                        <FieldHelp
+                          title="Chunking settings"
+                          ariaLabel="About the chunking settings"
+                          contentClassName="w-96 max-h-96 overflow-y-auto"
+                        >
+                          <p>
+                            These values control how documents are split into chunks before
+                            embedding. They are <strong>code-level constants</strong> today — there
+                            is no admin UI to change them. The values below are what the runtime
+                            actually uses, read directly from{' '}
+                            <code>lib/orchestration/knowledge/chunker-config.ts</code>.
+                          </p>
+
+                          <dl className="bg-muted/40 mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-md p-2 text-xs">
+                            <div>
+                              <dt className="text-muted-foreground">Min chunk size</dt>
+                              <dd className="font-medium">{MIN_CHUNK_TOKENS} tokens</dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">Max chunk size</dt>
+                              <dd className="font-medium">{MAX_CHUNK_TOKENS} tokens</dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">Token estimate</dt>
+                              <dd className="font-medium">
+                                ~{CHARS_PER_TOKEN_ESTIMATE} chars / token
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-muted-foreground">CSV row cap</dt>
+                              <dd className="font-medium">
+                                {CSV_MAX_ROW_CHARS.toLocaleString()} chars
+                              </dd>
+                            </div>
+                          </dl>
+
+                          <p className="text-foreground mt-3 font-medium">
+                            Chunk size (min/max tokens)
+                          </p>
+                          <p>
+                            The chunker aims for chunks between <strong>{MIN_CHUNK_TOKENS}</strong>{' '}
+                            and <strong>{MAX_CHUNK_TOKENS}</strong> tokens. Below the min,
+                            neighbouring sections merge; above the max, sections split.{' '}
+                            <strong>Smaller chunks</strong> = sharper similarity match (good for
+                            FAQs, glossaries); <strong>larger chunks</strong> = more surrounding
+                            context per match (good for long-form prose, legal text).
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">Token estimation</p>
+                          <p>
+                            Tokens are approximated as <strong>~{CHARS_PER_TOKEN_ESTIMATE}</strong>{' '}
+                            characters per token (a common rule of thumb for English). The chunker
+                            doesn&apos;t call the embedding provider&apos;s tokenizer — it&apos;s a
+                            heuristic.
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">Split hierarchy</p>
+                          <p>
+                            When a section exceeds the max, the chunker tries to split it cleanly in
+                            this order:{' '}
+                            <strong>paragraph → line → sentence → fixed-width window</strong>. The
+                            last tier is the safety net that guarantees no chunk ever exceeds the
+                            cap, at the cost of cutting mid-sentence.
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">CSV per-row cap</p>
+                          <p>
+                            CSV uploads chunk one row per chunk. Rows above{' '}
+                            <strong>{CSV_MAX_ROW_CHARS.toLocaleString()}</strong> characters are
+                            dropped before embedding (they exceed every embedding API&apos;s input
+                            limit) and named in the document warnings.
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">When to change these</p>
+                          <p>
+                            Rarely. Defaults work well for OpenAI, Voyage, and Ollama embeddings.
+                            Consider a change only if (a) you switch to a smaller-context embedding
+                            model, (b) your documents are uniformly very short or very long, or (c)
+                            coverage on most documents is consistently low.
+                          </p>
+                        </FieldHelp>
+                      </span>
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      <span className="inline-flex items-center justify-end gap-1">
+                        <Tip label="Distinct BM25 keywords currently indexed across this document's chunks. Click the count to inspect and enrich.">
+                          <span>BM25 keywords</span>
+                        </Tip>
+                        <FieldHelp
+                          title="What is BM25?"
+                          ariaLabel="About BM25 keyword ranking"
+                          contentClassName="w-96 max-h-96 overflow-y-auto"
+                        >
+                          <p>
+                            <strong>BM25</strong> (&ldquo;Best Matching 25&rdquo;) is a classic
+                            keyword-ranking algorithm — the same family that traditional search
+                            engines like Lucene and Elasticsearch use. It scores how well a chunk
+                            matches a query based on three signals: which query terms appear in the
+                            chunk, how often they appear, and how rare those terms are across the
+                            whole knowledge base (rarer terms count for more).
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">How it fits in here</p>
+                          <p>
+                            Sunrise uses <strong>hybrid search</strong>: a vector-similarity score
+                            (semantic meaning) blended with a BM25 score (lexical match). BM25 is
+                            good at exact-term recall — product codes, error IDs, acronyms — where
+                            the vector model might miss because the words don&apos;t carry semantic
+                            weight on their own.
+                          </p>
+                          <p className="text-foreground mt-2 font-medium">What this column shows</p>
+                          <p>
+                            The count of <em>distinct</em> keyword phrases stored in{' '}
+                            <code>chunk.keywords</code> across this document. Postgres feeds those
+                            phrases (plus the chunk content) into a generated <code>tsvector</code>{' '}
+                            column that the BM25 path reads. <strong>0</strong> is fine — BM25 still
+                            indexes the raw content; keywords are a precision boost, not a
+                            requirement. Click the count (or &ldquo;Enrich&rdquo;) to inspect or
+                            regenerate them.
+                          </p>
+                        </FieldHelp>
+                      </span>
                     </th>
                     <th className="px-4 py-2 text-right font-medium">
                       <Tip label="Percentage of the parsed source text that was captured in stored chunks. Click the document to see details.">
@@ -867,18 +721,71 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                           </button>
                         </td>
                         <td className="px-4 py-2">
-                          {doc.category ? (
-                            <Badge variant="secondary" className="text-xs">
-                              {doc.category}
-                            </Badge>
+                          {doc.tags && doc.tags.length > 0 ? (
+                            <Tip
+                              label={`${doc.tags.map((t) => t.name).join(', ')} — click to edit`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditTagsId(doc.id);
+                                  setEditTagsName(doc.name);
+                                }}
+                                aria-label={`Edit ${doc.tags.length} tag${doc.tags.length === 1 ? '' : 's'} on ${doc.name}`}
+                                className="focus-visible:ring-ring rounded-sm focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none"
+                              >
+                                <Badge variant="secondary" className="text-xs hover:underline">
+                                  {doc.tags.length} tag{doc.tags.length === 1 ? '' : 's'}
+                                </Badge>
+                              </button>
+                            </Tip>
                           ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditTagsId(doc.id);
+                                setEditTagsName(doc.name);
+                              }}
+                              className="text-muted-foreground hover:text-foreground text-xs hover:underline"
+                              title="No tags — click to add"
+                            >
+                              + Add
+                            </button>
                           )}
                         </td>
                         <td className="px-4 py-2">
                           <Badge variant={style.variant}>{style.label}</Badge>
                         </td>
                         <td className="px-4 py-2 text-right">{doc.chunkCount}</td>
+                        <td className="px-4 py-2 text-right">
+                          {(() => {
+                            const count = doc.distinctKeywordCount ?? 0;
+                            return (
+                              <Tip
+                                label={
+                                  count === 0
+                                    ? 'No BM25 keywords on this document yet. Click to inspect and run Enrich.'
+                                    : `${count} distinct BM25 keyword${count === 1 ? '' : 's'} across the chunks. Click to inspect or re-enrich.`
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setViewKeywordsId(doc.id);
+                                    setViewKeywordsName(doc.name);
+                                  }}
+                                  className={
+                                    count === 0
+                                      ? 'text-muted-foreground hover:text-foreground text-xs hover:underline'
+                                      : 'text-primary text-xs hover:underline'
+                                  }
+                                >
+                                  {count === 0 ? 'Enrich' : count.toLocaleString()}
+                                </button>
+                              </Tip>
+                            );
+                          })()}
+                        </td>
                         <td className="px-4 py-2 text-right text-xs">
                           {(() => {
                             const cov = readCoverage(doc.metadata);
@@ -930,7 +837,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                                   </p>
                                   <p className="mt-2">
                                     To refresh this data, use the{' '}
-                                    <strong>Load Agentic Design Patterns</strong> button above (it
+                                    <strong>Load Agentic Design Patterns</strong> button below (it
                                     will skip if already loaded).
                                   </p>
                                 </FieldHelp>
@@ -1010,6 +917,31 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         )}
       </div>
 
+      {/* Built-in setup renders below the table while still in progress so
+          it's reachable but doesn't compete with the table for attention.
+          Once setupComplete, it falls to the bottom of the page (see end
+          of this component) since it's already done. */}
+      {!setupComplete && builtInPanel}
+
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5" />
+              Upload document
+            </DialogTitle>
+            <DialogDescription>
+              Drop a file or click to browse. The dialog closes automatically once the upload starts
+              processing.
+            </DialogDescription>
+          </DialogHeader>
+          <DocumentUploadZone
+            onUploadComplete={handleUploadComplete}
+            onPdfPreview={handlePdfPreview}
+          />
+        </DialogContent>
+      </Dialog>
+
       <CompareProvidersModal open={compareOpen} onOpenChange={setCompareOpen} />
       <PdfPreviewModal
         data={pdfPreview}
@@ -1018,7 +950,6 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         onConfirmed={() => {
           onRefresh();
           void fetchEmbeddingStatus();
-          void fetchMetaTags();
         }}
       />
       <DocumentChunksModal
@@ -1031,6 +962,29 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             setViewChunksName(null);
           }
         }}
+      />
+      <DocumentTagsModal
+        documentId={editTagsId}
+        documentName={editTagsName}
+        open={editTagsId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditTagsId(null);
+            setEditTagsName(null);
+          }
+        }}
+      />
+      <DocumentKeywordsModal
+        documentId={viewKeywordsId}
+        documentName={viewKeywordsName}
+        open={viewKeywordsId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewKeywordsId(null);
+            setViewKeywordsName(null);
+          }
+        }}
+        onEnriched={onRefresh}
       />
 
       {/* Built-in setup falls to the bottom once complete — out of the

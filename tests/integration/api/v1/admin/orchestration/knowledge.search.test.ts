@@ -34,6 +34,10 @@ vi.mock('@/lib/orchestration/knowledge/search', () => ({
   searchKnowledge: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
+  resolveAgentDocumentAccess: vi.fn(),
+}));
+
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
   createRateLimitResponse: vi.fn(() =>
@@ -47,6 +51,7 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
+import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { adminLimiter } from '@/lib/security/rate-limit';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -145,7 +150,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
           query: 'parallel agent patterns',
           chunkType: 'pattern_overview',
           patternNumber: 4,
-          category: 'orchestration',
           limit: 5,
         })
       );
@@ -155,7 +159,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
         expect.objectContaining({
           chunkType: 'pattern_overview',
           patternNumber: 4,
-          category: 'orchestration',
         }),
         5
       );
@@ -201,6 +204,99 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
 
       expect(response.status).toBe(429);
       expect(vi.mocked(searchKnowledge)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Agent-scoped search (agentId param)', () => {
+    const AGENT_ID = 'cmjbv4i3x00003wsloputgwul';
+
+    it('routes search through resolver when agentId is provided in restricted mode', async () => {
+      // Arrange: agent has restricted access — only specific document IDs
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+        mode: 'restricted',
+        documentIds: ['doc-1', 'doc-2'],
+        includeSystemScope: false,
+      } as never);
+      vi.mocked(searchKnowledge).mockResolvedValue([makeResult()] as never);
+
+      const response = await POST(makePostRequest({ query: 'agent knowledge', agentId: AGENT_ID }));
+
+      // Assert: resolver was called with the agent id
+      expect(vi.mocked(resolveAgentDocumentAccess)).toHaveBeenCalledWith(AGENT_ID);
+
+      // Assert: searchKnowledge received the document-id filter
+      expect(vi.mocked(searchKnowledge)).toHaveBeenCalledWith(
+        'agent knowledge',
+        expect.objectContaining({
+          documentIds: ['doc-1', 'doc-2'],
+          includeSystemScope: false,
+        }),
+        expect.anything()
+      );
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        success: boolean;
+        data: { results: unknown[]; agentScope: string };
+      }>(response);
+      // test-review:accept tobe_true — structural boolean assertion on API response field
+      expect(data.success).toBe(true);
+      expect(data.data.agentScope).toBe('restricted');
+    });
+
+    it('does not apply document filters when agent mode is full', async () => {
+      // Arrange: agent has full access — no document-id restriction
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+        mode: 'full',
+        documentIds: [],
+        includeSystemScope: true,
+      } as never);
+      vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+      const response = await POST(makePostRequest({ query: 'open access', agentId: AGENT_ID }));
+
+      expect(vi.mocked(resolveAgentDocumentAccess)).toHaveBeenCalledWith(AGENT_ID);
+
+      // In full mode, documentIds filter should NOT be set on the filters object
+      const [, filtersArg] = vi.mocked(searchKnowledge).mock.calls[0];
+      expect(filtersArg).not.toHaveProperty('documentIds');
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        success: boolean;
+        data: { agentScope: string };
+      }>(response);
+      expect(data.data.agentScope).toBe('full');
+    });
+
+    it('includes scope field in response reflecting restricted agentScope', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+        mode: 'restricted',
+        documentIds: ['doc-3'],
+        includeSystemScope: true,
+      } as never);
+      vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+      const response = await POST(makePostRequest({ query: 'scoped search', agentId: AGENT_ID }));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{
+        data: { results: unknown[]; agentScope: string };
+      }>(response);
+      expect(data.data.agentScope).toBe('restricted');
+    });
+
+    it('does not call resolveAgentDocumentAccess when agentId is not provided', async () => {
+      // Arrange: no agentId — global search
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+      await POST(makePostRequest({ query: 'global search' }));
+
+      expect(vi.mocked(resolveAgentDocumentAccess)).not.toHaveBeenCalled();
     });
   });
 });

@@ -11,6 +11,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
@@ -23,6 +24,8 @@ import {
 import { requiresPreview } from '@/lib/orchestration/knowledge/parsers';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
+import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { cuidSchema } from '@/lib/validations/common';
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
 const MAX_FILES_PER_BATCH = 10;
@@ -74,9 +77,27 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  const category = formData.get('category');
-  const categoryStr =
-    typeof category === 'string' && category.trim().length > 0 ? category.trim() : undefined;
+  // Repeated `tagIds` form fields — same multipart shape as the single-file
+  // upload route. Unknown ids are dropped silently.
+  const tagIdsRaw = formData.getAll('tagIds');
+  const tagIds: string[] = [];
+  for (const v of tagIdsRaw) {
+    if (typeof v !== 'string') continue;
+    const parsed = cuidSchema.safeParse(v);
+    if (parsed.success && !tagIds.includes(parsed.data)) tagIds.push(parsed.data);
+  }
+
+  async function attachTagsTo(documentId: string): Promise<void> {
+    if (tagIds.length === 0) return;
+    try {
+      await prisma.aiKnowledgeDocumentTag.createMany({
+        data: tagIds.map((tagId) => ({ documentId, tagId })),
+        skipDuplicates: true,
+      });
+    } catch {
+      // Non-fatal — operator can re-tag from the chunks modal.
+    }
+  }
 
   const results: FileResult[] = [];
 
@@ -112,7 +133,8 @@ export const POST = withAdminAuth(async (request, session) => {
           continue;
         }
 
-        const doc = await uploadDocument(content, file.name, session.user.id, categoryStr);
+        const doc = await uploadDocument(content, file.name, session.user.id, undefined);
+        await attachTagsTo(doc.id);
         results.push({ fileName: file.name, status: 'success', documentId: doc.id });
       } else if (requiresPreview(file.name)) {
         // PDFs need preview flow — skip in bulk, return status so UI can handle individually
@@ -120,7 +142,8 @@ export const POST = withAdminAuth(async (request, session) => {
       } else {
         // EPUB, DOCX
         const buffer = Buffer.from(await file.arrayBuffer());
-        const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, categoryStr);
+        const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, undefined);
+        await attachTagsTo(doc.id);
         results.push({ fileName: file.name, status: 'success', documentId: doc.id });
       }
     } catch (err) {
@@ -137,12 +160,16 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   const successCount = results.filter((r) => r.status === 'success').length;
+  if (successCount > 0 && tagIds.length > 0) {
+    invalidateAllAgentAccess();
+  }
 
   log.info('Bulk document upload', {
     total: files.length,
     success: successCount,
     errors: results.filter((r) => r.status === 'error').length,
     skippedPdf: results.filter((r) => r.status === 'skipped_pdf').length,
+    tagsApplied: tagIds.length,
     adminId: session.user.id,
   });
 

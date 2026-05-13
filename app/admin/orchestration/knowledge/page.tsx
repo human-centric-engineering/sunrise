@@ -6,18 +6,18 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 export const metadata: Metadata = {
   title: 'Knowledge Base · AI Orchestration',
   description: 'Manage documents, seed patterns, and test knowledge base search.',
 };
 
-async function getDocuments(): Promise<AiKnowledgeDocument[]> {
+async function getDocuments(): Promise<KnowledgeDocumentListItem[]> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS);
     if (!res.ok) return [];
-    const body = await parseApiResponse<AiKnowledgeDocument[]>(res);
+    const body = await parseApiResponse<KnowledgeDocumentListItem[]>(res);
     return body.success ? body.data : [];
   } catch (err) {
     logger.error('knowledge page: document fetch failed', err);
@@ -57,8 +57,9 @@ export default async function KnowledgeBasePage() {
             </p>
             <p className="text-foreground mt-2 font-medium">This page</p>
             <p>
-              Upload documents, load built-in agentic design patterns, and use the search tester to
-              verify queries return relevant results.
+              Upload documents, load built-in agentic design patterns, manage the tag taxonomy that
+              scopes agent access, and use the search tester to verify queries return relevant
+              results.
             </p>
           </FieldHelp>
         </h1>

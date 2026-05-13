@@ -35,6 +35,8 @@ interface DetectionRow {
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  /** First candidate env-var from the provider's catalog (set or not). */
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;
@@ -198,9 +200,14 @@ export function ProviderDetectionsBanner({
   // the wizard's no-keys guidance so the operator hits the same
   // "set env keys and restart" message everywhere.
   if (unconfigured.length === 0 && showNoKeysWarning) {
+    // Use `primaryEnvVar` (the catalog's first candidate, always set for
+    // hosted providers) instead of `apiKeyEnvVar` (the one found in env,
+    // which is null whenever no keys are configured — i.e. exactly the
+    // branch we're rendering in). Without this the "Add one of the
+    // following" list was empty.
     const candidateEnvVars = detected
-      .filter((d) => !d.isLocal && !d.alreadyConfigured && d.apiKeyEnvVar)
-      .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar! }));
+      .filter((d) => !d.isLocal && !d.alreadyConfigured && d.primaryEnvVar)
+      .map((d) => ({ name: d.name, envVar: d.primaryEnvVar! }));
     return (
       <Card
         data-testid="provider-no-keys-banner"

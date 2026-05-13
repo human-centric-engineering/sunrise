@@ -21,7 +21,6 @@ function makeChunk(
     chunkType: string;
     section: string | null;
     patternName: string | null;
-    category: string | null;
   }> = {}
 ) {
   return {
@@ -29,7 +28,6 @@ function makeChunk(
     chunkType: 'overview',
     section: 'Introduction',
     patternName: 'Agent Loop',
-    category: 'orchestration',
     ...overrides,
   };
 }
@@ -44,7 +42,10 @@ describe('handlePatternDetail', () => {
   });
 
   it('returns error JSON for a URI with no pattern number', async () => {
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.error).toBe('Invalid pattern number');
@@ -52,7 +53,10 @@ describe('handlePatternDetail', () => {
   });
 
   it('returns error JSON for a non-numeric pattern segment', async () => {
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/abc', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/abc', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.error).toBe('Invalid pattern number');
@@ -61,7 +65,10 @@ describe('handlePatternDetail', () => {
   it('returns mimeType application/json', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.mimeType).toBe('application/json');
   });
@@ -70,7 +77,7 @@ describe('handlePatternDetail', () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
     const uri = 'sunrise://knowledge/patterns/3';
-    const result = await handlePatternDetail(uri, null);
+    const result = await handlePatternDetail(uri, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(result.uri).toBe(uri);
   });
@@ -78,7 +85,10 @@ describe('handlePatternDetail', () => {
   it('queries aiKnowledgeChunk with correct patternNumber', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
-    await handlePatternDetail('sunrise://knowledge/patterns/7', null);
+    await handlePatternDetail('sunrise://knowledge/patterns/7', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -90,7 +100,10 @@ describe('handlePatternDetail', () => {
   it('orders chunks by chunkKey ascending', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
-    await handlePatternDetail('sunrise://knowledge/patterns/1', null);
+    await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -102,7 +115,10 @@ describe('handlePatternDetail', () => {
   it('selects only the required fields', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
-    await handlePatternDetail('sunrise://knowledge/patterns/1', null);
+    await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -111,7 +127,6 @@ describe('handlePatternDetail', () => {
           chunkType: true,
           section: true,
           patternName: true,
-          category: true,
         },
       })
     );
@@ -120,7 +135,10 @@ describe('handlePatternDetail', () => {
   it('returns error JSON when pattern number is not found', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
 
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/99', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/99', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.error).toBe('Pattern 99 not found');
@@ -131,12 +149,14 @@ describe('handlePatternDetail', () => {
       makeChunk({ content: 'Overview content', section: 'Overview', chunkType: 'overview' }),
     ] as never);
 
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.patternNumber).toBe(1);
     expect(body.patternName).toBe('Agent Loop');
-    expect(body.category).toBe('orchestration');
     expect(body.sections).toHaveLength(1);
     expect(body.sections[0]).toEqual({
       section: 'Overview',
@@ -145,17 +165,19 @@ describe('handlePatternDetail', () => {
     });
   });
 
-  it('derives patternName and category from the first chunk', async () => {
+  it('derives patternName from the first chunk', async () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
-      makeChunk({ patternName: 'First Pattern', category: 'design' }),
-      makeChunk({ patternName: 'Should be ignored', category: 'other', section: 'Details' }),
+      makeChunk({ patternName: 'First Pattern' }),
+      makeChunk({ patternName: 'Should be ignored', section: 'Details' }),
     ] as never);
 
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/2', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/2', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.patternName).toBe('First Pattern');
-    expect(body.category).toBe('design');
   });
 
   it('maps all chunks to sections array', async () => {
@@ -165,7 +187,10 @@ describe('handlePatternDetail', () => {
       makeChunk({ content: 'Section 3', section: 'Examples', chunkType: 'example' }),
     ] as never);
 
-    const result = await handlePatternDetail('sunrise://knowledge/patterns/5', null);
+    const result = await handlePatternDetail('sunrise://knowledge/patterns/5', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.sections).toHaveLength(3);
@@ -176,7 +201,11 @@ describe('handlePatternDetail', () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
     await expect(
-      handlePatternDetail('sunrise://knowledge/patterns/1', { someConfig: true })
+      handlePatternDetail(
+        'sunrise://knowledge/patterns/1',
+        { someConfig: true },
+        { scopedAgentId: null, apiKeyId: 'key-1' }
+      )
     ).resolves.not.toThrow();
   });
 });

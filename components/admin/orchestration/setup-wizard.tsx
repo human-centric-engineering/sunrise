@@ -34,10 +34,16 @@
  */
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
 import { z } from 'zod';
 
+import {
+  DefaultModelsForm,
+  type AudioModelSummary,
+  type EmbeddingModelSummary,
+  type ProviderSummary,
+} from '@/components/admin/orchestration/default-models-form';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -60,6 +66,8 @@ import {
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
+import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
+import type { OrchestrationSettings } from '@/types/orchestration';
 import { cn } from '@/lib/utils';
 
 // Bumped v2 → v3 because the layout changed shape: 6 steps → 4 steps,
@@ -145,15 +153,56 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
   const [state, setState, clearState] = useLocalStorage<WizardState>(STORAGE_KEY, DEFAULT_STATE);
   const wiz = useWizard({ totalSteps: TOTAL_STEPS, initialIndex: state.stepIndex });
 
-  // Keep the wizard step-index in sync with persisted state
+  // Mirror `wiz.stepIndex` into persisted state when the user advances. Two
+  // skips keep us out of trouble:
+  //   1. The mount-time firing — at that point both indices are at their
+  //      initial values, and writing would clobber the stored value before
+  //      useLocalStorage's post-mount hydration has read it back.
+  //   2. Already-in-sync cases — when `state.stepIndex` already matches
+  //      `wiz.stepIndex` we skip the write. That handles the reconcile path
+  //      (after hydration the next effect calls wiz.goTo to match state, and
+  //      we don't want to round-trip that back) and the clearState-on-Finish
+  //      path (clearState removes storage, then reconcile snaps wiz to 0,
+  //      and this skip prevents us re-creating the row).
+  const writeBackInitialisedRef = useRef(false);
   useEffect(() => {
+    if (!writeBackInitialisedRef.current) {
+      writeBackInitialisedRef.current = true;
+      return;
+    }
+    if (wiz.stepIndex === state.stepIndex) return;
     setState((prev) => ({ ...prev, stepIndex: wiz.stepIndex }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wiz.stepIndex]);
 
+  // useLocalStorage starts with the default value at hydration time and reads
+  // from storage in a post-mount effect — so `state.stepIndex` may flip from
+  // its initial 0 to the stored value on the second render. `useWizard` locks
+  // in its starting step from `state.stepIndex` once and ignores later
+  // changes, so a divergence between the two strands them. Reconcile here:
+  // whenever the persisted step disagrees with the wizard's current step,
+  // sync the wizard. The other effect (`[wiz.stepIndex]`) handles the
+  // reverse direction, so there's no loop — they only fire when their own
+  // dependency actually changes.
+  useEffect(() => {
+    if (state.stepIndex !== wiz.stepIndex) {
+      wiz.goTo(state.stepIndex);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.stepIndex]);
+
   // Probe the backend once on open to auto-advance past completed steps.
   const [probed, setProbed] = useState(false);
   const [probingError, setProbingError] = useState<string | null>(null);
+
+  // Latest state in a ref so the async probe closure below can read the
+  // post-hydration step index rather than the closure-captured initial value.
+  // (Adding `state.stepIndex` to the effect dep array would refire the probe
+  // on every step change, which we don't want.)
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     if (!open || probed) return;
@@ -178,7 +227,7 @@ export function SetupWizard({ open, onOpenChange, forceOpen: _forceOpen }: Setup
         // typically because the dialog was closed mid-flow or the
         // operator deleted the provider after wizard progress was
         // saved.
-        if (!hasProvider && state.stepIndex > 0) {
+        if (!hasProvider && stateRef.current.stepIndex > 0) {
           wiz.goTo(0);
         }
       } catch {
@@ -276,7 +325,7 @@ const STEP_LABELS: Record<number, string> = {
  */
 const STEP_PILL_LABELS: Record<number, string> = {
   0: 'Provider',
-  1: 'Defaults',
+  1: 'Default Models',
   2: 'Smoke test',
   3: 'Done',
 };
@@ -384,6 +433,8 @@ interface DetectionRow {
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  /** First candidate env-var from the provider's catalog (set or not). */
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;
@@ -399,6 +450,9 @@ const detectionRowSchema: z.ZodType<DetectionRow> = z.object({
   providerType: z.enum(['anthropic', 'openai-compatible', 'voyage']),
   defaultBaseUrl: z.string().nullable(),
   apiKeyEnvVar: z.string().nullable(),
+  // .default(null) keeps older API responses (pre-primaryEnvVar) valid so
+  // we don't blow up the wizard during a rolling deploy.
+  primaryEnvVar: z.string().nullable().default(null),
   apiKeyPresent: z.boolean(),
   alreadyConfigured: z.boolean(),
   isLocal: z.boolean(),
@@ -478,8 +532,12 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
   const candidateEnvVars = useMemo(
     () =>
       (detection ?? [])
-        .filter((d) => !d.isLocal && d.apiKeyEnvVar)
-        .map((d) => ({ name: d.name, envVar: d.apiKeyEnvVar! })),
+        // Use `primaryEnvVar` (always set for hosted providers) — the
+        // hint needs to show what the operator *could* set, so we
+        // can't filter on `apiKeyEnvVar`, which is null until the key
+        // is actually in env.
+        .filter((d) => !d.isLocal && d.primaryEnvVar)
+        .map((d) => ({ name: d.name, envVar: d.primaryEnvVar! })),
     [detection]
   );
 
@@ -924,63 +982,152 @@ function DetectionCardPreview({ row }: { row: DetectionRow }): React.ReactElemen
 }
 
 // ----------------------------------------------------------------------------
-// Step 2 — Confirm default chat / embedding models
+// Step 2 — Confirm default models (routing / chat / reasoning / embeddings / audio)
 // ----------------------------------------------------------------------------
 
 interface StepDefaultModelsProps {
   onComplete: () => void;
 }
 
-interface ModelOption {
-  /** Canonical id passed to the LLM provider (e.g. "claude-sonnet-4-6"). */
-  id: string;
-  provider: string;
-  /** True if the provider config row backing this model exists and is active. */
-  available?: boolean;
-}
-
-const modelOptionSchema: z.ZodType<ModelOption> = z.object({
-  id: z.string(),
-  provider: z.string(),
-  available: z.boolean().optional(),
+/**
+ * Matrix row shape returned by `GET /provider-models?capability=chat|audio`.
+ * Same fields the Settings page consumes server-side — see
+ * `app/admin/orchestration/settings/page.tsx`.
+ */
+const matrixRowSchema = z.object({
+  modelId: z.string(),
+  name: z.string(),
+  providerSlug: z.string(),
+  tierRole: z.string().optional(),
 });
+
+const providerRowSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  isActive: z.boolean(),
+});
+
+const embeddingModelRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: z.string(),
+  model: z.string(),
+});
+
+// The full settings shape is large and loosely-typed (many optional
+// fields); we trust the server's envelope and only validate that
+// `data` is *some* object so the cast below stays honest.
+const settingsObjectSchema = z.object({}).passthrough();
+
+/**
+ * Mirrors the `matrixTierToModelTier` helper from
+ * `app/admin/orchestration/settings/page.tsx`. Kept inline because the
+ * settings page version is a server-only module — duplicating five
+ * lines is cheaper than wrestling it into a shared client-safe module.
+ */
+function tierFromMatrixRole(role: string | undefined): ModelTier {
+  switch (role) {
+    case 'thinking':
+      return 'frontier';
+    case 'worker':
+      return 'mid';
+    case 'infrastructure':
+    case 'control_plane':
+      return 'budget';
+    case 'local_sovereign':
+      return 'local';
+    default:
+      return 'mid';
+  }
+}
 
 function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactElement {
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chatModel, setChatModel] = useState<string>('');
-  const [embeddingModel, setEmbeddingModel] = useState<string>('');
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [settings, setSettings] = useState<OrchestrationSettings | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelSummary[]>([]);
+  const [audioModels, setAudioModels] = useState<AudioModelSummary[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [settingsRes, modelsRes] = await Promise.all([
+        const [settingsRes, modelsRes, providersRes, embeddingRes, audioRes] = await Promise.all([
           fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' }),
-          fetch(API.ADMIN.ORCHESTRATION.MODELS, { credentials: 'include' }),
+          fetch(
+            `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=100`,
+            { credentials: 'include' }
+          ),
+          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`, {
+            credentials: 'include',
+          }),
+          fetch(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS, { credentials: 'include' }),
+          fetch(
+            `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=audio&isActive=true&limit=100`,
+            { credentials: 'include' }
+          ),
         ]);
         if (cancelled) return;
 
         if (settingsRes.ok) {
-          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
-          if (parsed.success && parsed.data.success && parsed.data.data?.defaultModels) {
-            setChatModel(parsed.data.data.defaultModels.chat ?? '');
-            setEmbeddingModel(parsed.data.data.defaultModels.embeddings ?? '');
+          const parsed = envelopeSchema(settingsObjectSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setSettings(parsed.data.data as unknown as OrchestrationSettings);
           }
         }
 
         if (modelsRes.ok) {
-          const parsed = envelopeSchema(z.array(modelOptionSchema)).safeParse(
-            await modelsRes.json()
+          const parsed = envelopeSchema(z.array(matrixRowSchema)).safeParse(await modelsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setModels(
+              parsed.data.data.map((row) => ({
+                id: row.modelId,
+                name: row.name,
+                provider: row.providerSlug,
+                tier: tierFromMatrixRole(row.tierRole),
+                inputCostPerMillion: 0,
+                outputCostPerMillion: 0,
+                maxContext: 0,
+                supportsTools: false,
+              }))
+            );
+          }
+        }
+
+        if (providersRes.ok) {
+          const parsed = envelopeSchema(z.array(providerRowSchema)).safeParse(
+            await providersRes.json()
           );
           if (parsed.success && parsed.data.success && parsed.data.data) {
-            setModels(parsed.data.data);
+            setProviders(parsed.data.data);
+          }
+        }
+
+        if (embeddingRes.ok) {
+          const parsed = envelopeSchema(z.array(embeddingModelRowSchema)).safeParse(
+            await embeddingRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setEmbeddingModels(parsed.data.data);
+          }
+        }
+
+        if (audioRes.ok) {
+          const parsed = envelopeSchema(z.array(matrixRowSchema)).safeParse(await audioRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setAudioModels(
+              parsed.data.data.map((row) => ({
+                model: row.modelId,
+                name: row.name,
+                providerSlug: row.providerSlug,
+              }))
+            );
           }
         }
       } catch {
-        // Silent — empty model list is rendered as a fallback message.
+        setError('Could not load some of the default-model data. Try refreshing.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -989,33 +1136,6 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
       cancelled = true;
     };
   }, []);
-
-  async function handleContinue(): Promise<void> {
-    setError(null);
-    setSubmitting(true);
-    try {
-      const patch: Record<string, string> = {};
-      if (chatModel) patch.chat = chatModel;
-      if (embeddingModel) patch.embeddings = embeddingModel;
-      if (Object.keys(patch).length > 0) {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, {
-          method: 'PATCH',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultModels: patch }),
-        });
-        if (!res.ok) {
-          setError('Could not save the default models. You can edit them later from Settings.');
-          return;
-        }
-      }
-      onComplete();
-    } catch {
-      setError('Could not reach the server. Check your network and try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   if (loading) {
     return (
@@ -1027,78 +1147,21 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <p className="text-sm">
         These are the default models the system-seeded agents (pattern advisor, quiz master, the MCP
-        server) use when they don&apos;t pin a specific model. You can change them later from
-        Settings.
+        server) and the knowledge-base pipeline use when they don&apos;t pin a specific model. You
+        can change them later from Settings → Default models.
       </p>
-
-      <div className="space-y-2">
-        <Label htmlFor="default-chat-model">
-          Default chat model{' '}
-          <FieldHelp title="Default chat model">
-            Used by every system-seeded agent that doesn&apos;t pin its own model. Pick a balanced
-            tier — &quot;worker&quot; or &quot;thinking&quot; in the model matrix.
-          </FieldHelp>
-        </Label>
-        <Select value={chatModel || undefined} onValueChange={setChatModel} disabled={submitting}>
-          <SelectTrigger id="default-chat-model">
-            <SelectValue placeholder="Pick a model" />
-          </SelectTrigger>
-          <SelectContent>
-            {models.length === 0 ? (
-              <SelectItem value="__none" disabled>
-                No models discovered — check provider configuration.
-              </SelectItem>
-            ) : (
-              models.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.id} <span className="text-muted-foreground ml-2 text-xs">{m.provider}</span>
-                </SelectItem>
-              ))
-            )}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="default-embedding-model">
-          Default embedding model{' '}
-          <FieldHelp title="Default embedding model">
-            Used by the knowledge base for vector search. If you don&apos;t plan to use the
-            knowledge base, leave this as the suggested default.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="default-embedding-model"
-          placeholder="e.g. text-embedding-3-small"
-          value={embeddingModel}
-          onChange={(e) => setEmbeddingModel(e.target.value)}
-          disabled={submitting}
-        />
-      </div>
-
       {error && <div className="text-destructive text-sm">{error}</div>}
-
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          onClick={() => {
-            void handleContinue();
-          }}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-              Saving…
-            </>
-          ) : (
-            'Continue'
-          )}
-        </Button>
-      </div>
+      <DefaultModelsForm
+        settings={settings}
+        models={models}
+        providers={providers}
+        embeddingModels={embeddingModels}
+        audioModels={audioModels}
+        wizardMode={{ onComplete }}
+      />
     </div>
   );
 }
@@ -1445,16 +1508,16 @@ function StepDone() {
           — browse agentic design patterns for inspiration.
         </li>
         <li>
-          <Link href="/admin/orchestration/workflows" className="font-medium underline">
-            Build a workflow
-          </Link>{' '}
-          — chain agents into multi-step flows.
-        </li>
-        <li>
           <Link href="/admin/orchestration/knowledge" className="font-medium underline">
             Add knowledge docs
           </Link>{' '}
           — give your agents retrieval context.
+        </li>
+        <li>
+          <Link href="/admin/orchestration/workflows" className="font-medium underline">
+            Build a workflow
+          </Link>{' '}
+          — chain agents into multi-step flows.
         </li>
       </ul>
     </div>

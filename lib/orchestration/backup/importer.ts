@@ -18,6 +18,7 @@ export interface ImportResult {
   capabilities: { created: number; updated: number };
   workflows: { created: number; updated: number };
   webhooks: { created: number; skipped: number };
+  knowledgeTags: { created: number; updated: number };
   settingsUpdated: boolean;
   warnings: string[];
 }
@@ -33,11 +34,60 @@ export async function importOrchestrationConfig(
     capabilities: { created: 0, updated: 0 },
     workflows: { created: 0, updated: 0 },
     webhooks: { created: 0, skipped: 0 },
+    knowledgeTags: { created: 0, updated: 0 },
     settingsUpdated: false,
     warnings: [],
   };
 
   await prisma.$transaction(async (tx) => {
+    // Knowledge tags first — agents reference them by slug, so create/refresh
+    // them before the agent import so grant resolution succeeds.
+    const tagIdBySlug = new Map<string, string>();
+    for (const tag of parsed.data.knowledgeTags ?? []) {
+      const upserted = await tx.knowledgeTag.upsert({
+        where: { slug: tag.slug },
+        create: { slug: tag.slug, name: tag.name, description: tag.description ?? null },
+        update: { name: tag.name, description: tag.description ?? null },
+      });
+      tagIdBySlug.set(upserted.slug, upserted.id);
+      if (upserted.createdAt.getTime() === upserted.updatedAt.getTime()) {
+        result.knowledgeTags.created++;
+      } else {
+        result.knowledgeTags.updated++;
+      }
+    }
+
+    // v1 → v2 compatibility: when the backup is v1 (no `knowledgeTags`) but an
+    // agent carries non-empty `knowledgeCategories`, infer tag slugs from those
+    // strings so the new resolver model has something to work with.
+    function slugifyFor(input: string): string {
+      return input
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64);
+    }
+    if (parsed.schemaVersion === 1) {
+      const inferredCategories = new Set<string>();
+      for (const a of parsed.data.agents) {
+        for (const c of a.knowledgeCategories ?? []) {
+          if (c.trim()) inferredCategories.add(c.trim());
+        }
+      }
+      for (const name of inferredCategories) {
+        const slug = slugifyFor(name);
+        if (!slug || tagIdBySlug.has(slug)) continue;
+        const upserted = await tx.knowledgeTag.upsert({
+          where: { slug },
+          create: { slug, name },
+          update: { name },
+        });
+        tagIdBySlug.set(slug, upserted.id);
+        result.knowledgeTags.created++;
+      }
+    }
+
     // Import agents by slug upsert
     for (const agent of parsed.data.agents) {
       const existing = await tx.aiAgent.findUnique({ where: { slug: agent.slug } });
@@ -63,7 +113,7 @@ export async function importOrchestrationConfig(
             visibility: agent.visibility,
             isActive: agent.isActive,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            knowledgeCategories: agent.knowledgeCategories,
+            knowledgeAccessMode: agent.knowledgeAccessMode,
             topicBoundaries: agent.topicBoundaries,
             brandVoiceInstructions: agent.brandVoiceInstructions,
             rateLimitRpm: agent.rateLimitRpm,
@@ -78,16 +128,87 @@ export async function importOrchestrationConfig(
         });
         result.agents.updated++;
       } else {
+        const {
+          grantedTagSlugs: _ignoreTagSlugs,
+          grantedDocumentHashes: _ignoreDocHashes,
+          ...createAgent
+        } = agent;
         await tx.aiAgent.create({
           data: {
-            ...agent,
-            metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            ...createAgent,
+            metadata: (createAgent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            providerConfig:
+              (createAgent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            widgetConfig: (createAgent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             createdBy: userId,
           },
         });
         result.agents.created++;
+      }
+
+      // Apply grants after upsert. For v1 backups (where the slug arrays are
+      // empty and we synthesised tag rows from knowledgeCategories above),
+      // fall back to looking up by category-derived slug so the agent ends up
+      // with the same effective scope as before the migration.
+      const target = await tx.aiAgent.findUnique({
+        where: { slug: agent.slug },
+        select: { id: true },
+      });
+      if (!target) continue; // upsert just succeeded — should never happen
+
+      const tagSlugs =
+        agent.grantedTagSlugs.length > 0
+          ? agent.grantedTagSlugs
+          : parsed.schemaVersion === 1
+            ? (agent.knowledgeCategories ?? [])
+                .map((c) => slugifyFor(c))
+                .filter((s) => s.length > 0)
+            : [];
+
+      const resolvedTagIds: string[] = [];
+      for (const slug of tagSlugs) {
+        const tagId = tagIdBySlug.get(slug);
+        if (tagId) {
+          resolvedTagIds.push(tagId);
+        } else {
+          result.warnings.push(
+            `Agent '${agent.slug}' references missing knowledge-tag slug '${slug}'; grant skipped`
+          );
+        }
+      }
+
+      await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: target.id } });
+      if (resolvedTagIds.length > 0) {
+        await tx.aiAgentKnowledgeTag.createMany({
+          data: resolvedTagIds.map((tagId) => ({ agentId: target.id, tagId })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Document grants resolve via fileHash — content-derived, stable across envs.
+      const docHashes = agent.grantedDocumentHashes ?? [];
+      let resolvedDocIds: string[] = [];
+      if (docHashes.length > 0) {
+        const docs = await tx.aiKnowledgeDocument.findMany({
+          where: { fileHash: { in: docHashes } },
+          select: { id: true, fileHash: true },
+        });
+        const presentHashes = new Set(docs.map((d) => d.fileHash));
+        for (const h of docHashes) {
+          if (!presentHashes.has(h)) {
+            result.warnings.push(
+              `Agent '${agent.slug}' references missing knowledge document (fileHash ${h.slice(0, 12)}…); grant skipped`
+            );
+          }
+        }
+        resolvedDocIds = docs.map((d) => d.id);
+      }
+      await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: target.id } });
+      if (resolvedDocIds.length > 0) {
+        await tx.aiAgentKnowledgeDocument.createMany({
+          data: resolvedDocIds.map((documentId) => ({ agentId: target.id, documentId })),
+          skipDuplicates: true,
+        });
       }
     }
 

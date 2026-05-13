@@ -45,6 +45,10 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    // The list endpoint runs a tagged-template raw query to compute the
+    // distinct BM25 keyword count per doc. Default to "no keywords yet"
+    // so existing tests don't need to opt in.
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -94,6 +98,9 @@ function makeDocument(overrides: Record<string, unknown> = {}) {
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
     _count: { chunks: 12 },
+    // GET now returns inline tags joined through `AiKnowledgeDocumentTag`.
+    // Tests pass `tags: [...]` via overrides when they want chip rendering.
+    tags: [] as Array<{ tag: { id: string; slug: string; name: string } }>,
     ...overrides,
   };
 }
@@ -288,10 +295,12 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
 
       await POST(makePostRequestWithFormData(formData));
 
+      // Signature: (content, fileName, userId, sourceUrl, displayName)
       expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
         content,
         'patterns.md',
         ADMIN_ID,
+        undefined,
         undefined
       );
     });
@@ -311,10 +320,12 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(201);
+      // Signature: (buffer, fileName, userId, sourceUrl, displayName)
       expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalledWith(
         expect.any(Buffer),
         'spending.csv',
         ADMIN_ID,
+        undefined,
         undefined
       );
       expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();

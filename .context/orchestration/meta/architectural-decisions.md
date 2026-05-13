@@ -895,27 +895,32 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 
 **Where it lives:** `lib/orchestration/chat/` (citation handling), `lib/orchestration/capabilities/built-in/` (search_knowledge_base envelope), `lib/orchestration/chat/output-guard.ts` (citation guard), `.context/orchestration/chat.md`.
 
-### 5.7 Agent-scoped knowledge categories
+### 5.7 Tag-based knowledge access control
 
-**What is it?** A common platform design has one global knowledge corpus shared by every agent. That works until a multi-tenant deployment has agents that should see legal docs but not HR docs, or until a customer-facing agent shouldn't see internal-only documents.
+**What is it?** A common platform design has one global knowledge corpus shared by every agent. That works until a multi-tenant deployment has agents that should see legal docs but not HR docs, or until a customer-facing agent shouldn't see internal-only documents. The platform needs an access boundary between agents and documents that admins can manage without rewriting indexes or building a permission tree.
 
-**What we chose:** Documents are tagged with categories. Agents declare a `knowledgeCategories` array. Search is scoped to the agent's categories — chunks outside those categories are not retrievable for that agent.
+**What we chose:** A managed `KnowledgeTag` taxonomy with two join tables (`AiKnowledgeDocumentTag`, `AiAgentKnowledgeTag`) plus a per-document grant table (`AiAgentKnowledgeDocument`). Agents carry a `knowledgeAccessMode` of `full` (no filter — the default) or `restricted` (the effective doc set is the union of explicitly granted docs ∪ docs carrying any granted tag ∪ system-scoped seed docs). A resolver (`lib/orchestration/knowledge/resolveAgentDocumentAccess.ts`) maps `agentId → AgentDocumentAccess` at query time with a 60-second LRU cache; admin mutations that change grants invalidate the per-agent cache entry. The same resolved set is applied at three call sites — the chat capability, the MCP `sunrise://knowledge/search` resource, and the admin "preview as agent" search.
 
 **Alternatives**
 
-| Option                            | Why not                                                                             |
-| --------------------------------- | ----------------------------------------------------------------------------------- |
-| Single global corpus              | Agents leak knowledge across boundaries (customer-facing agent finds internal docs) |
-| Separate vector indexes per agent | Storage and embedding cost duplication; rebuilding per agent is expensive           |
-| Row-level ACLs at query time      | Adds DB-level access control; complex to administer                                 |
+| Option                                                         | Why not                                                                                       |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Single global corpus                                           | Agents leak knowledge across boundaries (customer-facing agent finds internal docs)           |
+| Free-text categories on agent + doc (the original Phase 0)     | String drift between agent and doc breaks scoping silently; no audit-friendly taxonomy        |
+| Separate vector indexes per agent                              | Storage and embedding cost duplication; rebuilding per agent is expensive                     |
+| Row-level ACLs at query time (per-user / per-role on each doc) | Adds DB-level access control; complex to administer; not the boundary operators actually want |
 
 **Why this approach**
 
-- A customer-support agent can be scoped to public docs while an internal IT agent has the broader corpus.
-- Categories are admin-managed strings, not a complex permission tree.
-- A document re-categorization automatically updates which agents can retrieve it without re-embedding.
+- A customer-support agent can be `restricted` and granted only the `public` tag; an internal IT agent can be `full` with no filter.
+- Tags are managed admin entities — a stable slug and a name. Renaming the name doesn't affect scoping; the slug is the cross-environment key carried in backup bundles.
+- Granting a tag to an agent covers every existing and future document with that tag — so a document re-tag automatically propagates without re-embedding or per-agent reconfiguration.
+- System-scoped seed docs (`scope = 'system'`, the bundled Agentic Design Patterns reference) bypass the filter unconditionally — they're shared platform reference material, and gating them per agent surprises operators.
+- The boundary is enforced at the SQL builder (`lib/orchestration/knowledge/search.ts`), not just at the capability — the empty-grant restricted state (`documentIds: []`, `includeSystemScope: true`) collapses to a `d.scope = 'system'` clause rather than silently dropping the filter, so a "deny by default" save state is safe.
 
-**Where it lives:** `lib/orchestration/knowledge/` (search filter), `prisma/schema.prisma` (`AiAgent.knowledgeCategories`, `AiKnowledgeDocument.categories`), `.context/orchestration/knowledge.md`.
+**History.** Phases 1 and 2 introduced the tag taxonomy and the resolver alongside the legacy `AiAgent.knowledgeCategories` / `AiKnowledgeDocument.category` columns. Phase 6 dropped the legacy columns once every call site routed through the resolver. The backup-bundle schema still accepts the field on the wire (older v1 bundles still ship it) but the importer ignores it on the write side.
+
+**Where it lives:** `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts` (resolver), `lib/orchestration/knowledge/search.ts` (SQL filter), `lib/orchestration/capabilities/built-in/search-knowledge.ts` (chat-time call site), `lib/orchestration/mcp/resources/knowledge-search.ts` (MCP call site), `app/api/v1/admin/orchestration/knowledge/tags/` (tag CRUD), `prisma/schema.prisma` (`KnowledgeTag`, `AiKnowledgeDocumentTag`, `AiAgentKnowledgeTag`, `AiAgentKnowledgeDocument`, `AiAgent.knowledgeAccessMode`), `.context/orchestration/knowledge.md`.
 
 ### 5.8 Conversation similarity via message embeddings
 
@@ -941,9 +946,9 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 
 ### 5.9 Knowledge namespace scope: agent, not team
 
-**What is it?** Knowledge categories (Section 5.7) scope what a single agent can retrieve. Multi-tenant deployments raise a different question: whether teams or organisations have their own knowledge namespaces, isolated from each other. Some platforms (LlamaIndex, Pinecone) ship per-namespace isolation as a first-class feature.
+**What is it?** Tag-based access control (Section 5.7) scopes what a single agent can retrieve. Multi-tenant deployments raise a different question: whether teams or organisations have their own knowledge namespaces, isolated from each other. Some platforms (LlamaIndex, Pinecone) ship per-namespace isolation as a first-class feature.
 
-**What we chose:** Knowledge is shared across the deployment, scoped by category — not by team. Multi-tenant isolation is achieved by running separate Sunrise deployments, not by partitioning a single one.
+**What we chose:** Knowledge is shared across the deployment, scoped per-agent via tags and document grants — not partitioned by team. Multi-tenant isolation is achieved by running separate Sunrise deployments, not by partitioning a single one.
 
 **Alternatives**
 
@@ -955,11 +960,11 @@ A short primer first: **RAG** (Retrieval-Augmented Generation) means giving the 
 
 **Why this approach**
 
-- The current customer base runs single-tenant deployments; agent-scoped categories are sufficient.
+- The current customer base runs single-tenant deployments; agent-scoped tag grants are sufficient.
 - Multi-tenant deployments are served by separate Docker instances, which is operationally simpler than a built-in namespace boundary.
-- If single-deployment multi-tenancy becomes a customer requirement, the category model can be extended into a namespace tree without an incompatible schema change.
+- If single-deployment multi-tenancy becomes a customer requirement, the tag model extends naturally — tags already namespace cleanly by slug, and a tenant-id column on `KnowledgeTag` would gate visibility without an incompatible schema change.
 
-**Where it lives:** `lib/orchestration/knowledge/` (search filter), `prisma/schema.prisma` (`AiKnowledgeDocument.categories`), `.context/orchestration/knowledge.md`. Documented as a deliberate scope choice in `maturity-analysis.md`.
+**Where it lives:** `lib/orchestration/knowledge/` (resolver + search filter), `prisma/schema.prisma` (`KnowledgeTag`, `AiKnowledgeDocumentTag`, `AiAgentKnowledgeTag`), `.context/orchestration/knowledge.md`. Documented as a deliberate scope choice in `maturity-analysis.md`.
 
 ### 5.10 Embedding provider choice and the 1536-dimension ceiling
 
@@ -1289,7 +1294,7 @@ How long-lived state is stored, versioned, and audited.
 
 ### 7.3 Versioning for agent configuration (two layers)
 
-**What is it?** An "agent" in Sunrise is a configured AI persona — its system instructions are the prompt that shapes its behaviour, and the rest of its configuration (model, temperature, attached capabilities, knowledge categories, fallback chain) shapes how it runs. Iterating on these is one of the most common admin activities, and "the version that worked yesterday" is often the right answer when today's version regresses.
+**What is it?** An "agent" in Sunrise is a configured AI persona — its system instructions are the prompt that shapes its behaviour, and the rest of its configuration (model, temperature, attached capabilities, knowledge access mode and tag/document grants, fallback chain) shapes how it runs. Iterating on these is one of the most common admin activities, and "the version that worked yesterday" is often the right answer when today's version regresses.
 
 **What we chose:** Two complementary versioning layers, each tuned to a different use case.
 
@@ -1783,7 +1788,7 @@ Alphabetical index of every decision in this document, with section reference. U
 
 | Decision                                                       | Section |
 | -------------------------------------------------------------- | ------- |
-| Agent-scoped knowledge categories                              | 5.7     |
+| Tag-based knowledge access control                             | 5.7     |
 | API-first design                                               | 1.3     |
 | Backup schema versioning + structured `ImportResult`           | 7.6     |
 | `better-auth` as the authentication substrate                  | 6.10    |

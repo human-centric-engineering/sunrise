@@ -41,6 +41,9 @@ const versionSnapshotSchema = z.object({
   topicBoundaries: z.array(z.string()).optional(),
   brandVoiceInstructions: z.string().nullable().optional(),
   metadata: z.unknown().optional(),
+  // `knowledgeCategories` was dropped in Phase 6. Older version snapshots
+  // may still include it; we accept and ignore the field rather than
+  // refusing to restore them.
   knowledgeCategories: z.array(z.string()).optional(),
   rateLimitRpm: z.number().int().nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']).optional(),
@@ -141,8 +144,9 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.topicBoundaries = snapshot.topicBoundaries;
     if (snapshot.brandVoiceInstructions !== undefined)
       updateData.brandVoiceInstructions = snapshot.brandVoiceInstructions;
-    if (snapshot.knowledgeCategories !== undefined)
-      updateData.knowledgeCategories = snapshot.knowledgeCategories;
+    // `snapshot.knowledgeCategories` is accepted by the schema for backwards-
+    // compat with older versions but the underlying column was dropped in
+    // Phase 6 — nothing to write.
     if (snapshot.rateLimitRpm !== undefined) updateData.rateLimitRpm = snapshot.rateLimitRpm;
     if (snapshot.visibility !== undefined) updateData.visibility = snapshot.visibility;
     if (snapshot.metadata !== undefined)

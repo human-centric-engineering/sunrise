@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Database, Eye, Search } from 'lucide-react';
+import { AlertTriangle, Database, Eye, Search, Tag } from 'lucide-react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -12,12 +12,13 @@ import {
   type KnowledgeTab,
 } from '@/lib/constants/knowledge';
 import { useTrackedUrlTabs } from '@/lib/hooks/use-tracked-url-tabs';
-import type { AiKnowledgeDocument } from '@/types/orchestration';
+import type { KnowledgeDocumentListItem } from '@/types/orchestration';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
 import { ExploreTab } from '@/components/admin/orchestration/knowledge/explore-tab';
 import { VisualizeTab } from '@/components/admin/orchestration/knowledge/visualize-tab';
 import { ErrorsTab } from '@/components/admin/orchestration/knowledge/errors-tab';
+import { KnowledgeTagsTable } from '@/components/admin/orchestration/knowledge/knowledge-tags-table';
 
 export type KnowledgeScope = 'all' | 'system' | 'app';
 
@@ -28,7 +29,7 @@ const SCOPE_OPTIONS: { value: KnowledgeScope; label: string }[] = [
 ];
 
 interface KnowledgeViewProps {
-  documents: AiKnowledgeDocument[];
+  documents: KnowledgeDocumentListItem[];
 }
 
 export function KnowledgeView({ documents }: KnowledgeViewProps) {
@@ -54,29 +55,15 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
     return documents.filter((d) => d.scope === scope);
   }, [documents, scope]);
 
+  // The Tags tab has no scope filter — its data set is the tag taxonomy,
+  // not documents — so the selector is hidden there. Manage, Explore,
+  // Visualize, and Errors all read `scope` (Manage filters
+  // `filteredDocuments` client-side; the others pass `apiScope` to their
+  // server fetches), so the selector remains visible on those tabs.
+  const showScopeSelector = activeTab !== 'tags';
+
   return (
     <div className="space-y-4">
-      {/* Scope selector */}
-      <div className="flex items-center gap-3">
-        <span className="text-muted-foreground text-xs font-medium">Scope</span>
-        <div className="bg-muted inline-flex items-center rounded-lg p-1">
-          {SCOPE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setScope(opt.value)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                scope === opt.value
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <Tabs
         value={activeTab}
         onValueChange={(v) => setActiveTab(v as KnowledgeTab)}
@@ -86,6 +73,10 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
           <TabsTrigger value="manage" className="gap-1.5">
             <Database className="h-3.5 w-3.5" />
             Manage
+          </TabsTrigger>
+          <TabsTrigger value="tags" className="gap-1.5">
+            <Tag className="h-3.5 w-3.5" />
+            Tags
           </TabsTrigger>
           <TabsTrigger value="explore" className="gap-1.5">
             <Search className="h-3.5 w-3.5" />
@@ -101,8 +92,40 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
           </TabsTrigger>
         </TabsList>
 
+        {showScopeSelector ? (
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-xs font-medium">Scope</span>
+            <div className="bg-muted inline-flex items-center rounded-lg p-1">
+              {SCOPE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setScope(opt.value)}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    scope === opt.value
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <TabsContent value="manage">
           <ManageTab documents={filteredDocuments} onRefresh={refresh} />
+        </TabsContent>
+
+        <TabsContent value="tags">
+          {/* The tags admin lives both here (in-flow) and as the standalone
+              page at /admin/orchestration/knowledge/tags. The table self-fetches
+              on mount when no server data is seeded. */}
+          <KnowledgeTagsTable
+            initialTags={[]}
+            initialMeta={{ page: 1, limit: 50, total: 0, totalPages: 1 }}
+          />
         </TabsContent>
 
         <TabsContent value="explore">

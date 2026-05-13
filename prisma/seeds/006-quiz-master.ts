@@ -62,9 +62,41 @@ const unit: SeedUnit = {
         maxTokens: 4096,
         isActive: true,
         isSystem: true,
+        // Quiz scope is the bundled Agentic Design Patterns reference
+        // and nothing else; restricted mode + the tag below keeps any
+        // user-uploaded docs out of the quiz's search results.
+        knowledgeAccessMode: 'restricted',
         createdBy,
       },
     });
+
+    // Promote pre-existing installs from the legacy default (`full`) to
+    // `restricted` — but only when the agent has no explicit doc or tag
+    // grants (admin hasn't customized scope yet).
+    const [docGrants, tagGrants] = await Promise.all([
+      prisma.aiAgentKnowledgeDocument.count({ where: { agentId: agent.id } }),
+      prisma.aiAgentKnowledgeTag.count({ where: { agentId: agent.id } }),
+    ]);
+    if (agent.knowledgeAccessMode === 'full' && docGrants === 0 && tagGrants === 0) {
+      await prisma.aiAgent.update({
+        where: { id: agent.id },
+        data: { knowledgeAccessMode: 'restricted' },
+      });
+      logger.info('Promoted quiz-master: full → restricted (no admin customization)');
+    }
+
+    // Apply the patterns tag if the knowledge base has been seeded.
+    // Bidirectional safety net with `seeder.ts` — idempotent.
+    const patternsTag = await prisma.knowledgeTag.findUnique({
+      where: { slug: 'agentic-design-patterns' },
+    });
+    if (patternsTag) {
+      await prisma.aiAgentKnowledgeTag.upsert({
+        where: { agentId_tagId: { agentId: agent.id, tagId: patternsTag.id } },
+        create: { agentId: agent.id, tagId: patternsTag.id },
+        update: {},
+      });
+    }
 
     for (const slug of QUIZ_CAPABILITY_SLUGS) {
       const capability = await prisma.aiCapability.findUnique({

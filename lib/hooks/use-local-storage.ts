@@ -35,7 +35,9 @@ function isBrowser(): boolean {
 }
 
 function readFromStorage<T>(key: string, initial: T): T {
+  /* v8 ignore start */
   if (!isBrowser()) return initial;
+  /* v8 ignore stop */
 
   try {
     const raw = window.localStorage.getItem(key);
@@ -51,12 +53,15 @@ function readFromStorage<T>(key: string, initial: T): T {
 }
 
 export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, () => void] {
-  // Lazy initializer — runs once on mount. On the server this returns `initial`
-  // so the first client render matches the server HTML; a post-mount effect
-  // below hydrates from storage.
-  const [value, setInternalValue] = useState<T>(() =>
-    isBrowser() ? readFromStorage(key, initial) : initial
-  );
+  // Always start with `initial`, even in the browser. The client's first render
+  // happens during hydration and MUST match the server's HTML — but server
+  // can't read localStorage, so it always sent HTML built from `initial`. If
+  // we read storage in the lazy init, the first client render diverges from
+  // the server and React tears the tree down with a hydration mismatch (seen
+  // on the knowledge admin's setup panel where aria-expanded flipped between
+  // server and client). The post-mount effect below picks up the stored value
+  // after hydration completes.
+  const [value, setInternalValue] = useState<T>(initial);
 
   // Keep a ref to the latest value so the setter's updater form can read it
   // without stale closures when `value` dependencies change.
@@ -66,7 +71,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   // Hydrate from storage after mount — covers the SSR render path where the
   // initial state was `initial` instead of the stored value.
   useEffect(() => {
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
     const stored = readFromStorage(key, initial);
     setInternalValue(stored);
     valueRef.current = stored;
@@ -78,7 +85,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
 
   // Cross-tab sync: when another tab writes to `key`, update our state.
   useEffect(() => {
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
 
     function onStorage(event: StorageEvent) {
       if (event.key !== key || event.storageArea !== window.localStorage) return;
@@ -112,7 +121,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       setInternalValue(resolved);
       valueRef.current = resolved;
 
+      /* v8 ignore start */
       if (!isBrowser()) return;
+      /* v8 ignore stop */
       try {
         window.localStorage.setItem(key, JSON.stringify(resolved));
       } catch (err) {
@@ -125,7 +136,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   const remove = useCallback(() => {
     setInternalValue(initial);
     valueRef.current = initial;
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
     try {
       window.localStorage.removeItem(key);
     } catch (err) {

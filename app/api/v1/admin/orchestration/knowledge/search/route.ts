@@ -15,7 +15,8 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
+import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
+import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { knowledgeSearchSchema } from '@/lib/validations/orchestration';
 
 export const POST = withAdminAuth(async (request, _session) => {
@@ -26,12 +27,30 @@ export const POST = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, knowledgeSearchSchema);
 
-  const { query, limit, chunkType, patternNumber, category, scope } = body;
-  const filters = { chunkType, patternNumber, category, scope };
+  const { query, limit, chunkType, patternNumber, scope, agentId } = body;
+  const filters: SearchFilters = { chunkType, patternNumber, scope };
+
+  // Preview-as-agent: route the search through the resolver when `agentId` is
+  // supplied so the admin sees what that agent would see. Without it the
+  // search runs unfiltered — explicit "global view".
+  let agentScope: 'full' | 'restricted' | undefined;
+  if (agentId) {
+    const access = await resolveAgentDocumentAccess(agentId);
+    agentScope = access.mode;
+    if (access.mode === 'restricted') {
+      filters.documentIds = access.documentIds;
+      filters.includeSystemScope = access.includeSystemScope;
+    }
+  }
 
   const results = await searchKnowledge(query, filters, limit);
 
-  log.info('Knowledge search completed', { query, resultCount: results.length });
+  log.info('Knowledge search completed', {
+    query,
+    resultCount: results.length,
+    agentId,
+    agentScope,
+  });
 
-  return successResponse({ results });
+  return successResponse({ results, agentScope });
 });

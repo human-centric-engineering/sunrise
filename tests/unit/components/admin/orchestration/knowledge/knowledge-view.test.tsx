@@ -613,6 +613,44 @@ describe('KnowledgeView', () => {
         expect(screen.getByText(/no documents yet/i)).toBeInTheDocument();
       });
     });
+
+    it('shows the scope selector on the default (Manage) tab', () => {
+      // Selector is visible on Manage — the default — because the tab
+      // filters the documents table by scope.
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+      expect(screen.getByText('Scope')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument();
+    });
+
+    it('hides the scope selector when the active tab is Tags', async () => {
+      // The Tags tab doesn't read `scope` at all — it manages the tag
+      // taxonomy, not documents — so the selector would be misleading.
+      // Drive the active tab via the URL since the mocked router.replace
+      // is a no-op (so clicking tabs doesn't actually change activeTab
+      // in this test environment).
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValueOnce(
+        new URLSearchParams('tab=tags') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+
+      expect(screen.queryByText('Scope')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
+    });
+
+    it('shows the scope selector on Explore, Visualize, and Errors', async () => {
+      const { useSearchParams } = await import('next/navigation');
+
+      for (const tab of ['explore', 'visualize', 'errors']) {
+        vi.mocked(useSearchParams).mockReturnValueOnce(
+          new URLSearchParams(`tab=${tab}`) as unknown as ReturnType<typeof useSearchParams>
+        );
+        const { unmount } = render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
+        expect(screen.getByText('Scope')).toBeInTheDocument();
+        unmount();
+      }
+    });
   });
 
   // ─── Tab navigation ─────────────────────────────────────────────────────────
@@ -634,7 +672,7 @@ describe('KnowledgeView', () => {
       expect(manageTab).toHaveAttribute('data-state', 'active');
     });
 
-    it('all four tabs are interactive (rendered as clickable tab buttons)', () => {
+    it('all tabs are interactive (rendered as clickable tab buttons)', () => {
       // Verifies the tab panel structure is correct — each tab is a
       // button with role="tab" that can be interacted with.
       // The URL-synced tab hook relies on router.replace to update state,
@@ -642,8 +680,10 @@ describe('KnowledgeView', () => {
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
       const tabs = screen.getAllByRole('tab');
-      // Exactly 4 tabs: Manage, Explore, Visualize, Errors
-      expect(tabs).toHaveLength(4);
+      // Five tabs: Manage, Tags, Explore, Visualize, Errors. Tags joined when
+      // the knowledge-access-control feature shipped — it surfaces the tag
+      // taxonomy in-flow rather than via a header link.
+      expect(tabs).toHaveLength(5);
 
       // Each tab is a button (not disabled)
       tabs.forEach((tab) => {

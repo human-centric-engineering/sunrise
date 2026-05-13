@@ -34,7 +34,6 @@ const knowledgeChunkSchema = z.object({
   chunkType: z.string(),
   patternNumber: z.number().nullable(),
   patternName: z.string().nullable(),
-  category: z.string().nullable(),
   section: z.string().nullable(),
   keywords: z.string().nullable(),
   estimatedTokens: z.number().nullable(),
@@ -345,12 +344,6 @@ export function ExploreTab({ scope }: ExploreTabProps) {
                     <>
                       <span className="text-muted-foreground">Pattern Name</span>
                       <span>{selected.chunk.patternName}</span>
-                    </>
-                  )}
-                  {selected.chunk.category && (
-                    <>
-                      <span className="text-muted-foreground">Category</span>
-                      <span>{selected.chunk.category}</span>
                     </>
                   )}
                   {selected.chunk.section && (

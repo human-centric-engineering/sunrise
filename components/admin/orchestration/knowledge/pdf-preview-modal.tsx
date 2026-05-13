@@ -13,7 +13,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FieldHelp } from '@/components/ui/field-help';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tip } from '@/components/ui/tooltip';
 import { API } from '@/lib/api/endpoints';
@@ -29,7 +28,6 @@ interface PdfPreviewModalProps {
 
 export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPreviewModalProps) {
   const [correctedContent, setCorrectedContent] = useState('');
-  const [category, setCategory] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
@@ -38,7 +36,6 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
   // Reset state when a different document is opened
   useEffect(() => {
     setCorrectedContent(data?.preview.extractedText ?? '');
-    setCategory('');
     setError(null);
     setDiscardError(null);
   }, [data?.document.id, data?.preview.extractedText]);
@@ -51,7 +48,6 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
     try {
       const body: Record<string, string> = { documentId: data.document.id };
       if (correctedContent.trim()) body.correctedContent = correctedContent.trim();
-      if (category.trim()) body.category = category.trim();
 
       const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentConfirm(data.document.id), {
         method: 'POST',
@@ -67,7 +63,6 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
       }
 
       setCorrectedContent('');
-      setCategory('');
       onOpenChange(false);
       onConfirmed();
     } catch (err) {
@@ -75,7 +70,7 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
     } finally {
       setConfirming(false);
     }
-  }, [data, correctedContent, category, onOpenChange, onConfirmed]);
+  }, [data, correctedContent, onOpenChange, onConfirmed]);
 
   const handleDiscard = useCallback(async () => {
     if (!data) return;
@@ -91,7 +86,6 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
         return;
       }
       setCorrectedContent('');
-      setCategory('');
       onOpenChange(false);
     } catch {
       setDiscardError('Network error — could not reach the server.');
@@ -181,19 +175,8 @@ export function PdfPreviewModal({ data, open, onOpenChange, onConfirmed }: PdfPr
             </p>
           </div>
 
-          {/* Category */}
-          <div className="space-y-1">
-            <label htmlFor="pdf-category" className="text-sm font-medium">
-              Category <span className="text-muted-foreground text-xs font-normal">(optional)</span>
-            </label>
-            <Input
-              id="pdf-category"
-              placeholder="e.g. sales, engineering, onboarding"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="h-8 text-sm"
-            />
-          </div>
+          {/* Tags are applied at upload time on the upload zone, not here.
+              The preview flow only confirms the extracted text and chunks it. */}
 
           {error && <p className="text-destructive text-sm">{error}</p>}
           {discardError && <p className="text-destructive text-sm">{discardError}</p>}

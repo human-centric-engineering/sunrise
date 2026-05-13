@@ -26,6 +26,7 @@ interface DetectionRow {
   providerType: 'anthropic' | 'openai-compatible' | 'voyage';
   defaultBaseUrl: string | null;
   apiKeyEnvVar: string | null;
+  primaryEnvVar: string | null;
   apiKeyPresent: boolean;
   alreadyConfigured: boolean;
   isLocal: boolean;
@@ -42,6 +43,7 @@ function makeDetection(overrides: Partial<DetectionRow> = {}): DetectionRow {
     providerType: 'anthropic',
     defaultBaseUrl: null,
     apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+    primaryEnvVar: 'ANTHROPIC_API_KEY',
     apiKeyPresent: true,
     alreadyConfigured: false,
     isLocal: false,
@@ -126,6 +128,10 @@ describe('ProviderDetectionsBanner', () => {
     // banner surfaces the same "add env vars and restart" guidance
     // the setup wizard shows. Includes candidate env vars from
     // detection rows whose key isn't present.
+    // Matches production: when no env keys are set, `apiKeyEnvVar` is
+    // null (nothing detected), but `primaryEnvVar` still carries the
+    // first candidate from the provider catalog so the warning can
+    // tell the operator which env var to add.
     vi.stubGlobal(
       'fetch',
       makeFetchMock({
@@ -133,13 +139,15 @@ describe('ProviderDetectionsBanner', () => {
           makeDetection({
             slug: 'anthropic',
             name: 'Anthropic',
-            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            apiKeyEnvVar: null,
+            primaryEnvVar: 'ANTHROPIC_API_KEY',
             apiKeyPresent: false,
           }),
           makeDetection({
             slug: 'openai',
             name: 'OpenAI',
-            apiKeyEnvVar: 'OPENAI_API_KEY',
+            apiKeyEnvVar: null,
+            primaryEnvVar: 'OPENAI_API_KEY',
             apiKeyPresent: false,
           }),
         ],

@@ -87,7 +87,6 @@ describe('executeRagRetrieve', () => {
           chunkType: 'text',
           patternNumber: null,
           patternName: null,
-          category: null,
           section: null,
           keywords: null,
           estimatedTokens: null,

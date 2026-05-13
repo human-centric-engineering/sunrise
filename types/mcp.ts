@@ -187,6 +187,13 @@ export interface McpAuthContext {
   createdBy: string;
   clientIp: string;
   userAgent: string;
+  /**
+   * When set, the API key is bound to a specific agent and MCP resources/tools that
+   * touch the knowledge base should resolve via that agent's grants (see
+   * `lib/orchestration/knowledge/resolveAgentDocumentAccess`). When null, the key is
+   * an explicit "unscoped service key" with system-wide access — audited as such.
+   */
+  scopedAgentId: string | null;
 }
 
 // ============================================================================

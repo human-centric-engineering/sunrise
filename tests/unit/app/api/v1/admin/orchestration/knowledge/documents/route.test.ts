@@ -35,6 +35,8 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    // Distinct keyword count aggregation; defaults to none for existing tests.
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -154,9 +156,10 @@ describe('Knowledge Documents API', () => {
 
   describe('GET /knowledge/documents', () => {
     it('returns paginated documents', async () => {
-      // Arrange
+      // Arrange — list endpoint now returns inline tag chips alongside the
+      // chunk count, so the mock has to mirror the new include shape.
       vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
-        { ...mockDocument, _count: { chunks: 5 } },
+        { ...mockDocument, _count: { chunks: 5 }, tags: [] },
       ] as never);
       vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(1);
 
@@ -167,7 +170,31 @@ describe('Knowledge Documents API', () => {
       // Assert
       expect(res.status).toBe(200);
       expect(json.data).toHaveLength(1);
+      expect(json.data[0].tags).toEqual([]);
+      // Default $queryRaw mock returns no rows → distinctKeywordCount defaults to 0.
+      expect(json.data[0].distinctKeywordCount).toBe(0);
       expect(json.meta.total).toBe(1);
+    });
+
+    it('returns the distinct BM25 keyword count from the aggregation query', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
+        { ...mockDocument, id: 'doc-1', _count: { chunks: 3 }, tags: [] },
+        { ...mockDocument, id: 'doc-2', _count: { chunks: 0 }, tags: [] },
+      ] as never);
+      vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(2);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { documentId: 'doc-1', count: BigInt(7) },
+      ] as never);
+
+      const res = await GET(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      const doc1 = json.data.find((d: { id: string }) => d.id === 'doc-1');
+      const doc2 = json.data.find((d: { id: string }) => d.id === 'doc-2');
+      expect(doc1.distinctKeywordCount).toBe(7);
+      // Docs missing from the aggregation row default to 0, not undefined.
+      expect(doc2.distinctKeywordCount).toBe(0);
     });
 
     it('filters by status', async () => {
@@ -198,22 +225,6 @@ describe('Knowledge Documents API', () => {
       expect(prisma.aiKnowledgeDocument.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ scope: 'app' }),
-        })
-      );
-    });
-
-    it('filters by category', async () => {
-      // Arrange
-      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(0);
-
-      // Act
-      await GET(makeGetRequest('?category=product'));
-
-      // Assert: where clause includes category
-      expect(prisma.aiKnowledgeDocument.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ category: 'product' }),
         })
       );
     });
@@ -294,29 +305,19 @@ describe('Knowledge Documents API', () => {
       expect(json.data.document.id).toBe('doc-txt-001');
     });
 
-    it('passes category to uploadDocument when category form field is provided', async () => {
-      // Arrange
-      vi.mocked(uploadDocument).mockResolvedValue({ ...mockDocument, category: 'faq' } as never);
-
-      // Act
-      await POST(makeFileRequest('faq.md', '# FAQ', 'text/markdown', { category: 'faq' }));
-
-      // Assert: category passed to service
-      expect(uploadDocument).toHaveBeenCalledWith(expect.any(String), 'faq.md', ADMIN_ID, 'faq');
-    });
-
-    it('uploads without category when category field is empty', async () => {
-      // Arrange
+    it('uploads passing only the standard fields (no category form field exists)', async () => {
       vi.mocked(uploadDocument).mockResolvedValue(mockDocument as never);
 
-      // Act
-      await POST(makeFileRequest('guide.md', '# Hello', 'text/markdown', { category: '  ' }));
+      await POST(makeFileRequest('guide.md', '# Hello', 'text/markdown'));
 
-      // Assert: category is undefined (whitespace trimmed to nothing)
+      // uploadDocument signature is (content, fileName, userId, sourceUrl, displayName).
+      // The category form field was dropped in Phase 6; sourceUrl + displayName
+      // are undefined for plain uploads from the admin form.
       expect(uploadDocument).toHaveBeenCalledWith(
         expect.any(String),
         'guide.md',
         ADMIN_ID,
+        undefined,
         undefined
       );
     });

@@ -103,7 +103,11 @@ describe('SetupWizard — step content', () => {
             name: 'Anthropic',
             providerType: 'anthropic',
             defaultBaseUrl: null,
-            apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+            // apiKeyEnvVar is null because the key isn't in env;
+            // primaryEnvVar carries the catalog hint so the warning
+            // can tell the operator which var to restore.
+            apiKeyEnvVar: null,
+            primaryEnvVar: 'ANTHROPIC_API_KEY',
             apiKeyPresent: false,
             alreadyConfigured: true,
             isLocal: false,
@@ -377,11 +381,20 @@ describe('SetupWizard — step content', () => {
   // --------------------------------------------------------------------------
 
   describe('Step 2 — StepDefaultModels', () => {
-    it('renders chat + embedding selectors', async () => {
+    it('renders the full default-model form (5 task slots)', async () => {
       vi.stubGlobal(
         'fetch',
         makeFetchMock({
           providerTotal: 1,
+          providers: [
+            {
+              id: 'prov-1',
+              slug: 'anthropic',
+              name: 'Anthropic',
+              isLocal: false,
+              apiKeyPresent: true,
+            },
+          ],
           models: [{ id: 'claude-sonnet-4-6', provider: 'anthropic' }],
           defaultModels: { chat: 'claude-sonnet-4-6' },
         })
@@ -390,19 +403,35 @@ describe('SetupWizard — step content', () => {
       seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      // Wait for the form fields directly — the wizard title renders
-      // before StepDefaultModels resolves its fetches and clears the
-      // loading spinner. Asserting on the title alone races on slower
-      // environments (e.g. CI).
+      // The step renders the shared DefaultModelsForm, which keys each
+      // slot's Select on `id="model-${task}"`. Asserting on
+      // chat + embeddings is enough to prove the form mounted with
+      // wizardMode — the other three are present in the same loop.
       await waitFor(() => {
-        expect(document.getElementById('default-chat-model')).not.toBeNull();
+        expect(document.getElementById('model-chat')).not.toBeNull();
       });
-      expect(document.getElementById('default-embedding-model')).not.toBeNull();
+      expect(document.getElementById('model-embeddings')).not.toBeNull();
+      expect(document.getElementById('model-routing')).not.toBeNull();
+      expect(document.getElementById('model-reasoning')).not.toBeNull();
+      expect(document.getElementById('model-audio')).not.toBeNull();
     });
 
-    it('Continue PATCHes /settings with the chat/embedding choice', async () => {
+    it('Continue advances the wizard without re-PATCHing when nothing changed', async () => {
+      // Form pre-fills from defaultModelsStored, so a "Continue" with
+      // no edits is a confirm-and-advance — we explicitly skip the
+      // PATCH in that case so the operator doesn't see a redundant
+      // network call.
       const fetchMock = makeFetchMock({
         providerTotal: 1,
+        providers: [
+          {
+            id: 'prov-1',
+            slug: 'anthropic',
+            name: 'Anthropic',
+            isLocal: false,
+            apiKeyPresent: true,
+          },
+        ],
         models: [{ id: 'claude-sonnet-4-6', provider: 'anthropic' }],
         defaultModels: { chat: 'claude-sonnet-4-6', embeddings: 'voyage-3' },
       });
@@ -412,19 +441,22 @@ describe('SetupWizard — step content', () => {
       seedStorage(1);
       render(<SetupWizard open={true} onOpenChange={() => {}} />);
 
-      // Wait for the Continue button — it only renders once the
-      // StepDefaultModels effect has resolved and loading is false.
-      const continueButton = await screen.findByRole('button', { name: /continue/i });
+      const continueButton = await screen.findByRole('button', { name: /^continue$/i });
       await user.click(continueButton);
 
+      // Wizard advanced — the smoke-test step renders a "Run test"
+      // button (one per active provider) which the defaults step
+      // never does.
       await waitFor(() => {
-        const patchCalls = fetchMock.mock.calls.filter((call) => {
-          const u = typeof call[0] === 'string' ? call[0] : '';
-          const init = call[1] as RequestInit | undefined;
-          return u.includes('/settings') && init?.method === 'PATCH';
-        });
-        expect(patchCalls.length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument();
       });
+
+      const patchCalls = fetchMock.mock.calls.filter((call) => {
+        const u = typeof call[0] === 'string' ? call[0] : '';
+        const init = call[1] as RequestInit | undefined;
+        return u.includes('/settings') && init?.method === 'PATCH';
+      });
+      expect(patchCalls).toHaveLength(0);
     });
   });
 

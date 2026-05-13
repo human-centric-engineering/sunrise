@@ -20,6 +20,7 @@ vi.mock('@/lib/db/client', () => ({
     aiCapability: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiWorkflow: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiWebhookSubscription: { findMany: (...a: unknown[]) => mockFindMany(...a) },
+    knowledgeTag: { findMany: (...a: unknown[]) => mockFindMany(...a) },
     aiOrchestrationSettings: { findUnique: (...a: unknown[]) => mockFindUnique(...a) },
   },
 }));
@@ -45,9 +46,13 @@ const agentRow = {
   isActive: true,
   metadata: null,
   knowledgeCategories: [],
+  knowledgeAccessMode: 'full',
   topicBoundaries: [],
   brandVoiceInstructions: null,
   widgetConfig: null,
+  // Include shape from the new exporter query — no grants for the default fixture.
+  grantedTags: [],
+  grantedDocuments: [],
 };
 
 const capabilityRow = {
@@ -110,17 +115,18 @@ describe('exportOrchestrationConfig', () => {
     vi.resetAllMocks();
   });
 
-  it('returns payload with schemaVersion: 1', async () => {
+  it('returns payload with schemaVersion: 2', async () => {
     mockFindMany
       .mockResolvedValueOnce([]) // agents
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
 
-    expect(payload.schemaVersion).toBe(1);
+    expect(payload.schemaVersion).toBe(2);
   });
 
   it('returns payload with exportedAt as an ISO string', async () => {
@@ -129,6 +135,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const before = new Date().toISOString();
@@ -147,6 +154,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -162,6 +170,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     await exportOrchestrationConfig();
@@ -177,6 +186,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -190,6 +200,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(settingsRow);
 
     const payload = await exportOrchestrationConfig();
@@ -206,6 +217,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([]) // workflows
       .mockResolvedValueOnce([webhookRow]); // webhooks — no secret
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
@@ -221,6 +233,7 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([capabilityRow])
       .mockResolvedValueOnce([workflowRow])
       .mockResolvedValueOnce([webhookRow]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(settingsRow);
 
     const payload = await exportOrchestrationConfig();
@@ -243,11 +256,140 @@ describe('exportOrchestrationConfig', () => {
       .mockResolvedValueOnce([]) // capabilities
       .mockResolvedValueOnce([workflowRow, unpublishedRow]) // workflows: one with, one without
       .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
     mockFindUnique.mockResolvedValue(null);
 
     const payload = await exportOrchestrationConfig();
 
     expect(payload.data.workflows).toHaveLength(1);
     expect(payload.data.workflows[0].slug).toBe('onboarding-flow');
+  });
+
+  it('exports knowledgeTags when present in the DB', async () => {
+    const tagRow = { slug: 'support', name: 'Support', description: 'support topics' };
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([tagRow]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.knowledgeTags).toHaveLength(1);
+    expect(payload.data.knowledgeTags[0].slug).toBe('support');
+    expect(payload.data.knowledgeTags[0].name).toBe('Support');
+  });
+
+  it('emits knowledgeAccessMode as "restricted" when the DB row has that value', async () => {
+    // This exercises the ternary on line ~142: knowledgeAccessMode === 'restricted'
+    const restrictedAgentRow = {
+      ...agentRow,
+      knowledgeAccessMode: 'restricted',
+    };
+    mockFindMany
+      .mockResolvedValueOnce([restrictedAgentRow]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.agents[0].knowledgeAccessMode).toBe('restricted');
+  });
+
+  it('emits knowledgeAccessMode as "full" for any non-restricted value', async () => {
+    // Any value that is not 'restricted' coerces to 'full' (the else branch)
+    const fullAgentRow = {
+      ...agentRow,
+      knowledgeAccessMode: 'full',
+    };
+    mockFindMany
+      .mockResolvedValueOnce([fullAgentRow]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.agents[0].knowledgeAccessMode).toBe('full');
+  });
+
+  it('flattens grantedTags into grantedTagSlugs array', async () => {
+    const agentWithGrants = {
+      ...agentRow,
+      grantedTags: [{ tag: { slug: 'billing' } }, { tag: { slug: 'support' } }],
+      grantedDocuments: [],
+    };
+    mockFindMany
+      .mockResolvedValueOnce([agentWithGrants]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.agents[0].grantedTagSlugs).toEqual(['billing', 'support']);
+  });
+
+  it('flattens grantedDocuments into grantedDocumentHashes array', async () => {
+    const agentWithDocs = {
+      ...agentRow,
+      grantedTags: [],
+      grantedDocuments: [
+        { document: { fileHash: 'abc123' } },
+        { document: { fileHash: 'def456' } },
+      ],
+    };
+    mockFindMany
+      .mockResolvedValueOnce([agentWithDocs]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.agents[0].grantedDocumentHashes).toEqual(['abc123', 'def456']);
+  });
+
+  it('always emits empty knowledgeCategories array (legacy field kept on wire)', async () => {
+    // knowledgeCategories was dropped from the DB in Phase 6 but the backup
+    // schema keeps the field on the wire. The exporter always emits [] for it.
+    mockFindMany
+      .mockResolvedValueOnce([agentRow]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.agents[0].knowledgeCategories).toEqual([]);
+  });
+
+  it('queries capabilities with where: { isSystem: false }', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    await exportOrchestrationConfig();
+
+    // Second findMany call is for capabilities
+    const capCall = mockFindMany.mock.calls[1][0] as { where?: { isSystem?: boolean } };
+    expect(capCall?.where?.isSystem).toBe(false);
   });
 });

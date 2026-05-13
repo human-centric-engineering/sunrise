@@ -42,6 +42,18 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       deleteMany: vi.fn(),
     },
+    knowledgeTag: {
+      upsert: vi.fn(),
+    },
+    aiKnowledgeDocumentTag: {
+      upsert: vi.fn(),
+    },
+    aiAgent: {
+      findMany: vi.fn(),
+    },
+    aiAgentKnowledgeTag: {
+      upsert: vi.fn(),
+    },
     user: {
       findFirst: vi.fn(),
     },
@@ -131,9 +143,84 @@ const CHUNKS_PATH = '/data/chunks.json';
 // --- Phase 1: seedChunks ---
 
 describe('seedChunks', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // New seeder upserts tags and document↔tag links; default no-op mocks keep tests
+    // focused on the legacy assertions (chunk insert SQL, uploader resolution, etc.).
+    (
+      vi.mocked(prisma.knowledgeTag.upsert) as unknown as {
+        mockImplementation: (fn: (args: unknown) => unknown) => void;
+      }
+    ).mockImplementation((args: unknown) => {
+      const a = args as { where: { slug: string }; create: { slug: string; name: string } };
+      return Promise.resolve({
+        id: `tag-${a.where.slug}`,
+        slug: a.where.slug,
+        name: a.create?.name ?? a.where.slug,
+      });
+    });
+    vi.mocked(prisma.aiKnowledgeDocumentTag.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue({} as never);
+    // Most tests don't care about the bidirectional system-agent grant —
+    // default to "no system agents seeded yet" so the loop is a no-op.
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiAgentKnowledgeTag.upsert).mockResolvedValue({} as never);
+  });
 
-  it('returns early without reading file or writing when document already exists', async () => {
+  it('grants the patterns tag to existing system agents (pattern-advisor, quiz-master)', async () => {
+    // Bidirectional safety net: if the prisma seeds have already created
+    // the system agents, loading the patterns should grant them the tag
+    // so the relationship is explicit in the admin UI. Idempotent — the
+    // upsert is keyed on (agentId, tagId).
+    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks) as never);
+    vi.mocked(prisma.user.findFirst)
+      .mockResolvedValueOnce({ id: 'admin-001' } as never)
+      .mockResolvedValueOnce({ id: 'user-001' } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { id: 'agent-pa', slug: 'pattern-advisor' },
+      { id: 'agent-qm', slug: 'quiz-master' },
+    ] as never);
+
+    await seedChunks(CHUNKS_PATH);
+
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
+      select: { id: true, slug: true },
+    });
+    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledTimes(2);
+    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledWith({
+      where: { agentId_tagId: { agentId: 'agent-pa', tagId: 'tag-agentic-design-patterns' } },
+      create: { agentId: 'agent-pa', tagId: 'tag-agentic-design-patterns' },
+      update: {},
+    });
+    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledWith({
+      where: { agentId_tagId: { agentId: 'agent-qm', tagId: 'tag-agentic-design-patterns' } },
+      create: { agentId: 'agent-qm', tagId: 'tag-agentic-design-patterns' },
+      update: {},
+    });
+  });
+
+  it('skips the system-agent grant loop when no system agents are seeded yet', async () => {
+    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null as never);
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks) as never);
+    vi.mocked(prisma.user.findFirst)
+      .mockResolvedValueOnce({ id: 'admin-001' } as never)
+      .mockResolvedValueOnce({ id: 'user-001' } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+    // beforeEach already mocks aiAgent.findMany → [], so no grants should fire.
+
+    await seedChunks(CHUNKS_PATH);
+
+    expect(prisma.aiAgentKnowledgeTag.upsert).not.toHaveBeenCalled();
+  });
+
+  it('skips when the legacy single document already exists (refuses to silently delete embeddings)', async () => {
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
       makeDocument({ status: 'ready' }) as never
     );
@@ -145,7 +232,7 @@ describe('seedChunks', () => {
     expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
-  it('checks for existing doc by the exact document name', async () => {
+  it('detects the legacy single document by its exact name', async () => {
     vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
       makeDocument({ status: 'ready' }) as never
     );
@@ -157,7 +244,7 @@ describe('seedChunks', () => {
     });
   });
 
-  it('cleans up a failed document before re-seeding', async () => {
+  it('cleans up a failed seed document before re-seeding', async () => {
     const failedDoc = makeDocument({ id: 'failed-doc', status: 'failed' });
     const chunks = [makeSeedChunk()];
 
@@ -282,18 +369,17 @@ describe('seedChunks', () => {
     expect(sql).not.toContain('::vector');
 
     // Positional params: [sql, $1=chunkKey, $2=docId, $3=content,
-    //   $4=chunkType, $5=patternNumber, $6=patternName, $7=category,
-    //   $8=section, $9=keywords, $10=estimatedTokens, $11=metadata]
+    //   $4=chunkType, $5=patternNumber, $6=patternName,
+    //   $7=section, $8=keywords, $9=estimatedTokens, $10=metadata]
     expect(call[1]).toBe(chunk.id); // chunkKey
     expect(call[2]).toBe(doc.id); // documentId
     expect(call[3]).toBe(chunk.content); // content
     expect(call[4]).toBe(chunk.metadata.type); // chunkType
     expect(call[5]).toBe(chunk.metadata.pattern_number); // patternNumber
     expect(call[6]).toBe(chunk.metadata.pattern_name); // patternName
-    expect(call[7]).toBe(chunk.metadata.category); // category
-    expect(call[8]).toBe(chunk.metadata.section_title); // section
-    expect(call[9]).toBe(chunk.metadata.keywords); // keywords
-    expect(call[10]).toBe(chunk.estimated_tokens); // estimatedTokens
+    expect(call[7]).toBe(chunk.metadata.section_title); // section
+    expect(call[8]).toBe(chunk.metadata.keywords); // keywords
+    expect(call[9]).toBe(chunk.estimated_tokens); // estimatedTokens
   });
 
   it('propagates file read errors', async () => {
@@ -343,9 +429,8 @@ describe('seedChunks', () => {
     const call = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
     expect(call[5]).toBeNull(); // patternNumber
     expect(call[6]).toBeNull(); // patternName
-    expect(call[7]).toBeNull(); // category
-    expect(call[8]).toBeNull(); // section
-    expect(call[9]).toBeNull(); // keywords
+    expect(call[7]).toBeNull(); // section
+    expect(call[8]).toBeNull(); // keywords
   });
 });
 

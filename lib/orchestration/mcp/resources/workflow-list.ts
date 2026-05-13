@@ -12,7 +12,8 @@ import type { McpResourceContent } from '@/types/mcp';
 
 export async function handleWorkflowList(
   uri: string,
-  _config: Record<string, unknown> | null
+  _config: Record<string, unknown> | null,
+  _callContext: import('@/lib/orchestration/mcp/resource-registry').ResourceCallContext
 ): Promise<McpResourceContent> {
   const workflows = await prisma.aiWorkflow.findMany({
     where: { isActive: true },

@@ -161,6 +161,8 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,
       knowledgeDocumentRechunk: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
+      knowledgeDocumentEnrichKeywords: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/enrich-keywords`,
       knowledgeDocumentRetry: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/retry`,
       knowledgeDocumentConfirm: (id: string): string =>
@@ -177,7 +179,8 @@ export const API = {
       EMBEDDING_MODELS: '/api/v1/admin/orchestration/embedding-models',
       KNOWLEDGE_EMBED: '/api/v1/admin/orchestration/knowledge/embed',
       KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
-      KNOWLEDGE_META_TAGS: '/api/v1/admin/orchestration/knowledge/meta-tags',
+      KNOWLEDGE_TAGS: '/api/v1/admin/orchestration/knowledge/tags',
+      knowledgeTagById: (id: string): string => `/api/v1/admin/orchestration/knowledge/tags/${id}`,
       WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
       webhookDeliveries: (id: string): string =>

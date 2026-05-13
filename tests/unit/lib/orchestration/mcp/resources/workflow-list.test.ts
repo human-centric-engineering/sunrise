@@ -46,7 +46,7 @@ describe('handleWorkflowList', () => {
   it('queries aiWorkflow with isActive=true filter', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null);
+    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -58,7 +58,7 @@ describe('handleWorkflowList', () => {
   it('orders results by name ascending', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null);
+    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -70,7 +70,7 @@ describe('handleWorkflowList', () => {
   it('selects only safe fields', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null);
+    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -87,7 +87,10 @@ describe('handleWorkflowList', () => {
   it('returns mimeType application/json', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.mimeType).toBe('application/json');
   });
@@ -95,7 +98,10 @@ describe('handleWorkflowList', () => {
   it('echoes the URI back in the result', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     expect(result.uri).toBe(TEST_URI);
   });
@@ -103,7 +109,10 @@ describe('handleWorkflowList', () => {
   it('returns empty workflows array when no active workflows exist', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.workflows).toEqual([]);
@@ -112,7 +121,10 @@ describe('handleWorkflowList', () => {
   it('maps workflows to the response body correctly', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([makeWorkflow()] as never);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.workflows).toHaveLength(1);
@@ -130,7 +142,10 @@ describe('handleWorkflowList', () => {
       makeWorkflow({ name: 'Workflow B', slug: 'workflow-b' }),
     ] as never);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.workflows).toHaveLength(2);
@@ -145,7 +160,10 @@ describe('handleWorkflowList', () => {
       makeWorkflow({ isTemplate: true }),
     ] as never);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     // test-review:accept tobe_true — boolean schema field `isTemplate`; structural assertion on workflow data shape
@@ -157,7 +175,10 @@ describe('handleWorkflowList', () => {
       makeWorkflow({ description: null }),
     ] as never);
 
-    const result = await handleWorkflowList(TEST_URI, null);
+    const result = await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+    });
 
     const body = JSON.parse(result.text);
     expect(body.workflows[0].description).toBeNull();
@@ -166,6 +187,12 @@ describe('handleWorkflowList', () => {
   it('ignores the config parameter', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await expect(handleWorkflowList(TEST_URI, { someConfig: 'value' })).resolves.not.toThrow();
+    await expect(
+      handleWorkflowList(
+        TEST_URI,
+        { someConfig: 'value' },
+        { scopedAgentId: null, apiKeyId: 'key-1' }
+      )
+    ).resolves.not.toThrow();
   });
 });

@@ -156,14 +156,13 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
       expect(data.data.document.id).toBe(VALID_DOC_ID);
     });
 
-    it('should call confirmPreview with (id, userId, correctedContent, category)', async () => {
+    it('should call confirmPreview with (id, userId, correctedContent)', async () => {
       const admin = mockAdminUser();
       vi.mocked(auth.api.getSession).mockResolvedValue(admin as never);
 
       const body = {
         documentId: VALID_DOC_ID,
         correctedContent: 'Corrected text here.',
-        category: 'legal',
       };
 
       const request = makeRequest(VALID_DOC_ID, body);
@@ -174,8 +173,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
       expect(confirmPreview).toHaveBeenCalledWith(
         VALID_DOC_ID,
         admin.user.id,
-        'Corrected text here.',
-        'legal'
+        'Corrected text here.'
       );
     });
 
@@ -184,12 +182,7 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm', () 
 
       await POST(makeRequest(VALID_DOC_ID, body), makeContext(VALID_DOC_ID));
 
-      expect(confirmPreview).toHaveBeenCalledWith(
-        VALID_DOC_ID,
-        expect.any(String),
-        undefined,
-        undefined
-      );
+      expect(confirmPreview).toHaveBeenCalledWith(VALID_DOC_ID, expect.any(String), undefined);
     });
   });
 

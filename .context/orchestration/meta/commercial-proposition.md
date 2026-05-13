@@ -73,7 +73,7 @@ A single `<script>` tag on any website creates an isolated chat interface connec
 
 ### Your agents know your domain
 
-Agents are not limited to their training data. You upload your own documents — product manuals, policy guides, knowledge articles, EPUB books, Word documents, scanned PDFs, and CSV exports (where each row becomes individually searchable) — and the platform chunks, embeds, and indexes them for semantic search. Agents retrieve relevant content at query time, grounding their responses in your actual information rather than general knowledge. You control which categories of knowledge each agent can access, so a customer support agent and an internal operations agent draw from different document sets even though they share the same platform.
+Agents are not limited to their training data. You upload your own documents — product manuals, policy guides, knowledge articles, EPUB books, Word documents, scanned PDFs, and CSV exports (where each row becomes individually searchable) — and the platform chunks, embeds, and indexes them for semantic search. Agents retrieve relevant content at query time, grounding their responses in your actual information rather than general knowledge. You control which slices of the knowledge base each agent can access — via a managed tag taxonomy and optional per-document grants — so a customer support agent and an internal operations agent draw from different document sets even though they share the same platform.
 
 ### Your agents back up their answers
 
