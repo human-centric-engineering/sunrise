@@ -45,6 +45,10 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    // The list endpoint runs a tagged-template raw query to compute the
+    // distinct BM25 keyword count per doc. Default to "no keywords yet"
+    // so existing tests don't need to opt in.
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 

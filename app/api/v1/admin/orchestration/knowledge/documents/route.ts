@@ -142,6 +142,29 @@ export const GET = withAdminAuth(async (request, _session) => {
     prisma.aiKnowledgeDocument.count({ where }),
   ]);
 
+  // Distinct BM25 keyword count per document on the current page. Single
+  // raw query: `string_to_array` splits the comma-separated `keywords`
+  // column, `unnest` expands it, and COUNT(DISTINCT) folds duplicates
+  // across chunks. The result powers the table's "BM25 keywords" column —
+  // operators click into the modal to inspect / enrich, so we only need
+  // the count here. Table names are snake_case via `@@map` in the schema
+  // (Prisma model `AiKnowledgeChunk` → DB table `ai_knowledge_chunk`).
+  const documentIds = rawDocuments.map((d) => d.id);
+  const keywordCountMap = new Map<string, number>();
+  if (documentIds.length > 0) {
+    const rows = await prisma.$queryRaw<Array<{ documentId: string; count: bigint }>>`
+      SELECT
+        c."documentId" AS "documentId",
+        COUNT(DISTINCT trim(BOTH FROM kw)) AS count
+      FROM ai_knowledge_chunk c,
+           LATERAL unnest(string_to_array(COALESCE(c.keywords, ''), ',')) AS kw
+      WHERE c."documentId" = ANY(${documentIds}::text[])
+        AND trim(BOTH FROM kw) <> ''
+      GROUP BY c."documentId"
+    `;
+    for (const r of rows) keywordCountMap.set(r.documentId, Number(r.count));
+  }
+
   // Flatten the tag join rows into an inline `tags` array. The doc list page
   // renders these as chips in the table — agents granted any of these tags
   // can search this document when running in restricted mode.
@@ -150,6 +173,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     return {
       ...rest,
       tags: tags.map((t) => ({ id: t.tag.id, slug: t.tag.slug, name: t.tag.name })),
+      distinctKeywordCount: keywordCountMap.get(d.id) ?? 0,
     };
   });
 

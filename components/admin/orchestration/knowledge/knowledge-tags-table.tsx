@@ -38,8 +38,47 @@ import {
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
+import { createKnowledgeTagSchema } from '@/lib/validations/orchestration';
 import type { PaginationMeta } from '@/types/api';
 import type { KnowledgeTagListItem } from '@/types/orchestration';
+
+/**
+ * Mirror of the slug regex from `createKnowledgeTagSchema`. Used to derive a
+ * suggested slug from the operator's tag name while the slug field is still
+ * pristine — same shape the server will accept, so the auto-derived value
+ * never needs an editing round-trip.
+ */
+function slugifyTagName(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
+interface FieldErrors {
+  slug?: string;
+  name?: string;
+  description?: string;
+}
+
+/**
+ * Map a `ValidationError` response's `details` (the zod issue map from
+ * `handleAPIError`) onto our flat field-error shape. Server returns each
+ * field as `{ path: [string[]] }` where the value is a list of messages —
+ * we surface the first one.
+ */
+function detailsToFieldErrors(details: unknown): FieldErrors {
+  const out: FieldErrors = {};
+  if (!details || typeof details !== 'object') return out;
+  const rec = details as Record<string, unknown>;
+  for (const key of ['slug', 'name', 'description'] as const) {
+    const v = rec[key];
+    if (Array.isArray(v) && typeof v[0] === 'string') out[key] = v[0];
+  }
+  return out;
+}
 
 type DialogState =
   | { kind: 'closed' }
@@ -69,6 +108,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   // Drill-down state: which tag is expanded, and what data we've loaded.
   // Cached by tag id so re-opening the same row doesn't refetch.
@@ -238,16 +278,27 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
       </div>
 
       <CreateOrEditDialog
+        // Re-mount when transitioning between tags (or between create/edit/closed)
+        // so the inner `useState` initialisers re-evaluate against the new
+        // `existing` tag and pre-populate the form. Without this key, React
+        // keeps the mounted instance and the initialisers run only on first
+        // mount — when the dialog was still in its `closed` state and
+        // `existing` was null — so editing an existing tag opens to blanks.
+        key={dialog.kind === 'edit' ? `edit-${dialog.tag.id}` : dialog.kind}
         state={dialog}
         busy={busy}
         error={error}
+        fieldErrors={fieldErrors}
+        onClearFieldError={(key) => setFieldErrors((prev) => ({ ...prev, [key]: undefined }))}
         onClose={() => {
           setDialog({ kind: 'closed' });
           setError(null);
+          setFieldErrors({});
         }}
         onSubmit={async (payload) => {
           setBusy(true);
           setError(null);
+          setFieldErrors({});
           try {
             if (dialog.kind === 'create') {
               await apiClient.post(API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS, { body: payload });
@@ -259,7 +310,25 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
             setDialog({ kind: 'closed' });
             await refresh();
           } catch (err) {
-            setError(err instanceof APIClientError ? err.message : 'Failed to save the tag.');
+            // Server-side validation errors arrive with per-field `details`
+            // (the zod issue map from `handleAPIError`). Surface those under
+            // the matching inputs; fall back to a top-level message for
+            // anything that isn't a field-shaped error (e.g. unique-conflict
+            // on slug, network errors).
+            if (err instanceof APIClientError) {
+              const fields = detailsToFieldErrors(err.details);
+              if (Object.keys(fields).length > 0) {
+                setFieldErrors(fields);
+                // Suppress the generic top-level "Validation failed" since
+                // the field-level messages tell the operator exactly what
+                // to fix.
+                setError(null);
+              } else {
+                setError(err.message);
+              }
+            } else {
+              setError('Failed to save the tag.');
+            }
           } finally {
             setBusy(false);
           }
@@ -312,24 +381,59 @@ function CreateOrEditDialog({
   state,
   busy,
   error,
+  fieldErrors,
+  onClearFieldError,
   onClose,
   onSubmit,
 }: DialogCommonProps & {
+  fieldErrors: FieldErrors;
+  /** Clear a single field error — fires on edit so the operator gets immediate feedback. */
+  onClearFieldError: (key: keyof FieldErrors) => void;
   onSubmit: (payload: { slug: string; name: string; description?: string }) => Promise<void>;
 }): React.ReactElement | null {
   const open = state.kind === 'create' || state.kind === 'edit';
   const existing = state.kind === 'edit' ? state.tag : null;
 
+  // Initialisers run on mount; the parent remounts this component via a
+  // tag-scoped `key` whenever the dialog transitions to a different tag,
+  // so `existing` here is always the tag being edited (or null for create).
   const [slug, setSlug] = useState(existing?.slug ?? '');
   const [name, setName] = useState(existing?.name ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
-
-  // Reset locals when the dialog opens with a different tag.
-  if (state.kind === 'edit' && existing && existing.id !== slugId(slug, name)) {
-    // intentionally not re-syncing — once the dialog opens, user edits drive
-  }
+  // When the operator hasn't typed in the slug field yet, auto-derive it from
+  // the name. Once they edit slug manually, we stop overwriting it so a hand-
+  // crafted slug isn't clobbered by further name keystrokes. Editing an
+  // existing tag starts "dirty" so we never overwrite the persisted slug.
+  const [slugDirty, setSlugDirty] = useState(existing !== null);
+  const [localErrors, setLocalErrors] = useState<FieldErrors>({});
 
   if (!open) return null;
+
+  const errs: FieldErrors = { ...fieldErrors, ...localErrors };
+
+  function handleSubmit(): void {
+    const payload = {
+      slug: slug.trim(),
+      name: name.trim(),
+      description: description.trim() || undefined,
+    };
+    // Client-side validation against the same schema the server uses, so
+    // operators see field-level feedback before the network round-trip.
+    const parsed = createKnowledgeTagSchema.safeParse(payload);
+    if (!parsed.success) {
+      const next: FieldErrors = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path[0];
+        if (key === 'slug' || key === 'name' || key === 'description') {
+          if (!next[key]) next[key] = issue.message;
+        }
+      }
+      setLocalErrors(next);
+      return;
+    }
+    setLocalErrors({});
+    void onSubmit(payload);
+  }
 
   return (
     <Dialog
@@ -348,35 +452,84 @@ function CreateOrEditDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="tag-slug">Slug</Label>
-            <Input
-              id="tag-slug"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="e.g. customer-support"
-              disabled={busy}
-            />
-          </div>
-          <div className="grid gap-1.5">
             <Label htmlFor="tag-name">Name</Label>
             <Input
               id="tag-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setName(next);
+                onClearFieldError('name');
+                setLocalErrors((p) => ({ ...p, name: undefined }));
+                if (!slugDirty) {
+                  setSlug(slugifyTagName(next));
+                  onClearFieldError('slug');
+                  setLocalErrors((p) => ({ ...p, slug: undefined }));
+                }
+              }}
               placeholder="e.g. Customer Support"
               disabled={busy}
+              aria-invalid={errs.name ? true : undefined}
+              aria-describedby={errs.name ? 'tag-name-error' : undefined}
             />
+            {errs.name ? (
+              <p id="tag-name-error" className="text-destructive text-xs">
+                {errs.name}
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-xs">
+                Human-readable label shown wherever this tag appears.
+              </p>
+            )}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="tag-slug">Slug</Label>
+            <Input
+              id="tag-slug"
+              value={slug}
+              onChange={(e) => {
+                setSlugDirty(true);
+                setSlug(e.target.value);
+                onClearFieldError('slug');
+                setLocalErrors((p) => ({ ...p, slug: undefined }));
+              }}
+              placeholder="e.g. customer-support"
+              disabled={busy}
+              aria-invalid={errs.slug ? true : undefined}
+              aria-describedby={errs.slug ? 'tag-slug-error' : 'tag-slug-help'}
+            />
+            {errs.slug ? (
+              <p id="tag-slug-error" className="text-destructive text-xs">
+                {errs.slug}
+              </p>
+            ) : (
+              <p id="tag-slug-help" className="text-muted-foreground text-xs">
+                Lowercase letters, numbers, and hyphens only. Auto-derived from the name until you
+                edit it.
+              </p>
+            )}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="tag-description">Description (optional)</Label>
             <Textarea
               id="tag-description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                onClearFieldError('description');
+                setLocalErrors((p) => ({ ...p, description: undefined }));
+              }}
               rows={3}
               placeholder="What kind of documents belong under this tag?"
               disabled={busy}
+              aria-invalid={errs.description ? true : undefined}
+              aria-describedby={errs.description ? 'tag-description-error' : undefined}
             />
+            {errs.description ? (
+              <p id="tag-description-error" className="text-destructive text-xs">
+                {errs.description}
+              </p>
+            ) : null}
           </div>
           {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </div>
@@ -384,16 +537,7 @@ function CreateOrEditDialog({
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button
-            onClick={() => {
-              void onSubmit({
-                slug: slug.trim(),
-                name: name.trim(),
-                description: description.trim() || undefined,
-              });
-            }}
-            disabled={busy || !slug.trim() || !name.trim()}
-          >
+          <Button onClick={handleSubmit} disabled={busy}>
             {existing ? 'Save changes' : 'Create tag'}
           </Button>
         </DialogFooter>
@@ -445,11 +589,6 @@ function DeleteDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function slugId(_slug: string, _name: string): string {
-  // No-op helper kept for the strict-equality guard above (lint friendly).
-  return '';
 }
 
 function BulkDeleteUnusedButton({

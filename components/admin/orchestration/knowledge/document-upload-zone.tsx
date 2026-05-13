@@ -474,11 +474,16 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               emptyText="No matching tags. Type a new name to create one."
               disabled={uploading}
               ariaLabelledBy="upload-tags-label"
-              onCreate={async (name) => {
+              createSupportsDescription
+              onCreate={async (name, description) => {
                 const created = await apiClient.post<TagRow>(
                   API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS,
                   {
-                    body: { slug: slugifyTagName(name), name },
+                    body: {
+                      slug: slugifyTagName(name),
+                      name,
+                      ...(description ? { description } : {}),
+                    },
                   }
                 );
                 // Refresh availableTags so the new row appears in subsequent renders.

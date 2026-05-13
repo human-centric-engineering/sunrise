@@ -35,6 +35,8 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    // Distinct keyword count aggregation; defaults to none for existing tests.
+    $queryRaw: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -169,7 +171,30 @@ describe('Knowledge Documents API', () => {
       expect(res.status).toBe(200);
       expect(json.data).toHaveLength(1);
       expect(json.data[0].tags).toEqual([]);
+      // Default $queryRaw mock returns no rows → distinctKeywordCount defaults to 0.
+      expect(json.data[0].distinctKeywordCount).toBe(0);
       expect(json.meta.total).toBe(1);
+    });
+
+    it('returns the distinct BM25 keyword count from the aggregation query', async () => {
+      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
+        { ...mockDocument, id: 'doc-1', _count: { chunks: 3 }, tags: [] },
+        { ...mockDocument, id: 'doc-2', _count: { chunks: 0 }, tags: [] },
+      ] as never);
+      vi.mocked(prisma.aiKnowledgeDocument.count).mockResolvedValue(2);
+      vi.mocked(prisma.$queryRaw).mockResolvedValue([
+        { documentId: 'doc-1', count: BigInt(7) },
+      ] as never);
+
+      const res = await GET(makeGetRequest());
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      const doc1 = json.data.find((d: { id: string }) => d.id === 'doc-1');
+      const doc2 = json.data.find((d: { id: string }) => d.id === 'doc-2');
+      expect(doc1.distinctKeywordCount).toBe(7);
+      // Docs missing from the aggregation row default to 0, not undefined.
+      expect(doc2.distinctKeywordCount).toBe(0);
     });
 
     it('filters by status', async () => {

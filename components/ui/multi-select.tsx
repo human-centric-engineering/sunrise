@@ -49,12 +49,21 @@ interface BaseProps {
    * Optional inline-create hook. When provided and the operator's search
    * query doesn't match an existing option exactly, a "Create '<query>'"
    * row appears at the top of the popover. Clicking it calls this function
-   * with the trimmed query string; the resolved option is auto-selected.
-   * Errors are surfaced inline; the popover stays open.
+   * with the trimmed query string and (when `createSupportsDescription` is
+   * set) the operator-supplied description; the resolved option is
+   * auto-selected. Errors are surfaced inline; the popover stays open.
    */
-  onCreate?: (label: string) => Promise<MultiSelectOption>;
+  onCreate?: (label: string, description?: string) => Promise<MultiSelectOption>;
   /** Optional copy override for the inline-create row. Defaults to `Create "<query>"`. */
   createLabel?: (query: string) => string;
+  /**
+   * When true, the "+ Create" affordance expands into a two-field inline
+   * form (name + optional description) so the operator can fill in the
+   * description before posting. Description is forwarded as the second
+   * arg to `onCreate`. When false (default), `onCreate` is called
+   * immediately with just the label.
+   */
+  createSupportsDescription?: boolean;
 }
 
 interface StaticProps extends BaseProps {
@@ -89,6 +98,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
     ariaLabelledBy,
     onCreate,
     createLabel,
+    createSupportsDescription,
   } = props;
   const isAsync = 'loadOptions' in props && typeof props.loadOptions === 'function';
 
@@ -98,6 +108,18 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
   const [asyncLoading, setAsyncLoading] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState<string | null>(null);
+  const [createFormOpen, setCreateFormOpen] = React.useState(false);
+  const [createDescription, setCreateDescription] = React.useState('');
+
+  // Reset the inline-create form whenever the popover closes or the query
+  // is cleared — keeps the form state in sync with the operator's intent.
+  React.useEffect(() => {
+    if (!open) {
+      setCreateFormOpen(false);
+      setCreateDescription('');
+      setCreateError(null);
+    }
+  }, [open]);
 
   // Debounced async fetch.
   React.useEffect(() => {
@@ -154,12 +176,18 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
     setCreating(true);
     setCreateError(null);
     try {
-      const created = await onCreate(trimmedQuery);
+      const description = createSupportsDescription ? createDescription.trim() : '';
+      const created = await onCreate(
+        trimmedQuery,
+        description.length > 0 ? description : undefined
+      );
       // Auto-select the new option. The consumer is responsible for
       // refreshing the options list (or supplying selectedLabels in async
       // mode) so the chip renders the right label after this.
       if (!value.includes(created.value)) onChange([...value, created.value]);
       setQuery('');
+      setCreateFormOpen(false);
+      setCreateDescription('');
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create');
     } finally {
@@ -254,11 +282,16 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
           />
         </div>
         <div className="max-h-64 overflow-y-auto py-1">
-          {canCreate ? (
+          {canCreate && !createFormOpen ? (
             <button
               type="button"
               onClick={() => {
-                void handleCreate();
+                if (createSupportsDescription) {
+                  setCreateFormOpen(true);
+                  setCreateError(null);
+                } else {
+                  void handleCreate();
+                }
               }}
               disabled={creating}
               className="hover:bg-muted/60 flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm font-medium disabled:cursor-not-allowed"
@@ -270,6 +303,63 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                   : (createLabel?.(trimmedQuery) ?? `Create "${trimmedQuery}"`)}
               </span>
             </button>
+          ) : null}
+          {canCreate && createFormOpen && createSupportsDescription ? (
+            <div className="space-y-2 border-b p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className="text-primary">+</span>
+                <span className="truncate">{`Create "${trimmedQuery}"`}</span>
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="multi-select-create-description"
+                  className="text-muted-foreground text-xs"
+                >
+                  Description (optional)
+                </label>
+                <Input
+                  id="multi-select-create-description"
+                  value={createDescription}
+                  onChange={(e) => setCreateDescription(e.target.value)}
+                  placeholder="What is this option for?"
+                  className="h-8 text-sm"
+                  disabled={creating}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleCreate();
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    setCreateFormOpen(false);
+                    setCreateDescription('');
+                    setCreateError(null);
+                  }}
+                  disabled={creating}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 px-3 text-xs"
+                  onClick={() => {
+                    void handleCreate();
+                  }}
+                  disabled={creating}
+                >
+                  {creating ? 'Creating…' : 'Create'}
+                </Button>
+              </div>
+            </div>
           ) : null}
           {createError ? (
             <p className="text-destructive border-b px-3 py-2 text-xs">{createError}</p>
@@ -307,20 +397,45 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
             })
           )}
         </div>
-        {value.length > 0 ? (
-          <div className="flex items-center justify-between gap-2 border-t px-2 py-1.5">
-            <span className="text-muted-foreground text-xs">{value.length} selected</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => onChange([])}
-            >
-              Clear all
-            </Button>
-          </div>
-        ) : null}
+        <div className="flex items-center justify-between gap-2 border-t px-2 py-1.5">
+          {value.length > 0 ? (
+            <>
+              <span className="text-muted-foreground text-xs">{value.length} selected</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => onChange([])}
+                >
+                  Clear all
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 px-3 text-xs"
+                  onClick={() => setOpen(false)}
+                >
+                  Done
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground text-xs">None selected</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-3 text-xs"
+                onClick={() => setOpen(false)}
+              >
+                Done
+              </Button>
+            </>
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   );

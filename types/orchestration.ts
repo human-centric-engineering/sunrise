@@ -767,6 +767,14 @@ export interface DocumentTagRef {
  */
 export type KnowledgeDocumentListItem = AiKnowledgeDocument & {
   tags?: DocumentTagRef[];
+  /**
+   * Distinct BM25 keyword count across this document's chunks. Computed
+   * server-side via `string_to_array` + `unnest` on
+   * `AiKnowledgeChunk.keywords`. Drives the "BM25 keywords" column on
+   * the admin documents table; clicking opens a modal that lists the
+   * keywords and offers post-upload enrichment.
+   */
+  distinctKeywordCount?: number;
 };
 
 /** Evaluation session with logs */

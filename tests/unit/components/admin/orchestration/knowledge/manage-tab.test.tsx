@@ -130,9 +130,24 @@ describe('ManageTab', () => {
     render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
 
     expect(screen.getByText('No documents yet.')).toBeInTheDocument();
-    expect(
-      screen.getByText('Upload a file or load the built-in patterns to get started.')
-    ).toBeInTheDocument();
+    // The hint copy is split by an inline <strong> ("Upload document"), so we
+    // assert on the `<p>` tagName directly to avoid matching ancestor wrappers.
+    const hint = screen.getAllByText((_, node) => {
+      if (!node) return false;
+      return (
+        node.tagName === 'P' &&
+        node.textContent?.includes(
+          'Use the Upload document button above to add your own files, or load the Built-in: Agentic Design Patterns reference from the panel below.'
+        ) === true
+      );
+    });
+    expect(hint.length).toBeGreaterThan(0);
+  });
+
+  it('shows the Upload document button that opens the upload dialog', () => {
+    render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /upload document/i })).toBeInTheDocument();
   });
 
   // ── Seeded vs user documents ───────────────────────────────────────────────
@@ -490,170 +505,6 @@ describe('ManageTab', () => {
     await waitFor(() => {
       expect(screen.getByText(/last seeded:/i)).toBeInTheDocument();
     });
-  });
-
-  // ── Meta-tags panel ───────────────────────────────────────────────────────
-
-  it('renders the Indexed keywords panel with app + system sections when both have keywords', async () => {
-    // Categories are intentionally ignored by the panel now — Tags own that
-    // concept. The panel renders keyword chips only.
-    mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                app: {
-                  categories: [{ value: 'sales', chunkCount: 1, documentCount: 1 }],
-                  keywords: [{ value: 'pricing', chunkCount: 5, documentCount: 1 }],
-                },
-                system: {
-                  categories: [],
-                  keywords: [{ value: 'reasoning', chunkCount: 3, documentCount: 1 }],
-                },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    });
-
-    await act(async () => {
-      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('Indexed keywords')).toBeInTheDocument();
-    });
-
-    // App section open by default — keyword chip visible.
-    expect(screen.getByText('App knowledge')).toBeInTheDocument();
-    expect(screen.getByText('pricing')).toBeInTheDocument();
-
-    // Category text from the legacy column must NOT bleed into this panel.
-    expect(screen.queryByText('sales')).not.toBeInTheDocument();
-
-    // System section present but collapsed by default — chip not yet rendered.
-    expect(screen.getByText('System knowledge')).toBeInTheDocument();
-    expect(screen.queryByText('reasoning')).not.toBeInTheDocument();
-  });
-
-  it('expands system section when clicked', async () => {
-    const user = userEvent.setup();
-    mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                app: { categories: [], keywords: [] },
-                system: {
-                  categories: [],
-                  keywords: [{ value: 'reasoning', chunkCount: 5, documentCount: 1 }],
-                },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    });
-
-    await act(async () => {
-      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('System knowledge')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('System knowledge'));
-
-    await waitFor(() => {
-      expect(screen.getByText('reasoning')).toBeInTheDocument();
-    });
-  });
-
-  it('does not render the Indexed keywords panel when no keywords exist in either scope', async () => {
-    mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                // Categories present but panel still hidden — it ignores them.
-                app: {
-                  categories: [{ value: 'sales', chunkCount: 1, documentCount: 1 }],
-                  keywords: [],
-                },
-                system: { categories: [], keywords: [] },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    });
-
-    await act(async () => {
-      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
-    });
-
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/meta-tags'));
-    });
-
-    expect(screen.queryByText('Indexed keywords')).not.toBeInTheDocument();
-  });
-
-  it('shows "Show all" toggle and reveals hidden keywords when clicked', async () => {
-    const user = userEvent.setup();
-    const manyKeywords = Array.from({ length: 35 }, (_, i) => ({
-      value: `kw-${i}`,
-      chunkCount: i + 1,
-      documentCount: 1,
-    }));
-
-    mockFetch.mockImplementation((url: string) => {
-      if (url.includes('/meta-tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: {
-                app: { categories: [], keywords: manyKeywords },
-                system: { categories: [], keywords: [] },
-              },
-            }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    });
-
-    await act(async () => {
-      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('Indexed keywords')).toBeInTheDocument();
-    });
-
-    // First 30 visible, 31st hidden
-    expect(screen.getByText('kw-0')).toBeInTheDocument();
-    expect(screen.getByText('kw-29')).toBeInTheDocument();
-    expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
-
-    // Click "Show all"
-    await user.click(screen.getByText('Show all 35 keywords'));
-
-    // Now all visible
-    expect(screen.getByText('kw-30')).toBeInTheDocument();
-    expect(screen.getByText('kw-34')).toBeInTheDocument();
-
-    // Toggle back
-    await user.click(screen.getByText('Show less'));
-    expect(screen.queryByText('kw-30')).not.toBeInTheDocument();
   });
 
   it('renders a tag-count chip in the Tags column when the document has tags', async () => {
