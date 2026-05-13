@@ -55,29 +55,15 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
     return documents.filter((d) => d.scope === scope);
   }, [documents, scope]);
 
+  // The Tags tab has no scope filter — its data set is the tag taxonomy,
+  // not documents — so the selector is hidden there. Manage, Explore,
+  // Visualize, and Errors all read `scope` (Manage filters
+  // `filteredDocuments` client-side; the others pass `apiScope` to their
+  // server fetches), so the selector remains visible on those tabs.
+  const showScopeSelector = activeTab !== 'tags';
+
   return (
     <div className="space-y-4">
-      {/* Scope selector */}
-      <div className="flex items-center gap-3">
-        <span className="text-muted-foreground text-xs font-medium">Scope</span>
-        <div className="bg-muted inline-flex items-center rounded-lg p-1">
-          {SCOPE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setScope(opt.value)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                scope === opt.value
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <Tabs
         value={activeTab}
         onValueChange={(v) => setActiveTab(v as KnowledgeTab)}
@@ -105,6 +91,28 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
             Errors
           </TabsTrigger>
         </TabsList>
+
+        {showScopeSelector ? (
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-xs font-medium">Scope</span>
+            <div className="bg-muted inline-flex items-center rounded-lg p-1">
+              {SCOPE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setScope(opt.value)}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    scope === opt.value
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <TabsContent value="manage">
           <ManageTab documents={filteredDocuments} onRefresh={refresh} />
