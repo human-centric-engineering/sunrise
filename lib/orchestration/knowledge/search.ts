@@ -73,16 +73,17 @@ export interface SearchFilters {
   documentId?: string;
   /**
    * Restrict to chunks belonging to any of these documents. Used by the agent
-   * knowledge-access resolver (Phase 2 of knowledge-access-control). When set
-   * together with `includeSystemScope: true`, system-scoped documents pass
-   * through regardless of whether they appear in this list — system docs are
-   * shared platform seed data and always visible.
+   * knowledge-access resolver. **The presence of this field (even as `[]`)
+   * is significant** — it switches the search into "restricted mode" and
+   * makes `includeSystemScope` meaningful. An empty array means "no granted
+   * docs"; combined with `includeSystemScope: true` it collapses the search
+   * to system-scoped seed docs only. Omit the field entirely for unrestricted
+   * search.
    */
   documentIds?: string[];
   /**
-   * When true, always include chunks from system-scoped documents in the
-   * result set, regardless of `documentIds`. Defaults to false to preserve
-   * the prior unfiltered behaviour for unrelated call sites.
+   * When true, include chunks from system-scoped documents alongside the
+   * `documentIds` allowlist. Only meaningful when `documentIds` is set.
    */
   includeSystemScope?: boolean;
   scope?: string;
@@ -140,23 +141,28 @@ export async function searchKnowledge(
     params.push(filters.documentId);
     paramIdx++;
   }
-  if (filters?.documentIds && filters.documentIds.length > 0) {
-    const placeholders = filters.documentIds.map((_, i) => `$${paramIdx + i}`).join(', ');
-    // System-scoped docs pass through unconditionally when includeSystemScope is true —
-    // the resolver relies on this so seeded reference material stays visible to every
-    // RESTRICTED agent without explicit grants.
-    const docFilter = filters.includeSystemScope
-      ? `(c."documentId" IN (${placeholders}) OR d.scope = 'system')`
-      : `c."documentId" IN (${placeholders})`;
-    conditions.push(docFilter);
-    for (const id of filters.documentIds) {
-      params.push(id);
-      paramIdx++;
+  // Document-scope filter. The presence of `documentIds` (even when empty)
+  // signals an explicit restriction — the resolver passes `documentIds: []`
+  // for a restricted agent with zero grants, and that MUST collapse the
+  // search to system-scoped seed docs (or nothing) rather than falling back
+  // to an unfiltered KB. Skipping this clause on `length === 0` was the
+  // empty-grants bypass — fixed by emitting an explicit predicate in every
+  // case where the caller passes the array.
+  if (filters?.documentIds !== undefined) {
+    if (filters.documentIds.length === 0) {
+      conditions.push(filters.includeSystemScope ? `d.scope = 'system'` : `FALSE`);
+    } else {
+      const placeholders = filters.documentIds.map((_, i) => `$${paramIdx + i}`).join(', ');
+      const docFilter = filters.includeSystemScope
+        ? `(c."documentId" IN (${placeholders}) OR d.scope = 'system')`
+        : `c."documentId" IN (${placeholders})`;
+      conditions.push(docFilter);
+      for (const id of filters.documentIds) {
+        params.push(id);
+        paramIdx++;
+      }
     }
   }
-  // `includeSystemScope` is intentionally a no-op when documentIds is empty —
-  // the caller wants either "no restrictions" (omit both) or "these docs ∪ system"
-  // (set both).
   if (filters?.scope) {
     conditions.push(`d.scope = $${paramIdx}`);
     params.push(filters.scope);

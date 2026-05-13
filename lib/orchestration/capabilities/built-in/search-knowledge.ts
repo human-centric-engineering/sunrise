@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { logger } from '@/lib/logging';
 import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
@@ -97,6 +98,23 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
       filters.documentId = args.document_id;
     }
     if (access.mode === 'restricted') {
+      // Defense in depth on the LLM-supplied `document_id` filter. The SQL
+      // builder already AND-s this against the access set (`documentId = X`
+      // intersected with `documentId IN (grants) OR scope = 'system'`), so an
+      // out-of-scope lookup returns zero rows. But silently empty results
+      // mask the boundary from operators — refusing the tool call here makes
+      // the attempt visible in logs and gives the LLM a structured signal so
+      // it can retry without the filter.
+      if (args.document_id !== undefined && !access.documentIds.includes(args.document_id)) {
+        logger.warn('search_knowledge_base: document_id outside agent access set', {
+          agentId: context.agentId,
+          requestedDocumentId: args.document_id,
+        });
+        return this.error(
+          'Document is not accessible to this agent. Drop the document_id filter or search by query alone.',
+          'forbidden_document'
+        );
+      }
       filters.documentIds = access.documentIds;
       filters.includeSystemScope = access.includeSystemScope;
     }

@@ -122,10 +122,13 @@ describe('SearchKnowledgeCapability', () => {
     );
   });
 
-  it('combines pattern_number, document_id, and restricted document grants in one filter object', async () => {
+  it('combines pattern_number, document_id, and restricted document grants when the doc is granted', async () => {
+    // The LLM-supplied document_id IS in the agent's grant set, so the
+    // capability passes all three filters through to searchKnowledge.
+    const grantedDoc = '550e8400-e29b-41d4-a716-446655440000';
     vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
       mode: 'restricted',
-      documentIds: ['doc-legal'],
+      documentIds: [grantedDoc, 'doc-other'],
       includeSystemScope: true,
     });
     (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -135,7 +138,7 @@ describe('SearchKnowledgeCapability', () => {
       {
         query: 'liability',
         pattern_number: 2,
-        document_id: '550e8400-e29b-41d4-a716-446655440000',
+        document_id: grantedDoc,
       },
       context
     );
@@ -144,10 +147,56 @@ describe('SearchKnowledgeCapability', () => {
       'liability',
       {
         patternNumber: 2,
-        documentId: '550e8400-e29b-41d4-a716-446655440000',
-        documentIds: ['doc-legal'],
+        documentId: grantedDoc,
+        documentIds: [grantedDoc, 'doc-other'],
         includeSystemScope: true,
       },
+      10,
+      0.7
+    );
+  });
+
+  it('refuses an LLM document_id that lies outside the restricted agent grant set', async () => {
+    // Vuln 2 regression: under the old code the SQL would intersect the
+    // singular `documentId` filter with the `documentIds` allowlist, but a
+    // silently empty result set masked the boundary from operators. The
+    // capability now rejects up front with a structured `forbidden_document`
+    // error so the LLM can retry without the filter.
+    vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({
+      mode: 'restricted',
+      documentIds: ['doc-granted'],
+      includeSystemScope: true,
+    });
+    const cap = new SearchKnowledgeCapability();
+
+    const result = await cap.execute(
+      {
+        query: 'confidential roadmap',
+        document_id: '550e8400-e29b-41d4-a716-446655440000',
+      },
+      context
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        code: 'forbidden_document',
+        message: expect.stringContaining('not accessible'),
+      },
+    });
+    expect(searchKnowledge).not.toHaveBeenCalled();
+  });
+
+  it('allows document_id without restriction when the agent has full access', async () => {
+    vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({ mode: 'full' });
+    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const cap = new SearchKnowledgeCapability();
+
+    await cap.execute({ query: 'q', document_id: '550e8400-e29b-41d4-a716-446655440000' }, context);
+
+    expect(searchKnowledge).toHaveBeenCalledWith(
+      'q',
+      { documentId: '550e8400-e29b-41d4-a716-446655440000' },
       10,
       0.7
     );

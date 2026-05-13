@@ -219,6 +219,73 @@ describe('searchKnowledge', () => {
 
     expect(embedText).toHaveBeenCalledWith('my search query', 'query');
   });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Vuln 1 regression: an empty `documentIds` array must NOT degrade into an
+  // unfiltered KB search. The presence of the field is the signal — even when
+  // empty — that the caller has explicitly chosen restricted mode.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it('collapses to system-scoped docs only when documentIds=[] and includeSystemScope=true', async () => {
+    // The empty-grants restricted state: resolver returns documentIds: [] and
+    // includeSystemScope: true. The WHERE clause must restrict to system docs.
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('q', { documentIds: [], includeSystemScope: true });
+
+    const [sql] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0] as [string, ...unknown[]];
+
+    // The SQL builder must emit an explicit `d.scope = 'system'` predicate
+    // rather than silently dropping the document-scope filter.
+    expect(sql).toContain("d.scope = 'system'");
+  });
+
+  it('collapses to FALSE (no rows) when documentIds=[] and includeSystemScope is omitted', async () => {
+    // Defensive: a caller that passes documentIds=[] without includeSystemScope
+    // is saying "this agent has no access to any document" — the search must
+    // return zero rows, not the entire KB.
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('q', { documentIds: [] });
+
+    const [sql] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0] as [string, ...unknown[]];
+
+    expect(sql).toContain('FALSE');
+    expect(sql).not.toContain("d.scope = 'system'");
+  });
+
+  it('emits the `(IN (...) OR scope=system)` union when documentIds is populated and includeSystemScope=true', async () => {
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('q', {
+      documentIds: ['doc-a', 'doc-b'],
+      includeSystemScope: true,
+    });
+
+    const [sql, ...params] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0] as [
+      string,
+      ...unknown[],
+    ];
+
+    expect(sql).toMatch(/c\."documentId" IN \(\$4, \$5\) OR d\.scope = 'system'/);
+    expect(params[3]).toBe('doc-a');
+    expect(params[4]).toBe('doc-b');
+  });
+
+  it('omits the document-scope clause entirely when documentIds is undefined', async () => {
+    // Backwards-compat: callers that don't pass documentIds (chat capability
+    // for `mode: 'full'` agents, admin search without agentId) get the
+    // pre-Phase 2 unfiltered behaviour.
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await searchKnowledge('q', {});
+
+    const [sql] = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0] as [string, ...unknown[]];
+
+    expect(sql).not.toContain("d.scope = 'system'");
+    expect(sql).not.toContain('FALSE');
+    expect(sql).not.toContain('"documentId" IN');
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
