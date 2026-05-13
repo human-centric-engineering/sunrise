@@ -233,13 +233,20 @@ export function GET(request: NextRequest): Response {
         }
         .starter:hover { filter: brightness(1.05); }
         .input-area {
-          padding: 8px 12px; border-top: 1px solid var(--sw-border); display: flex; gap: 8px;
+          padding: 8px 12px; border-top: 1px solid var(--sw-border);
+          display: flex; gap: 8px; align-items: flex-end;
         }
-        .input-area input {
+        .input-area textarea {
           flex: 1; padding: 8px 12px; border: 1px solid var(--sw-border);
           border-radius: 8px; font-size: 14px; outline: none;
           background: var(--sw-input-bg); color: var(--sw-text);
-          font-family: inherit;
+          font-family: inherit; line-height: 1.4;
+          /* Auto-grow via JS: rows=1 sets the initial single-line look,
+             and the input/value handler bumps height to scrollHeight up
+             to max-height. resize:none hides the manual drag handle so
+             the box feels like a chat input rather than a form field. */
+          resize: none; overflow-y: auto;
+          min-height: 36px; max-height: 160px;
         }
         .input-area button {
           padding: 8px 16px; border: none; border-radius: 8px;
@@ -353,7 +360,7 @@ export function GET(request: NextRequest): Response {
           <button type="button" class="attach-btn" aria-label="Attach an image or PDF" style="display:none;">&#x1F4CE;<span class="attach-badge" style="display:none;">0</span></button>
           <input type="file" class="attach-input" multiple hidden />
           <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
-          <input type="text" />
+          <textarea rows="1"></textarea>
           <button type="button" class="send-btn"></button>
         </div>
         <div class="voice-error" style="display:none;" role="status" aria-live="polite"></div>
@@ -375,7 +382,7 @@ export function GET(request: NextRequest): Response {
     var bubble = shadow.querySelector('.bubble');
     var panel = shadow.querySelector('.panel');
     var messagesEl = shadow.querySelector('.messages');
-    var input = shadow.querySelector('.input-area input');
+    var input = shadow.querySelector('.input-area textarea');
     var sendBtn = shadow.querySelector('.send-btn');
     var micBtn = shadow.querySelector('.mic-btn');
     var attachBtn = shadow.querySelector('.attach-btn');
@@ -424,6 +431,7 @@ export function GET(request: NextRequest): Response {
         (function (text) {
           btn.addEventListener('click', function () {
             input.value = text;
+            if (input.__swResize) input.__swResize();
             send();
           });
         })(cfg.conversationStarters[i]);
@@ -718,6 +726,7 @@ export function GET(request: NextRequest): Response {
         }
         var existing = input.value || '';
         input.value = existing ? (existing.replace(/\\s+$/, '') + ' ' + out.body.data.text) : out.body.data.text;
+        if (input.__swResize) input.__swResize();
         input.focus();
         setVoiceState('idle');
       }).catch(function () {
@@ -926,6 +935,7 @@ export function GET(request: NextRequest): Response {
       statusEl.style.display = 'none';
       statusEl.textContent = '';
       input.value = '';
+      if (input.__swResize) input.__swResize();
       sending = false;
       sendBtn.disabled = false;
       input.focus();
@@ -1265,7 +1275,10 @@ export function GET(request: NextRequest): Response {
       var preserved = input.value;
       input.value = text;
       send();
-      if (preserved) input.value = preserved;
+      if (preserved) {
+        input.value = preserved;
+        if (input.__swResize) input.__swResize();
+      }
     }
 
     function extractFinalOutput(trace) {
@@ -1349,6 +1362,7 @@ export function GET(request: NextRequest): Response {
       sending = true;
       sendBtn.disabled = true;
       input.value = '';
+      if (input.__swResize) input.__swResize();
       addMsg('user', msg || (pendingAttachments.length > 0 ? '[' + pendingAttachments.length + ' attachment(s)]' : ''));
       var assistantSpan = addMsg('assistant', '\\u2026');
 
@@ -1439,8 +1453,29 @@ export function GET(request: NextRequest): Response {
     }
 
     sendBtn.addEventListener('click', send);
+
+    // Auto-grow the textarea up to the CSS max-height. Reset to 'auto'
+    // first so the box shrinks back when the user deletes lines. Called
+    // on user input AND any time the script writes to input.value
+    // programmatically (voice transcript, send-clear, focus-restore).
+    function resizeInput() {
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+    }
+    input.addEventListener('input', resizeInput);
+    // Expose so other code paths (e.g. clearing on send, voice append)
+    // can trigger the same logic without duplicating it.
+    input.__swResize = resizeInput;
+
     input.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') send();
+      // Shift+Enter inserts a newline (the textarea's default
+      // behaviour); bare Enter sends. Skip during IME composition so
+      // Japanese/Chinese input confirmations don't fire send.
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
     });
   }
 })();

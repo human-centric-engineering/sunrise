@@ -1322,4 +1322,90 @@ describe('ChatInterface', () => {
       expect(reads).toHaveLength(0);
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Message-input keyboard handling: Enter sends; Shift+Enter inserts a
+  // newline so multi-line messages are composable in-place.
+  // ──────────────────────────────────────────────────────────────────────
+
+  describe('Message input keyboard handling', () => {
+    it('renders the message input as a textarea (not a single-line input)', () => {
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      expect(input.tagName).toBe('TEXTAREA');
+    });
+
+    it('sends on Enter without Shift', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([contentFrame('Pong')]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.click(input);
+      await user.keyboard('Ping');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('Ping')).toBeInTheDocument();
+      });
+    });
+
+    it('inserts a newline on Shift+Enter rather than sending', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([contentFrame('ignored')]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      if (!(input instanceof HTMLTextAreaElement)) {
+        throw new Error(
+          'Expected a textarea — see "renders the message input as a textarea" above'
+        );
+      }
+      await user.click(input);
+      await user.keyboard('Line one');
+      await user.keyboard('{Shift>}{Enter}{/Shift}');
+      await user.keyboard('Line two');
+
+      // The textarea now contains a real newline and the send did not fire.
+      expect(input.value).toBe('Line one\nLine two');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not send while an IME composition is in progress', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        body: makeSseStream([contentFrame('ignored')]),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      if (!(input instanceof HTMLTextAreaElement)) {
+        throw new Error(
+          'Expected a textarea — see "renders the message input as a textarea" above'
+        );
+      }
+
+      // Simulate an in-flight IME composition: typing a glyph and pressing
+      // Enter to commit it. The browser dispatches keydown with
+      // isComposing=true; if we treated that as "send", the
+      // composition-confirmation keystroke would also fire the chat send.
+      input.focus();
+      input.value = 'こん';
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'isComposing', { value: true });
+      input.dispatchEvent(event);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

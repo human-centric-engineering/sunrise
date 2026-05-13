@@ -475,3 +475,59 @@ describe('Embed widget voice input (Phase 4)', () => {
     expect(body).toContain('localStorage.setItem');
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// Phase 5 — multi-line message input (textarea, Shift+Enter, auto-grow).
+// The widget swapped its single-line <input> for a <textarea> so multi-
+// line messages can be composed inline. These tests pin the contract via
+// string assertions against the served JS (the widget is a vanilla bundle
+// produced by an API route, not a renderable React tree).
+// ────────────────────────────────────────────────────────────────────────
+
+describe('Embed widget multi-line message input (Phase 5)', () => {
+  it('renders the input as a <textarea>, not a single-line <input>', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain('<textarea rows="1"></textarea>');
+    // The legacy `<input type="text" />` markup must be gone — a stray
+    // copy would silently swallow newlines because single-line inputs
+    // ignore "\n" characters in their value.
+    expect(body).not.toMatch(/<input type="text"\s*\/?>/);
+  });
+
+  it('selects the textarea from the input-area (matching markup change)', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("shadow.querySelector('.input-area textarea')");
+  });
+
+  it('Enter sends, Shift+Enter inserts a newline, IME composition is skipped', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The keydown handler distinguishes Shift+Enter and skips during
+    // IME composition. Both signals must be present in the served JS.
+    expect(body).toMatch(/e\.key === 'Enter' && !e\.shiftKey/);
+    expect(body).toMatch(/e\.isComposing \|\| e\.keyCode === 229/);
+  });
+
+  it('exposes a resize helper and calls it after every programmatic value write', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The helper itself: reset to 'auto', then size to scrollHeight.
+    expect(body).toContain("input.style.height = 'auto'");
+    expect(body).toContain("input.style.height = input.scrollHeight + 'px'");
+    expect(body).toContain('input.__swResize = resizeInput');
+    // Every code path that writes input.value programmatically must
+    // trigger a resize so the textarea grows/shrinks to match. Count
+    // the occurrences as a regression guard — currently 5 call sites
+    // (starter click, voice transcript append, reset, send clear,
+    // followup-restore).
+    const resizeCalls = body.match(/input\.__swResize\(\)/g) ?? [];
+    expect(resizeCalls.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('caps the auto-grow at a sensible max-height via CSS', async () => {
+    const body = await GET(makeGetRequest()).text();
+    // The textarea CSS pins min and max heights so the box looks like
+    // a single-line input until the user types past the line cap.
+    expect(body).toMatch(/\.input-area textarea\s*\{[^}]*min-height:\s*36px/);
+    expect(body).toMatch(/\.input-area textarea\s*\{[^}]*max-height:\s*160px/);
+    expect(body).toMatch(/\.input-area textarea\s*\{[^}]*resize:\s*none/);
+  });
+});
