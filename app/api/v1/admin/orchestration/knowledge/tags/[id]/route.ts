@@ -5,8 +5,15 @@
  * PATCH  /api/v1/admin/orchestration/knowledge/tags/:id
  * DELETE /api/v1/admin/orchestration/knowledge/tags/:id?force=true
  *   - Hard delete cascades the doc/agent join rows by FK CASCADE.
- *   - When the tag has linked docs or agents, returns 409 unless `?force=true`
- *     is passed. The admin UI surfaces the link count and re-prompts.
+ *   - When the tag is granted to one or more agents, returns 409
+ *     unconditionally — `force=true` does NOT bypass this. The operator
+ *     must remove the grant from each agent first, so a tag-deletion can
+ *     never silently strip an agent's knowledge access. The response
+ *     includes `details.agents` (up to 50) so the UI can link the
+ *     operator to the agents that hold the grant.
+ *   - When the tag is only linked to documents (no agents), `?force=true`
+ *     still bypasses the 409. Document tagging is descriptive metadata;
+ *     forcing a clean-detach there is much safer than for agents.
  *
  * Mutations call `invalidateAllAgentAccess()` so the resolver's per-agent
  * cache picks up the new tag membership immediately.
@@ -149,21 +156,52 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   const { searchParams } = new URL(request.url);
   const force = searchParams.get('force') === 'true';
 
+  // Eagerly include the agent grants so we can name them in the 409
+  // response when the operator tries to delete a tag that's still bound
+  // to one or more agents. Capped at 50 — the dialog lists them as
+  // links; beyond 50 we trust the operator to follow up by tag drill-
+  // down. Documents are not enumerated here because doc linkage can be
+  // force-stripped, so the operator doesn't need the per-row list to
+  // make a decision.
   const current = await prisma.knowledgeTag.findUnique({
     where: { id },
     include: {
       _count: { select: { documents: true, agents: true } },
+      agents: {
+        include: { agent: { select: { id: true, name: true, slug: true } } },
+        orderBy: { createdAt: 'asc' },
+        take: 50,
+      },
     },
   });
   if (!current) throw new NotFoundError(`Knowledge tag ${id} not found`);
 
-  const linkedCount = current._count.documents + current._count.agents;
-  if (linkedCount > 0 && !force) {
+  // Agent grants are sacred: deleting a tag that's actively granting an
+  // agent access would silently shrink that agent's knowledge scope.
+  // Block unconditionally — the operator must remove the grant from
+  // each agent first. `force=true` does NOT bypass this guard; it only
+  // bypasses the document-only path below.
+  if (current._count.agents > 0) {
     throw new ConflictError(
-      `Tag "${current.name}" is linked to ${current._count.documents} document(s) and ${current._count.agents} agent(s). Re-send with ?force=true to delete anyway.`,
+      `Tag "${current.name}" is granted to ${current._count.agents} agent(s). Remove the grant from each agent before deleting this tag.`,
+      {
+        agentCount: current._count.agents,
+        documentCount: current._count.documents,
+        agents: current.agents.map((row) => ({
+          id: row.agent.id,
+          name: row.agent.name,
+          slug: row.agent.slug,
+        })),
+      }
+    );
+  }
+
+  if (current._count.documents > 0 && !force) {
+    throw new ConflictError(
+      `Tag "${current.name}" is applied to ${current._count.documents} document(s). Re-send with ?force=true to delete the tag and strip it from those documents.`,
       {
         documentCount: current._count.documents,
-        agentCount: current._count.agents,
+        agentCount: 0,
       }
     );
   }

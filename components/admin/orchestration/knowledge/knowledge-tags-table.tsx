@@ -84,7 +84,19 @@ type DialogState =
   | { kind: 'closed' }
   | { kind: 'create' }
   | { kind: 'edit'; tag: KnowledgeTagListItem }
-  | { kind: 'delete'; tag: KnowledgeTagListItem; force: boolean };
+  | {
+      kind: 'delete';
+      tag: KnowledgeTagListItem;
+      /**
+       * `initial` — first confirm. `force-confirm` — operator opted to
+       * strip the tag from N documents. `agent-blocked` — server refused
+       * because at least one agent holds this as a grant; we surface
+       * those agents so the operator can fix the dependency at source
+       * before re-trying.
+       */
+      phase: 'initial' | 'force-confirm' | 'agent-blocked';
+      blockedAgents?: Array<{ id: string; name: string; slug: string }>;
+    };
 
 export interface KnowledgeTagsTableProps {
   initialTags: KnowledgeTagListItem[];
@@ -248,7 +260,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                             size="sm"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setDialog({ kind: 'delete', tag, force: false });
+                              setDialog({ kind: 'delete', tag, phase: 'initial' });
                             }}
                             aria-label={`Delete ${tag.name}`}
                           >
@@ -348,16 +360,33 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
           setBusy(true);
           setError(null);
           try {
-            const url = dialog.force
-              ? `${API.ADMIN.ORCHESTRATION.knowledgeTagById(dialog.tag.id)}?force=true`
-              : API.ADMIN.ORCHESTRATION.knowledgeTagById(dialog.tag.id);
+            const url =
+              dialog.phase === 'force-confirm'
+                ? `${API.ADMIN.ORCHESTRATION.knowledgeTagById(dialog.tag.id)}?force=true`
+                : API.ADMIN.ORCHESTRATION.knowledgeTagById(dialog.tag.id);
             await apiClient.delete(url);
             setDialog({ kind: 'closed' });
             await refresh();
           } catch (err) {
-            if (err instanceof APIClientError && err.status === 409 && !dialog.force) {
-              setError(err.message);
-              setDialog({ ...dialog, force: true });
+            if (err instanceof APIClientError && err.status === 409) {
+              // Server tells us which guard tripped:
+              //   - agent grants exist → `agent-blocked`, no escape hatch
+              //   - documents only → `force-confirm`, operator can re-try with ?force
+              const details = (err.details ?? {}) as {
+                agentCount?: number;
+                agents?: Array<{ id: string; name: string; slug: string }>;
+              };
+              if ((details.agentCount ?? 0) > 0) {
+                setDialog({
+                  ...dialog,
+                  phase: 'agent-blocked',
+                  blockedAgents: details.agents ?? [],
+                });
+              } else if (dialog.phase === 'initial') {
+                setDialog({ ...dialog, phase: 'force-confirm' });
+              } else {
+                setError(err.message);
+              }
             } else {
               setError(err instanceof APIClientError ? err.message : 'Failed to delete the tag.');
             }
@@ -504,8 +533,10 @@ function CreateOrEditDialog({
               </p>
             ) : (
               <p id="tag-slug-help" className="text-muted-foreground text-xs">
-                Lowercase letters, numbers, and hyphens only. Auto-derived from the name until you
-                edit it.
+                Lowercase letters, numbers, and hyphens only.{' '}
+                {existing
+                  ? "Renaming is safe — documents and agents reference the tag by its internal id, not its slug, so existing links won't break."
+                  : 'Auto-derived from the name until you edit it.'}
               </p>
             )}
           </div>
@@ -554,7 +585,11 @@ function DeleteDialog({
   onConfirm,
 }: DialogCommonProps & { onConfirm: () => Promise<void> }): React.ReactElement | null {
   if (state.kind !== 'delete') return null;
-  const { tag, force } = state;
+  const { tag, phase, blockedAgents } = state;
+
+  const isAgentBlocked = phase === 'agent-blocked';
+  const isForceConfirm = phase === 'force-confirm';
+
   return (
     <Dialog
       open
@@ -564,27 +599,57 @@ function DeleteDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete &ldquo;{tag.name}&rdquo;?</DialogTitle>
+          <DialogTitle>
+            {isAgentBlocked ? 'Cannot delete' : 'Delete'} &ldquo;{tag.name}&rdquo;
+            {isAgentBlocked ? '' : '?'}
+          </DialogTitle>
           <DialogDescription>
-            {force
-              ? 'This tag is linked to documents and/or agents. Deleting it will detach those links — agents currently scoped to this tag will lose that grant.'
-              : 'Cannot be undone. Use only if no agent depends on this tag.'}
+            {isAgentBlocked
+              ? 'This tag is currently granted to one or more agents. Remove the grant from each agent first, then come back here to delete the tag.'
+              : isForceConfirm
+                ? 'This tag is applied to documents but no agents depend on it. Deleting it will strip the tag from those documents (their content stays). Cannot be undone.'
+                : 'Cannot be undone.'}
           </DialogDescription>
         </DialogHeader>
+
+        {isAgentBlocked && blockedAgents && blockedAgents.length > 0 ? (
+          <div className="rounded-md border p-3">
+            <p className="text-muted-foreground mb-2 text-xs">
+              {blockedAgents.length} agent{blockedAgents.length === 1 ? '' : 's'} hold this grant:
+            </p>
+            <ul className="space-y-1.5">
+              {blockedAgents.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    href={`/admin/orchestration/agents/${a.id}`}
+                    className="text-primary text-sm hover:underline"
+                  >
+                    {a.name}
+                  </Link>
+                  <span className="text-muted-foreground ml-2 font-mono text-xs">{a.slug}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {error ? <p className="text-destructive text-sm">{error}</p> : null}
+
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
+            {isAgentBlocked ? 'Close' : 'Cancel'}
           </Button>
-          <Button
-            variant="destructive"
-            onClick={() => {
-              void onConfirm();
-            }}
-            disabled={busy}
-          >
-            {force ? 'Delete anyway' : 'Delete'}
-          </Button>
+          {isAgentBlocked ? null : (
+            <Button
+              variant="destructive"
+              onClick={() => {
+                void onConfirm();
+              }}
+              disabled={busy}
+            >
+              {isForceConfirm ? 'Delete anyway' : 'Delete'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

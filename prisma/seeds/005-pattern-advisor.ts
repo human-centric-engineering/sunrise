@@ -174,9 +174,44 @@ const unit: SeedUnit = {
         maxTokens: 4096,
         isActive: true,
         isSystem: true,
+        // The agent's knowledge surface is the bundled Agentic Design
+        // Patterns reference, nothing else. Starting in restricted mode
+        // (with the tag granted below) keeps user-uploaded docs out of
+        // its search results — matching the agent's narrow role.
+        knowledgeAccessMode: 'restricted',
         createdBy,
       },
     });
+
+    // Promote pre-existing installs from the legacy default (`full`) to
+    // `restricted` — but only when the agent is still "untouched" (no
+    // explicit doc or tag grants from the admin). Any customization is
+    // treated as a signal that the admin owns this agent's scope now.
+    const [docGrants, tagGrants] = await Promise.all([
+      prisma.aiAgentKnowledgeDocument.count({ where: { agentId: agent.id } }),
+      prisma.aiAgentKnowledgeTag.count({ where: { agentId: agent.id } }),
+    ]);
+    if (agent.knowledgeAccessMode === 'full' && docGrants === 0 && tagGrants === 0) {
+      await prisma.aiAgent.update({
+        where: { id: agent.id },
+        data: { knowledgeAccessMode: 'restricted' },
+      });
+      logger.info('Promoted pattern-advisor: full → restricted (no admin customization)');
+    }
+
+    // Apply the patterns tag if the knowledge base has been seeded. The
+    // knowledge seeder also tries to apply this grant — whichever order
+    // the operator runs them, the grant ends up present. Idempotent.
+    const patternsTag = await prisma.knowledgeTag.findUnique({
+      where: { slug: 'agentic-design-patterns' },
+    });
+    if (patternsTag) {
+      await prisma.aiAgentKnowledgeTag.upsert({
+        where: { agentId_tagId: { agentId: agent.id, tagId: patternsTag.id } },
+        create: { agentId: agent.id, tagId: patternsTag.id },
+        update: {},
+      });
+    }
 
     for (const def of CAPABILITY_DEFINITIONS) {
       const capability = await prisma.aiCapability.upsert({

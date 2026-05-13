@@ -174,6 +174,27 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     update: {},
   });
 
+  // Bidirectional safety net: grant this tag to any built-in system agent
+  // that depends on the patterns knowledge (pattern-advisor, quiz-master).
+  // The agent seeds also try to apply the tag — whichever order the
+  // operator runs them, the grant ends up present. Idempotent.
+  const systemAgents = await prisma.aiAgent.findMany({
+    where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
+    select: { id: true, slug: true },
+  });
+  for (const agent of systemAgents) {
+    await prisma.aiAgentKnowledgeTag.upsert({
+      where: { agentId_tagId: { agentId: agent.id, tagId: seedTag.id } },
+      create: { agentId: agent.id, tagId: seedTag.id },
+      update: {},
+    });
+  }
+  if (systemAgents.length > 0) {
+    logger.info('Granted patterns tag to system agents', {
+      slugs: systemAgents.map((a) => a.slug),
+    });
+  }
+
   // Record the seed timestamp on the settings singleton (upsert to handle
   // the case where settings haven't been lazily created yet).
   await prisma.aiOrchestrationSettings.upsert({

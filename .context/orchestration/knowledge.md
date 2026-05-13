@@ -25,6 +25,10 @@ The resolver (`resolveAgentDocumentAccess` in `lib/orchestration/knowledge/resol
 
 Tags have no required semantic meaning — they're labels. "Internal", "HR-confidential", "Onboarding" are all valid. Operators can create tags inline from the upload zone (type a non-matching name → "Create '…'" row).
 
+**Built-in `agentic-design-patterns` tag.** When `seedChunks` loads the bundled patterns reference, it also creates a tag with slug `agentic-design-patterns` and grants it to the seeded `pattern-advisor` and `quiz-master` system agents (both run in `restricted` mode out of the box). The grant is created bidirectionally — the agent seeds also apply the tag if the patterns are already loaded — so this works regardless of whether the operator loads the patterns or runs the prisma seeds first. Pre-existing installs whose system agents are still on the `full` default get promoted to `restricted` automatically, but only when no admin customization is detected (no doc grants and no tag grants on the agent); any sign of customization is treated as the admin owning that agent's scope.
+
+**Tag deletion safety.** When a tag is granted to one or more agents, `DELETE /knowledge/tags/:id` returns 409 unconditionally and includes the agents in `details.agents` — `?force=true` does not bypass this guard. The operator must remove the grant from each agent first. Tag deletion only force-deletes through when the tag is only linked to documents (where strip-on-delete is safe).
+
 ### Indexed Keywords
 
 Per-chunk BM25 hints. Lives in `chunk.keywords` as a comma-separated string. Postgres maintains a generated `searchVector` column = `to_tsvector('english', content || ' ' || keywords)` indexed with a GIN index, used by the hybrid-search path (`search.ts:runHybridSearch`). The blended score is `vectorWeight × vector_score + bm25Weight × keyword_score`.

@@ -343,10 +343,56 @@ describe('DELETE /api/v1/admin/orchestration/knowledge/tags/:id', () => {
     expect(invalidateAllAgentAccess).toHaveBeenCalled();
   });
 
-  it('returns 409 when tag has links and force is not set', async () => {
+  it('returns 409 with agent details when the tag is granted to one or more agents', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
-      makeTag({}, { documents: 4, agents: 2 }) as never
+      makeTag(
+        {
+          agents: [
+            { agent: { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' } },
+            { agent: { id: 'agent-2', name: 'Sales Bot', slug: 'sales-bot' } },
+          ],
+        },
+        { documents: 0, agents: 2 }
+      ) as never
+    );
+
+    const response = await DELETE(makeByIdRequest('DELETE'), makeParams(TAG_ID));
+
+    expect(response.status).toBe(409);
+    expect(vi.mocked(prisma.knowledgeTag.delete)).not.toHaveBeenCalled();
+    const data = (await response.json()) as {
+      error: { details: { agentCount: number; agents: Array<{ id: string; name: string }> } };
+    };
+    expect(data.error.details.agentCount).toBe(2);
+    expect(data.error.details.agents).toEqual([
+      { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' },
+      { id: 'agent-2', name: 'Sales Bot', slug: 'sales-bot' },
+    ]);
+  });
+
+  it('does NOT allow ?force=true to bypass an agent-bound tag delete', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
+      makeTag(
+        { agents: [{ agent: { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' } }] },
+        { documents: 0, agents: 1 }
+      ) as never
+    );
+
+    const response = await DELETE(
+      makeByIdRequest('DELETE', undefined, '?force=true'),
+      makeParams(TAG_ID)
+    );
+
+    expect(response.status).toBe(409);
+    expect(vi.mocked(prisma.knowledgeTag.delete)).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when only documents are linked and force is not set', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
+      makeTag({}, { documents: 4, agents: 0 }) as never
     );
 
     const response = await DELETE(makeByIdRequest('DELETE'), makeParams(TAG_ID));
@@ -355,10 +401,10 @@ describe('DELETE /api/v1/admin/orchestration/knowledge/tags/:id', () => {
     expect(vi.mocked(prisma.knowledgeTag.delete)).not.toHaveBeenCalled();
   });
 
-  it('deletes despite links when ?force=true is set', async () => {
+  it('deletes when only documents are linked and ?force=true is set', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
-      makeTag({}, { documents: 4, agents: 2 }) as never
+      makeTag({}, { documents: 4, agents: 0 }) as never
     );
     vi.mocked(prisma.knowledgeTag.delete).mockResolvedValue(makeTag() as never);
 
