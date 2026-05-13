@@ -74,6 +74,7 @@ interface ChatRequest {
   attachments?: { name: string; mimeType: string; data: string }[];
   requestId?: string;
   signal?: AbortSignal;
+  includeTrace?: boolean;
 }
 ```
 
@@ -82,6 +83,7 @@ interface ChatRequest {
 - `entityContext` is opaque to the handler — it's passed straight through to `CapabilityContext.entityContext` so capabilities can read it.
 - `requestId` is a correlation ID for structured log tracing. When provided, the handler creates a scoped logger via `logger.withContext({ requestId })` so all log entries from the chat turn are traceable. The chat stream route extracts this from the `x-request-id` header automatically.
 - `signal` is forwarded into every `provider.chatStream` call.
+- `includeTrace` is the admin-only opt-in for inline tool-call diagnostics. See [Inline trace annotations](#inline-trace-annotations-admin-only) below.
 
 ## `ChatEvent` Lifecycle
 
