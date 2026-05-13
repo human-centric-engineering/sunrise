@@ -188,4 +188,156 @@ describe('DocumentKeywordsModal', () => {
     // Only the initial chunks fetch + the failed enrich attempt — no refetch.
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('clicking Close calls onOpenChange(false)', async () => {
+    // Arrange: modal with keywords loaded
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    mockFetch.mockResolvedValueOnce(
+      chunksResponse([{ id: 'c1', keywords: 'vector-search, bm25' }])
+    );
+
+    render(<DocumentKeywordsModal {...baseProps} onOpenChange={onOpenChange} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('vector-search')).toBeInTheDocument();
+    });
+
+    // Act: click the "Close" ghost button in the footer (not the dialog X)
+    // Use getAllByRole and find the one whose text is exactly "Close"
+    const closeButtons = screen.getAllByRole('button', { name: /^close$/i });
+    const footerClose = closeButtons.find((btn) => btn.textContent?.trim() === 'Close');
+    expect(footerClose).toBeDefined();
+    await user.click(footerClose!);
+
+    // Assert: onOpenChange called with false
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('clicking Cancel during confirm step returns to the main footer without POSTing', async () => {
+    // Arrange
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce(chunksResponse([{ id: 'c1', keywords: null }]));
+
+    render(<DocumentKeywordsModal {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No keywords indexed yet.')).toBeInTheDocument();
+    });
+
+    // Open confirm step
+    await user.click(screen.getByRole('button', { name: /enrich keywords/i }));
+    expect(screen.getByRole('button', { name: /yes, overwrite/i })).toBeInTheDocument();
+
+    // Act: click Cancel — should go back to the normal footer
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    // Assert: confirm step gone, main Close + Enrich buttons back
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /yes, overwrite/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /enrich keywords/i })).toBeInTheDocument();
+    });
+    // No POST was made
+    expect(mockFetch).toHaveBeenCalledTimes(1); // only the initial chunks fetch
+  });
+
+  it('shows "Re-enrich keywords" when the document already has keywords', async () => {
+    // Arrange: document with keywords already indexed
+    mockFetch.mockResolvedValueOnce(
+      chunksResponse([{ id: 'c1', keywords: 'vector-search, bm25' }])
+    );
+
+    render(<DocumentKeywordsModal {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('vector-search')).toBeInTheDocument();
+    });
+
+    // Assert: button text changes to "Re-enrich keywords" when rows exist
+    expect(screen.getByRole('button', { name: /re-enrich keywords/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^enrich keywords$/i })).not.toBeInTheDocument();
+  });
+
+  it('state is reset when modal closes (open transitions to false)', async () => {
+    // Arrange: mock the initial chunks fetch before rendering
+    mockFetch.mockResolvedValueOnce(chunksResponse([{ id: 'c1', keywords: 'rag' }]));
+
+    const { rerender } = render(<DocumentKeywordsModal {...baseProps} />);
+
+    // Wait for keywords to load
+    await waitFor(() => {
+      expect(screen.getByText('rag')).toBeInTheDocument();
+    });
+
+    // Act: close the modal by re-rendering with open=false
+    rerender(<DocumentKeywordsModal {...baseProps} open={false} />);
+
+    // When re-opened, rows are cleared and a fresh fetch is triggered
+    mockFetch.mockResolvedValueOnce(chunksResponse([{ id: 'c2', keywords: null }]));
+    rerender(<DocumentKeywordsModal {...baseProps} open={true} />);
+
+    await waitFor(() => {
+      // After re-open with empty keywords, shows empty state
+      expect(screen.getByText('No keywords indexed yet.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows enrichment network error when fetch throws', async () => {
+    // Arrange: enrich call rejects with a network error
+    const user = userEvent.setup();
+
+    mockFetch
+      .mockResolvedValueOnce(chunksResponse([{ id: 'c1', keywords: null }]))
+      .mockRejectedValueOnce(new Error('Network failure'));
+
+    render(<DocumentKeywordsModal {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No keywords indexed yet.')).toBeInTheDocument();
+    });
+
+    // Trigger enrich (confirm → overwrite)
+    await user.click(screen.getByRole('button', { name: /enrich keywords/i }));
+    await user.click(screen.getByRole('button', { name: /yes, overwrite/i }));
+
+    // Assert: network error surfaces in the enrichError paragraph
+    await waitFor(() => {
+      expect(screen.getByText('Network failure')).toBeInTheDocument();
+    });
+  });
+
+  it('shows generic error message when fetch throws a non-Error value', async () => {
+    // Arrange: fetch rejects with a non-Error object — covers the
+    // `err instanceof Error ? err.message : 'Failed to load keywords'` false branch.
+    mockFetch.mockRejectedValueOnce('string rejection — not an Error');
+
+    render(<DocumentKeywordsModal {...baseProps} />);
+
+    // Assert: generic fallback message shown
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load keywords')).toBeInTheDocument();
+    });
+  });
+
+  it('shows "No keywords match" when filter has no results', async () => {
+    // Arrange: load some keywords then filter to a non-matching term
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce(
+      chunksResponse([{ id: 'c1', keywords: 'vector-search, bm25' }])
+    );
+
+    render(<DocumentKeywordsModal {...baseProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('vector-search')).toBeInTheDocument();
+    });
+
+    // Act: type a filter that matches nothing
+    await user.type(screen.getByLabelText('Filter keywords'), 'xyz-no-match');
+
+    // Assert: the "no match" empty state shows within the list area
+    await waitFor(() => {
+      expect(screen.getByText(/No keywords match/i)).toBeInTheDocument();
+    });
+  });
 });

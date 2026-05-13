@@ -149,4 +149,24 @@ describe('KnowledgeBasePage (server component)', () => {
     expect(thrown).toBe(false);
     expect(screen.getByRole('heading', { name: /^knowledge base$/i })).toBeInTheDocument();
   });
+
+  it('returns empty list when parseApiResponse returns success:false', async () => {
+    // Arrange: fetch ok, but API response envelope has success:false
+    // This covers the `body.success ? body.data : []` false branch (line 21).
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'No documents' },
+    });
+
+    const { default: KnowledgeBasePage } = await import('@/app/admin/orchestration/knowledge/page');
+
+    render(await KnowledgeBasePage());
+
+    // The page still renders (just with no documents)
+    expect(screen.getByRole('heading', { name: /^knowledge base$/i })).toBeInTheDocument();
+    // No document names should appear
+    expect(screen.queryByText('Agentic Design Patterns')).not.toBeInTheDocument();
+  });
 });

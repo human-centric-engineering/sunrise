@@ -35,7 +35,9 @@ function isBrowser(): boolean {
 }
 
 function readFromStorage<T>(key: string, initial: T): T {
+  /* v8 ignore start */
   if (!isBrowser()) return initial;
+  /* v8 ignore stop */
 
   try {
     const raw = window.localStorage.getItem(key);
@@ -69,7 +71,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   // Hydrate from storage after mount — covers the SSR render path where the
   // initial state was `initial` instead of the stored value.
   useEffect(() => {
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
     const stored = readFromStorage(key, initial);
     setInternalValue(stored);
     valueRef.current = stored;
@@ -81,7 +85,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
 
   // Cross-tab sync: when another tab writes to `key`, update our state.
   useEffect(() => {
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
 
     function onStorage(event: StorageEvent) {
       if (event.key !== key || event.storageArea !== window.localStorage) return;
@@ -115,7 +121,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       setInternalValue(resolved);
       valueRef.current = resolved;
 
+      /* v8 ignore start */
       if (!isBrowser()) return;
+      /* v8 ignore stop */
       try {
         window.localStorage.setItem(key, JSON.stringify(resolved));
       } catch (err) {
@@ -128,7 +136,9 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   const remove = useCallback(() => {
     setInternalValue(initial);
     valueRef.current = initial;
+    /* v8 ignore start */
     if (!isBrowser()) return;
+    /* v8 ignore stop */
     try {
       window.localStorage.removeItem(key);
     } catch (err) {

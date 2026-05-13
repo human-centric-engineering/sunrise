@@ -15,6 +15,22 @@ import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/d
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
+// apiClient.get is used for the tags fetch and apiClient.post for inline tag creation
+vi.mock('@/lib/api/client', () => ({
+  apiClient: {
+    get: vi.fn().mockResolvedValue([]),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+  APIClientError: class APIClientError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'APIClientError';
+    }
+  },
+}));
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Default mock that handles the tags fetch and upload. */
@@ -239,25 +255,12 @@ describe('DocumentUploadZone', () => {
   });
 
   it('sends selected tagIds in form data when tags are picked', async () => {
-    // Mock the /knowledge/tags endpoint to expose a small picker option list.
-    // When the operator picks one, its id should arrive in the multipart body
-    // under the repeated `tagIds` field (collected server-side via getAll).
-    mockFetch.mockImplementation((url: string) => {
-      if (typeof url === 'string' && url.includes('/knowledge/tags')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              success: true,
-              data: [{ id: 'tag-cuid-1', slug: 'engineering', name: 'Engineering' }],
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ data: {} }),
-      });
-    });
+    // Mock apiClient.get to return a tag so the picker can offer it.
+    // The component calls apiClient.get<TagRow[]>(KNOWLEDGE_TAGS + '?limit=100') on mount.
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([
+      { id: 'tag-cuid-1', slug: 'engineering', name: 'Engineering' },
+    ] as never);
 
     const user = userEvent.setup();
     render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
@@ -960,4 +963,281 @@ describe('DocumentUploadZone', () => {
   // exercised "type partial text to pick a category suggestion" are gone
   // along with the feature. Coverage moved to "sends selected tagIds in
   // form data when tags are picked" above.
+
+  it('shows generic "Upload failed" when upload throws a non-Error value', async () => {
+    // Covers branch 27 (line 300): `err instanceof Error ? err.message : 'Upload failed'`
+    // false path — when the thrown value is NOT an Error instance.
+    mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === 'POST') {
+        // Deliberately throw a non-Error value to cover the `err instanceof Error` false branch.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        return Promise.reject('plain string rejection — not an Error instance');
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: {} }) });
+    });
+
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const fileInput = screen.getByLabelText(/upload document/i);
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'test.md', { type: 'text/markdown' })] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^upload$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    // Assert: generic fallback message shown
+    await waitFor(() => {
+      expect(screen.getByText('Upload failed')).toBeInTheDocument();
+    });
+  });
+
+  it('handles dragDrop with empty file list gracefully (no files staged)', async () => {
+    // Covers branch 28 (line 311): `if (files.length > 0)` false path.
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
+
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
+
+    // Drop with empty dataTransfer.files — should not stage anything or crash
+    fireEvent.drop(dropZone, {
+      preventDefault: vi.fn(),
+      dataTransfer: { files: [] },
+    });
+
+    // Drop zone still shows (no file was staged)
+    expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
+  });
+
+  it('handles non-array tags response gracefully (falls back to empty list)', async () => {
+    // Covers branch 0 (line 138): `Array.isArray(tags) ? tags : []` false path.
+    // When apiClient.get returns a non-array, the component uses [] instead.
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue({ unexpected: 'object' } as never);
+
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
+
+    // Stage a file to show the tags picker
+    const fileInput = screen.getByLabelText(/upload document/i);
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'test.md', { type: 'text/markdown' })] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('test.md')).toBeInTheDocument();
+    });
+
+    // The tags picker shows the empty placeholder text
+    expect(screen.getByText(/No tags yet/i)).toBeInTheDocument();
+  });
+
+  it('does nothing when a non-Enter/Space key is pressed on the drop zone', async () => {
+    // Covers branch 34 (line 359): the else path where e.key is not Enter or Space.
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
+
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
+
+    // Press a key that is NOT Enter or Space — handler should do nothing (no crash)
+    fireEvent.keyDown(dropZone, { key: 'Tab' });
+
+    // Drop zone still visible, no file staged
+    expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
+  });
+
+  it('fires onDragOver handler on the drop zone without error', async () => {
+    // Covers the onDragOver={(e) => e.preventDefault()} handler (line 354).
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
+
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
+
+    // dragOver should call e.preventDefault() without error
+    fireEvent.dragOver(dropZone, { preventDefault: vi.fn() });
+
+    // Drop zone still visible (no crash)
+    expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
+  });
+
+  it('clicking the drop zone div triggers the file input click (onClick handler)', async () => {
+    // Covers the onClick handler on the drop zone: () => inputRef.current?.click()
+    // In jsdom, click() on a hidden input is a no-op, but the handler should execute.
+    await act(async () => {
+      render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+    });
+
+    const dropZone = screen.getByText(/drop files here/i).closest('[role="button"]')!;
+
+    // Click the drop zone div (not the hidden input)
+    fireEvent.click(dropZone);
+
+    // Assert: no crash, drop zone still rendered
+    expect(screen.getByText(/drop files here/i)).toBeInTheDocument();
+  });
+
+  it('opens the "Read full guide" popover and renders UploadGuideBody content', async () => {
+    // Covers UploadGuideBody() component (line 723) — rendered inside the popover.
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    // Act: click the "Read full guide" button to open the popover
+    await user.click(screen.getByRole('button', { name: /read full guide/i }));
+
+    // Assert: UploadGuideBody content is now visible
+    await waitFor(() => {
+      // UploadGuideBody starts with "What happens when you upload"
+      expect(screen.getByText('Uploading documents to the knowledge base')).toBeInTheDocument();
+    });
+  });
+
+  it('allows editing the display name (title) after staging a single file', async () => {
+    // Covers the title Input onChange handler (line 436).
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const fileInput = screen.getByLabelText(/upload document/i);
+    const mdFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+    fireEvent.change(fileInput, { target: { files: [mdFile] } });
+
+    // Wait for the staged-file UI to appear (it renders the title input)
+    await waitFor(() => {
+      expect(screen.getByText('readme.md')).toBeInTheDocument();
+    });
+
+    // Act: type a custom name in the title input (id="upload-display-name")
+    const titleInput = document.getElementById('upload-display-name') as HTMLInputElement;
+    expect(titleInput).not.toBeNull();
+    await user.clear(titleInput);
+    await user.type(titleInput, 'My Custom Title');
+
+    // Assert: value updated
+    expect(titleInput).toHaveValue('My Custom Title');
+  });
+
+  it('shows the "Add more files" button and clicking it does not crash', async () => {
+    // Covers the "Add more files" button onClick handler (line 407).
+    // In jsdom, clicking the hidden file input doesn't open a picker,
+    // but the handler executes without error.
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const mdFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+    fireEvent.change(input, { target: { files: [mdFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('readme.md')).toBeInTheDocument();
+    });
+
+    // "Add more files" appears because stagedFiles.length (1) < 10
+    const addMoreBtn = screen.getByRole('button', { name: /add more files/i });
+    expect(addMoreBtn).toBeInTheDocument();
+
+    // Clicking it calls inputRef.current?.click() — no error expected
+    await user.click(addMoreBtn);
+    // The hidden input receives focus but no file dialog opens in test env
+    expect(screen.getByText('readme.md')).toBeInTheDocument();
+  });
+
+  it('shows the extract-tables checkbox when a PDF is staged', async () => {
+    // Covers the PDF extract-tables checkbox (lines 502-546) and its onChange handler.
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const input = screen.getByLabelText(/upload document/i);
+    const pdfFile = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+    fireEvent.change(input, { target: { files: [pdfFile] } });
+
+    await waitFor(() => {
+      // The checkbox is only shown for single PDF uploads
+      expect(screen.getByLabelText(/extract tables/i)).toBeInTheDocument();
+    });
+
+    // Act: check the checkbox (covers onChange handler)
+    const checkbox = screen.getByLabelText(/extract tables/i);
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    // Uncheck it
+    await user.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it('sends extractTables=true in the form data when checkbox is checked for PDF', async () => {
+    // Covers the extractTables=true branch in uploadFiles (lines 217-220).
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const fileInput = screen.getByLabelText(/upload document/i);
+    const pdfFile = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+    fireEvent.change(fileInput, { target: { files: [pdfFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/extract tables/i)).toBeInTheDocument();
+    });
+
+    // Check the extract-tables checkbox
+    await user.click(screen.getByLabelText(/extract tables/i));
+
+    // Upload the file
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    await waitFor(() => {
+      const uploadCall = mockFetch.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('/knowledge/documents') &&
+          !call[0].includes('/bulk') &&
+          (call[1] as RequestInit)?.method === 'POST'
+      );
+      expect(uploadCall).toBeDefined();
+      const formData = (uploadCall as [string, RequestInit])[1].body as FormData;
+      expect(formData.get('extractTables')).toBe('true');
+    });
+  });
+
+  it('sends custom title when display name differs from filename stem', async () => {
+    // Covers the `trimmedName !== filenameDefault` branch in uploadFiles (line ~214).
+    const user = userEvent.setup();
+    render(<DocumentUploadZone onUploadComplete={onUploadComplete} />);
+
+    const fileInput = screen.getByLabelText(/upload document/i);
+    const mdFile = new File(['# Content'], 'source.md', { type: 'text/markdown' });
+    fireEvent.change(fileInput, { target: { files: [mdFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('source.md')).toBeInTheDocument();
+    });
+
+    // Edit the display name to something different from "source" (the default)
+    const titleInput = document.getElementById('upload-display-name') as HTMLInputElement;
+    expect(titleInput).not.toBeNull();
+    await user.clear(titleInput);
+    await user.type(titleInput, 'My Custom Name');
+
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    await waitFor(() => {
+      const uploadCall = mockFetch.mock.calls.find(
+        (call) =>
+          typeof call[0] === 'string' &&
+          call[0].includes('/knowledge/documents') &&
+          !call[0].includes('/bulk') &&
+          (call[1] as RequestInit)?.method === 'POST'
+      );
+      expect(uploadCall).toBeDefined();
+      const formData = (uploadCall as [string, RequestInit])[1].body as FormData;
+      // The custom name is sent
+      expect(formData.get('name')).toBe('My Custom Name');
+    });
+  });
 });

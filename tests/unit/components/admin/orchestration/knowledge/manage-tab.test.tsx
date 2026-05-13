@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
@@ -24,6 +24,22 @@ import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab
 
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
+
+// DocumentUploadZone uses apiClient.get for tags — mock it to return empty list
+vi.mock('@/lib/api/client', () => ({
+  apiClient: {
+    get: vi.fn().mockResolvedValue([]),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+  APIClientError: class APIClientError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'APIClientError';
+    }
+  },
+}));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -808,6 +824,283 @@ describe('ManageTab', () => {
     await user.click(screen.getByRole('button', { name: /review/i }));
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
+
+  // ── Upload dialog callbacks ───────────────────────────────────────────────
+  // These cover handleUploadComplete and handlePdfPreview, which are called
+  // by the DocumentUploadZone inside the upload Dialog.
+
+  it('closes the upload dialog and calls onRefresh when upload completes', async () => {
+    const user = userEvent.setup();
+    const onRefresh = vi.fn();
+
+    // Mock: tags fetch (empty) + successful upload response
+    mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('/knowledge/tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: [] }),
+        });
+      }
+      if (opts?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: {} }), // no preview — triggers onUploadComplete
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[]} onRefresh={onRefresh} />);
+
+    // Open the upload dialog
+    await user.click(screen.getByRole('button', { name: /upload document/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Stage a file via the hidden input
+    const input = screen.getByLabelText(/upload documents/i);
+    const mdFile = new File(['# Hello'], 'readme.md', { type: 'text/markdown' });
+    fireEvent.change(input, { target: { files: [mdFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^upload$/i })).toBeInTheDocument();
+    });
+
+    // Act: submit the upload
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    // Assert: onRefresh was called (handleUploadComplete fired)
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalled();
+    });
+  });
+
+  it('shows distinctKeywordCount as a number when document has keywords', () => {
+    // Covers the `count > 0` branch in the BM25 keywords column
+    const docWithKeywords = {
+      ...makeDocument({ id: 'doc-kw', name: 'KW Doc' }),
+      distinctKeywordCount: 5,
+    };
+
+    render(<ManageTab documents={[docWithKeywords]} onRefresh={vi.fn()} />);
+
+    // When count > 0, the button shows the count rather than "Enrich"
+    expect(screen.getByRole('button', { name: '5' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^enrich$/i })).not.toBeInTheDocument();
+  });
+
+  it('clicking the tag badge opens the tags modal (fn 23: tag-badge onClick)', async () => {
+    // Covers the inline onClick for the tag badge in the Tags column
+    const user = userEvent.setup();
+    const docWithTags = makeDocument({
+      id: 'doc-tag-click',
+      name: 'Tagged Doc',
+      tags: [{ id: 'tag-1', slug: 'sales', name: 'Sales' }],
+    });
+
+    render(<ManageTab documents={[docWithTags]} onRefresh={vi.fn()} />);
+
+    // Click the "1 tag" badge to open the DocumentTagsModal
+    await user.click(screen.getByLabelText(/Edit 1 tag on Tagged Doc/i));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
+
+  it('closing the chunks modal via Escape clears viewChunksId (fn 34: onOpenChange)', async () => {
+    // Covers the DocumentChunksModal onOpenChange close handler:
+    //   (open) => { if (!open) { setViewChunksId(null); setViewChunksName(null); } }
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    // Open chunks modal
+    await user.click(screen.getByRole('button', { name: USER_DOC.name }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Close via Escape
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows seed fallback error when res.json() throws on seed error response (fn 6: () => null)', async () => {
+    // Covers the `() => null` catch fallback in handleSeed's error path:
+    //   errorBodySchema.safeParse(await res.json().catch(() => null))
+    // when res.json() itself throws.
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/knowledge/seed')) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          json: () => Promise.reject(new Error('invalid json')), // json() throws
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /load agentic design patterns/i }));
+
+    // Assert: fallback error message using the status code
+    await waitFor(() => {
+      expect(screen.getByText(/Load failed \(500\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows embed fallback error when res.json() throws on embed error response (fn 8: () => null)', async () => {
+    // Covers the `() => null` catch fallback in handleEmbed's error path.
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 0, pending: 10, hasActiveProvider: true },
+            }),
+        });
+      }
+      if (url.includes('/knowledge/embed')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          json: () => Promise.reject(new Error('invalid json')),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await act(async () => {
+      render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+    });
+
+    await waitFor(() => {
+      const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+      expect(embedButtons[0]).not.toBeDisabled();
+    });
+
+    const embedButtons = screen.getAllByRole('button', { name: /generate embeddings/i });
+    await user.click(embedButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Embedding failed \(503\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows rechunk fallback error when res.json() throws on rechunk error (fn 10: () => null)', async () => {
+    // Covers the `() => null` catch fallback in handleRechunk's error path.
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((url: string, options?: RequestInit) => {
+      if (options?.method === 'POST' && url.includes('/rechunk')) {
+        return Promise.resolve({
+          ok: false,
+          status: 422,
+          json: () => Promise.reject(new Error('invalid json')),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
+    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
+    expect(actionButton).toBeDefined();
+    await user.click(actionButton!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Rechunk failed \(422\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows delete fallback error when res.json() throws on delete error (fn 12: () => null)', async () => {
+    // Covers the `() => null` catch fallback in handleDelete's error path.
+    const user = userEvent.setup();
+    mockFetch.mockImplementation((_url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          json: () => Promise.reject(new Error('invalid json')),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    const allButtons = screen.getAllByRole('button');
+    const deleteBtn = allButtons.find(
+      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
+    );
+    if (deleteBtn) await user.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^yes$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Delete failed \(409\)/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Document Keywords Modal close handler ────────────────────────────────
+  // Covers the `onOpenChange` close callback in the DocumentKeywordsModal:
+  //   if (!open) { setViewKeywordsId(null); setViewKeywordsName(null); }
+
+  it('closes the keywords modal when its onOpenChange is called with false', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    // Open the keywords modal by clicking the "Enrich" button in the keywords column
+    const enrichBtn = screen.getByRole('button', { name: /enrich/i });
+    await user.click(enrichBtn);
+
+    // A dialog should now be open
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Close by pressing Escape (which triggers onOpenChange(false))
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Tags Modal open/close ────────────────────────────────────────────────
+  // Covers the `onOpenChange` close callback in the DocumentTagsModal:
+  //   if (!open) { setEditTagsId(null); setEditTagsName(null); }
+
+  it('opens and closes the tags modal via the + Add button', async () => {
+    const user = userEvent.setup();
+    const docWithoutTags = makeDocument({ id: 'doc-notags', name: 'Tag-free', tags: [] });
+    render(<ManageTab documents={[docWithoutTags]} onRefresh={vi.fn()} />);
+
+    // Click "+ Add" in the Tags column
+    await user.click(screen.getByText('+ Add'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Close by pressing Escape
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
 
