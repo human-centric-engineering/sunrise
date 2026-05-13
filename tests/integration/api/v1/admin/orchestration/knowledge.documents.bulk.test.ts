@@ -426,8 +426,14 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/bulk', () => {
     });
   });
 
-  describe('Category parameter', () => {
-    it('passes category to uploadDocument when form has category field', async () => {
+  describe('Legacy category form field', () => {
+    // Phase 6 dropped the `category` column from `AiKnowledgeDocument` and
+    // the corresponding `category` argument from `uploadDocument`. The 4th
+    // positional argument is now `sourceUrl`. A stale client still sending
+    // `category` in form data must be ignored — NOT silently misrouted into
+    // the `sourceUrl` slot. Regression test for the dead-code defect found
+    // in /code-review:code-review.
+    it('ignores a legacy `category` form field instead of threading it through to uploadDocument', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const fd = makeFormDataWithFiles([
         new File(['# Hello'], 'notes.md', { type: 'text/markdown' }),
@@ -436,11 +442,12 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/bulk', () => {
 
       await POST(makePostRequest(fd));
 
+      // The legacy "guides" value must NOT land in the sourceUrl slot.
       expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
         expect.any(String),
         'notes.md',
         ADMIN_ID,
-        'guides'
+        undefined
       );
     });
   });

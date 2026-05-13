@@ -77,10 +77,6 @@ export const POST = withAdminAuth(async (request, session) => {
     });
   }
 
-  const category = formData.get('category');
-  const categoryStr =
-    typeof category === 'string' && category.trim().length > 0 ? category.trim() : undefined;
-
   // Repeated `tagIds` form fields — same multipart shape as the single-file
   // upload route. Unknown ids are dropped silently.
   const tagIdsRaw = formData.getAll('tagIds');
@@ -137,7 +133,7 @@ export const POST = withAdminAuth(async (request, session) => {
           continue;
         }
 
-        const doc = await uploadDocument(content, file.name, session.user.id, categoryStr);
+        const doc = await uploadDocument(content, file.name, session.user.id, undefined);
         await attachTagsTo(doc.id);
         results.push({ fileName: file.name, status: 'success', documentId: doc.id });
       } else if (requiresPreview(file.name)) {
@@ -146,7 +142,7 @@ export const POST = withAdminAuth(async (request, session) => {
       } else {
         // EPUB, DOCX
         const buffer = Buffer.from(await file.arrayBuffer());
-        const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, categoryStr);
+        const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, undefined);
         await attachTagsTo(doc.id);
         results.push({ fileName: file.name, status: 'success', documentId: doc.id });
       }
