@@ -263,7 +263,7 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 - C[ ] L[ ] M[ ] A[ ] — Embedding insert fails (provider down) → verify chat continues; embedding is fire-and-forget.
 - C[ ] L[ ] M[ ] A[ ] — Conversation context type set to `evaluation` — verify `AiEvaluationLog` rows are mirrored alongside `AiMessage` rows (per Tier 2 #6 in `improvement-priorities.md`).
 - C[ ] L[ ] M[ ] A[ ] — Resumability — client disconnects at token 47 of 200 and reconnects with `Last-Event-ID` (or equivalent) → verify whether the server resumes, restarts, or requires the user to re-issue, and that the documented behaviour matches.
-- C[ ] L[ ] M[ ] A[ ] — Agent's `knowledgeCategories` modified between turn 5 and turn 6 of the same conversation → verify whether turn 6 honours the old or new scope, and that the rolling summary built from old-scope chunks doesn't leak old-scope content into the new scope.
+- C[ ] L[ ] M[ ] A[ ] — Agent's knowledge access (mode, tag grants, or document grants) modified between turn 5 and turn 6 of the same conversation → verify whether turn 6 honours the old or new scope, that the resolver cache is invalidated on grant mutation, and that the rolling summary built from old-scope chunks doesn't leak old-scope content into the new scope.
 
 ---
 
@@ -281,7 +281,7 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 - C[ ] L[ ] M[ ] A[ ] — Attach 5 capabilities to an agent → verify the LLM sees only the explicitly visible subset (default-deny LLM visibility, default-allow dispatch).
 - C[ ] L[ ] M[ ] A[ ] — Set `monthlyBudgetUsd` to $50 → verify the budget renders in the cost panel and the agent can be chatted with up to that cap.
 - C[ ] L[ ] M[ ] A[ ] — Set `fallbackProviders` to an ordered list of 3 providers → verify the fallback chain is honoured under failure (cross-ref Phase 1.3).
-- C[ ] L[ ] M[ ] A[ ] — Set `knowledgeCategories` to scope an agent to one category → verify other categories' chunks are filtered out of search results.
+- C[ ] L[ ] M[ ] A[ ] — Set `knowledgeAccessMode` to `restricted` and grant one tag → verify chunks from documents lacking that tag (and not system-scoped) are filtered out of search results across the chat capability, the MCP `knowledge/search` resource, and the admin preview-as-agent search.
 - C[ ] L[ ] M[ ] A[ ] — Clone an agent → verify all configuration (instructions, capabilities, knowledge scope, fallback chain) is duplicated.
 - C[ ] L[ ] M[ ] A[ ] — Export a single agent as JSON → verify all configuration is in the bundle (credentials excluded).
 - C[ ] L[ ] M[ ] A[ ] — Export multiple agents (bulk) → verify the bundle is well-formed.
@@ -453,7 +453,7 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 - C[ ] L[ ] M[ ] A[ ] — Upload an EPUB book → verify chapters become semantically coherent chunks.
 - C[ ] L[ ] M[ ] A[ ] — Upload a DOCX with headings → verify chunking respects heading boundaries.
 - C[ ] L[ ] M[ ] A[ ] — Upload a PDF → verify the lifecycle pauses at `pending_review`, the preview is visible, and confirmation transitions to `ready`.
-- C[ ] L[ ] M[ ] A[ ] — Tag a document with a category → verify only agents scoped to that category retrieve its chunks.
+- C[ ] L[ ] M[ ] A[ ] — Tag a document with a `KnowledgeTag` → verify only `restricted` agents granted that tag (or granted the document directly) retrieve its chunks; `full`-mode agents retrieve unchanged.
 - C[ ] L[ ] M[ ] A[ ] — Re-chunk an existing document → verify chunks are regenerated and embeddings are reissued.
 - C[ ] L[ ] M[ ] A[ ] — Retry a failed document → verify it re-enters the pipeline.
 
@@ -488,7 +488,7 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 
 ## Phase 1.7 — Knowledge Base: Hybrid Search & Citations
 
-**What this covers:** The hybrid retrieval (BM25-flavoured `ts_rank_cd` blended with pgvector cosine via tunable weights), agent scoping by `knowledgeCategories`, and the citation envelope that flows from the `search_knowledge_base` tool through the chat handler to the persisted message metadata and rendered admin/embed surfaces.
+**What this covers:** The hybrid retrieval (BM25-flavoured `ts_rank_cd` blended with pgvector cosine via tunable weights), agent scoping via `knowledgeAccessMode` + `KnowledgeTag` grants resolved by `resolveAgentDocumentAccess`, and the citation envelope that flows from the `search_knowledge_base` tool through the chat handler to the persisted message metadata and rendered admin/embed surfaces.
 
 **Reference docs:** `.context/orchestration/knowledge.md`, `.context/orchestration/chat.md` (Citations section), `.context/orchestration/output-guard.md` (Citation Guard), `functional-specification.md` §7.3.
 
@@ -507,8 +507,9 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 
 - C[ ] L[ ] M[ ] A[ ] — Run a search query containing a SQL-like payload → verify Postgres parameterisation prevents injection.
 - C[ ] L[ ] M[ ] A[ ] — Run a search query of 10,000 characters → verify clean rejection or truncation.
-- C[ ] L[ ] M[ ] A[ ] — Configure an agent with `knowledgeCategories: []` → verify NO chunks are returned (correct restrictive behaviour, not a misinterpretation of "no filter").
-- C[ ] L[ ] M[ ] A[ ] — Configure two agents with overlapping but distinct categories → verify each retrieves only its own scope (no cross-leak).
+- C[ ] L[ ] M[ ] A[ ] — Configure a `restricted` agent with zero tag grants and zero document grants → verify only system-scoped seed documents are returned (correct restrictive behaviour, not a misinterpretation of "no filter"). Regression test for the empty-grants bypass closed in `fix(knowledge): close two access-control bypasses in restricted search`.
+- C[ ] L[ ] M[ ] A[ ] — Configure two `restricted` agents with overlapping but distinct tag grants → verify each retrieves only its own scope (no cross-leak) across chat capability, MCP, and admin preview.
+- C[ ] L[ ] M[ ] A[ ] — From a `restricted` agent's LLM, attempt to read a document by UUID outside the granted set → verify the capability returns `forbidden_document` and the attempt is logged.
 - C[ ] L[ ] M[ ] A[ ] — Set the Citation Guard to `block` and have the LLM emit a `[N]` for a marker that no citation produced → verify guard catches the hallucinated marker.
 - C[ ] L[ ] M[ ] A[ ] — Set the Citation Guard to `block` and have the LLM produce a citationable claim with NO marker → verify the under-citation case is caught.
 - C[ ] L[ ] M[ ] A[ ] — Set the Citation Guard to `log_only` → verify violations are logged but the response is delivered unchanged.
@@ -522,7 +523,7 @@ A regression in any Tier 1 area breaks every deployment of the platform. These a
 - C[ ] L[ ] M[ ] A[ ] — Citation envelope with 50+ unique markers in one turn → verify the message metadata size is reasonable.
 - C[ ] L[ ] M[ ] A[ ] — CSV chunk surfaced as a citation → verify it renders the row content readably (not as raw JSON).
 - C[ ] L[ ] M[ ] A[ ] — Search determinism — issue the same query twice with identical settings → verify identical hybrid rankings and ties resolved deterministically (drift here makes evaluation re-scores artifactual).
-- C[ ] L[ ] M[ ] A[ ] — Agent `knowledgeCategories` modified between turn 5 and turn 6 of an ongoing conversation → verify subsequent searches honour the new scope, and that the rolling summary doesn't leak old-scope content forward.
+- C[ ] L[ ] M[ ] A[ ] — Agent knowledge grants (tag, document, or `knowledgeAccessMode`) modified between turn 5 and turn 6 of an ongoing conversation → verify subsequent searches honour the new scope (resolver cache invalidated), and that the rolling summary doesn't leak old-scope content forward.
 - C[ ] L[ ] M[ ] A[ ] — Citation persistence vs source mutation: a chunk cited in a persisted message is later edited or its parent document deleted → verify the citation envelope on the historical message remains coherent (snapshot of source content, or a "source removed" flag), not silently broken.
 
 ---
@@ -1376,7 +1377,7 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 
 ### Edge cases
 
-- C[ ] L[ ] M[ ] A[ ] — Coverage gaps for an agent with `knowledgeCategories: []` → verify expected behaviour.
+- C[ ] L[ ] M[ ] A[ ] — Coverage gaps for a `restricted` agent with zero tag grants and zero document grants → verify expected behaviour (only system-scoped seed docs returned).
 - C[ ] L[ ] M[ ] A[ ] — Topics analysis on a fresh instance with no historical data.
 - C[ ] L[ ] M[ ] A[ ] — Engagement metrics where one user dominates traffic → verify the reporting isn't skewed in misleading ways.
 
@@ -1671,7 +1672,7 @@ The pattern: configuration / state mutates while a request is mid-flight. Verify
 - C[ ] L[ ] M[ ] A[ ] — Agent visibility flipped from `public` to `internal` mid-conversation (cross-ref Phase 1.2).
 - C[ ] L[ ] M[ ] A[ ] — Provider key rotated mid-stream (cross-ref Phase 1.3).
 - C[ ] L[ ] M[ ] A[ ] — Capability `customConfig` updated mid-workflow execution (cross-ref Phase 1.5 / 2.1).
-- C[ ] L[ ] M[ ] A[ ] — Agent `knowledgeCategories` modified between turns (cross-ref Phase 1.7).
+- C[ ] L[ ] M[ ] A[ ] — Agent knowledge grants (`knowledgeAccessMode`, tag grants, or document grants) modified between turns (cross-ref Phase 1.7) — resolver cache must invalidate.
 - C[ ] L[ ] M[ ] A[ ] — Settings singleton change mid-chat (cross-ref Phase 4.7).
 - C[ ] L[ ] M[ ] A[ ] — Embedding model swap to a different vector dimension while old chunks exist (cross-ref Phase 1.6 / 1.3).
 - C[ ] L[ ] M[ ] A[ ] — Workflow definition version bumped while a previous-version execution is in flight (cross-ref Phase 2.1).
