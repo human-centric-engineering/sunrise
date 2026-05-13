@@ -23,7 +23,13 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent, Citation, MessageMetadata, PendingApproval } from '@/types/orchestration';
+import type {
+  ChatEvent,
+  Citation,
+  MessageMetadata,
+  PendingApproval,
+  ToolCallTrace,
+} from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -106,6 +112,54 @@ async function withToolTimeout<T>(
   } finally {
     clearTimeout(timer!);
   }
+}
+
+/**
+ * Build a {@link ToolCallTrace} from a dispatch outcome. Keeps the
+ * per-tool admin diagnostic shape consistent across the single-tool and
+ * parallel-tool branches of the loop.
+ *
+ * `resultPreview` is truncated to ~480 chars so the persisted metadata
+ * column stays well below the Prisma row-size budget even after a many-
+ * tool turn. The full result is still available on the tool-role
+ * message's `metadata.result` for any caller that needs it.
+ */
+function buildToolCallTrace(
+  slug: string,
+  args: unknown,
+  result: unknown,
+  latencyMs: number
+): ToolCallTrace {
+  const success =
+    typeof result === 'object' && result !== null && 'success' in result
+      ? (result as { success: unknown }).success === true
+      : false;
+  const errorObj =
+    typeof result === 'object' &&
+    result !== null &&
+    'error' in result &&
+    typeof (result as { error: unknown }).error === 'object' &&
+    (result as { error: unknown }).error !== null
+      ? ((result as { error: { code?: unknown } }).error as { code?: unknown })
+      : null;
+  const errorCode = typeof errorObj?.code === 'string' ? errorObj.code : undefined;
+
+  let resultPreview: string | undefined;
+  try {
+    const json = JSON.stringify(result);
+    if (json) resultPreview = json.length > 480 ? `${json.slice(0, 477)}...` : json;
+  } catch {
+    // Non-serialisable result (cyclic, BigInt) — skip preview rather than throw.
+  }
+
+  return {
+    slug,
+    arguments: args,
+    latencyMs,
+    success,
+    ...(errorCode ? { errorCode } : {}),
+    ...(resultPreview ? { resultPreview } : {}),
+  };
 }
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
@@ -584,6 +638,15 @@ export class StreamingChatHandler {
       const citations: Citation[] = [];
       let nextCitationMarker = 1;
 
+      /**
+       * Per-tool diagnostics accumulated across the whole turn. Populated
+       * only when `request.includeTrace === true`. Each dispatch (single
+       * or parallel branch) pushes one entry. Attached to the terminal
+       * assistant message metadata so the post-hoc viewer can render
+       * the same `<MessageTrace>` component without replaying the loop.
+       */
+      const turnToolCalls: ToolCallTrace[] = [];
+
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
@@ -875,6 +938,12 @@ export class StreamingChatHandler {
           if (isTerminalTurn && citations.length > 0) {
             assistantMetadata.citations = citations;
           }
+          // Admin-only: attach per-tool diagnostics to the terminal
+          // assistant message so the post-hoc trace viewer can render
+          // the same `<MessageTrace>` strip from persisted state.
+          if (isTerminalTurn && request.includeTrace && turnToolCalls.length > 0) {
+            assistantMetadata.toolCalls = turnToolCalls;
+          }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
@@ -1086,7 +1155,18 @@ export class StreamingChatHandler {
           nextCitationMarker = extracted.nextMarker;
           const augmentedResult = extracted.augmentedResult;
 
-          yield { type: 'capability_result', capabilitySlug: tc.name, result: augmentedResult };
+          const singleLatencyMs = Date.now() - dispatchStart;
+          const singleTrace = request.includeTrace
+            ? buildToolCallTrace(tc.name, tc.arguments, augmentedResult, singleLatencyMs)
+            : undefined;
+          if (singleTrace) turnToolCalls.push(singleTrace);
+
+          yield {
+            type: 'capability_result',
+            capabilitySlug: tc.name,
+            result: augmentedResult,
+            ...(singleTrace ? { trace: singleTrace } : {}),
+          };
 
           await this.persistMessage({
             conversationId: conversation.id,
@@ -1107,7 +1187,7 @@ export class StreamingChatHandler {
             eventType: 'capability_result',
             capabilitySlug: tc.name,
             outputData: augmentedResult,
-            executionTimeMs: Date.now() - dispatchStart,
+            executionTimeMs: singleLatencyMs,
           });
 
           if (request.contextType && request.contextId) {
@@ -1206,13 +1286,25 @@ export class StreamingChatHandler {
           );
           const parallelDispatchEndMs = Date.now() - parallelDispatchStart;
 
-          const results: Array<{ capabilitySlug: string; result: unknown }> = [];
+          const results: Array<{
+            capabilitySlug: string;
+            result: unknown;
+            trace?: ToolCallTrace;
+          }> = [];
           const toolResultMessages: LlmMessage[] = [];
           let anySkipFollowup = false;
 
           // Process skipped tools first
           for (const { tc, result } of skippedResults) {
-            results.push({ capabilitySlug: tc.name, result });
+            const skippedTrace = request.includeTrace
+              ? buildToolCallTrace(tc.name, tc.arguments, result, 0)
+              : undefined;
+            if (skippedTrace) turnToolCalls.push(skippedTrace);
+            results.push({
+              capabilitySlug: tc.name,
+              result,
+              ...(skippedTrace ? { trace: skippedTrace } : {}),
+            });
             await this.persistMessage({
               conversationId: conversation.id,
               role: 'tool',
@@ -1282,7 +1374,15 @@ export class StreamingChatHandler {
             nextCitationMarker = extracted.nextMarker;
             const augmentedResult = extracted.augmentedResult;
 
-            results.push({ capabilitySlug: tc.name, result: augmentedResult });
+            const parallelTrace = request.includeTrace
+              ? buildToolCallTrace(tc.name, tc.arguments, augmentedResult, parallelDispatchEndMs)
+              : undefined;
+            if (parallelTrace) turnToolCalls.push(parallelTrace);
+            results.push({
+              capabilitySlug: tc.name,
+              result: augmentedResult,
+              ...(parallelTrace ? { trace: parallelTrace } : {}),
+            });
 
             await this.persistMessage({
               conversationId: conversation.id,
