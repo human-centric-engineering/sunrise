@@ -41,7 +41,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
-import { formatAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { formatAudioDefault, parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 
 export interface ProviderSummary {
   slug: string;
@@ -84,6 +84,20 @@ export interface DefaultModelsFormProps {
   embeddingModels?: EmbeddingModelSummary[];
   /** Audio-capable matrix rows, sourced from /provider-models?capability=audio. */
   audioModels?: AudioModelSummary[];
+  /**
+   * When set, the form switches to wizard mode:
+   *
+   *   - the header Save button is hidden,
+   *   - a single "Save & continue" button appears at the bottom of the
+   *     card,
+   *   - on a successful save (or when the form is pristine), `onComplete`
+   *     fires so the wizard can advance to the next step.
+   *
+   * The form's data shape and validation stays identical to the settings
+   * page — the wizard just embeds the same component instead of
+   * duplicating the dropdown / suggestion UX.
+   */
+  wizardMode?: { onComplete: () => void };
 }
 
 // Narrower client-side schema — the server re-validates every model id
@@ -100,6 +114,25 @@ const settingsFormSchema = z.object({
 });
 
 type SettingsFormData = z.input<typeof settingsFormSchema>;
+
+/**
+ * Task slots split for the wizard's Required / Optional view.
+ *
+ *   - Required: chat (needed by every system-seeded agent without a
+ *     pinned model) and embeddings (needed by the knowledge-base
+ *     pipeline). These two together are the minimum for the wizard's
+ *     smoke-test step to succeed and for the KB to be usable.
+ *
+ *   - Optional: routing and reasoning both fall back to the chat
+ *     default when unset; audio is only consulted when an agent has
+ *     voice input enabled. Leaving these blank during setup is a
+ *     legitimate choice.
+ *
+ * Settings page ignores this split and renders all five in a single
+ * grid — operators editing existing config already know the priority.
+ */
+const REQUIRED_TASKS = ['chat', 'embeddings'] as const satisfies readonly TaskType[];
+const OPTIONAL_TASKS = ['routing', 'reasoning', 'audio'] as const satisfies readonly TaskType[];
 
 const TASK_LABELS: Record<TaskType, { label: string; help: React.ReactNode }> = {
   routing: {
@@ -196,6 +229,7 @@ export function DefaultModelsForm({
   providers = [],
   embeddingModels = [],
   audioModels = [],
+  wizardMode,
 }: DefaultModelsFormProps) {
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -209,18 +243,36 @@ export function DefaultModelsForm({
   const stored = settings?.defaultModelsStored ?? {};
   const hydrated = settings?.defaultModels;
 
+  // Audio uses a `${providerSlug}::${modelId}` composite at the wire
+  // level, but pre-composite installs may have a bare model id stored.
+  // The dropdown options are always composite, so a legacy value would
+  // never match an option and the Select would silently show its
+  // placeholder. Resolve the composite at load time by looking up the
+  // matrix row whose `model` matches the stored id. If multiple rows
+  // match (two providers with the same id) we pick the first, matching
+  // the legacy resolver's arbitrary-but-deterministic choice.
+  const normalizedStoredAudio = React.useMemo(() => {
+    const raw = stored.audio ?? '';
+    if (!raw) return '';
+    const parsed = parseAudioDefault(raw);
+    if (parsed?.providerSlug) return raw;
+    const match = audioModels.find((m) => m.model === (parsed?.modelId ?? raw));
+    return match ? formatAudioDefault(match.providerSlug, match.model) : '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, audioModels]);
+
   const defaults: SettingsFormData = React.useMemo(
     () => ({
       routing: stored.routing ?? '',
       chat: stored.chat ?? '',
       reasoning: stored.reasoning ?? '',
       embeddings: stored.embeddings ?? '',
-      audio: stored.audio ?? '',
+      audio: normalizedStoredAudio,
     }),
     // `stored` is rebuilt every render from `settings`; depend on the
     // parent's identity to avoid the useMemo running every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [settings]
+    [settings, normalizedStoredAudio]
   );
 
   const {
@@ -301,10 +353,123 @@ export function DefaultModelsForm({
     [audioModels, configuredProviderSlugs]
   );
 
+  /**
+   * Render the dropdown + suggestion footer for a single task slot.
+   * Extracted as a closure so the settings page (flat single grid) and
+   * the wizard (Required/Optional split) can each call it without
+   * duplicating the option-resolution / Controller wiring. Returns the
+   * full per-row JSX including the label, Select, and footer.
+   */
+  const renderTaskSlot = (task: TaskType): React.ReactElement => {
+    const isEmbeddings = task === 'embeddings';
+    const isAudio = task === 'audio';
+    const optionsForTask = isEmbeddings
+      ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
+      : isAudio
+        ? audioOptions
+        : chatLikeOptions.map((m) => ({
+            id: m.id,
+            label: `${m.name} (${m.tier})`,
+          }));
+    // Drop suggestions that aren't actually in the dropdown for this
+    // slot — e.g. a chat-tier model proposed for embeddings. Showing
+    // "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in the embeddings
+    // dropdown is misleading and the "Use suggestion" button is already
+    // a no-op for those ids.
+    const rawSuggested = hydrated?.[task] ?? '';
+    const suggested = optionsForTask.some((o) => o.id === rawSuggested) ? rawSuggested : '';
+    const suggestedLabel = optionsForTask.find((o) => o.id === suggested)?.label ?? suggested;
+
+    return (
+      <div key={task} className="space-y-1.5">
+        <Label htmlFor={`model-${task}`} className="flex items-center gap-1">
+          {TASK_LABELS[task].label}
+          <FieldHelp title={TASK_LABELS[task].label}>{TASK_LABELS[task].help}</FieldHelp>
+        </Label>
+        <Controller
+          name={task}
+          control={control}
+          render={({ field }) => {
+            const isStored = field.value !== '';
+            return (
+              <>
+                <Select
+                  value={field.value || undefined}
+                  onValueChange={field.onChange}
+                  disabled={optionsForTask.length === 0}
+                >
+                  <SelectTrigger id={`model-${task}`}>
+                    <SelectValue placeholder="Not set — pick a model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {optionsForTask.length === 0 ? (
+                      <SelectItem value="__none" disabled>
+                        No options
+                      </SelectItem>
+                    ) : (
+                      optionsForTask.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.label}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                {/* When the slot has no available options AND nothing is
+                    saved, surface a helpful hint instead of the
+                    suggestion footer. Embeddings is the most likely
+                    case here (Anthropic has no embeddings) but the same
+                    UX makes sense for any task. */}
+                {!isStored && optionsForTask.length === 0 ? (
+                  isEmbeddings ? (
+                    <NoEmbeddingProviderHint />
+                  ) : isAudio ? (
+                    <NoAudioProviderHint />
+                  ) : (
+                    <NoOptionsHint task={task} />
+                  )
+                ) : (
+                  <SuggestionFooter
+                    isStored={isStored}
+                    suggested={suggested}
+                    suggestedLabel={suggestedLabel}
+                    onUseSuggestion={() => {
+                      if (suggested && optionsForTask.some((o) => o.id === suggested)) {
+                        setValue(task, suggested, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
+                      }
+                    }}
+                    onClear={() => {
+                      setValue(task, '', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                  />
+                )}
+              </>
+            );
+          }}
+        />
+        {errors[task] && <p className="text-xs text-red-600">{errors[task]?.message as string}</p>}
+      </div>
+    );
+  };
+
   const onSubmit = async (data: SettingsFormData) => {
     setSubmitting(true);
     setError(null);
     try {
+      // Wizard mode + pristine form → nothing to save, just advance.
+      // The form is pre-filled with the existing settings, so a
+      // "Continue" with no edits is a meaningful "I confirm these
+      // values" — but there's nothing to PATCH.
+      if (wizardMode && !isDirty) {
+        wizardMode.onComplete();
+        return;
+      }
       const parsed = settingsFormSchema.parse(data);
       // Server schema rejects empty strings (`z.string().min(1)`); filter
       // them out so a partial save (e.g. only chat picked, embeddings
@@ -322,6 +487,7 @@ export function DefaultModelsForm({
       });
       reset(data);
       setSavedAt(new Date());
+      wizardMode?.onComplete();
     } catch (err) {
       setError(
         err instanceof APIClientError
@@ -351,19 +517,24 @@ export function DefaultModelsForm({
                 Saved
               </span>
             )}
-            <Button type="submit" size="sm" disabled={submitting || !isDirty}>
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Save changes
-                </>
-              )}
-            </Button>
+            {/* Wizard mode owns its own Save & Continue button in the
+                card footer, so the header version would be duplicative
+                and confusing about which one advances the flow. */}
+            {!wizardMode && (
+              <Button type="submit" size="sm" disabled={submitting || !isDirty}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save changes
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         </CardHeader>
 
@@ -384,6 +555,27 @@ export function DefaultModelsForm({
 
           {!hasAnyProvider ? (
             <NoProvidersCTA />
+          ) : wizardMode ? (
+            // Wizard mode: split the 5 task slots into a "Required" and
+            // "Optional" pair so a brand-new operator immediately sees
+            // which two defaults actually matter for a working install.
+            // Settings keeps the flat single-section layout below — the
+            // operator on that page is editing existing config and
+            // already knows the priority.
+            <>
+              <TaskSlotGroup
+                title="Required"
+                description="Chat powers system-seeded agents (pattern advisor, quiz master, MCP server) and any agent that doesn't pin its own model. Embeddings powers knowledge-base search. The smoke-test step needs these to pass."
+                tasks={REQUIRED_TASKS}
+                renderSlot={renderTaskSlot}
+              />
+              <TaskSlotGroup
+                title="Optional"
+                description="Routing and reasoning have graceful fallbacks (they fall back to the chat default if unset). Audio is only used by agents with voice input enabled. Leave any of these blank — you can fill them in later from Settings → Default models."
+                tasks={OPTIONAL_TASKS}
+                renderSlot={renderTaskSlot}
+              />
+            </>
           ) : (
             <section className="space-y-4">
               <h3 className="text-sm font-semibold">Default model assignments</h3>
@@ -392,121 +584,110 @@ export function DefaultModelsForm({
                 <code>model</code> binding refuse to run when these are unset. Pick a model in each
                 row, or click <em>Use suggestion</em>.
               </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {TASK_TYPES.map((task) => {
-                  const isEmbeddings = task === 'embeddings';
-                  const isAudio = task === 'audio';
-                  const optionsForTask = isEmbeddings
-                    ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
-                    : isAudio
-                      ? audioOptions
-                      : chatLikeOptions.map((m) => ({
-                          id: m.id,
-                          label: `${m.name} (${m.tier})`,
-                        }));
-                  // Drop suggestions that aren't actually in the dropdown for
-                  // this slot — e.g. a chat-tier model proposed for embeddings.
-                  // Showing "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in
-                  // the embeddings dropdown is misleading and the
-                  // "Use suggestion" button is already a no-op for those ids.
-                  const rawSuggested = hydrated?.[task] ?? '';
-                  const suggested = optionsForTask.some((o) => o.id === rawSuggested)
-                    ? rawSuggested
-                    : '';
-                  const suggestedLabel =
-                    optionsForTask.find((o) => o.id === suggested)?.label ?? suggested;
-
-                  return (
-                    <div key={task} className="space-y-1.5">
-                      <Label htmlFor={`model-${task}`} className="flex items-center gap-1">
-                        {TASK_LABELS[task].label}
-                        <FieldHelp title={TASK_LABELS[task].label}>
-                          {TASK_LABELS[task].help}
-                        </FieldHelp>
-                      </Label>
-                      <Controller
-                        name={task}
-                        control={control}
-                        render={({ field }) => {
-                          const isStored = field.value !== '';
-                          return (
-                            <>
-                              <Select
-                                value={field.value || undefined}
-                                onValueChange={field.onChange}
-                                disabled={optionsForTask.length === 0}
-                              >
-                                <SelectTrigger id={`model-${task}`}>
-                                  <SelectValue placeholder="Not set — pick a model" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {optionsForTask.length === 0 ? (
-                                    <SelectItem value="__none" disabled>
-                                      No options
-                                    </SelectItem>
-                                  ) : (
-                                    optionsForTask.map((o) => (
-                                      <SelectItem key={o.id} value={o.id}>
-                                        {o.label}
-                                      </SelectItem>
-                                    ))
-                                  )}
-                                </SelectContent>
-                              </Select>
-                              {/* When the slot has no available options
-                                  AND nothing is saved, surface a helpful
-                                  hint instead of the suggestion footer.
-                                  Embeddings is the most likely case here
-                                  (Anthropic has no embeddings) but the
-                                  same UX makes sense for any task. */}
-                              {!isStored && optionsForTask.length === 0 ? (
-                                isEmbeddings ? (
-                                  <NoEmbeddingProviderHint />
-                                ) : isAudio ? (
-                                  <NoAudioProviderHint />
-                                ) : (
-                                  <NoOptionsHint task={task} />
-                                )
-                              ) : (
-                                <SuggestionFooter
-                                  isStored={isStored}
-                                  suggested={suggested}
-                                  suggestedLabel={suggestedLabel}
-                                  onUseSuggestion={() => {
-                                    if (
-                                      suggested &&
-                                      optionsForTask.some((o) => o.id === suggested)
-                                    ) {
-                                      setValue(task, suggested, {
-                                        shouldDirty: true,
-                                        shouldValidate: true,
-                                      });
-                                    }
-                                  }}
-                                  onClear={() => {
-                                    setValue(task, '', {
-                                      shouldDirty: true,
-                                      shouldValidate: true,
-                                    });
-                                  }}
-                                />
-                              )}
-                            </>
-                          );
-                        }}
-                      />
-                      {errors[task] && (
-                        <p className="text-xs text-red-600">{errors[task]?.message as string}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <div className="grid gap-4 sm:grid-cols-2">{TASK_TYPES.map(renderTaskSlot)}</div>
             </section>
+          )}
+
+          {wizardMode && (
+            <WizardFooter
+              submitting={submitting}
+              isDirty={isDirty}
+              chatPicked={!!stored.chat}
+              embeddingsPicked={!!stored.embeddings}
+              hasAnyProvider={hasAnyProvider}
+            />
           )}
         </CardContent>
       </Card>
     </form>
+  );
+}
+
+/**
+ * Bottom-of-card action row for wizard mode. Mirrors the wizard's
+ * "Continue" affordance for the provider and smoke-test steps — same
+ * shape, same right-aligned placement — so the operator's eye lands in
+ * the same spot on every step.
+ *
+ * The button is a single submit trigger: if the form is dirty it saves
+ * + advances; if it's pristine it just advances (the values are already
+ * persisted from a prior session or the env-detect auto-write).
+ */
+function WizardFooter({
+  submitting,
+  isDirty,
+  chatPicked,
+  embeddingsPicked,
+  hasAnyProvider,
+}: {
+  submitting: boolean;
+  isDirty: boolean;
+  chatPicked: boolean;
+  embeddingsPicked: boolean;
+  hasAnyProvider: boolean;
+}): React.ReactElement {
+  const missingMinimums: string[] = [];
+  if (!chatPicked) missingMinimums.push('a chat model');
+  if (!embeddingsPicked) missingMinimums.push('an embeddings model');
+
+  return (
+    <div className="space-y-3 border-t pt-4">
+      {hasAnyProvider && missingMinimums.length > 0 && (
+        <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>
+            For full functionality we recommend picking {missingMinimums.join(' and ')}. You can
+            still continue and set this later from Settings → Default models.
+          </span>
+        </div>
+      )}
+      <div className="flex justify-end">
+        <Button type="submit" size="sm" disabled={submitting}>
+          {submitting ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+              Saving…
+            </>
+          ) : isDirty ? (
+            <>
+              <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+              Save &amp; continue
+            </>
+          ) : (
+            'Continue'
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Wizard-mode section that wraps a labelled group of task slots
+ * (Required or Optional). Same 2-column grid the flat settings layout
+ * uses inside, so a slot rendered here is visually identical to one
+ * rendered on the settings page — the only difference is the heading +
+ * description band above the grid.
+ */
+function TaskSlotGroup({
+  title,
+  description,
+  tasks,
+  renderSlot,
+}: {
+  title: string;
+  description: string;
+  tasks: readonly TaskType[];
+  renderSlot: (task: TaskType) => React.ReactElement;
+}): React.ReactElement {
+  return (
+    <section className="space-y-3">
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="text-muted-foreground text-xs">{description}</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">{tasks.map(renderSlot)}</div>
+    </section>
   );
 }
 

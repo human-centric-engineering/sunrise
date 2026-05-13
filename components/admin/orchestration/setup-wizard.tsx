@@ -38,6 +38,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Loader2, X } from 'lucide-react';
 import { z } from 'zod';
 
+import {
+  DefaultModelsForm,
+  type AudioModelSummary,
+  type EmbeddingModelSummary,
+  type ProviderSummary,
+} from '@/components/admin/orchestration/default-models-form';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -60,6 +66,8 @@ import {
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { useWizard } from '@/lib/hooks/use-wizard';
 import { API } from '@/lib/api/endpoints';
+import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
+import type { OrchestrationSettings } from '@/types/orchestration';
 import { cn } from '@/lib/utils';
 
 // Bumped v2 → v3 because the layout changed shape: 6 steps → 4 steps,
@@ -317,7 +325,7 @@ const STEP_LABELS: Record<number, string> = {
  */
 const STEP_PILL_LABELS: Record<number, string> = {
   0: 'Provider',
-  1: 'Defaults',
+  1: 'Default Models',
   2: 'Smoke test',
   3: 'Done',
 };
@@ -974,63 +982,152 @@ function DetectionCardPreview({ row }: { row: DetectionRow }): React.ReactElemen
 }
 
 // ----------------------------------------------------------------------------
-// Step 2 — Confirm default chat / embedding models
+// Step 2 — Confirm default models (routing / chat / reasoning / embeddings / audio)
 // ----------------------------------------------------------------------------
 
 interface StepDefaultModelsProps {
   onComplete: () => void;
 }
 
-interface ModelOption {
-  /** Canonical id passed to the LLM provider (e.g. "claude-sonnet-4-6"). */
-  id: string;
-  provider: string;
-  /** True if the provider config row backing this model exists and is active. */
-  available?: boolean;
-}
-
-const modelOptionSchema: z.ZodType<ModelOption> = z.object({
-  id: z.string(),
-  provider: z.string(),
-  available: z.boolean().optional(),
+/**
+ * Matrix row shape returned by `GET /provider-models?capability=chat|audio`.
+ * Same fields the Settings page consumes server-side — see
+ * `app/admin/orchestration/settings/page.tsx`.
+ */
+const matrixRowSchema = z.object({
+  modelId: z.string(),
+  name: z.string(),
+  providerSlug: z.string(),
+  tierRole: z.string().optional(),
 });
+
+const providerRowSchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  isActive: z.boolean(),
+});
+
+const embeddingModelRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: z.string(),
+  model: z.string(),
+});
+
+// The full settings shape is large and loosely-typed (many optional
+// fields); we trust the server's envelope and only validate that
+// `data` is *some* object so the cast below stays honest.
+const settingsObjectSchema = z.object({}).passthrough();
+
+/**
+ * Mirrors the `matrixTierToModelTier` helper from
+ * `app/admin/orchestration/settings/page.tsx`. Kept inline because the
+ * settings page version is a server-only module — duplicating five
+ * lines is cheaper than wrestling it into a shared client-safe module.
+ */
+function tierFromMatrixRole(role: string | undefined): ModelTier {
+  switch (role) {
+    case 'thinking':
+      return 'frontier';
+    case 'worker':
+      return 'mid';
+    case 'infrastructure':
+    case 'control_plane':
+      return 'budget';
+    case 'local_sovereign':
+      return 'local';
+    default:
+      return 'mid';
+  }
+}
 
 function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactElement {
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chatModel, setChatModel] = useState<string>('');
-  const [embeddingModel, setEmbeddingModel] = useState<string>('');
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [settings, setSettings] = useState<OrchestrationSettings | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelSummary[]>([]);
+  const [audioModels, setAudioModels] = useState<AudioModelSummary[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [settingsRes, modelsRes] = await Promise.all([
+        const [settingsRes, modelsRes, providersRes, embeddingRes, audioRes] = await Promise.all([
           fetch(API.ADMIN.ORCHESTRATION.SETTINGS, { credentials: 'include' }),
-          fetch(API.ADMIN.ORCHESTRATION.MODELS, { credentials: 'include' }),
+          fetch(
+            `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=100`,
+            { credentials: 'include' }
+          ),
+          fetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=50`, {
+            credentials: 'include',
+          }),
+          fetch(API.ADMIN.ORCHESTRATION.EMBEDDING_MODELS, { credentials: 'include' }),
+          fetch(
+            `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=audio&isActive=true&limit=100`,
+            { credentials: 'include' }
+          ),
         ]);
         if (cancelled) return;
 
         if (settingsRes.ok) {
-          const parsed = envelopeSchema(defaultModelsSchema).safeParse(await settingsRes.json());
-          if (parsed.success && parsed.data.success && parsed.data.data?.defaultModels) {
-            setChatModel(parsed.data.data.defaultModels.chat ?? '');
-            setEmbeddingModel(parsed.data.data.defaultModels.embeddings ?? '');
+          const parsed = envelopeSchema(settingsObjectSchema).safeParse(await settingsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setSettings(parsed.data.data as unknown as OrchestrationSettings);
           }
         }
 
         if (modelsRes.ok) {
-          const parsed = envelopeSchema(z.array(modelOptionSchema)).safeParse(
-            await modelsRes.json()
+          const parsed = envelopeSchema(z.array(matrixRowSchema)).safeParse(await modelsRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setModels(
+              parsed.data.data.map((row) => ({
+                id: row.modelId,
+                name: row.name,
+                provider: row.providerSlug,
+                tier: tierFromMatrixRole(row.tierRole),
+                inputCostPerMillion: 0,
+                outputCostPerMillion: 0,
+                maxContext: 0,
+                supportsTools: false,
+              }))
+            );
+          }
+        }
+
+        if (providersRes.ok) {
+          const parsed = envelopeSchema(z.array(providerRowSchema)).safeParse(
+            await providersRes.json()
           );
           if (parsed.success && parsed.data.success && parsed.data.data) {
-            setModels(parsed.data.data);
+            setProviders(parsed.data.data);
+          }
+        }
+
+        if (embeddingRes.ok) {
+          const parsed = envelopeSchema(z.array(embeddingModelRowSchema)).safeParse(
+            await embeddingRes.json()
+          );
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setEmbeddingModels(parsed.data.data);
+          }
+        }
+
+        if (audioRes.ok) {
+          const parsed = envelopeSchema(z.array(matrixRowSchema)).safeParse(await audioRes.json());
+          if (parsed.success && parsed.data.success && parsed.data.data) {
+            setAudioModels(
+              parsed.data.data.map((row) => ({
+                model: row.modelId,
+                name: row.name,
+                providerSlug: row.providerSlug,
+              }))
+            );
           }
         }
       } catch {
-        // Silent — empty model list is rendered as a fallback message.
+        setError('Could not load some of the default-model data. Try refreshing.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1039,33 +1136,6 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
       cancelled = true;
     };
   }, []);
-
-  async function handleContinue(): Promise<void> {
-    setError(null);
-    setSubmitting(true);
-    try {
-      const patch: Record<string, string> = {};
-      if (chatModel) patch.chat = chatModel;
-      if (embeddingModel) patch.embeddings = embeddingModel;
-      if (Object.keys(patch).length > 0) {
-        const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS, {
-          method: 'PATCH',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultModels: patch }),
-        });
-        if (!res.ok) {
-          setError('Could not save the default models. You can edit them later from Settings.');
-          return;
-        }
-      }
-      onComplete();
-    } catch {
-      setError('Could not reach the server. Check your network and try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   if (loading) {
     return (
@@ -1077,78 +1147,21 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <p className="text-sm">
         These are the default models the system-seeded agents (pattern advisor, quiz master, the MCP
-        server) use when they don&apos;t pin a specific model. You can change them later from
-        Settings.
+        server) and the knowledge-base pipeline use when they don&apos;t pin a specific model. You
+        can change them later from Settings → Default models.
       </p>
-
-      <div className="space-y-2">
-        <Label htmlFor="default-chat-model">
-          Default chat model{' '}
-          <FieldHelp title="Default chat model">
-            Used by every system-seeded agent that doesn&apos;t pin its own model. Pick a balanced
-            tier — &quot;worker&quot; or &quot;thinking&quot; in the model matrix.
-          </FieldHelp>
-        </Label>
-        <Select value={chatModel || undefined} onValueChange={setChatModel} disabled={submitting}>
-          <SelectTrigger id="default-chat-model">
-            <SelectValue placeholder="Pick a model" />
-          </SelectTrigger>
-          <SelectContent>
-            {models.length === 0 ? (
-              <SelectItem value="__none" disabled>
-                No models discovered — check provider configuration.
-              </SelectItem>
-            ) : (
-              models.map((m) => (
-                <SelectItem key={m.id} value={m.id}>
-                  {m.id} <span className="text-muted-foreground ml-2 text-xs">{m.provider}</span>
-                </SelectItem>
-              ))
-            )}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="default-embedding-model">
-          Default embedding model{' '}
-          <FieldHelp title="Default embedding model">
-            Used by the knowledge base for vector search. If you don&apos;t plan to use the
-            knowledge base, leave this as the suggested default.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="default-embedding-model"
-          placeholder="e.g. text-embedding-3-small"
-          value={embeddingModel}
-          onChange={(e) => setEmbeddingModel(e.target.value)}
-          disabled={submitting}
-        />
-      </div>
-
       {error && <div className="text-destructive text-sm">{error}</div>}
-
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          onClick={() => {
-            void handleContinue();
-          }}
-          disabled={submitting}
-        >
-          {submitting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-              Saving…
-            </>
-          ) : (
-            'Continue'
-          )}
-        </Button>
-      </div>
+      <DefaultModelsForm
+        settings={settings}
+        models={models}
+        providers={providers}
+        embeddingModels={embeddingModels}
+        audioModels={audioModels}
+        wizardMode={{ onComplete }}
+      />
     </div>
   );
 }
@@ -1495,16 +1508,16 @@ function StepDone() {
           — browse agentic design patterns for inspiration.
         </li>
         <li>
-          <Link href="/admin/orchestration/workflows" className="font-medium underline">
-            Build a workflow
-          </Link>{' '}
-          — chain agents into multi-step flows.
-        </li>
-        <li>
           <Link href="/admin/orchestration/knowledge" className="font-medium underline">
             Add knowledge docs
           </Link>{' '}
           — give your agents retrieval context.
+        </li>
+        <li>
+          <Link href="/admin/orchestration/workflows" className="font-medium underline">
+            Build a workflow
+          </Link>{' '}
+          — chain agents into multi-step flows.
         </li>
       </ul>
     </div>

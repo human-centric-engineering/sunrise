@@ -53,6 +53,13 @@ export interface ProviderRowFixture {
   name: string;
   isLocal?: boolean;
   apiKeyPresent?: boolean;
+  /**
+   * Optional in test fixtures (older tests don't care). The default in
+   * `makeFetchMock` is `true` so providers count as active and
+   * `DefaultModelsForm` renders its dropdowns rather than the
+   * "no providers configured" CTA.
+   */
+  isActive?: boolean;
 }
 
 export interface MakeFetchMockOptions {
@@ -148,7 +155,7 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
     }
 
     if (u.includes('/providers')) {
-      const data: ProviderRowFixture[] =
+      const raw: ProviderRowFixture[] =
         providers ??
         Array.from({ length: providerTotal }, (_, i) => ({
           id: `id-${i}`,
@@ -157,6 +164,11 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
           isLocal: false,
           apiKeyPresent: true,
         }));
+      // Default `isActive: true` so the DefaultModelsForm rendered
+      // inside the wizard doesn't mistake every fixture row for an
+      // inactive provider and short-circuit to the "no providers"
+      // CTA. Tests that need an inactive row can set it explicitly.
+      const data = raw.map((p) => ({ isActive: true, ...p }));
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ success: true, data, meta: { total: providerTotal } }),
@@ -171,9 +183,43 @@ export function makeFetchMock(opts: MakeFetchMockOptions = {}) {
     }
 
     if (u.includes('/settings')) {
+      // Provide both the hydrated `defaultModels` (suggestion source)
+      // and the operator-saved `defaultModelsStored` (form value
+      // source) — DefaultModelsForm reads them separately so the
+      // wizard step pre-fills correctly in tests.
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ success: true, data: { defaultModels } }),
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: { defaultModels, defaultModelsStored: defaultModels },
+          }),
+      });
+    }
+
+    // Matrix-driven chat / audio rows used by DefaultModelsForm. The
+    // wizard's StepDefaultModels hits `/provider-models?capability=chat`
+    // and `/provider-models?capability=audio`; reshape the `models`
+    // fixture into the matrix row shape so the same fixture serves
+    // both endpoints. `/embedding-models` returns an empty list by
+    // default — tests that need embeddings pass `embeddingModels`.
+    if (u.includes('/provider-models')) {
+      const data = models.map((m) => ({
+        modelId: m.id,
+        name: m.id,
+        providerSlug: m.provider,
+        tierRole: 'worker',
+      }));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data }),
+      });
+    }
+
+    if (u.includes('/embedding-models')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: [] }),
       });
     }
 
