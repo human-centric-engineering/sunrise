@@ -20,6 +20,7 @@ Reusable SSE streaming chat component for embedding in admin panels. Lives at `c
 | `typingAnimationOptions` | `{ chunkSize?: number; intervalMs?: number }` | No       | —       | Typing animation speed config                                                                                    |
 | `showClearButton`        | `boolean`                                     | No       | `false` | Show trash icon to clear/reset conversation                                                                      |
 | `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                                                                              |
+| `showInlineTrace`        | `boolean`                                     | No       | `false` | Admin-only diagnostic. Sends `includeTrace: true` and renders `<MessageTrace>` per assistant turn.               |
 
 ## Modes
 
@@ -81,6 +82,21 @@ Raw error text is never forwarded to the DOM. The AbortController is cleaned up 
 
 Network failures trigger up to 3 reconnect attempts with exponential backoff (1s, 2s, 4s cap). HTTP-level errors (429, 4xx, 5xx) are not retriable and show specific error messages via `getUserFacingError()`. During reconnection, a warning banner shows "Connection interrupted. Reconnecting..." with an amber `AlertTriangle` icon. After all retries are exhausted, a "Connection Lost" error is displayed. Note: `AgentTestChat` deliberately does **not** retry — chat POSTs are not idempotent, so retrying would duplicate the message on the server.
 
+### Inline trace annotations (`showInlineTrace`)
+
+Admin-only. When `true`, the chat:
+
+1. Sets `includeTrace: true` on the POST body so the streaming handler attaches a `trace` field to each `capability_result` event (validated args, `latencyMs`, `success`, optional `errorCode`, `resultPreview`).
+2. Routes every SSE frame through the validated parser at `components/admin/orchestration/chat/chat-events.ts` (Zod-typed) — never reads raw `parseSseBlock` output for trace fields.
+3. Accumulates traces onto the in-flight assistant message in component state.
+4. Renders `<MessageTrace>` (`components/admin/orchestration/chat/message-trace.tsx`) below the bubble: collapsed strip shows "N tools · totalLatency"; expanded view shows per-tool cards with slug pill, latency, optional cost, arguments JSON, and a result preview.
+
+The strip is also rendered post-hoc by `conversation-trace-viewer.tsx` from the persisted `metadata.toolCalls` on the terminal assistant message, so the same component covers live + replay views.
+
+Currently enabled on: the Learning Lab pattern advisor + quiz, the agent test tab on the agent edit form, and the evaluation runner. All three are admin-only routes; do not enable on consumer surfaces — the strip exposes raw tool arguments and internal slugs.
+
+See `.context/orchestration/chat.md#inline-trace-annotations-admin-only` for the wire-shape contract and the consumer-route redaction guarantee.
+
 ## Usage
 
 ```tsx
@@ -89,6 +105,7 @@ Network failures trigger up to 3 reconnect attempts with exponential backoff (1s
   embedded
   enableTypingAnimation
   showClearButton
+  showInlineTrace
   starterPrompts={['Help me choose a pattern', 'Compare chain vs parallel']}
   onStreamComplete={(text) => console.log('Full response:', text)}
   onConversationCleared={() => console.log('Conversation cleared')}

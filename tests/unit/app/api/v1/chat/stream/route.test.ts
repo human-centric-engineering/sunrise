@@ -272,6 +272,22 @@ describe('POST /api/v1/chat/stream', () => {
         })
       );
     });
+
+    it('never forwards includeTrace into streamChat, even if a malicious client sets it', async () => {
+      // Defense-in-depth regression: the consumer route deliberately
+      // does NOT thread `includeTrace` into the orchestration handler.
+      // A client could craft the body to include the flag — the route
+      // must drop it so internal tool arguments and scores can never
+      // leak to public chat surfaces. If this test starts failing it
+      // means a future refactor accidentally widened the forward
+      // mapping and admin-only diagnostics are now reaching consumers.
+      const request = createMockRequest({ ...validPayload, includeTrace: true });
+
+      await POST(request);
+
+      const call = vi.mocked(streamChat).mock.calls[0][0] as Record<string, unknown>;
+      expect(call.includeTrace).toBeUndefined();
+    });
   });
 
   // ---------------------------------------------------------------------------

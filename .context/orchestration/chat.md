@@ -176,6 +176,44 @@ Currently `search_knowledge_base` is the only citation-producing capability; the
 
 Citations are attached only to the **terminal** assistant message (the one that contains the `[N]` markers). Interim tool-call turns do not carry citations because the LLM has not yet produced grounded text.
 
+## Inline trace annotations (admin only)
+
+Internal admin chat surfaces — the Learning Lab pattern advisor and quiz, the agent test tab on the agent edit form, the evaluation runner — display _why_ a response was produced: which capabilities the model invoked, with what arguments, at what latency, and whether each call succeeded. The diagnostic strip renders under each assistant bubble (small grey text, collapsible to per-tool cards) and is also rehydrated post-hoc by the conversation trace viewer.
+
+**Opting in.** The chat request takes a new `includeTrace?: boolean` flag (`ChatRequest` in `lib/orchestration/chat/types.ts`). Default `false`. The admin streaming route — `app/api/v1/admin/orchestration/chat/stream/route.ts` — forwards the client's choice. Consumer routes (`/api/v1/chat/stream`, `/api/v1/embed/chat/stream`) never set the flag, so consumer event payloads keep their existing shape.
+
+**Event shape additions** (additive — old clients ignore them):
+
+```ts
+| {
+    type: 'capability_result';
+    capabilitySlug: string;
+    result: unknown;
+    trace?: ToolCallTrace; // present iff includeTrace was set
+  }
+| {
+    type: 'capability_results';
+    results: Array<{ capabilitySlug: string; result: unknown; trace?: ToolCallTrace }>;
+  }
+```
+
+`ToolCallTrace` (defined in `types/orchestration.ts`):
+
+| Field           | Source                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `slug`          | Capability slug, e.g. `search_knowledge_base`                                                     |
+| `arguments`     | Validated args passed to `capabilityDispatcher.dispatch`                                          |
+| `latencyMs`     | `Date.now() - dispatchStart` (per-call for the single branch, batch-wide for the parallel branch) |
+| `success`       | Derived from `CapabilityResult.success`                                                           |
+| `errorCode`     | `CapabilityResult.error.code` when present                                                        |
+| `resultPreview` | First ~480 chars of `JSON.stringify(result)` — keeps the persisted JSON column compact            |
+
+**Persistence.** When `includeTrace: true`, the streaming handler also writes the accumulated `ToolCallTrace[]` onto the _terminal_ assistant message's `metadata.toolCalls`. The conversation trace viewer reads this through `messageMetadataSchema` and renders the same `<MessageTrace>` component used live. Pre-trace conversations have no `toolCalls` field and the strip is simply absent — no migration required.
+
+**Wire-format guarantee.** The consumer route does not thread `includeTrace` into `streamChat`, even if a client sets the flag in its POST body. A regression test in `tests/unit/app/api/v1/chat/stream/route.test.ts` locks this in: a body with `includeTrace: true` must result in `streamChat()` being called without that field. If you add a new consumer-facing chat surface, follow the same pattern — leave the flag unset.
+
+**Client integration.** The shared admin parser (`components/admin/orchestration/chat/chat-events.ts`) validates every SSE block through a discriminated-union Zod schema so the new `trace` field arrives strongly typed. UI consumers should never reach into `parseSseBlock`'s `data: Record<string, unknown>` for trace fields; route them through `parseChatStreamEvent()` instead.
+
 ## In-chat approvals
 
 When an agent calls the `run_workflow` capability and the workflow pauses on a `human_approval` step, the chat handler surfaces the pause inline so the end user can Approve or Reject without leaving the conversation.

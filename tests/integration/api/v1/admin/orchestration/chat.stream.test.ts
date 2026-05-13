@@ -183,6 +183,28 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
         expect.objectContaining({ conversationId: 'cmjbv4i3x00003wsloputgwul' })
       );
     });
+
+    it('forwards includeTrace: true into streamChat when admin client opts in', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(streamChat).mockReturnValue(makeStreamEvents([{ type: 'done' }]) as never);
+
+      await POST(makePostRequest({ ...VALID_BODY, includeTrace: true }));
+
+      expect(vi.mocked(streamChat)).toHaveBeenCalledWith(
+        expect.objectContaining({ includeTrace: true })
+      );
+    });
+
+    it('defaults includeTrace to false when the admin client omits it', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(streamChat).mockReturnValue(makeStreamEvents([{ type: 'done' }]) as never);
+
+      await POST(makePostRequest(VALID_BODY));
+
+      expect(vi.mocked(streamChat)).toHaveBeenCalledWith(
+        expect.objectContaining({ includeTrace: false })
+      );
+    });
   });
 
   describe('Validation errors', () => {
