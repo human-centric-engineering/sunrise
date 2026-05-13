@@ -161,6 +161,8 @@ export const API = {
         `/api/v1/admin/orchestration/knowledge/documents/${id}`,
       knowledgeDocumentRechunk: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/rechunk`,
+      knowledgeDocumentEnrichKeywords: (id: string): string =>
+        `/api/v1/admin/orchestration/knowledge/documents/${id}/enrich-keywords`,
       knowledgeDocumentRetry: (id: string): string =>
         `/api/v1/admin/orchestration/knowledge/documents/${id}/retry`,
       knowledgeDocumentConfirm: (id: string): string =>

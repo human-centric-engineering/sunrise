@@ -98,6 +98,13 @@ export const CostOperation = {
    * platform charges for serving the modality.
    */
   VISION: 'vision',
+  /**
+   * Post-upload BM25 keyword enrichment on a knowledge document — runs
+   * a chat completion per chunk to generate 3–8 keyword phrases. Split
+   * from the regular `chat` operation so the Costs admin can show how
+   * much operators have spent on this opt-in enrichment.
+   */
+  KNOWLEDGE_ENRICH_KEYWORDS: 'knowledge.enrich_keywords',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 

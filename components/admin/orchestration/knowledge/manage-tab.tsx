@@ -213,6 +213,10 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
   const [rechunkingId, setRechunkingId] = useState<string | null>(null);
   const [rechunkError, setRechunkError] = useState<string | null>(null);
+  const [enrichingId, setEnrichingId] = useState<string | null>(null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [enrichConfirmId, setEnrichConfirmId] = useState<string | null>(null);
+  const [enrichSuccess, setEnrichSuccess] = useState<string | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
   const [lastSeededAt, setLastSeededAt] = useState<string | null>(null);
   const [metaTags, setMetaTags] = useState<MetaTagSummary | null>(null);
@@ -338,6 +342,52 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
       }
     },
     [onRefresh]
+  );
+
+  const handleEnrichKeywords = useCallback(
+    async (docId: string) => {
+      setEnrichingId(docId);
+      setEnrichError(null);
+      setEnrichSuccess(null);
+      try {
+        const res = await fetch(API.ADMIN.ORCHESTRATION.knowledgeDocumentEnrichKeywords(docId), {
+          method: 'POST',
+        });
+        if (!res.ok) {
+          const raw = errorBodySchema.safeParse(await res.json().catch(() => null));
+          const msg =
+            (raw.success ? raw.data?.error?.message : null) ?? `Enrich failed (${res.status})`;
+          setEnrichError(msg);
+          return;
+        }
+        const body = (await res.json().catch(() => null)) as {
+          success?: boolean;
+          data?: {
+            chunksProcessed?: number;
+            chunksFailed?: number;
+            chunksSkipped?: number;
+            costUsd?: number;
+            model?: string;
+          };
+        } | null;
+        const data = body?.data;
+        const processed = data?.chunksProcessed ?? 0;
+        const failed = data?.chunksFailed ?? 0;
+        const cost = data?.costUsd ?? 0;
+        const parts = [`Enriched ${processed} chunk${processed === 1 ? '' : 's'}`];
+        if (failed > 0) parts.push(`${failed} failed`);
+        parts.push(`~$${cost.toFixed(4)}`);
+        setEnrichSuccess(parts.join(' · '));
+        onRefresh();
+        void fetchMetaTags();
+      } catch {
+        setEnrichError('Network error — could not reach the server.');
+      } finally {
+        setEnrichingId(null);
+        setEnrichConfirmId(null);
+      }
+    },
+    [onRefresh, fetchMetaTags]
   );
 
   const handleDelete = useCallback(
@@ -799,6 +849,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           <>
             {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
             {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
+            {enrichError && <p className="text-destructive text-sm">{enrichError}</p>}
+            {enrichSuccess && <p className="text-sm text-emerald-600">{enrichSuccess}</p>}
             <div className="overflow-x-auto rounded-lg border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
@@ -974,6 +1026,43 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                                         className={`mr-1 h-3 w-3 ${rechunkingId === doc.id ? 'animate-spin' : ''}`}
                                       />
                                       Rechunk
+                                    </Button>
+                                  </Tip>
+                                )}
+                                {doc.status === 'pending_review' ? null : enrichConfirmId ===
+                                  doc.id ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="text-muted-foreground text-xs">
+                                      Overwrite keywords on every chunk?
+                                    </span>
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      disabled={enrichingId === doc.id}
+                                      onClick={() => void handleEnrichKeywords(doc.id)}
+                                    >
+                                      {enrichingId === doc.id ? 'Enriching…' : 'Yes'}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => setEnrichConfirmId(null)}
+                                    >
+                                      No
+                                    </Button>
+                                  </span>
+                                ) : (
+                                  <Tip label="Run an LLM over every chunk to generate 3–8 BM25 keyword phrases. Overwrites existing keywords. Use when hybrid-search ranking is weak because the chunk vocabulary doesn't match how users phrase queries. Cost scales with chunk count and the configured chat model.">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={enrichingId === doc.id}
+                                      onClick={() => setEnrichConfirmId(doc.id)}
+                                    >
+                                      <Sparkles
+                                        className={`mr-1 h-3 w-3 ${enrichingId === doc.id ? 'animate-pulse' : ''}`}
+                                      />
+                                      Enrich keywords
                                     </Button>
                                   </Tip>
                                 )}
