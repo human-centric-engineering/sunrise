@@ -285,7 +285,7 @@ describe('POST /api/v1/chat/stream', () => {
 
       await POST(request);
 
-      const call = vi.mocked(streamChat).mock.calls[0][0] as Record<string, unknown>;
+      const call = vi.mocked(streamChat).mock.calls[0][0] as unknown as Record<string, unknown>;
       expect(call.includeTrace).toBeUndefined();
     });
   });
