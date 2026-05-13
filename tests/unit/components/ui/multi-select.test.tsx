@@ -145,4 +145,217 @@ describe('MultiSelect', () => {
     expect(screen.getByRole('button', { name: /create "gamma"/i })).toBeInTheDocument();
     expect(onCreate).not.toHaveBeenCalled();
   });
+
+  it('shows the placeholder text when no items are selected', () => {
+    render(<Harness options={options} />);
+    expect(screen.getByText('Select…')).toBeInTheDocument();
+  });
+
+  it('uses a custom placeholder prop', () => {
+    const [value, setValue] = [[] as string[], vi.fn()];
+    render(
+      <MultiSelect value={value} onChange={setValue} options={options} placeholder="Pick tags…" />
+    );
+    expect(screen.getByText('Pick tags…')).toBeInTheDocument();
+  });
+
+  it('shows emptyText when filter matches nothing', async () => {
+    const user = userEvent.setup();
+    render(
+      <MultiSelect value={[]} onChange={vi.fn()} options={options} emptyText="Nothing found" />
+    );
+    await user.click(screen.getByRole('combobox'));
+    await user.type(screen.getByLabelText('Search options'), 'zzz');
+    expect(screen.getByText('Nothing found')).toBeInTheDocument();
+  });
+
+  it('filters options by label substring', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} />);
+
+    await user.click(screen.getByRole('combobox'));
+    await user.type(screen.getByLabelText('Search options'), 'alp');
+
+    // Only Alpha should be visible; Beta should be gone
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+  });
+
+  it('filters options by description substring', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} />);
+
+    await user.click(screen.getByRole('combobox'));
+    // 'first letter' is the description of Alpha
+    await user.type(screen.getByLabelText('Search options'), 'first');
+
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+  });
+
+  it('Clear all removes all selections and resets the footer', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} initialValue={['a', 'b']} />);
+
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(screen.getByText('None selected')).toBeInTheDocument();
+  });
+
+  it('removes a chip via the X button without opening the popover', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} initialValue={['a']} />);
+
+    // Popover is closed; the chip Remove button is on the trigger
+    const removeBtn = screen.getByRole('button', { name: 'Remove Alpha' });
+    await user.click(removeBtn);
+
+    // Chip gone — placeholder reappears
+    expect(screen.getByText('Select…')).toBeInTheDocument();
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('removes a chip via keyboard Enter on the X span', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} initialValue={['a']} />);
+
+    const removeSpan = screen.getByRole('button', { name: 'Remove Alpha' });
+    removeSpan.focus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('removes a chip via keyboard Space on the X span', async () => {
+    const user = userEvent.setup();
+    render(<Harness options={options} initialValue={['a']} />);
+
+    const removeSpan = screen.getByRole('button', { name: 'Remove Alpha' });
+    removeSpan.focus();
+    await user.keyboard(' ');
+
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('collapses extra chips into "+N more" badge beyond maxVisibleChips', () => {
+    const manyOptions: MultiSelectOption[] = Array.from({ length: 8 }, (_, i) => ({
+      value: `v${i}`,
+      label: `Item ${i}`,
+    }));
+    // Select all 8 but default maxVisibleChips is 6 → 2 hidden
+    render(
+      <MultiSelect
+        value={manyOptions.map((o) => o.value)}
+        onChange={vi.fn()}
+        options={manyOptions}
+      />
+    );
+    expect(screen.getByText('+2 more')).toBeInTheDocument();
+  });
+
+  it('submits the inline-create form via Enter key in the description input', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi
+      .fn()
+      .mockResolvedValue({ value: 'g', label: 'Gamma', description: 'keyboard submit' });
+    render(<Harness options={options} onCreate={onCreate} createSupportsDescription />);
+
+    await user.click(screen.getByRole('combobox'));
+    await user.type(screen.getByLabelText('Search options'), 'Gamma');
+    await user.click(screen.getByRole('button', { name: /create "gamma"/i }));
+    await user.type(screen.getByLabelText('Description (optional)'), 'keyboard submit');
+    // Press Enter inside the description field — should submit the form
+    await user.keyboard('{Enter}');
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate).toHaveBeenCalledWith('Gamma', 'keyboard submit');
+  });
+
+  it('does not show the Create row when query matches an existing option exactly', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    render(<Harness options={options} onCreate={onCreate} />);
+
+    await user.click(screen.getByRole('combobox'));
+    // Exact match (case-insensitive) with existing option 'Alpha'
+    await user.type(screen.getByLabelText('Search options'), 'Alpha');
+
+    // The create row must not appear — exact label match suppresses it
+    expect(screen.queryByRole('button', { name: /create "alpha"/i })).not.toBeInTheDocument();
+  });
+});
+
+// ─── Async mode ───────────────────────────────────────────────────────────────
+
+describe('MultiSelect — async mode', () => {
+  it('calls loadOptions with the search query after debounce and renders results', async () => {
+    const user = userEvent.setup();
+    const asyncOptions: MultiSelectOption[] = [{ value: 'x', label: 'Extra option' }];
+    const loadOptions = vi.fn().mockResolvedValue(asyncOptions);
+
+    render(
+      <MultiSelect value={[]} onChange={vi.fn()} loadOptions={loadOptions} selectedLabels={{}} />
+    );
+
+    await user.click(screen.getByRole('combobox'));
+    // loadOptions is called once on open with empty query
+    await screen.findByText('Extra option');
+
+    expect(loadOptions).toHaveBeenCalledWith('');
+    expect(screen.getByText('Extra option')).toBeInTheDocument();
+  });
+
+  it('shows Loading… while async fetch is in flight', async () => {
+    const user = userEvent.setup();
+    // Never resolves — keeps the loading state
+    const loadOptions = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MultiSelect value={[]} onChange={vi.fn()} loadOptions={loadOptions} selectedLabels={{}} />
+    );
+
+    await user.click(screen.getByRole('combobox'));
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+
+  it('re-fetches when the search query changes', async () => {
+    const user = userEvent.setup();
+    const loadOptions = vi
+      .fn()
+      .mockResolvedValueOnce([{ value: 'x', label: 'Extra' }])
+      .mockResolvedValueOnce([{ value: 'y', label: 'Why' }]);
+
+    render(
+      <MultiSelect value={[]} onChange={vi.fn()} loadOptions={loadOptions} selectedLabels={{}} />
+    );
+
+    await user.click(screen.getByRole('combobox'));
+    await screen.findByText('Extra');
+
+    await user.type(screen.getByLabelText('Search options'), 'w');
+    await screen.findByText('Why');
+
+    // Called at least twice (initial open + after typing)
+    expect(loadOptions.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('uses selectedLabels for chips not in the current async results', async () => {
+    // An already-selected value whose label is not in the current async result
+    // set should still render the chip using the selectedLabels map.
+    const loadOptions = vi.fn().mockResolvedValue([]);
+
+    render(
+      <MultiSelect
+        value={['z']}
+        onChange={vi.fn()}
+        loadOptions={loadOptions}
+        selectedLabels={{ z: 'Zeta label' }}
+      />
+    );
+
+    // The chip should say "Zeta label" even though loadOptions returns []
+    expect(screen.getByText('Zeta label')).toBeInTheDocument();
+  });
 });

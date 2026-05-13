@@ -399,3 +399,400 @@ describe('importOrchestrationConfig', () => {
     );
   });
 });
+
+// ─── Knowledge tag import ────────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — knowledgeTags', () => {
+  beforeEach(() => {
+    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.create.mockReset();
+    mockTx.aiAgent.update.mockReset();
+    mockTx.knowledgeTag.upsert.mockReset();
+    mockTx.aiAgentKnowledgeTag.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeTag.createMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.createMany.mockReset();
+    mockTx.aiKnowledgeDocument.findMany.mockReset();
+  });
+
+  it('creates a new knowledge tag and increments knowledgeTags.created', async () => {
+    const now = new Date();
+    // Same createdAt and updatedAt → newly created row
+    mockTx.knowledgeTag.upsert.mockResolvedValue({
+      slug: 'support',
+      id: 'tag-1',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.knowledgeTag.upsert).toHaveBeenCalledWith({
+      where: { slug: 'support' },
+      create: { slug: 'support', name: 'Support', description: null },
+      update: { name: 'Support', description: null },
+    });
+    expect(result.knowledgeTags.created).toBe(1);
+    expect(result.knowledgeTags.updated).toBe(0);
+  });
+
+  it('counts as updated when createdAt and updatedAt differ', async () => {
+    const createdAt = new Date('2024-01-01');
+    const updatedAt = new Date('2024-06-01');
+    mockTx.knowledgeTag.upsert.mockResolvedValue({
+      slug: 'billing',
+      id: 'tag-2',
+      createdAt,
+      updatedAt,
+    });
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        knowledgeTags: [{ slug: 'billing', name: 'Billing', description: 'billing topics' }],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(result.knowledgeTags.updated).toBe(1);
+    expect(result.knowledgeTags.created).toBe(0);
+  });
+
+  it('imports multiple tags and sums created/updated counts correctly', async () => {
+    const now = new Date();
+    const past = new Date('2024-01-01');
+    mockTx.knowledgeTag.upsert
+      .mockResolvedValueOnce({ slug: 'new-tag', id: 'tag-n', createdAt: now, updatedAt: now })
+      .mockResolvedValueOnce({
+        slug: 'old-tag',
+        id: 'tag-o',
+        createdAt: past,
+        updatedAt: new Date(),
+      });
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        knowledgeTags: [
+          { slug: 'new-tag', name: 'New Tag', description: null },
+          { slug: 'old-tag', name: 'Old Tag', description: 'pre-existing' },
+        ],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(result.knowledgeTags.created).toBe(1);
+    expect(result.knowledgeTags.updated).toBe(1);
+  });
+});
+
+// ─── System agent skip ────────────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — system agent protection', () => {
+  beforeEach(() => {
+    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.create.mockReset();
+    mockTx.aiAgent.update.mockReset();
+    mockTx.aiAgentKnowledgeTag.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeTag.createMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.createMany.mockReset();
+    mockTx.aiKnowledgeDocument.findMany.mockReset();
+  });
+
+  it('skips a system agent and adds a warning instead of updating it', async () => {
+    // Existing record has isSystem: true — the import must not overwrite it.
+    mockTx.aiAgent.findUnique.mockResolvedValue({
+      id: 'sys-1',
+      slug: 'system-bot',
+      isSystem: true,
+    });
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, agents: [makeAgent({ slug: 'system-bot' })] },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgent.update).not.toHaveBeenCalled();
+    expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
+    expect(result.agents.updated).toBe(0);
+    expect(result.agents.created).toBe(0);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('system-bot')])
+    );
+    expect(result.warnings[0]).toMatch(/system agents cannot be overwritten/i);
+  });
+});
+
+// ─── Grant resolution ─────────────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — knowledge grants', () => {
+  beforeEach(() => {
+    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.create.mockReset();
+    mockTx.aiAgent.update.mockReset();
+    mockTx.knowledgeTag.upsert.mockReset();
+    mockTx.aiAgentKnowledgeTag.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeTag.createMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.createMany.mockReset();
+    mockTx.aiKnowledgeDocument.findMany.mockReset();
+  });
+
+  it('resolves tag grants from the tagIdBySlug map and calls createMany', async () => {
+    const now = new Date();
+    // Tag upsert builds the tagIdBySlug map
+    mockTx.knowledgeTag.upsert.mockResolvedValue({
+      slug: 'support',
+      id: 'tag-1',
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Agent does not exist yet → create path
+    mockTx.aiAgent.findUnique
+      .mockResolvedValueOnce(null) // first call: slug lookup for upsert
+      .mockResolvedValueOnce({ id: 'agent-1' }); // second call: select id for grants
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-1' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
+        agents: [makeAgent({ grantedTagSlugs: ['support'], grantedDocumentHashes: [] })],
+      },
+    };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgentKnowledgeTag.deleteMany).toHaveBeenCalledWith({
+      where: { agentId: 'agent-1' },
+    });
+    expect(mockTx.aiAgentKnowledgeTag.createMany).toHaveBeenCalledWith({
+      data: [{ agentId: 'agent-1', tagId: 'tag-1' }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('emits a warning when a grantedTagSlug does not map to a known tag', async () => {
+    // No knowledgeTags in payload → tagIdBySlug is empty
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-2' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-2' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: ['missing-tag'], grantedDocumentHashes: [] })],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    // No createMany for tags because resolution failed
+    expect(mockTx.aiAgentKnowledgeTag.createMany).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringMatching(/missing knowledge-tag slug 'missing-tag'/)])
+    );
+  });
+
+  it('resolves document grants by fileHash and calls createMany', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3' });
+    // The DB has a doc with matching fileHash
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-1', fileHash: 'abc123hash' },
+    ]);
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: ['abc123hash'] })],
+      },
+    };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgentKnowledgeDocument.deleteMany).toHaveBeenCalledWith({
+      where: { agentId: 'agent-3' },
+    });
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).toHaveBeenCalledWith({
+      data: [{ agentId: 'agent-3', documentId: 'doc-1' }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('emits a warning for missing document hashes and skips the missing doc grant', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-4' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-4' });
+    // DB returns empty — hash not found
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: ['deadbeef1234'] })],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringMatching(/missing knowledge document.*deadbeef1234/i)])
+    );
+  });
+
+  it('does not call createMany for tags when there are no resolved tag ids', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-5' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-5' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    // No granted slugs at all — agent has no grants
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: [] })],
+      },
+    };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    // deleteMany is still called to clear stale grants, but createMany is not
+    expect(mockTx.aiAgentKnowledgeTag.deleteMany).toHaveBeenCalledWith({
+      where: { agentId: 'agent-5' },
+    });
+    expect(mockTx.aiAgentKnowledgeTag.createMany).not.toHaveBeenCalled();
+    expect(mockTx.aiAgentKnowledgeDocument.deleteMany).toHaveBeenCalledWith({
+      where: { agentId: 'agent-5' },
+    });
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── v1 compatibility — slugify from knowledgeCategories ─────────────────────
+
+describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
+  beforeEach(() => {
+    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.create.mockReset();
+    mockTx.aiAgent.update.mockReset();
+    mockTx.knowledgeTag.upsert.mockReset();
+    mockTx.aiAgentKnowledgeTag.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeTag.createMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.deleteMany.mockReset();
+    mockTx.aiAgentKnowledgeDocument.createMany.mockReset();
+    mockTx.aiKnowledgeDocument.findMany.mockReset();
+  });
+
+  it('infers tag slugs from knowledgeCategories when schemaVersion is 1', async () => {
+    const now = new Date();
+    // The upsert call that creates/updates the inferred tag
+    mockTx.knowledgeTag.upsert.mockResolvedValue({
+      slug: 'billing-support',
+      id: 'tag-inf',
+      createdAt: now,
+      updatedAt: now,
+    });
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-v1' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-v1' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    const v1Payload = {
+      schemaVersion: 1 as const,
+      exportedAt: '2025-01-01T00:00:00Z',
+      data: {
+        agents: [
+          makeAgent({
+            slug: 'v1-agent',
+            knowledgeCategories: ['Billing Support'],
+            grantedTagSlugs: [],
+            grantedDocumentHashes: [],
+          }),
+        ],
+        capabilities: [],
+        workflows: [],
+        webhooks: [],
+        settings: null,
+      },
+    };
+    const result = await importOrchestrationConfig(v1Payload, 'user-1');
+
+    // The importer slugifies 'Billing Support' → 'billing-support' and upserts it
+    expect(mockTx.knowledgeTag.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'billing-support' } })
+    );
+    // Tag created counted
+    expect(result.knowledgeTags.created).toBe(1);
+  });
+
+  it('skips blank knowledgeCategories entries when inferring v1 tags', async () => {
+    mockTx.aiAgent.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'agent-blank' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-blank' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+
+    const v1Payload = {
+      schemaVersion: 1 as const,
+      exportedAt: '2025-01-01T00:00:00Z',
+      data: {
+        agents: [
+          makeAgent({
+            slug: 'v1-blank',
+            // All blank — should produce no upserts
+            knowledgeCategories: ['   ', ''],
+            grantedTagSlugs: [],
+            grantedDocumentHashes: [],
+          }),
+        ],
+        capabilities: [],
+        workflows: [],
+        webhooks: [],
+        settings: null,
+      },
+    };
+    await importOrchestrationConfig(v1Payload, 'user-1');
+
+    // No tag upsert should have been called (blank categories produce no slug)
+    expect(mockTx.knowledgeTag.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Capability update path ───────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — capability update', () => {
+  beforeEach(() => {
+    mockTx.aiCapability.findUnique.mockReset();
+    mockTx.aiCapability.create.mockReset();
+    mockTx.aiCapability.update.mockReset();
+  });
+
+  it('updates an existing capability → capabilities.updated = 1', async () => {
+    mockTx.aiCapability.findUnique.mockResolvedValue({ id: 'cap-1', slug: 'web-search' });
+    mockTx.aiCapability.update.mockResolvedValue({});
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, capabilities: [makeCapability()] },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiCapability.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'web-search' } })
+    );
+    expect(mockTx.aiCapability.create).not.toHaveBeenCalled();
+    expect(result.capabilities.updated).toBe(1);
+    expect(result.capabilities.created).toBe(0);
+  });
+});
