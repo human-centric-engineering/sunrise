@@ -401,4 +401,53 @@ describe('ConversationTraceViewer', () => {
       expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('Tool-call trace rehydration', () => {
+    it('renders MessageTrace from persisted toolCalls metadata', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Looked it up.',
+              metadata: {
+                modelUsed: 'claude-sonnet-4-6',
+                toolCalls: [
+                  {
+                    slug: 'lookup_order',
+                    arguments: { orderId: 'o_1' },
+                    latencyMs: 142,
+                    success: true,
+                    resultPreview: '{"id":"o_1"}',
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('message-trace')).toBeInTheDocument();
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 tool');
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('142ms');
+    });
+
+    it('does not render MessageTrace for legacy messages without toolCalls', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Pre-trace answer.',
+              metadata: { modelUsed: 'claude-sonnet-4-6' },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
+    });
+  });
 });

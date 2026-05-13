@@ -20,7 +20,8 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { cn } from '@/lib/utils';
 import { messageMetadataSchema } from '@/lib/validations/orchestration';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
-import type { Citation } from '@/types/orchestration';
+import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import type { Citation, ToolCallTrace } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,13 @@ interface MessageMetadata {
   latencyMs?: number;
   costUsd?: number;
   citations?: Citation[];
+  /**
+   * Per-capability dispatch diagnostics persisted by the streaming
+   * handler when the live request opted into `includeTrace`. Old
+   * messages (pre-trace) simply leave this absent and the trace
+   * strip renders nothing.
+   */
+  toolCalls?: ToolCallTrace[];
 }
 
 export interface ConversationMessage {
@@ -106,11 +114,16 @@ function MessageCard({ message }: { message: ConversationMessage }) {
             {message.content}
           </pre>
         ) : message.role === 'assistant' ? (
-          <MessageWithCitations
-            content={message.content}
-            citations={meta.citations}
-            className="text-sm"
-          />
+          <>
+            <MessageWithCitations
+              content={message.content}
+              citations={meta.citations}
+              className="text-sm"
+            />
+            {meta.toolCalls && meta.toolCalls.length > 0 && (
+              <MessageTrace toolCalls={meta.toolCalls} />
+            )}
+          </>
         ) : (
           <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         )}
