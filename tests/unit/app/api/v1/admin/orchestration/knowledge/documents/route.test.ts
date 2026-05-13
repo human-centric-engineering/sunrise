@@ -304,7 +304,16 @@ describe('Knowledge Documents API', () => {
       await POST(makeFileRequest('faq.md', '# FAQ', 'text/markdown', { category: 'faq' }));
 
       // Assert: category passed to service
-      expect(uploadDocument).toHaveBeenCalledWith(expect.any(String), 'faq.md', ADMIN_ID, 'faq');
+      // uploadDocument signature is (content, fileName, userId, category, sourceUrl, displayName).
+      // sourceUrl + displayName are undefined for plain uploads from the admin form.
+      expect(uploadDocument).toHaveBeenCalledWith(
+        expect.any(String),
+        'faq.md',
+        ADMIN_ID,
+        'faq',
+        undefined,
+        undefined
+      );
     });
 
     it('uploads without category when category field is empty', async () => {
@@ -319,6 +328,8 @@ describe('Knowledge Documents API', () => {
         expect.any(String),
         'guide.md',
         ADMIN_ID,
+        undefined,
+        undefined,
         undefined
       );
     });

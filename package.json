@@ -28,7 +28,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:embeddings": "tsx scripts/seed-embeddings.ts",
     "db:backfill:knowledge-tags": "tsx --env-file=.env.local scripts/backfill-knowledge-tags.ts",
-    "db:migrate:per-pattern": "tsx --env-file=.env.local scripts/migrate-knowledge-to-per-pattern.ts",
+    "db:migrate:single-doc": "tsx --env-file=.env.local scripts/migrate-knowledge-to-single-doc.ts",
     "db:reset": "prisma migrate reset --force",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",

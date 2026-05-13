@@ -106,6 +106,10 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<TagRow[]>([]);
   const [extractTables, setExtractTables] = useState(false);
+  // Operator-supplied display name for the document. Defaults to the file
+  // stem so existing behaviour is preserved; only sent to the server when the
+  // operator actually edits it.
+  const [displayName, setDisplayName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Load the managed tag taxonomy once so the picker can offer it. apiClient
@@ -161,6 +165,11 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             setError('Maximum 10 files per batch');
             return prev;
           }
+          // Seed the display-name input from the first staged file when
+          // staging starts empty. The operator can edit before uploading.
+          if (prev.length === 0 && combined.length > 0) {
+            setDisplayName(combined[0].name.replace(/\.[^.]+$/, ''));
+          }
           return combined;
         });
       }
@@ -182,6 +191,13 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         // FormData supports repeated keys; the server collects via getAll('tagIds').
         for (const tagId of tagIds) {
           formData.append('tagIds', tagId);
+        }
+        // Only send `name` when the operator actually edited it — empty or
+        // unchanged means the server falls back to the filename-derived name.
+        const trimmedName = displayName.trim();
+        const filenameDefault = stagedFiles[0].name.replace(/\.[^.]+$/, '');
+        if (trimmedName && trimmedName !== filenameDefault) {
+          formData.append('name', trimmedName);
         }
         const isPdf = stagedFiles[0].name.toLowerCase().endsWith('.pdf');
         if (isPdf && extractTables) {
@@ -207,6 +223,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
         ) {
           setStagedFiles([]);
           setTagIds([]);
+          setDisplayName('');
           onPdfPreview({
             document: responseBody.data.document,
             preview: responseBody.data.preview,
@@ -216,6 +233,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 
         setStagedFiles([]);
         setTagIds([]);
+        setDisplayName('');
         onUploadComplete();
         return;
       }
@@ -261,13 +279,14 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
 
       setStagedFiles([]);
       setTagIds([]);
+      setDisplayName('');
       onUploadComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [stagedFiles, tagIds, extractTables, onUploadComplete, onPdfPreview]);
+  }, [stagedFiles, tagIds, displayName, extractTables, onUploadComplete, onPdfPreview]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -378,6 +397,35 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
             </Button>
           )}
 
+          {stagedFiles.length === 1 ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1">
+                <label htmlFor="upload-display-name" className="text-xs font-medium">
+                  Title
+                </label>
+                <span className="text-muted-foreground text-xs">(optional)</span>
+                <FieldHelp title="Document title" ariaLabel="What is the document title?">
+                  <p>
+                    The display name shown in the document list. Defaults to the filename without
+                    its extension — edit if you want something more readable.
+                  </p>
+                  <p className="mt-2">
+                    Doesn&apos;t affect search; it&apos;s purely for browsing in the admin and the
+                    citation panels that surface document names.
+                  </p>
+                </FieldHelp>
+              </div>
+              <Input
+                id="upload-display-name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder={stagedFiles[0].name.replace(/\.[^.]+$/, '')}
+                disabled={uploading}
+                className="h-8 text-sm"
+              />
+            </div>
+          ) : null}
+
           <div className="space-y-1">
             <div className="flex items-center gap-1">
               <span id="upload-tags-label" className="text-xs font-medium">
@@ -466,6 +514,7 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               onClick={() => {
                 setStagedFiles([]);
                 setTagIds([]);
+                setDisplayName('');
                 setExtractTables(false);
                 setError(null);
               }}

@@ -41,82 +41,45 @@ export const seedChunkSchema = z.object({
 
 export type SeedChunk = z.infer<typeof seedChunkSchema>;
 
-// Legacy single-document name — kept for the upgrade-detection branch in seedChunks.
-const LEGACY_DOCUMENT_NAME = 'Agentic Design Patterns';
-
-// Non-pattern chunks (glossary, getting_started, etc.) are bundled into one reference doc
-// so the patterns themselves stay one-doc-per-pattern. Reference docs are always tagged
-// 'reference' so an agent can grant or omit them as a group.
-const REFERENCE_DOCUMENT_NAME = 'Agentic Design Patterns — Reference Material';
-const REFERENCE_TAG_SLUG = 'reference';
-const REFERENCE_TAG_NAME = 'Reference Material';
-
-function slugify(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-}
-
-async function upsertTagBySlug(slug: string, name: string): Promise<string> {
-  const tag = await prisma.knowledgeTag.upsert({
-    where: { slug },
-    create: { slug, name },
-    update: { name },
-  });
-  return tag.id;
-}
+const DOCUMENT_NAME = 'Agentic Design Patterns';
+const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
 
 /**
  * Phase 1 — Seed chunks into the knowledge base (no embeddings).
  *
- * Creates one AiKnowledgeDocument per pattern (one document per pattern_number) plus
- * one shared "Reference Material" document for non-pattern chunks (glossary, selection
- * guide, composition recipes, etc.). Each document is linked to the KnowledgeTag(s)
- * matching its chunks' categories so the access-control resolver can grant or deny
- * agents at pattern-level or category-level granularity.
+ * Creates one `AiKnowledgeDocument` named "Agentic Design Patterns" containing
+ * every chunk in chunks.json (patterns + reference material). Each distinct
+ * `chunk.category` becomes a managed `KnowledgeTag`, applied to the document
+ * via the doc↔tag join — so agents in restricted-knowledge mode can be granted
+ * a subset of tags and the resolver will surface this document when any of
+ * those tags match.
  *
- * Idempotent: skips if any system-scoped pattern documents already exist. If a
- * previous attempt left a failed record with no chunks, that document is cleaned up
- * and re-seeded.
+ * History: an earlier iteration split this into one-doc-per-pattern. That
+ * fragmented the KB list into 22 rows ("Pattern 1: Prompt Chaining", "Pattern
+ * 2: Routing", …) and degraded the manage-tab UX. Reverted to one doc; the
+ * tags still carry the per-category slicing.
  *
- * Upgrade detection: if the legacy single document `LEGACY_DOCUMENT_NAME` exists, the
- * seeder logs a warning and bails — the operator must delete it before the new layout
- * will be created. We refuse to silently delete it because doing so destroys embeddings
- * (the user's data, which the seeder cannot recompute for free).
+ * Idempotent: skips if the document already exists with chunks. Failed
+ * seed attempts are cleaned up and re-seeded.
  *
  * @param chunksJsonPath - Absolute path to the chunks.json file
  */
 export async function seedChunks(chunksJsonPath: string): Promise<void> {
   logger.info('Starting knowledge base seed (chunks only)', { chunksJsonPath });
 
-  const legacy = await prisma.aiKnowledgeDocument.findFirst({
-    where: { name: LEGACY_DOCUMENT_NAME },
+  const existing = await prisma.aiKnowledgeDocument.findFirst({
+    where: { name: DOCUMENT_NAME },
   });
-  if (legacy && legacy.status !== 'failed') {
-    logger.warn(
-      `Legacy single-document seed detected ("${LEGACY_DOCUMENT_NAME}", id=${legacy.id}). ` +
-        'Skipping new-layout seed. Delete the legacy document via the admin UI or `prisma studio` ' +
-        'if you want the per-pattern layout — note this drops the existing embeddings.'
-    );
-    return;
-  }
-  if (legacy && legacy.status === 'failed') {
-    logger.info('Removing previously failed legacy seed document', { documentId: legacy.id });
-    await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId: legacy.id } });
-    await prisma.aiKnowledgeDocument.delete({ where: { id: legacy.id } });
-  }
 
-  // If any of our new-layout pattern documents already exist (status != failed),
-  // skip — the seeder is idempotent.
-  const existingPattern = await prisma.aiKnowledgeDocument.findFirst({
-    where: { scope: 'system', fileName: { startsWith: 'agentic-design-patterns-' } },
-  });
-  if (existingPattern && existingPattern.status !== 'failed') {
-    logger.info('Knowledge base already seeded (new layout), skipping');
-    return;
+  if (existing) {
+    if (existing.status === 'failed') {
+      logger.info('Removing previously failed seed document', { documentId: existing.id });
+      await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId: existing.id } });
+      await prisma.aiKnowledgeDocument.delete({ where: { id: existing.id } });
+    } else {
+      logger.info('Knowledge base already seeded, skipping', { documentId: existing.id });
+      return;
+    }
   }
 
   const raw = await readFile(chunksJsonPath, 'utf-8');
@@ -146,134 +109,70 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     throw new Error('No users found in database. Create a user first, then re-run the seeder.');
   }
 
-  // Pre-build the tag taxonomy from every distinct category referenced by any chunk.
-  // The "reference" tag is added unconditionally so the non-pattern reference doc has a home.
-  const distinctCategories = new Set<string>();
-  for (const c of chunks) {
-    if (c.metadata.category) distinctCategories.add(c.metadata.category);
-  }
-  const tagIdBySlug = new Map<string, string>();
-  for (const name of distinctCategories) {
-    const slug = slugify(name);
-    if (!slug) continue;
-    tagIdBySlug.set(slug, await upsertTagBySlug(slug, name));
-  }
-  tagIdBySlug.set(
-    REFERENCE_TAG_SLUG,
-    await upsertTagBySlug(REFERENCE_TAG_SLUG, REFERENCE_TAG_NAME)
-  );
-
-  // Group chunks. Pattern-bearing chunks bucket by pattern_number; everything else
-  // goes into the shared reference bucket.
-  const byPattern = new Map<number, SeedChunk[]>();
-  const referenceBucket: SeedChunk[] = [];
-  for (const c of chunks) {
-    const pn = c.metadata.pattern_number;
-    if (typeof pn === 'number') {
-      const bucket = byPattern.get(pn) ?? [];
-      bucket.push(c);
-      byPattern.set(pn, bucket);
-    } else {
-      referenceBucket.push(c);
-    }
-  }
-
   const { createHash } = await import('crypto');
-  let totalDocs = 0;
-  let totalChunks = 0;
+  const contentForHash = chunks.map((c) => c.content).join('');
+  const fileHash = createHash('sha256').update(contentForHash).digest('hex');
 
-  // Helper: insert a document plus its chunks plus its tag links in one batch.
-  async function createDocument(opts: {
-    name: string;
-    fileName: string;
-    chunks: SeedChunk[];
-    tagSlugs: Iterable<string>;
-  }): Promise<void> {
-    const contentForHash = opts.chunks.map((c) => c.content).join('');
-    const fileHash = createHash('sha256').update(contentForHash).digest('hex');
+  const document = await prisma.aiKnowledgeDocument.create({
+    data: {
+      name: DOCUMENT_NAME,
+      fileName: DOCUMENT_FILE_NAME,
+      fileHash,
+      scope: 'system',
+      status: 'ready',
+      uploadedBy: uploaderId,
+      chunkCount: chunks.length,
+    },
+  });
 
-    const document = await prisma.aiKnowledgeDocument.create({
-      data: {
-        name: opts.name,
-        fileName: opts.fileName,
-        fileHash,
-        scope: 'system',
-        status: 'ready',
-        uploadedBy: uploaderId!,
-        chunkCount: opts.chunks.length,
-      },
-    });
-
-    for (const chunk of opts.chunks) {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ai_knowledge_chunk (
-          id, "chunkKey", "documentId", content,
-          "chunkType", "patternNumber", "patternName", category,
-          section, keywords, "estimatedTokens", metadata
-        ) VALUES (
-          gen_random_uuid()::text, $1, $2, $3,
-          $4, $5, $6, $7, $8, $9, $10, $11::jsonb
-        )`,
-        chunk.id,
-        document.id,
-        chunk.content,
-        chunk.metadata.type,
-        chunk.metadata.pattern_number ?? null,
-        chunk.metadata.pattern_name ?? null,
-        chunk.metadata.category ?? null,
-        chunk.metadata.section_title ?? chunk.metadata.section ?? null,
-        chunk.metadata.keywords ?? null,
-        chunk.estimated_tokens,
-        JSON.stringify({
-          complexity: chunk.metadata.complexity ?? null,
-          relatedPatterns: chunk.metadata.related_patterns ?? null,
-          patternId: chunk.metadata.pattern_id ?? null,
-          source: chunk.metadata.source ?? null,
-        })
-      );
-    }
-
-    for (const slug of opts.tagSlugs) {
-      const tagId = tagIdBySlug.get(slug);
-      if (!tagId) continue;
-      await prisma.aiKnowledgeDocumentTag.upsert({
-        where: { documentId_tagId: { documentId: document.id, tagId } },
-        create: { documentId: document.id, tagId },
-        update: {},
-      });
-    }
-
-    totalDocs++;
-    totalChunks += opts.chunks.length;
+  for (const chunk of chunks) {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO ai_knowledge_chunk (
+        id, "chunkKey", "documentId", content,
+        "chunkType", "patternNumber", "patternName", category,
+        section, keywords, "estimatedTokens", metadata
+      ) VALUES (
+        gen_random_uuid()::text, $1, $2, $3,
+        $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+      )`,
+      chunk.id,
+      document.id,
+      chunk.content,
+      chunk.metadata.type,
+      chunk.metadata.pattern_number ?? null,
+      chunk.metadata.pattern_name ?? null,
+      chunk.metadata.category ?? null,
+      chunk.metadata.section_title ?? chunk.metadata.section ?? null,
+      chunk.metadata.keywords ?? null,
+      chunk.estimated_tokens,
+      JSON.stringify({
+        complexity: chunk.metadata.complexity ?? null,
+        relatedPatterns: chunk.metadata.related_patterns ?? null,
+        patternId: chunk.metadata.pattern_id ?? null,
+        source: chunk.metadata.source ?? null,
+      })
+    );
   }
 
-  // One document per pattern, named "Pattern N: <Name>". Tags = the categories carried
-  // by that pattern's chunks (almost always one, but we use a Set to be safe).
-  const patternNumbers = [...byPattern.keys()].sort((a, b) => a - b);
-  for (const pn of patternNumbers) {
-    const chunksForPattern = byPattern.get(pn)!;
-    const patternName = chunksForPattern[0].metadata.pattern_name ?? `Pattern ${pn}`;
-    const categories = new Set<string>();
-    for (const c of chunksForPattern) {
-      if (c.metadata.category) categories.add(slugify(c.metadata.category));
-    }
-    await createDocument({
-      name: `Pattern ${pn}: ${patternName}`,
-      fileName: `agentic-design-patterns-pattern-${pn}.md`,
-      chunks: chunksForPattern,
-      tagSlugs: categories,
-    });
-  }
-
-  // The reference bucket gets its own document tagged 'reference'.
-  if (referenceBucket.length > 0) {
-    await createDocument({
-      name: REFERENCE_DOCUMENT_NAME,
-      fileName: 'agentic-design-patterns-reference.md',
-      chunks: referenceBucket,
-      tagSlugs: [REFERENCE_TAG_SLUG],
-    });
-  }
+  // Apply a single tag for the seeded patterns. We deliberately don't lift
+  // every chunk.category into a separate tag — that gave us 10 redundant
+  // tags all pointing at the same doc, which was the operator complaint
+  // that drove the revert. One tag, one doc.
+  const seedTag = await prisma.knowledgeTag.upsert({
+    where: { slug: 'agentic-design-patterns' },
+    create: {
+      slug: 'agentic-design-patterns',
+      name: 'Agentic Design Patterns',
+      description:
+        'Built-in reference: the 21 agentic design patterns and supporting material. Grant this tag to any agent that should be able to consult the patterns playbook.',
+    },
+    update: {},
+  });
+  await prisma.aiKnowledgeDocumentTag.upsert({
+    where: { documentId_tagId: { documentId: document.id, tagId: seedTag.id } },
+    create: { documentId: document.id, tagId: seedTag.id },
+    update: {},
+  });
 
   // Record the seed timestamp on the settings singleton (upsert to handle
   // the case where settings haven't been lazily created yet).
@@ -284,9 +183,9 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   });
 
   logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
-    documents: totalDocs,
-    chunks: totalChunks,
-    tags: tagIdBySlug.size,
+    documentId: document.id,
+    chunkCount: chunks.length,
+    tag: 'agentic-design-patterns',
   });
 }
 

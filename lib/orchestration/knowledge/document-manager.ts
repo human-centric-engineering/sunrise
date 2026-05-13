@@ -191,10 +191,14 @@ export async function uploadDocument(
   fileName: string,
   userId: string,
   category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(content).digest('hex');
-  const name = fileName.replace(/\.[^.]+$/, '');
+  // Use the operator-supplied display name when present; otherwise fall back
+  // to the filename without extension.
+  const fallbackName = fileName.replace(/\.[^.]+$/, '');
+  const name = displayName?.trim() || fallbackName;
 
   logger.info('Uploading document', { fileName, fileHash, userId });
 
@@ -311,7 +315,8 @@ export async function uploadDocumentFromBuffer(
   fileName: string,
   userId: string,
   category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   if (requiresPreview(fileName)) {
     throw new Error(
@@ -331,7 +336,7 @@ export async function uploadDocumentFromBuffer(
   // CSV uses row-level chunking via chunkCsvDocument (not the markdown
   // chunker), so it bypasses uploadDocument and runs the full lifecycle here.
   if (parsed.metadata.format === 'csv') {
-    return uploadCsvFromParsed(parsed, buffer, fileName, userId, category, sourceUrl);
+    return uploadCsvFromParsed(parsed, buffer, fileName, userId, category, sourceUrl, displayName);
   }
 
   // For markdown files, use the raw text directly (the markdown chunker
@@ -340,7 +345,7 @@ export async function uploadDocumentFromBuffer(
   const ext = extname(fileName).toLowerCase();
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
-  return uploadDocument(content, fileName, userId, category, sourceUrl);
+  return uploadDocument(content, fileName, userId, category, sourceUrl, displayName);
 }
 
 /**
@@ -357,10 +362,12 @@ async function uploadCsvFromParsed(
   fileName: string,
   userId: string,
   category?: string,
-  sourceUrl?: string
+  sourceUrl?: string,
+  displayName?: string
 ): Promise<AiKnowledgeDocument> {
   const fileHash = createHash('sha256').update(buffer).digest('hex');
-  const name = fileName.replace(/\.[^.]+$/, '');
+  const fallbackName = fileName.replace(/\.[^.]+$/, '');
+  const name = displayName?.trim() || fallbackName;
 
   logger.info('Uploading CSV document', { fileName, fileHash, userId });
 

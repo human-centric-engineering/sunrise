@@ -221,6 +221,12 @@ export const POST = withAdminAuth(async (request, session) => {
   const category =
     typeof categoryField === 'string' && categoryField.trim() ? categoryField.trim() : undefined;
 
+  // Optional display name override — when set, replaces the filename-derived
+  // doc name. Trimmed; empty strings fall back to the filename.
+  const nameField = formData.get('name');
+  const displayName =
+    typeof nameField === 'string' && nameField.trim().length > 0 ? nameField.trim() : undefined;
+
   const tagIds = parseTagIdsFromForm(formData);
 
   const ext = getExtension(file.name);
@@ -241,7 +247,14 @@ export const POST = withAdminAuth(async (request, session) => {
       });
     }
 
-    const document = await uploadDocument(content, file.name, session.user.id, category);
+    const document = await uploadDocument(
+      content,
+      file.name,
+      session.user.id,
+      category,
+      undefined,
+      displayName
+    );
     const tagsApplied = await applyDocumentTags(document.id, tagIds);
 
     log.info('Document uploaded (text)', {
@@ -321,7 +334,14 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   // EPUB, DOCX: direct buffer upload
-  const document = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, category);
+  const document = await uploadDocumentFromBuffer(
+    buffer,
+    file.name,
+    session.user.id,
+    category,
+    undefined,
+    displayName
+  );
   const tagsApplied = await applyDocumentTags(document.id, tagIds);
 
   log.info('Document uploaded (binary)', {

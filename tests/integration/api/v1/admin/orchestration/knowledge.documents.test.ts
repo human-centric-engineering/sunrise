@@ -291,10 +291,13 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
 
       await POST(makePostRequestWithFormData(formData));
 
+      // Signature: (content, fileName, userId, category, sourceUrl, displayName)
       expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
         content,
         'patterns.md',
         ADMIN_ID,
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -314,10 +317,13 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents', () => {
       const response = await POST(makePostRequestWithFormData(formData));
 
       expect(response.status).toBe(201);
+      // Signature: (buffer, fileName, userId, category, sourceUrl, displayName)
       expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalledWith(
         expect.any(Buffer),
         'spending.csv',
         ADMIN_ID,
+        undefined,
+        undefined,
         undefined
       );
       expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
