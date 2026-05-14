@@ -457,78 +457,15 @@ When writing tests:
    - If critical paths are untested, recommend priority
    - If test setup is complex, suggest simplification
 
-## When Tests Fail: Code Bug vs Test Bug
+## The Testing Lens (canonical source: `.claude/skills/testing/SKILL.md`)
 
-When a test you wrote fails, **do not automatically edit the test to make it pass**. First determine which side is wrong:
+Two principles govern every test you write. The skill is the authoritative reference — read it first. Summary:
 
-### Is the CODE wrong?
+- **Anti-green-bar self-check** — for every test, ask: (1) would this still pass if the function body were deleted? (2) am I asserting something the code computed, or something the mock returned? (3) does this verify at least one thing the code _does_, not just what it _returns_? If any answer is wrong, do not ship the test — fix the assertion to check a transformation, side effect, or response wrapping, or report the source as having nothing testable.
 
-Evidence the code has a bug:
+- **Code bug vs test bug** — when a test fails, do NOT silently edit the test to make it pass. If the code contradicts its docstring/contract/CLAUDE.md, or if the only way to make the test green is to assert the raw mock return value, that's a suspected code bug — flag with `// BUG:`, report it (`⚠️ SUSPECTED CODE BUG\nFile: …\nExpected: …\nActual: …\nEvidence: …`), and leave the failing assertion in place. Otherwise fix the test and tag ambiguous cases `// AMBIGUOUS:` so `/test-review` can flag them.
 
-- The code's behavior contradicts its own docstring, comment, or function name
-- The code violates a documented API contract (e.g., CLAUDE.md says "return 401 for unauthenticated" but the code returns 403)
-- The code silently swallows errors that should propagate
-- The code has an obvious logic error (wrong comparison operator, missing null check, off-by-one)
-- The code doesn't match the Zod schema it claims to validate against
-
-**Action**: Do NOT fix the source code yourself. Report it clearly:
-
-```
-⚠️ SUSPECTED CODE BUG
-File: lib/auth/guards.ts:42
-Expected: Should return 401 for missing session (per API contract)
-Actual: Returns 403
-Evidence: CLAUDE.md documents withAuth() should return 401 for unauthenticated requests
-```
-
-Write the test with the CORRECT expected behavior (the test will fail). Flag it with a `// BUG:` comment so the issue is visible. Let the user decide whether to fix the code.
-
-### Is the TEST wrong?
-
-Evidence the test expectation is wrong:
-
-- You assumed a return format that the code doesn't use (check actual API response shapes)
-- You mocked a dependency incorrectly (wrong return type, missing fields)
-- You tested an implementation detail that changed, not the contract
-- The code's behavior is intentional and your expectation was based on assumptions
-
-**Action**: Fix the test. This is normal — adjust the expectation to match the code's actual (correct) contract.
-
-### Decision checklist
-
-When a test fails, ask yourself:
-
-1. Does the source code's behavior match its documented intent? → If no, likely a **code bug**
-2. Did I mock dependencies correctly (right types, right return shapes)? → If no, likely a **test bug**
-3. Is the code following the project's patterns (CLAUDE.md, `.context/` docs)? → If no, likely a **code bug**
-4. Am I testing an implementation detail or a behavioral contract? → If implementation detail, likely a **test bug**
-
-**Default assumption**: If unclear, treat the code as correct and fix the test — but add a comment noting the ambiguity so `/test-review` can flag it. **Exception**: If the only way to make the test pass is to assert the exact mock return value with no transformation, that's not ambiguity — it's a mock-proving test. Report it as a suspected code bug (the code should be doing something with the data, not just passing it through).
-
-## Anti-Green-Bar Self-Check
-
-Apply this checklist to **every test you write** before moving to the next one. A green-bar test — one that passes but doesn't verify real behavior — is worse than no test at all because it gives false confidence.
-
-### Per-test checklist
-
-After writing each test, ask yourself these three questions:
-
-1. **Would this test fail if I deleted the function body?** If the function returned `undefined`/`null`/empty and the test would still pass (because it only checks `toBeDefined()` or `toBeTruthy()`), the assertion is too weak. Assert specific values or structures.
-
-2. **Am I asserting something the code computed, or something the mock returned?** If your assertion checks a value that was literally set up in `mockResolvedValue()` with no transformation, filtering, mapping, or enrichment by the code under test, the test proves the mock works — not the code. Either:
-   - Assert a **transformed** value (the code filters, maps, enriches, or restructures the mock data)
-   - Assert a **side effect** (the code called another dependency with specific arguments derived from the mock data)
-   - Assert **structural wrapping** (the code wrapped the data in a response envelope, added metadata, etc.)
-
-3. **Does this test verify at least one thing the code DOES, not just what it RETURNS?** Good tests check: Was the right query made? Were the right arguments passed? Was the error logged? Was the response shaped correctly? A test that only checks `data === mockData` checks nothing the code did.
-
-### When you catch yourself green-barring
-
-If a test fails this checklist, **do not ship it**. Instead:
-
-- If the code genuinely transforms the data → fix the assertion to check the transformation
-- If the code just passes data through (no transformation at all) → the test is still valid but needs a side-effect assertion (e.g., was the right DB query made with the right `where` clause?)
-- If you can't write a meaningful assertion because the code doesn't do anything testable → report it as a finding, don't write a vacuous test
+The full lens with worked examples lives in `.claude/skills/testing/SKILL.md`. Do not duplicate it here; if the lens needs to evolve, edit the skill.
 
 ## Working Within the Testing Command Pipeline
 
