@@ -15,6 +15,8 @@
 
 import { Children, cloneElement, isValidElement, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+
+import type { Citation } from '@/types/orchestration';
 // SECURITY: react-markdown is intentionally used with NO plugins. Default
 // behaviour treats raw HTML in markdown source as inert text, which is what
 // makes it safe to render model-emitted content. Adding `rehype-raw` or
@@ -23,7 +25,6 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import Markdown from 'react-markdown';
 
 import { cn } from '@/lib/utils';
-import type { Citation } from '@/types/orchestration';
 
 interface Props {
   content: string;
@@ -36,6 +37,24 @@ interface Props {
    * text without breaking the inline flow.
    */
   trailingInline?: React.ReactNode;
+  /**
+   * Where the citations panel lives.
+   * - `'inline'` (default): the component renders its own toggle +
+   *   expandable list directly under the body. Used by post-hoc
+   *   surfaces (conversation trace viewer, evaluation runner) that
+   *   want a self-contained bubble.
+   * - `'external'`: the component renders only the body with marker
+   *   anchors. The caller renders the toggle and list themselves via
+   *   {@link CitationsList} — used by the live chat interface so the
+   *   sources, tools, and cost summary can share one meta strip.
+   */
+  panelMode?: 'inline' | 'external';
+  /**
+   * Called when a valid citation marker is clicked. Only consulted in
+   * `'external'` mode — `'inline'` mode opens the internal panel
+   * instead. Use this to surface the citations list elsewhere.
+   */
+  onCitationClick?: () => void;
 }
 
 // Private-use unicode sentinels wrap citation markers in the markdown source
@@ -77,6 +96,8 @@ export function MessageWithCitations({
   citations,
   className,
   trailingInline,
+  panelMode = 'inline',
+  onCitationClick,
 }: Props): React.ReactElement {
   // Default closed so the sources list doesn't dominate the message
   // body — operators can expand it on demand. The marker anchors
@@ -93,11 +114,12 @@ export function MessageWithCitations({
     ? content.replace(CITE_SOURCE_RE, (_, n) => `${CITE_OPEN}${n}${CITE_CLOSE}`)
     : content;
 
+  const handleMarkerClick =
+    panelMode === 'external' ? () => onCitationClick?.() : () => setShowSources(true);
+
   const transform = (node: ReactNode): ReactNode => {
     if (!validMarkers) return node;
-    return walkChildren(node, (text) =>
-      splitCitations(text, validMarkers, () => setShowSources(true))
-    );
+    return walkChildren(node, (text) => splitCitations(text, validMarkers, handleMarkerClick));
   };
 
   return (
@@ -125,7 +147,7 @@ export function MessageWithCitations({
         {trailingInline}
       </div>
 
-      {hasCitations && (
+      {hasCitations && panelMode === 'inline' && (
         <CitationsPanel
           citations={citations}
           open={showSources}
@@ -133,6 +155,45 @@ export function MessageWithCitations({
         />
       )}
     </>
+  );
+}
+
+/**
+ * Just the `<ol>` of citations — no toggle, no border. Used by surfaces
+ * that already own the toggle (e.g. the live chat's unified meta strip)
+ * so the list slots in next to other expanded panels.
+ */
+export function CitationsList({ citations }: { citations: Citation[] }): React.ReactElement {
+  return (
+    <ol className="mt-2 space-y-2 text-xs">
+      {citations.map((c) => (
+        <li
+          key={c.marker}
+          id={`citation-${c.marker}`}
+          className="border-border/40 bg-muted/40 rounded border p-2"
+        >
+          <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="text-primary bg-primary/10 inline-flex h-4 min-w-4 items-center justify-center rounded-sm px-1 text-[11px] leading-none font-medium">
+              {c.marker}
+            </span>
+            <span className="text-foreground text-[11px] font-medium">
+              {c.documentName ?? c.patternName ?? 'Untitled source'}
+            </span>
+            {c.section && <span className="text-muted-foreground text-[11px]">· {c.section}</span>}
+          </header>
+          {c.excerpt && (
+            <div
+              className={cn(
+                MARKDOWN_BLOCK_CLASSES,
+                'text-muted-foreground mt-1 text-[11px] leading-snug'
+              )}
+            >
+              <Markdown>{c.excerpt}</Markdown>
+            </div>
+          )}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -228,39 +289,7 @@ function CitationsPanel({ citations, open, onToggle }: CitationsPanelProps): Rea
         )}
         Sources ({citations.length})
       </button>
-      {open && (
-        <ol className="mt-2 space-y-2 text-xs">
-          {citations.map((c) => (
-            <li
-              key={c.marker}
-              id={`citation-${c.marker}`}
-              className="border-border/40 bg-muted/40 rounded border p-2"
-            >
-              <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span className="text-primary bg-primary/10 inline-flex h-4 min-w-4 items-center justify-center rounded-sm px-1 text-[11px] leading-none font-medium">
-                  {c.marker}
-                </span>
-                <span className="text-foreground text-[11px] font-medium">
-                  {c.documentName ?? c.patternName ?? 'Untitled source'}
-                </span>
-                {c.section && (
-                  <span className="text-muted-foreground text-[11px]">· {c.section}</span>
-                )}
-              </header>
-              {c.excerpt && (
-                <div
-                  className={cn(
-                    MARKDOWN_BLOCK_CLASSES,
-                    'text-muted-foreground mt-1 text-[11px] leading-snug'
-                  )}
-                >
-                  <Markdown>{c.excerpt}</Markdown>
-                </div>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
+      {open && <CitationsList citations={citations} />}
     </aside>
   );
 }
