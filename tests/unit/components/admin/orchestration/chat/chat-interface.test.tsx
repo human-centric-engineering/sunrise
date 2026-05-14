@@ -1793,7 +1793,10 @@ describe('ChatInterface', () => {
       expect(onResample).toHaveBeenCalledOnce();
     });
 
-    it('hides the shuffle button once the conversation has at least one message', async () => {
+    it('moves the shuffle button into the Suggested-prompts disclosure once the conversation starts', async () => {
+      // Pre-conversation it lives next to "Try asking:"; post-first-turn
+      // it relocates to the disclosure header so operators can still
+      // re-roll without scrolling back to the empty state.
       const user = userEvent.setup();
       const stream = makeSseStream([
         startFrame('conv-1', 'msg-1'),
@@ -1814,8 +1817,129 @@ describe('ChatInterface', () => {
       await user.type(input, 'hello');
       await user.click(screen.getByRole('button', { name: /send/i }));
       await waitFor(() => {
-        expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+        // The pre-conversation grid is gone; the disclosure has taken over.
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
       });
+      // Still exactly one shuffle button — only its location changed.
+      expect(screen.getAllByLabelText(/randomise suggestions/i)).toHaveLength(1);
+    });
+  });
+
+  // ─── Mid-conversation "Suggested prompts" disclosure ──────────────────────────
+
+  describe('suggested prompts disclosure (post-first-turn)', () => {
+    async function sendFirstTurn(user: ReturnType<typeof userEvent.setup>) {
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+    }
+
+    it('does not render the disclosure when no messages have been sent', () => {
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      expect(screen.queryByRole('button', { name: /suggested prompts/i })).not.toBeInTheDocument();
+    });
+
+    it('renders the disclosure header after the first turn', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+    });
+
+    it('keeps the disclosure body hidden until the operator opens it', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['Alpha', 'Beta']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('suggested-prompts-panel')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      const panel = screen.getByTestId('suggested-prompts-panel');
+      expect(panel).toBeInTheDocument();
+      expect(panel).toHaveTextContent('Alpha');
+      expect(panel).toHaveTextContent('Beta');
+    });
+
+    it('sends a prompt and closes-on-send when the user clicks a suggestion inside the panel', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['Alpha', 'Beta']} />);
+      // First turn — sets messages.length > 0.
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+
+      // Open the disclosure and click a suggestion.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      // Re-stub fetch for the second turn so the prompt click triggers
+      // a fresh stream — the first stub is single-use (already drained).
+      const stream2 = makeSseStream([
+        startFrame('conv-1', 'msg-2'),
+        contentFrame('ok'),
+        doneFrame(),
+      ]);
+      fetchMock.mockResolvedValueOnce({ ok: true, body: stream2 });
+      await user.click(screen.getByRole('button', { name: 'Alpha' }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      });
+      const second = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<
+        string,
+        unknown
+      >;
+      expect(second.message).toBe('Alpha');
+    });
+
+    it('shows the shuffle icon inside the disclosure when onResampleStarters is set', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      // The shuffle icon sits next to the disclosure header — it
+      // works regardless of whether the panel is open.
+      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      expect(onResample).toHaveBeenCalledOnce();
+    });
+
+    it('omits the shuffle icon when the caller has no resample handler (e.g. quiz)', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="quiz-master" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
     });
   });
 });

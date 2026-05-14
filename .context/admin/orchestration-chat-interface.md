@@ -84,6 +84,16 @@ Raw error text is never forwarded to the DOM. The AbortController is cleaned up 
 
 Network failures trigger up to 3 reconnect attempts with exponential backoff (1s, 2s, 4s cap). HTTP-level errors (429, 4xx, 5xx) are not retriable and show specific error messages via `getUserFacingError()`. During reconnection, a warning banner shows "Connection interrupted. Reconnecting..." with an amber `AlertTriangle` icon. After all retries are exhausted, a "Connection Lost" error is displayed. Note: `AgentTestChat` deliberately does **not** retry — chat POSTs are not idempotent, so retrying would duplicate the message on the server.
 
+### Suggested-prompts disclosure (post-first-turn)
+
+Once the conversation has at least one message, the pre-conversation "Try asking:" grid is hidden. In its place a collapsible **Suggested prompts** disclosure appears beneath the top action cluster:
+
+- Chevron toggle on the left; default closed so it doesn't compete with the assistant body.
+- Shuffle icon next to the toggle — only renders when `onResampleStarters` is provided. (Quiz Master keeps its static four prompts and gets no shuffle; the advisor reuses its pool sampler.)
+- Expanding the disclosure reveals the same `starterPrompts` as buttons. Clicking one sends it as a fresh user turn and closes the panel implicitly on the next render (the panel hides while streaming).
+
+Hidden during streaming so the toggle button doesn't fight whichever in-flight controls are active.
+
 ### Suggest-a-prompt button (`suggestionPool`)
 
 A small lightbulb icon button rendered in the input row when (a) `suggestionPool` is non-empty and (b) the conversation has at least one message. Click → random pool entry replaces the textarea value (focus returns to the textarea so the operator can edit before sending). Hidden while streaming.

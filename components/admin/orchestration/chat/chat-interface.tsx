@@ -27,6 +27,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   Download,
   Lightbulb,
   Loader2,
@@ -56,8 +58,15 @@ import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
-import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
-import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import {
+  CitationsList,
+  MessageWithCitations,
+} from '@/components/admin/orchestration/chat/message-with-citations';
+import {
+  ToolCallsList,
+  formatTraceLatency,
+  summarizeToolCalls,
+} from '@/components/admin/orchestration/chat/message-trace';
 import { InputBreakdownPopover } from '@/components/admin/orchestration/chat/input-breakdown-popover';
 import type {
   Citation,
@@ -266,6 +275,133 @@ function formatCostUsd(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
+interface AssistantMetaStripProps {
+  message: ChatMessage;
+  /** Which diagnostic panel — if any — is expanded under this message. */
+  expanded: 'sources' | 'tools' | null;
+  onToggle: (panel: 'sources' | 'tools') => void;
+  /** Admin gate — when false the strip stays hidden. */
+  showInlineTrace: boolean;
+}
+
+/**
+ * Single horizontal strip under an assistant message that combines the
+ * Sources toggle, the Tools (capabilities) toggle, and the per-turn
+ * cost summary. The expanded panel (citations list or tool-call list)
+ * renders below the strip when one is selected. Mutually exclusive —
+ * opening one collapses the other so the vertical footprint stays
+ * compact even on turns that ship both kinds of diagnostics.
+ */
+function AssistantMetaStrip({
+  message,
+  expanded,
+  onToggle,
+  showInlineTrace,
+}: AssistantMetaStripProps): React.ReactElement | null {
+  const hasCitations = !!message.citations && message.citations.length > 0;
+  const hasToolCalls = showInlineTrace && !!message.toolCalls && message.toolCalls.length > 0;
+  const hasCost = showInlineTrace && (typeof message.costUsd === 'number' || !!message.tokenUsage);
+
+  // Citations always render their toggle (regardless of `showInlineTrace`)
+  // because they exist on consumer turns too. Tools + cost are admin-only.
+  if (!hasCitations && !hasToolCalls && !hasCost) return null;
+
+  const toolSummary = hasToolCalls ? summarizeToolCalls(message.toolCalls!) : null;
+
+  return (
+    <>
+      <div className="border-border/60 mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t pt-2 text-[11px] tabular-nums">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          {hasCitations && (
+            <button
+              type="button"
+              onClick={() => onToggle('sources')}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              aria-expanded={expanded === 'sources'}
+            >
+              {expanded === 'sources' ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              Sources ({message.citations!.length})
+            </button>
+          )}
+          {hasToolCalls && toolSummary && (
+            <button
+              type="button"
+              onClick={() => onToggle('tools')}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              aria-expanded={expanded === 'tools'}
+              aria-controls="message-trace-details"
+              data-testid="message-trace"
+            >
+              {expanded === 'tools' ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              <span>
+                {toolSummary.count} tool{toolSummary.count === 1 ? '' : 's'} ·{' '}
+                {formatTraceLatency(toolSummary.totalLatencyMs)}
+              </span>
+              {toolSummary.failed > 0 && (
+                <span
+                  className="text-amber-700 dark:text-amber-300"
+                  title={`${toolSummary.failed} call${toolSummary.failed === 1 ? '' : 's'} failed`}
+                >
+                  · {toolSummary.failed} failed
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+
+        {hasCost && (
+          <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-1">
+            {typeof message.costUsd === 'number' && (
+              <span title="Approximate cost for this turn">≈ {formatCostUsd(message.costUsd)}</span>
+            )}
+            {message.tokenUsage && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="flex items-baseline gap-1">
+                  <span>Toks:</span>
+                  {message.inputBreakdown ? (
+                    <InputBreakdownPopover
+                      breakdown={message.inputBreakdown}
+                      reportedInputTokens={message.tokenUsage.inputTokens}
+                      compact
+                    />
+                  ) : (
+                    <span title="Input tokens for this turn">
+                      {message.tokenUsage.inputTokens.toLocaleString()} input
+                    </span>
+                  )}
+                  <span>, {message.tokenUsage.outputTokens.toLocaleString()} output</span>
+                </span>
+              </>
+            )}
+            {message.modelUsed && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono" title="Model used for this turn">
+                  {message.modelUsed}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {expanded === 'sources' && hasCitations && <CitationsList citations={message.citations!} />}
+      {expanded === 'tools' && hasToolCalls && (
+        <ToolCallsList toolCalls={message.toolCalls!} id="message-trace-details" />
+      )}
+    </>
+  );
+}
+
 function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMessage[] {
   if (traces.length === 0) return prev;
   const updated = [...prev];
@@ -366,6 +502,22 @@ export function ChatInterface({
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Mid-conversation "Suggested prompts" disclosure. Default closed so
+  // it doesn't compete with the assistant text below; opens on click
+  // and stays open until the operator collapses it. Independent of
+  // the pre-conversation starter grid.
+  const [showSuggestedPrompts, setShowSuggestedPrompts] = useState(false);
+  /**
+   * Per-message diagnostic-panel state. Each entry is keyed by the
+   * message's index in {@link messages} and stores which of the
+   * Sources/Tools panels is currently expanded under that message
+   * (mutually exclusive — only one at a time so the meta strip stays
+   * compact). Reset implicitly on conversation clear since the keys
+   * are tied to message indices.
+   */
+  const [expandedPanels, setExpandedPanels] = useState<Record<number, 'sources' | 'tools' | null>>(
+    {}
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -932,6 +1084,65 @@ export function ChatInterface({
         </div>
       )}
 
+      {/* Suggested prompts disclosure — appears after the first turn
+          so operators can grab a new question without scrolling to
+          the input. Mirrors the pre-conversation starter grid (same
+          prompts, same shuffle icon) but lives in a collapsible row
+          beneath the top action cluster. Hidden while streaming so
+          the toggle button doesn't fight the "Cancel" affordances. */}
+      {messages.length > 0 && starterPrompts && starterPrompts.length > 0 && !streaming && (
+        <div className="border-border/60 border-b px-3 py-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setShowSuggestedPrompts((v) => !v)}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs font-medium"
+              aria-expanded={showSuggestedPrompts}
+              aria-controls="suggested-prompts-panel"
+            >
+              {showSuggestedPrompts ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              Suggested prompts
+            </button>
+            {onResampleStarters && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground hover:text-foreground h-6 w-6"
+                onClick={() => onResampleStarters()}
+                aria-label="Randomise suggestions"
+                title="Randomise suggestions"
+              >
+                <Shuffle className="h-3 w-3" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+          {showSuggestedPrompts && (
+            <div
+              id="suggested-prompts-panel"
+              className="mt-2 flex flex-wrap gap-2"
+              data-testid="suggested-prompts-panel"
+            >
+              {starterPrompts.map((prompt) => (
+                <Button
+                  key={prompt}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void sendMessageWrapped(prompt)}
+                  disabled={streaming}
+                >
+                  {prompt}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Messages area */}
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
         {showStarters && (
@@ -986,6 +1197,10 @@ export function ChatInterface({
                       <MessageWithCitations
                         content={msg.content}
                         citations={msg.citations}
+                        panelMode="external"
+                        onCitationClick={() =>
+                          setExpandedPanels((prev) => ({ ...prev, [i]: 'sources' }))
+                        }
                         trailingInline={
                           isStreamingTail ? (
                             <span className="terminal-caret text-foreground" aria-hidden="true">
@@ -1001,40 +1216,17 @@ export function ChatInterface({
                         onResolved={(_action, followup) => sendFollowupWhenIdle(followup)}
                       />
                     )}
-                    {showInlineTrace && msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <MessageTrace toolCalls={msg.toolCalls} />
-                    )}
-                    {showInlineTrace && (typeof msg.costUsd === 'number' || msg.tokenUsage) && (
-                      <div className="text-muted-foreground border-border/60 mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-2 text-[11px] tabular-nums">
-                        {typeof msg.costUsd === 'number' && (
-                          <span title="Approximate cost for this turn">
-                            ≈ {formatCostUsd(msg.costUsd)}
-                          </span>
-                        )}
-                        {msg.tokenUsage && (
-                          <span className="flex items-baseline gap-1">
-                            {msg.inputBreakdown ? (
-                              <InputBreakdownPopover
-                                breakdown={msg.inputBreakdown}
-                                reportedInputTokens={msg.tokenUsage.inputTokens}
-                              />
-                            ) : (
-                              <span title="Input tokens for this turn">
-                                {msg.tokenUsage.inputTokens.toLocaleString()} input tokens
-                              </span>
-                            )}
-                            <span>
-                              · {msg.tokenUsage.outputTokens.toLocaleString()} output tokens
-                            </span>
-                          </span>
-                        )}
-                        {msg.modelUsed && (
-                          <span className="font-mono" title="Model used for this turn">
-                            {msg.modelUsed}
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    <AssistantMetaStrip
+                      message={msg}
+                      expanded={expandedPanels[i] ?? null}
+                      onToggle={(panel) =>
+                        setExpandedPanels((prev) => ({
+                          ...prev,
+                          [i]: prev[i] === panel ? null : panel,
+                        }))
+                      }
+                      showInlineTrace={showInlineTrace}
+                    />
                     {/* Inline status during streaming — shown below content */}
                     {streaming && msg.content && i === messages.length - 1 && status && (
                       <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
