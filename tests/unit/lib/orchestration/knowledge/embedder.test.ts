@@ -49,7 +49,8 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 // Import SUT after mocks are in place
-const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
+const { embedText, embedBatch, getActiveEmbeddingModelSummary } =
+  await import('@/lib/orchestration/knowledge/embedder');
 
 // Helper: build a minimal fetch response
 function makeFetchResponse(
@@ -616,5 +617,506 @@ describe('embedBatch', () => {
     const texts = Array.from({ length: 2 }, (_, i) => `text-${i}`);
 
     await expect(embedBatch(texts, 1)).rejects.toThrow('Network error on batch 2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: build a minimal AiProviderModel stub for active-embedding-model tests
+// ---------------------------------------------------------------------------
+
+function makeModelRow(overrides: Record<string, unknown> = {}) {
+  return {
+    modelId: 'text-embedding-3-small',
+    dimensions: 1536,
+    capabilities: ['embedding'],
+    isActive: true,
+    providerSlug: 'openai',
+    schemaCompatible: true,
+    ...overrides,
+  };
+}
+
+// Helper: build a minimal AiProviderConfig stub that includes the `slug` field
+// required by resolveActiveEmbeddingConfig.
+function makeActiveProvider(overrides: Record<string, unknown> = {}) {
+  return {
+    ...makeProvider(overrides),
+    slug: (overrides['slug'] as string | undefined) ?? 'openai',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// getActiveEmbeddingModelSummary
+// ---------------------------------------------------------------------------
+
+describe('getActiveEmbeddingModelSummary', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+  });
+
+  it('returns null when no AiOrchestrationSettings row exists', async () => {
+    // Arrange: findFirst returns null (default from beforeEach)
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: no settings → no active model id → null
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the settings row has a null activeEmbeddingModelId', async () => {
+    // Arrange: settings row exists but activeEmbeddingModelId is null
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: null,
+    } as never);
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: id is falsy → null without querying the model
+    expect(result).toBeNull();
+    expect(prisma.aiProviderModel.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('returns null when AiProviderModel.findUnique returns null', async () => {
+    // Arrange: settings points at a model id that no longer exists
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-gone',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: model missing → null
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the referenced model is inactive', async () => {
+    // Arrange: model exists but isActive is false
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ isActive: false }) as never
+    );
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: inactive model is unusable → null
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the model's capabilities do not include 'embedding'", async () => {
+    // Arrange: model is a chat-only model
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ capabilities: ['chat'] }) as never
+    );
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: no embedding capability → null
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the model has null dimensions', async () => {
+    // Arrange: model hasn't had dimensions populated yet
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ dimensions: null }) as never
+    );
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: dim-less model can't be used for drift detection → null
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the model has zero dimensions', async () => {
+    // Arrange: dimensions is explicitly 0 (invalid)
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ dimensions: 0 }) as never
+    );
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: 0 is ≤ 0, which the validity gate rejects
+    expect(result).toBeNull();
+  });
+
+  it('returns { modelId, dimensions } when all validity gates pass', async () => {
+    // Arrange: settings + fully-valid model row
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ modelId: 'text-embedding-3-large', dimensions: 3072 }) as never
+    );
+
+    // Act
+    const result = await getActiveEmbeddingModelSummary();
+
+    // Assert: all gates pass → summary returned with values from the DB row (not hardcoded)
+    expect(result).toEqual({ modelId: 'text-embedding-3-large', dimensions: 3072 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveActiveEmbeddingConfig (exercised via embedText / embedBatch)
+// ---------------------------------------------------------------------------
+
+describe('resolveActiveEmbeddingConfig (via embedText)', () => {
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    savedEnv = process.env;
+    process.env = { ...savedEnv };
+    // Default fallback chain: one openai-compatible provider so tests that
+    // verify "falls back to provider-priority" get a determinate result.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({
+        id: 'fallback-1',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://fallback.example.com/v1',
+        apiKeyEnvVar: null,
+      }),
+    ] as never);
+    // Default: no active-model override
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+  });
+
+  afterEach(() => {
+    process.env = savedEnv;
+  });
+
+  it('falls through to provider-priority when activeEmbeddingModelId is null', async () => {
+    // Arrange: settings row explicitly returns null activeEmbeddingModelId
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: null,
+    } as never);
+
+    // Act
+    await embedText('hello');
+
+    // Assert: provider-priority path hit the fallback openai-compatible provider
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back with a warn log when the picked model is inactive', async () => {
+    // Arrange: settings points at a model that is inactive
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'inactive-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ isActive: false }) as never
+    );
+
+    // Act
+    await embedText('hello');
+
+    // Assert (1): warn fired with the expected key phrase
+    const { logger } = await import('@/lib/logging');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('missing or inactive'),
+      expect.objectContaining({ activeEmbeddingModelId: 'inactive-model' })
+    );
+
+    // Assert (2): provider-priority fallback was used, not the active-model URL
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it("falls back with a warn log when the picked model lacks the 'embedding' capability", async () => {
+    // Arrange: settings points at a chat-only model
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'chat-only-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ capabilities: ['chat'] }) as never
+    );
+
+    // Act
+    await embedText('hello');
+
+    // Assert (1): warn fired with the capability-related key phrase
+    const { logger } = await import('@/lib/logging');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('embedding capability'),
+      expect.objectContaining({ activeEmbeddingModelId: 'chat-only-model' })
+    );
+
+    // Assert (2): fell back to provider-priority
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back with a warn log when the picked model has no dimensions', async () => {
+    // Arrange: valid model but dimensions is null
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'dim-less-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ dimensions: null }) as never
+    );
+
+    // Act
+    await embedText('hello');
+
+    // Assert (1): warn includes "no dimensions"
+    const { logger } = await import('@/lib/logging');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no dimensions'),
+      expect.objectContaining({ activeEmbeddingModelId: 'dim-less-model' })
+    );
+
+    // Assert (2): fell back to provider-priority
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back with a warn log when no matching AiProviderConfig exists for the active model', async () => {
+    // Arrange: valid model but no matching provider config
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'valid-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ providerSlug: 'missing-provider' }) as never
+    );
+    // findFirst returns null — no active provider config with that slug
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+
+    // Act
+    await embedText('hello');
+
+    // Assert (1): warn includes "no matching active provider"
+    const { logger } = await import('@/lib/logging');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no matching active provider'),
+      expect.objectContaining({ providerSlug: 'missing-provider' })
+    );
+
+    // Assert (2): fell back to provider-priority
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back with a warn log when provider has no baseUrl and is not Voyage', async () => {
+    // Arrange: valid model + provider config, but baseUrl is null and type is not voyage
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'valid-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ providerSlug: 'custom-provider' }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeActiveProvider({
+        slug: 'custom-provider',
+        providerType: 'openai-compatible',
+        baseUrl: null,
+        apiKeyEnvVar: null,
+      }) as never
+    );
+
+    // Act
+    await embedText('hello');
+
+    // Assert (1): warn includes "no baseUrl"
+    const { logger } = await import('@/lib/logging');
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no baseUrl'),
+      expect.objectContaining({ providerSlug: 'custom-provider' })
+    );
+
+    // Assert (2): fell back to provider-priority
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('active-model path: sends dimensions param (schemaCompatible: true) and uses registry model', async () => {
+    // Arrange: fully valid active model — schemaCompatible true → dimensions in body
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'active-model-1',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'text-embedding-3-large',
+        dimensions: 3072,
+        providerSlug: 'openai-custom',
+        schemaCompatible: true,
+      }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeActiveProvider({
+        slug: 'openai-custom',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://active.example.com/v1',
+        apiKeyEnvVar: 'ACTIVE_KEY',
+      }) as never
+    );
+    process.env['ACTIVE_KEY'] = 'sk-active-key';
+
+    // Act
+    await embedText('hello');
+
+    // Assert: active-model URL was called (not the fallback provider)
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
+    expect(calledUrl).toBe('https://active.example.com/v1/embeddings');
+
+    // Assert: model from the registry row, not the legacy default
+    const body = JSON.parse(calledOptions.body) as { model: string; dimensions?: number };
+    expect(body.model).toBe('text-embedding-3-large');
+
+    // Assert: dimensions is sent because schemaCompatible is true
+    expect(body.dimensions).toBe(3072);
+  });
+
+  it('active-model path: omits dimensions param when schemaCompatible is false', async () => {
+    // Arrange: fixed-dim local model — schemaCompatible false → no dimensions in body
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'local-active-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'nomic-embed-text',
+        dimensions: 768,
+        providerSlug: 'local-ollama',
+        schemaCompatible: false,
+      }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeActiveProvider({
+        slug: 'local-ollama',
+        providerType: 'openai-compatible',
+        baseUrl: 'http://ollama.local/v1',
+        isLocal: true,
+        apiKeyEnvVar: null,
+      }) as never
+    );
+
+    // Act
+    await embedText('hello');
+
+    // Assert: active-model URL was called
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
+    expect(calledUrl).toBe('http://ollama.local/v1/embeddings');
+
+    // Assert: model from registry row
+    const body = JSON.parse(calledOptions.body) as { model: string; dimensions?: number };
+    expect(body.model).toBe('nomic-embed-text');
+
+    // Assert: dimensions NOT sent for fixed-dim model (schemaCompatible: false)
+    expect(body.dimensions).toBeUndefined();
+  });
+
+  it('falls back gracefully when AiOrchestrationSettings.findFirst rejects (catch path)', async () => {
+    // Arrange: findFirst throws — the .catch(() => null) guard should suppress it
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockRejectedValue(
+      new Error('DB connection lost')
+    );
+
+    // Act: should not throw; falls back to provider-priority
+    await embedText('hello');
+
+    // Assert: provider-priority fallback was used
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back gracefully when AiProviderModel.findUnique rejects inside resolveActiveEmbeddingConfig', async () => {
+    // Arrange: settings has an activeEmbeddingModelId but model lookup throws
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'model-db-error',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockRejectedValue(new Error('timeout'));
+
+    // Act: should not throw; the .catch(() => null) guard returns null → warn + fallback
+    await embedText('hello');
+
+    // Assert: provider-priority fallback was used
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('falls back gracefully when AiProviderConfig.findFirst rejects inside resolveActiveEmbeddingConfig', async () => {
+    // Arrange: model resolves fine but provider config lookup throws
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'config-db-error',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ providerSlug: 'broken-provider' }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(
+      new Error('provider config DB error')
+    );
+
+    // Act: should not throw; the .catch(() => null) guard returns null → warn + fallback
+    await embedText('hello');
+
+    // Assert: provider-priority fallback was used
+    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
+    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  });
+
+  it('active Voyage model: sends output_dimension and input_type in body', async () => {
+    // Arrange: operator has picked a Voyage model via the admin picker
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'voyage-active',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({
+        modelId: 'voyage-3-large',
+        dimensions: 1024,
+        providerSlug: 'voyage-custom',
+        schemaCompatible: true,
+      }) as never
+    );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeActiveProvider({
+        slug: 'voyage-custom',
+        providerType: 'voyage',
+        baseUrl: null, // null → Voyage gets its canonical URL
+        apiKeyEnvVar: 'VOYAGE_KEY',
+      }) as never
+    );
+    process.env['VOYAGE_KEY'] = 'voyage-secret-789';
+
+    // Act
+    await embedText('hello', 'query');
+
+    // Assert: Voyage canonical URL used (baseUrl was null)
+    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
+    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
+
+    // Assert: Voyage-specific body params — output_dimension and input_type
+    const body = JSON.parse(calledOptions.body) as {
+      model: string;
+      output_dimension?: number;
+      input_type?: string;
+      dimensions?: number;
+    };
+    expect(body.model).toBe('voyage-3-large');
+    expect(body.output_dimension).toBe(1024);
+    expect(body.input_type).toBe('query');
+    // OpenAI-style `dimensions` must NOT be sent to Voyage
+    expect(body.dimensions).toBeUndefined();
   });
 });
