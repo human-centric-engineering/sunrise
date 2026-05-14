@@ -1,46 +1,20 @@
 ---
 name: form-builder
-version: 1.0.0
 description: |
-  Expert form builder for Sunrise. Creates validated forms using Zod + react-hook-form + shadcn/ui
-  following established patterns: schema validation, API integration, loading states, error handling,
-  and accessibility. Use when creating new forms or modifying existing ones.
-
-triggers:
-  - 'create form'
-  - 'build a form'
-  - 'add form for'
-  - 'create profile form'
-  - 'create settings form'
-  - 'add form validation'
-
-contexts:
-  - 'components/forms/**/*'
-  - 'lib/validations/**/*'
-  - 'lib/api/client.ts'
-  - '.context/api/client.md'
-
-mcp_integrations:
-  next_devtools: true
-  context7:
-    libraries:
-      - zod: TBC # For validation patterns
-      - react-hook-form: TBC # For form handling
-      - { shadcn: '/websites/ui_shadcn' } # For UI components
-
-parameters:
-  validation_mode: 'onTouched' # Validate on blur for better UX
-  api_client: 'apiClient' # Use apiClient for API calls
-  auth_client: 'authClient' # Use authClient for auth flows only
+  Form builder for Sunrise. Creates validated forms using
+  `react-hook-form` + Zod + shadcn/ui following the established
+  pattern: `mode: 'onTouched'`, all fields default-valued, `apiClient`
+  for non-auth submits / `authClient` for auth flows, `<FormError>` for
+  per-field errors, and `<FieldHelp>` ⓘ popovers on every non-trivial
+  field. Use when creating new forms under `components/forms/` or
+  modifying existing ones.
 ---
 
-# Form Builder Skill - Overview
+# Form Builder Skill
 
-## Mission
+Production-ready forms in Sunrise use one composition: `react-hook-form` for state, `zodResolver` for validation, shadcn primitives for UI, and `<FieldHelp>` for inline guidance on non-trivial fields. Reference `components/forms/profile-form.tsx` and `preferences-form.tsx` for the canonical implementations — copy them instead of inventing.
 
-You are a form builder for the Sunrise project. Your role is to create production-ready forms using **react-hook-form**, **Zod** validation, and **shadcn/ui** components following established patterns for validation, error handling, loading states, and accessibility.
-
-**CRITICAL:** Forms in Sunrise follow specific patterns. Always reference existing forms in `components/forms/` before creating new ones.
+**Required by CLAUDE.md:** every non-trivial form field gets a `<FieldHelp>` ⓘ popover. See [`.context/ui/contextual-help.md`](../../../.context/ui/contextual-help.md) for the full spec.
 
 ## Core Patterns
 
@@ -253,21 +227,54 @@ const {
 
 ### Step 4: Implement Features
 
-**Field rendering pattern:**
+**Field rendering pattern.** Two flavours — pick based on whether the field's purpose is self-evident from its label alone.
+
+**Self-evident fields** (name, email, password — meaning is obvious): no FieldHelp needed.
 
 ```typescript
 <div className="space-y-2">
-  <Label htmlFor="fieldId">Field Label</Label>
+  <Label htmlFor="email">Email</Label>
   <Input
-    id="fieldId"
-    type="text"
-    placeholder="Placeholder text"
+    id="email"
+    type="email"
     disabled={isLoading}
-    {...register('fieldName')}
+    {...register('email')}
   />
-  <FormError message={errors.fieldName?.message} />
+  <FormError message={errors.email?.message} />
 </div>
 ```
+
+**Non-trivial fields** (bio, phone, timezone, anything domain-specific or whose default matters): wrap with a `<FieldHelp>` ⓘ popover inside the label. Required by CLAUDE.md.
+
+```typescript
+import { FieldHelp } from '@/components/ui/field-help';
+
+<div className="space-y-2">
+  <Label htmlFor="bio" className="flex items-center gap-1">
+    Bio
+    <FieldHelp title="Public bio">
+      Shown on your profile and in @mentions. 500 character max. Leave blank to
+      hide the bio section entirely.
+    </FieldHelp>
+  </Label>
+  <Textarea
+    id="bio"
+    rows={3}
+    disabled={isLoading}
+    {...register('bio')}
+  />
+  <FormError message={errors.bio?.message} />
+</div>
+```
+
+Notes on the FieldHelp pattern:
+
+- `className="flex items-center gap-1"` on the `<Label>` puts the ⓘ inline with the text.
+- Body should answer three questions: **what** the setting does, **when** to change it, and **what the default is**. Keep it under three sentences.
+- Add `<Link href="/admin/orchestration/learning">Learn more</Link>` when there's deeper context the user should be able to drill into.
+- Heuristic for "non-trivial": if you wouldn't be able to predict what a field controls from its label alone — or if it has a non-obvious default, an effect on billing/cost, or domain-specific terminology — it needs help text.
+
+Full spec and accessibility notes: [`.context/ui/contextual-help.md`](../../../.context/ui/contextual-help.md).
 
 **Password field with strength meter:**
 
@@ -332,6 +339,7 @@ if (success) {
 - [ ] Error state displayed to user
 - [ ] Success handling (redirect or message)
 - [ ] FormError component used for field errors
+- [ ] **Every non-trivial field has `<FieldHelp>` inside its `<Label>`** (per CLAUDE.md)
 - [ ] Accessible: Labels linked to inputs with `htmlFor`
 - [ ] Run `npm run validate` - all checks pass
 
@@ -428,6 +436,7 @@ await authClient.signIn.social({
 
 **Available Form Helpers:**
 
+- `FieldHelp` - ⓘ popover for non-trivial field guidance (`components/ui/field-help.tsx`) — required on non-self-evident fields per CLAUDE.md
 - `FormError` - Field error display (`components/forms/form-error.tsx`)
 - `PasswordStrength` - Password strength meter (`components/forms/password-strength.tsx`)
 - `OAuthButtons` - OAuth sign-in buttons (`components/forms/oauth-buttons.tsx`)
