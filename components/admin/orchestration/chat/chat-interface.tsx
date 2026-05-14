@@ -67,7 +67,7 @@ import {
   formatTraceLatency,
   summarizeToolCalls,
 } from '@/components/admin/orchestration/chat/message-trace';
-import { InputBreakdownPopover } from '@/components/admin/orchestration/chat/input-breakdown-popover';
+import { InputBreakdownList } from '@/components/admin/orchestration/chat/input-breakdown-list';
 import type {
   Citation,
   InputBreakdown,
@@ -275,11 +275,13 @@ function formatCostUsd(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
+type MetaPanel = 'sources' | 'tools' | 'inputs';
+
 interface AssistantMetaStripProps {
   message: ChatMessage;
   /** Which diagnostic panel — if any — is expanded under this message. */
-  expanded: 'sources' | 'tools' | null;
-  onToggle: (panel: 'sources' | 'tools') => void;
+  expanded: MetaPanel | null;
+  onToggle: (panel: MetaPanel) => void;
   /** Admin gate — when false the strip stays hidden. */
   showInlineTrace: boolean;
 }
@@ -300,13 +302,17 @@ function AssistantMetaStrip({
 }: AssistantMetaStripProps): React.ReactElement | null {
   const hasCitations = !!message.citations && message.citations.length > 0;
   const hasToolCalls = showInlineTrace && !!message.toolCalls && message.toolCalls.length > 0;
+  const hasInputBreakdown = showInlineTrace && !!message.inputBreakdown;
   const hasCost = showInlineTrace && (typeof message.costUsd === 'number' || !!message.tokenUsage);
 
   // Citations always render their toggle (regardless of `showInlineTrace`)
-  // because they exist on consumer turns too. Tools + cost are admin-only.
-  if (!hasCitations && !hasToolCalls && !hasCost) return null;
+  // because they exist on consumer turns too. Tools + inputs + cost are
+  // admin-only.
+  if (!hasCitations && !hasToolCalls && !hasInputBreakdown && !hasCost) return null;
 
   const toolSummary = hasToolCalls ? summarizeToolCalls(message.toolCalls!) : null;
+  const inputTokens =
+    message.tokenUsage?.inputTokens ?? message.inputBreakdown?.totalEstimated ?? 0;
 
   return (
     <>
@@ -355,6 +361,23 @@ function AssistantMetaStrip({
               )}
             </button>
           )}
+          {hasInputBreakdown && (
+            <button
+              type="button"
+              onClick={() => onToggle('inputs')}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              aria-expanded={expanded === 'inputs'}
+              aria-controls="input-breakdown-details"
+              title="Why this turn used this many input tokens"
+            >
+              {expanded === 'inputs' ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              <span>Inputs ({inputTokens.toLocaleString()})</span>
+            </button>
+          )}
         </div>
 
         {hasCost && (
@@ -365,20 +388,9 @@ function AssistantMetaStrip({
             {message.tokenUsage && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="flex items-baseline gap-1">
-                  <span>Toks:</span>
-                  {message.inputBreakdown ? (
-                    <InputBreakdownPopover
-                      breakdown={message.inputBreakdown}
-                      reportedInputTokens={message.tokenUsage.inputTokens}
-                      compact
-                    />
-                  ) : (
-                    <span title="Input tokens for this turn">
-                      {message.tokenUsage.inputTokens.toLocaleString()} input
-                    </span>
-                  )}
-                  <span>, {message.tokenUsage.outputTokens.toLocaleString()} output</span>
+                <span title="Tokens for this turn">
+                  Toks: {message.tokenUsage.inputTokens.toLocaleString()} input,{' '}
+                  {message.tokenUsage.outputTokens.toLocaleString()} output
                 </span>
               </>
             )}
@@ -397,6 +409,12 @@ function AssistantMetaStrip({
       {expanded === 'sources' && hasCitations && <CitationsList citations={message.citations!} />}
       {expanded === 'tools' && hasToolCalls && (
         <ToolCallsList toolCalls={message.toolCalls!} id="message-trace-details" />
+      )}
+      {expanded === 'inputs' && hasInputBreakdown && (
+        <InputBreakdownList
+          breakdown={message.inputBreakdown!}
+          reportedInputTokens={message.tokenUsage?.inputTokens}
+        />
       )}
     </>
   );
@@ -515,9 +533,7 @@ export function ChatInterface({
    * compact). Reset implicitly on conversation clear since the keys
    * are tied to message indices.
    */
-  const [expandedPanels, setExpandedPanels] = useState<Record<number, 'sources' | 'tools' | null>>(
-    {}
-  );
+  const [expandedPanels, setExpandedPanels] = useState<Record<number, MetaPanel | null>>({});
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);

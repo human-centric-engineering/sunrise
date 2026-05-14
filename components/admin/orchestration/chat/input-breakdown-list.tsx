@@ -1,36 +1,30 @@
 'use client';
 
 /**
- * InputBreakdownPopover — admin-only popover that explains why a chat
- * turn consumed N input tokens. Surfaces the per-section breakdown
- * supplied by the streaming handler on the `done` SSE event so
- * operators can attribute scaffolding cost (system prompt, tool
+ * InputBreakdownList — admin-only inline panel that explains why a
+ * chat turn consumed N input tokens. Surfaces the per-section
+ * breakdown supplied by the streaming handler on the `done` SSE event
+ * so operators can attribute scaffolding cost (system prompt, tool
  * schemas, history) vs the user's actual message.
  *
- * Triggered by clicking the input-tokens number in the per-turn cost
- * strip; safe to render only inside admin route groups since it
- * surfaces the raw system prompt and capability schemas.
+ * Renders inline beneath an assistant message, alongside Sources and
+ * Tools panels — same chevron-toggle pattern (see `AssistantMetaStrip`
+ * in `chat-interface.tsx`). Safe to render only inside admin route
+ * groups since it surfaces the raw system prompt and capability
+ * schemas.
  */
 
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import type { InputBreakdown, InputBreakdownPart } from '@/types/orchestration';
 
 interface Props {
   breakdown: InputBreakdown;
-  /** The model-reported input-token count, for comparison. */
+  /** The model-reported input-token count, for the header comparison. */
   reportedInputTokens?: number;
   className?: string;
-  /**
-   * When true, the trigger renders just the number (no trailing
-   * "input tokens" label). Used by the live chat's compact meta strip
-   * where the surrounding text — `Toks: <number> input, …` — already
-   * supplies the label.
-   */
-  compact?: boolean;
 }
 
 interface SectionConfig {
@@ -44,14 +38,12 @@ interface SectionConfig {
   explanation?: ReactNode;
 }
 
-export function InputBreakdownPopover({
+export function InputBreakdownList({
   breakdown,
   reportedInputTokens,
   className,
-  compact = false,
 }: Props): React.ReactElement {
   const totalEstimated = breakdown.totalEstimated || 1;
-  const displayTokens = reportedInputTokens ?? breakdown.totalEstimated;
 
   const sections: SectionConfig[] = [
     {
@@ -192,44 +184,29 @@ export function InputBreakdownPopover({
   }
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            'hover:text-foreground cursor-pointer underline decoration-dotted underline-offset-2',
-            className
-          )}
-          title="Click to see why this turn used this many input tokens"
-        >
-          {displayTokens.toLocaleString()}
-          {!compact && ' input tokens'}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[min(48rem,95vw)] p-0" align="start" side="top">
-        <div className="border-border/60 flex items-baseline justify-between border-b p-3">
-          <div className="text-sm font-medium">Input breakdown</div>
-          <div className="text-muted-foreground text-[11px] tabular-nums">
-            {typeof reportedInputTokens === 'number' && (
-              <>model reported {reportedInputTokens.toLocaleString()} · </>
-            )}
-            est. {breakdown.totalEstimated.toLocaleString()}
-          </div>
+    <aside
+      className={cn('border-border/40 bg-muted/40 mt-2 overflow-hidden rounded border', className)}
+      data-testid="input-breakdown"
+    >
+      {typeof reportedInputTokens === 'number' && (
+        <div className="border-border/40 text-muted-foreground flex items-baseline justify-between border-b px-3 py-1.5 text-[11px] tabular-nums">
+          <span>model reported {reportedInputTokens.toLocaleString()}</span>
+          <span>est. {breakdown.totalEstimated.toLocaleString()}</span>
         </div>
-        <ul className="divide-border/40 max-h-[60vh] divide-y overflow-auto">
-          {sections.map((section) => (
-            <Section key={section.key} section={section} totalEstimated={totalEstimated} />
-          ))}
-        </ul>
-        <p className="text-muted-foreground border-border/60 border-t p-2 text-[10.5px] leading-snug">
-          Sections show the local-tokeniser count of each piece of content sent to the model. The
-          total is reconciled to the model&rsquo;s reported{' '}
-          <code className="font-mono">usage.input_tokens</code>, with any unattributed remainder
-          shown as &ldquo;Provider framing&rdquo;. Counts reflect the first LLM call of this turn;
-          tool round-trips add more on subsequent iterations.
-        </p>
-      </PopoverContent>
-    </Popover>
+      )}
+      <ul className="divide-border/40 divide-y">
+        {sections.map((section) => (
+          <Section key={section.key} section={section} totalEstimated={totalEstimated} />
+        ))}
+      </ul>
+      <p className="text-muted-foreground border-border/40 border-t p-2 text-[10.5px] leading-snug">
+        Sections show the local-tokeniser count of each piece of content sent to the model. The
+        total is reconciled to the model&rsquo;s reported{' '}
+        <code className="font-mono">usage.input_tokens</code>, with any unattributed remainder shown
+        as &ldquo;Provider framing&rdquo;. Counts reflect the first LLM call of this turn; tool
+        round-trips add more on subsequent iterations.
+      </p>
+    </aside>
   );
 }
 
