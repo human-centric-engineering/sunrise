@@ -226,15 +226,22 @@ describe('claimLease', () => {
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     const where = (call as { where: Record<string, unknown> }).where;
-    expect(where['status']).toBe('running');
+    expect(where['status']).toEqual({ equals: 'running' });
   });
 
-  it('reason=fresh-resume → WHERE clause requires status=paused_for_approval', async () => {
+  // fresh-resume must accept both pre- and post-executeApproval states. The
+  // approve route flips paused_for_approval → pending atomically with the trace
+  // write; if claimLease accepted only paused_for_approval, the resume path
+  // (channel routes + admin route) would race the approve write and lose.
+  // Accepting both removes that race. Terminal rows (failed/completed/cancelled)
+  // are still blocked because they're not in the allowlist AND the reaper clears
+  // the lease columns atomically with the FAILED flip.
+  it('reason=fresh-resume → WHERE clause accepts paused_for_approval and pending', async () => {
     await claimLease('exec-status-fresh', 'fresh-resume');
 
     const call = mockUpdateMany.mock.calls[0]?.[0];
     const where = (call as { where: Record<string, unknown> }).where;
-    expect(where['status']).toBe('paused_for_approval');
+    expect(where['status']).toEqual({ in: ['paused_for_approval', 'pending'] });
   });
 });
 

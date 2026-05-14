@@ -76,6 +76,22 @@ export function leaseExpiry(now: Date = new Date()): Date {
 export type ClaimReason = 'fresh-resume' | 'orphan-resume';
 
 /**
+ * Resumable statuses for `fresh-resume`. `paused_for_approval` covers the pre-`executeApproval`
+ * state (where a maintenance-tick-driven recovery sweep races the approve route); `pending`
+ * covers the post-`executeApproval` state where the approve route has already written the
+ * payload and flipped the row before kicking the resume helper. Both are valid starting
+ * points for an approval-driven resume.
+ *
+ * Why a list, not a single status: `executeApproval` is the only place that transitions
+ * `paused_for_approval → pending`, and it does so atomically alongside the trace update.
+ * If `claimLease` accepted only one of the two, the resume path would race the approve
+ * write in one direction or the other. Accepting both removes the race window without
+ * weakening the terminal-row protection — the lease-coherence guard plus the reaper's
+ * atomic lease-clear on FAILED transitions already handle that.
+ */
+const FRESH_RESUME_STATUSES = [WorkflowStatus.PAUSED_FOR_APPROVAL, WorkflowStatus.PENDING];
+
+/**
  * Claim a lease on an execution row. Returns the new `leaseToken` on success, `null` when
  * another host already owns a fresh lease.
  *
@@ -83,16 +99,18 @@ export type ClaimReason = 'fresh-resume' | 'orphan-resume';
  * Fresh runs claim their lease atomically in the row-create call inside `initRun`.
  *
  * Conditional UPDATE — only succeeds when (a) the row is in a resumable status (`running`
- * for orphan-resume, `paused_for_approval` for fresh-resume) AND (b) the lease is unclaimed
- * (`leaseToken IS NULL`) or already expired (`leaseExpiresAt < now`). Postgres serialises
- * the UPDATE on the row, so two hosts racing on the same orphaned row will see exactly one
- * winner.
+ * for orphan-resume, `paused_for_approval` or `pending` for fresh-resume) AND (b) the lease
+ * is unclaimed (`leaseToken IS NULL`) or already expired (`leaseExpiresAt < now`). Postgres
+ * serialises the UPDATE on the row, so two hosts racing on the same orphaned row will see
+ * exactly one winner.
  *
- * The status guard is what prevents a terminal row (failed/completed/cancelled) from being
- * resurrected: the zombie reaper writes `status: FAILED` without clearing the lease columns,
- * so a race between the reaper and the orphan sweep could otherwise leave a FAILED row with
- * an expired lease that this function would happily re-claim and the engine would flip back
- * to `running`.
+ * Terminal rows (failed/completed/cancelled) are protected from resurrection by the
+ * lease-coherence guard combined with the reaper's atomic lease-clear: `reapZombieExecutions`
+ * writes `status: FAILED` AND `leaseToken: null, leaseExpiresAt: null` in the same
+ * `updateMany`, so any subsequent `claimLease` on the FAILED row sees `leaseToken=null` but
+ * also `status != expected` and can't take it. The status-allowlist (rather than a positive
+ * status check) is what stops the FAILED row from being re-claimed even if a future change
+ * forgets to clear the lease columns — defence in depth.
  *
  * `recoveryAttempts` is incremented only for `orphan-resume` — the `fresh-resume` path is a
  * clean state-machine transition that should not consume a recovery slot.
@@ -100,12 +118,12 @@ export type ClaimReason = 'fresh-resume' | 'orphan-resume';
 export async function claimLease(executionId: string, reason: ClaimReason): Promise<string | null> {
   const now = new Date();
   const token = generateLeaseToken();
-  const expectedStatus =
-    reason === 'orphan-resume' ? WorkflowStatus.RUNNING : WorkflowStatus.PAUSED_FOR_APPROVAL;
+  const statusFilter =
+    reason === 'orphan-resume' ? { equals: WorkflowStatus.RUNNING } : { in: FRESH_RESUME_STATUSES };
   const result = await prisma.aiWorkflowExecution.updateMany({
     where: {
       id: executionId,
-      status: expectedStatus,
+      status: statusFilter,
       OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
     },
     data: {
