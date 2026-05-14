@@ -7,7 +7,7 @@
  * markers without a matching citation get the "hallucinated" treatment.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -164,5 +164,53 @@ describe('MessageWithCitations', () => {
     // The list item still renders the document name, but no excerpt <p>.
     expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     expect(screen.queryByText(/deposit must be protected/)).not.toBeInTheDocument();
+  });
+
+  it('expands citation markers inside every supported markdown wrapper', () => {
+    const citations = Array.from({ length: 8 }, (_, i) =>
+      makeCitation({ marker: i + 1, chunkId: `c${i + 1}` })
+    );
+    // One marker per element type so every entry in the Markdown
+    // component override map is exercised (h1-h6, li, blockquote).
+    const content = [
+      '# H1 [1]',
+      '',
+      '## H2 [2]',
+      '',
+      '### H3 [3]',
+      '',
+      '#### H4 [4]',
+      '',
+      '##### H5 [5]',
+      '',
+      '###### H6 [6]',
+      '',
+      '- list item [7]',
+      '',
+      '> blockquote [8]',
+    ].join('\n');
+    render(<MessageWithCitations content={content} citations={citations} />);
+    for (let marker = 1; marker <= 8; marker++) {
+      expect(screen.getByLabelText(`Citation ${marker}`)).toBeInTheDocument();
+    }
+  });
+
+  it('invokes the onCitationClick callback in external panel mode instead of opening an inline panel', async () => {
+    const user = userEvent.setup();
+    const onCitationClick = vi.fn();
+    render(
+      <MessageWithCitations
+        content="See [1] for context."
+        citations={[makeCitation({ marker: 1 })]}
+        panelMode="external"
+        onCitationClick={onCitationClick}
+      />
+    );
+
+    // No inline Sources panel in external mode.
+    expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Citation 1'));
+    expect(onCitationClick).toHaveBeenCalledOnce();
   });
 });
