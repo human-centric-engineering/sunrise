@@ -97,6 +97,14 @@ export const EMBEDDING_USD_PER_MILLION_TOKENS: Record<string, number> = {
  * Returns zeroed costs for unknown models (with a debug log) so an
  * out-of-table model still produces an `AiCostLog` row for volume
  * tracking — just without dollar attribution until added.
+ *
+ * Always returns `isLocal: false` — "rate unknown" is NOT "local". The
+ * caller is responsible for setting `isLocal` from `provider.isLocal`
+ * (true Ollama-style local models) via `logCost`'s OR. An earlier
+ * version inferred local-ness from a zero rate, which incorrectly
+ * tagged unmapped cloud embeddings (a brand-new OpenAI/Voyage model
+ * the rate table hasn't caught up with) as local and polluted the
+ * `calculateLocalSavings` report.
  */
 export function calculateEmbeddingCost(modelId: string, inputTokens: number): ComputedCost {
   if (!Number.isFinite(inputTokens) || inputTokens <= 0) {
@@ -108,7 +116,7 @@ export function calculateEmbeddingCost(modelId: string, inputTokens: number): Co
     inputCostUsd: totalCostUsd,
     outputCostUsd: 0,
     totalCostUsd,
-    isLocal: ratePerMillion === 0,
+    isLocal: false,
   };
 }
 
