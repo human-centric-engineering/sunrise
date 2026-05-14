@@ -123,7 +123,7 @@ Opened automatically after a PDF upload. Displays:
 
 ### Per-document keyword management
 
-There is no aggregated keyword panel — that surface (`GET /knowledge/meta-tags`) was removed alongside the Categories cleanup. Keyword management happens per-document on the Manage tab:
+Keyword management happens per-document on the Manage tab:
 
 - The **Enrich keywords** action on each document row (between Rechunk and Delete) opens `DocumentKeywordsModal`, which lists every chunk's current keywords and offers an Enrich / Re-enrich button that runs `POST /knowledge/documents/:id/enrich-keywords` (LLM-over-chunks, writes 3–8 phrases per chunk).
 - For markdown uploads, `<!-- metadata: keywords="…" -->` HTML comments in the source produce keywords at chunk time; the chunker reads them via `parseMetadataComments`.
