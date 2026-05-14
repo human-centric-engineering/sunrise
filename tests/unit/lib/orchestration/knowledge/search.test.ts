@@ -327,13 +327,37 @@ describe('searchKnowledge — active model validation', () => {
       modelId: 'voyage-3',
       dimensions: 1024,
     });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 42 } },
+    ] as never);
     vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
       embeddingModel: 'text-embedding-3-small',
-      embeddingDimension: 1536,
     } as never);
 
     await expect(searchKnowledge('whatever')).rejects.toThrow(/embeddings:reset/);
     // Must short-circuit before paying for the embedding round-trip
+    expect(embedText).not.toHaveBeenCalled();
+  });
+
+  it("names each mismatched dimension's count and exemplar model when the corpus is partially re-embedded", async () => {
+    // Partial-state corruption: an aborted reset left some chunks at the
+    // old 1536-dim and some at the new 1024-dim. groupBy catches both.
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'voyage-3',
+      dimensions: 1024,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 17 } },
+      { embeddingDimension: 1024, _count: { _all: 8 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findFirst)
+      .mockResolvedValueOnce({ embeddingModel: 'text-embedding-3-small' } as never)
+      .mockResolvedValueOnce({ embeddingModel: 'voyage-3' } as never);
+
+    await expect(searchKnowledge('whatever')).rejects.toThrow(
+      /17 chunk\(s\) embedded by "text-embedding-3-small" at 1536 dims/
+    );
+    // The matching-dim group (1024) must not appear in the error
     expect(embedText).not.toHaveBeenCalled();
   });
 
@@ -343,19 +367,35 @@ describe('searchKnowledge — active model validation', () => {
 
     await expect(searchKnowledge('whatever')).resolves.toEqual([]);
     expect(embedText).toHaveBeenCalled();
-    expect(prisma.aiKnowledgeChunk.findFirst).not.toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.groupBy).not.toHaveBeenCalled();
   });
 
-  it('skips validation when the corpus has no chunks yet', async () => {
+  it('skips validation when the corpus has no chunks with a recorded dimension yet', async () => {
     vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
       modelId: 'text-embedding-3-small',
       dimensions: 1536,
     });
-    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([] as never);
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
 
     await expect(searchKnowledge('whatever')).resolves.toEqual([]);
     expect(embedText).toHaveBeenCalled();
+  });
+
+  it('skips validation when every chunk group matches the active dimension', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 50 } },
+    ] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
+    // No exemplar lookup needed when nothing's mismatched
+    expect(prisma.aiKnowledgeChunk.findFirst).not.toHaveBeenCalled();
   });
 });
 

@@ -12,7 +12,7 @@ Two related concepts that determine where vectors live and how they're sized.
 
 `AiOrchestrationSettings.activeEmbeddingModelId` is a nullable FK to `AiProviderModel`. When set, it's the single source of truth for which model the embedder uses and which dimension it produces; when null, the legacy provider-priority resolver runs (Voyage → local → OpenAI, all coerced to 1536).
 
-`resolveActiveEmbeddingConfig()` in `embedder.ts` reads this FK, loads the matrix row, and validates four gates: row exists, `isActive: true`, `capabilities ∋ 'embedding'`, `dimensions > 0`. Failing any gate falls back to the legacy chain with a warning log — the picked model isn't usable, so we don't break embeddings outright.
+`resolveActiveEmbeddingConfig()` in `embedder.ts` reads this FK, loads the matrix row, and validates six gates: model row exists, `isActive: true`, `capabilities ∋ 'embedding'`, `dimensions > 0`, a matching active `AiProviderConfig` exists, and that config has a usable `baseUrl` (Voyage gets a canonical URL when missing). Failing any gate falls back to the legacy chain with a warning log naming the gate — the picked model isn't usable, so we don't break embeddings outright.
 
 **Switching models is a multi-step operation.** pgvector locks dimension at the column level, so:
 
@@ -20,7 +20,7 @@ Two related concepts that determine where vectors live and how they're sized.
 2. Operator runs `npm run embeddings:reset` (drops + recreates the vector columns at the new dim, truncates `ai_knowledge_chunk` / `ai_knowledge_document` / `ai_message_embedding`, rebuilds HNSW indexes — **only those three tables**, never `db:reset`).
 3. Operator re-uploads documents through the admin UI.
 
-Skipping step 2 doesn't silently produce wrong results — search calls `assertActiveModelMatchesStoredVectors()` first, which samples one chunk's `embeddingDimension` and throws a directive error pointing at the reset script when it disagrees with the active model. The settings form surfaces the same notice inline after a dim-changing save.
+Skipping step 2 doesn't silently produce wrong results — search calls `assertActiveModelMatchesStoredVectors()` first, which `groupBy`'s the corpus by `embeddingDimension` and throws a directive error pointing at the reset script when any group disagrees with the active model. The error names each mismatched dimension with its chunk count and one exemplar model id, so a partially-re-embedded corpus (some chunks at the old dim, some at the new) is caught — not just the single-sample-row case. The settings form surfaces the same notice inline after a dim-changing save.
 
 **Provenance.** Every chunk and message-embedding row records the `embeddingModel`, `embeddingProvider`, and `embeddingDimension` that produced its vector. Don't infer dim from model id — matryoshka-truncated `text-embedding-3-large` at 1536 shares the model id with native 3072 but is a different vector space.
 
@@ -218,23 +218,6 @@ Content here inherits the metadata above…
 `parseMetadataComments(content)` (exported from `chunker.ts`) extracts these into a `Record<string, string>`. The only key the chunker reads today is `keywords`; comma-separated values, optionally double-quoted when the value itself contains commas.
 
 **Only markdown.** DOCX, PDF, EPUB, and CSV uploads do not pick up metadata comments — their parser pipelines go directly to chunking without the markdown comment-stripping pass. To set keywords on non-markdown uploads, use the **Enrich Keywords** admin action (below).
-
-## Indexed-keyword discovery
-
-`listMetaTags()` returns a `MetaTagSummary` with distinct keyword values in use, grouped by document scope (`app` vs `system`), plus chunk and document counts for each. Surfaced by the Manage tab as the **Indexed keywords** diagnostic panel.
-
-```typescript
-interface MetaTagSummary {
-  app: ScopedMetaTags; // user-uploaded documents
-  system: ScopedMetaTags; // built-in seeded patterns (read-only)
-}
-
-interface ScopedMetaTags {
-  keywords: MetaTagEntry[]; // { value, chunkCount, documentCount }
-}
-```
-
-The admin route `GET /knowledge/meta-tags` exposes this. Agent scoping is **not** done here — it lives on the `KnowledgeTag` model and `resolveAgentDocumentAccess` (see "Tags, Indexed Keywords, and Categories" at the top of this doc).
 
 ## Enriching keywords post-upload
 
