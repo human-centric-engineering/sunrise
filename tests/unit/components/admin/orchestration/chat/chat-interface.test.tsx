@@ -712,6 +712,43 @@ describe('ChatInterface', () => {
     clickSpy.mockRestore();
   });
 
+  // ─── Input-clear (in-textarea X) tests ─────────────────────────────────────
+
+  it('does not show the input-clear X when the textarea is empty', () => {
+    render(<ChatInterface agentSlug="test-agent" />);
+    expect(screen.queryByRole('button', { name: /clear input/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the input-clear X once the operator types into the textarea', async () => {
+    const user = userEvent.setup();
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'draft message');
+
+    expect(screen.getByRole('button', { name: /clear input/i })).toBeInTheDocument();
+  });
+
+  it('clicking the input-clear X empties the textarea without touching the conversation', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'something I changed my mind about');
+    expect(input.value).toBe('something I changed my mind about');
+
+    await user.click(screen.getByRole('button', { name: /clear input/i }));
+
+    expect(input.value).toBe('');
+    // No network calls — clearing input must not delete the conversation.
+    expect(fetchMock).not.toHaveBeenCalled();
+    // X disappears once the field is empty.
+    expect(screen.queryByRole('button', { name: /clear input/i })).not.toBeInTheDocument();
+  });
+
   // ─── Thinking indicator tests ──────────────────────────────────────────────
 
   it('shows ThinkingIndicator in empty assistant bubble during streaming', async () => {

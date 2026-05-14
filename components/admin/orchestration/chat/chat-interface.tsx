@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Download, Lightbulb, Loader2, Send, X } from 'lucide-react';
+import { AlertTriangle, Download, Lightbulb, Loader2, Send, Trash2, X } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -810,24 +810,49 @@ export function ChatInterface({
     <div className={cn('relative flex flex-col', embedded ? 'h-full' : 'h-[500px]', className)}>
       {/* Top-right action cluster — anchored to the outer (non-scrolling)
           container so the buttons stay visible regardless of how far the
-          messages area is scrolled. The translucent backdrop keeps the
-          icons legible when message text sits behind them. */}
-      {/* Download stays anchored top-right on the outer (non-scrolling)
-          container so it remains accessible in long conversations.
-          Clear lives next to Send in the input area below — see the
-          input-area block — so the two destructive/utility actions are
-          visually grouped with the textarea they affect. */}
-      {messages.length > 0 && !streaming && showDownloadButton && (
+          messages area is scrolled. Download saves a transcript copy;
+          the trash button resets the entire conversation (destructive,
+          keeps the AlertDialog confirm). The in-textarea X button below
+          is a separate affordance that clears only the input field. */}
+      {messages.length > 0 && !streaming && (showDownloadButton || showClearButton) && (
         <div className="bg-background/80 absolute top-2 right-2 z-10 flex items-center gap-1 rounded-md backdrop-blur-sm">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            aria-label="Download transcript"
-            onClick={handleDownload}
-          >
-            <Download className="h-3.5 w-3.5" />
-          </Button>
+          {showDownloadButton && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              aria-label="Download transcript"
+              onClick={handleDownload}
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {showClearButton && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  aria-label="Clear conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will remove all messages. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       )}
 
@@ -971,33 +996,21 @@ export function ChatInterface({
                 }
               }}
             />
-            {showClearButton && messages.length > 0 && !streaming && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="text-muted-foreground hover:text-foreground absolute top-1 right-1 h-7 w-7"
-                    aria-label="Clear conversation"
-                    title="Clear conversation"
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will remove all messages. This cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+            {input.length > 0 && !streaming && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="text-muted-foreground hover:text-foreground absolute top-1 right-1 h-7 w-7"
+                aria-label="Clear input"
+                title="Clear input"
+                onClick={() => {
+                  setInput('');
+                  inputRef.current?.focus();
+                }}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
             )}
           </div>
           {suggestionPool && suggestionPool.length > 0 && messages.length > 0 && (
