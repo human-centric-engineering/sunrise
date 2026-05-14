@@ -58,6 +58,52 @@ interface EmbeddingProvider {
 }
 
 /**
+ * Cheap read of just the active embedding model's identity and
+ * dimensions — used by search to detect drift between the operator's
+ * picked model and the vectors already on disk without paying for a
+ * full provider resolve.
+ *
+ * Returns null when no active model is set OR when the picked model
+ * is unusable (inactive / chat-only / dim-less). Mirrors the same
+ * validity gates as {@link resolveActiveEmbeddingConfig}.
+ */
+export async function getActiveEmbeddingModelSummary(): Promise<{
+  modelId: string;
+  dimensions: number;
+} | null> {
+  const settings = await prisma.aiOrchestrationSettings
+    .findFirst({
+      where: { slug: 'global' },
+      select: { activeEmbeddingModelId: true },
+    })
+    .catch(() => null);
+
+  const id = settings?.activeEmbeddingModelId;
+  if (!id) {
+    return null;
+  }
+
+  const model = await prisma.aiProviderModel
+    .findUnique({
+      where: { id },
+      select: { modelId: true, dimensions: true, capabilities: true, isActive: true },
+    })
+    .catch(() => null);
+
+  if (
+    !model ||
+    !model.isActive ||
+    !model.capabilities.includes('embedding') ||
+    !model.dimensions ||
+    model.dimensions <= 0
+  ) {
+    return null;
+  }
+
+  return { modelId: model.modelId, dimensions: model.dimensions };
+}
+
+/**
  * If `AiOrchestrationSettings.activeEmbeddingModelId` is set, resolve
  * the embedder against that explicit choice. Returns `null` if the
  * setting is absent or points at a model that can't currently be used

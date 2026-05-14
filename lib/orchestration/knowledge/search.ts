@@ -15,7 +15,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import { embedText, getActiveEmbeddingModelSummary } from '@/lib/orchestration/knowledge/embedder';
 import type { KnowledgeSearchResult, PatternSummary, SearchConfig } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
 
@@ -63,6 +63,40 @@ async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
     hybridEnabled: config?.hybridEnabled === true,
     bm25Weight: config?.bm25Weight ?? DEFAULT_BM25_WEIGHT,
   };
+}
+
+/**
+ * Fail fast when the operator has picked a new active embedding model
+ * (changing dim) but hasn't re-embedded the corpus yet. Without this
+ * check, the search would still call out to the embedder, spend a
+ * round-trip, then crash on the SQL cast — a confusing failure mode.
+ *
+ * Skips silently when:
+ *   - no active model is set (legacy fallback path; stored vectors
+ *     are 1536 by construction and the embedder produces 1536),
+ *   - the corpus is empty (no chunks to compare against),
+ *   - stored chunks have no `embeddingDimension` recorded yet (rows
+ *     pre-dating Phase 1 — they were 1536, by construction).
+ */
+async function assertActiveModelMatchesStoredVectors(): Promise<void> {
+  const active = await getActiveEmbeddingModelSummary();
+  if (!active) return;
+
+  const sample = await prisma.aiKnowledgeChunk.findFirst({
+    where: { embeddingDimension: { not: null } },
+    select: { embeddingModel: true, embeddingDimension: true },
+  });
+
+  if (!sample || sample.embeddingDimension === null) return;
+
+  if (sample.embeddingDimension !== active.dimensions) {
+    throw new Error(
+      `Embedding model mismatch: the active model "${active.modelId}" produces ` +
+        `${active.dimensions}-dim vectors, but stored chunks were embedded by ` +
+        `"${sample.embeddingModel ?? 'unknown'}" at ${sample.embeddingDimension} dims. ` +
+        'Run `npm run embeddings:reset` and re-upload documents to apply the new model.'
+    );
+  }
 }
 
 /** Search filter options */
@@ -150,6 +184,8 @@ export async function searchKnowledgeWithEmbedding(
   threshold: number = DEFAULT_THRESHOLD
 ): Promise<KnowledgeSearchResponse> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
+
+  await assertActiveModelMatchesStoredVectors();
 
   const weights = await resolveSearchWeights();
 

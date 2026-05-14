@@ -29,6 +29,8 @@ vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
     inputTokens: 10,
     costUsd: 0,
   }),
+  // Default: no active model → search-side validation is a no-op.
+  getActiveEmbeddingModelSummary: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -47,7 +49,8 @@ vi.mock('@/lib/orchestration/settings', () => ({
 // Import SUT and mock modules after mocks are registered
 const { searchKnowledge, getPatternDetail, listPatterns } =
   await import('@/lib/orchestration/knowledge/search');
-const { embedText } = await import('@/lib/orchestration/knowledge/embedder');
+const { embedText, getActiveEmbeddingModelSummary } =
+  await import('@/lib/orchestration/knowledge/embedder');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 
 // --- Helpers ---
@@ -299,6 +302,60 @@ describe('searchKnowledge', () => {
     expect(sql).not.toContain("d.scope = 'system'");
     expect(sql).not.toContain('FALSE');
     expect(sql).not.toContain('"documentId" IN');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Active-model drift detection
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('searchKnowledge — active model validation', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(embedText).mockResolvedValue({
+      embedding: new Array(1536).fill(0),
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      dimensions: 1536,
+      inputTokens: 10,
+      costUsd: 0,
+    });
+  });
+
+  it('throws a directive error when stored chunk dim differs from the active model dim', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'voyage-3',
+      dimensions: 1024,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
+      embeddingModel: 'text-embedding-3-small',
+      embeddingDimension: 1536,
+    } as never);
+
+    await expect(searchKnowledge('whatever')).rejects.toThrow(/embeddings:reset/);
+    // Must short-circuit before paying for the embedding round-trip
+    expect(embedText).not.toHaveBeenCalled();
+  });
+
+  it('skips validation when no active model is set (legacy fallback path)', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue(null);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('skips validation when the corpus has no chunks yet', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
   });
 });
 
