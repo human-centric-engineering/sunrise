@@ -1675,6 +1675,137 @@ describe('ChatInterface', () => {
     });
   });
 
+  // ─── Cost / tokens / model meta strip ────────────────────────────────────────
+
+  describe('cost row + input-breakdown toggle', () => {
+    function doneFrameRich(opts: {
+      tokens?: { input: number; output: number };
+      cost?: number;
+      model?: string;
+      breakdown?: Record<string, unknown>;
+    }): string {
+      const payload: Record<string, unknown> = {};
+      if (opts.tokens) {
+        payload.tokenUsage = {
+          inputTokens: opts.tokens.input,
+          outputTokens: opts.tokens.output,
+          totalTokens: opts.tokens.input + opts.tokens.output,
+        };
+      }
+      if (typeof opts.cost === 'number') payload.costUsd = opts.cost;
+      if (opts.model) payload.model = opts.model;
+      if (opts.breakdown) payload.inputBreakdown = opts.breakdown;
+      return `event: done\ndata: ${JSON.stringify(payload)}\n\n`;
+    }
+
+    const sampleBreakdown = {
+      systemPrompt: { tokens: 120, chars: 480, content: 'You are helpful.' },
+      userMessage: { tokens: 8, chars: 32, content: 'Hi' },
+      framingOverhead: { tokens: 200, chars: 0 },
+      totalEstimated: 328,
+    };
+
+    it('renders the cost / tokens / model summary line when showInlineTrace is on', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({
+          tokens: { input: 4991, output: 234 },
+          cost: 0.0123,
+          model: 'gpt-4o-mini',
+        }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Toks:/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/4,991 input, 234 output/)).toBeInTheDocument();
+      expect(screen.getByTitle('Approximate cost for this turn')).toHaveTextContent('$0.0123');
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+
+    it('formats sub-cent costs with four decimals and $1+ costs with two', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({ cost: 1.4567, tokens: { input: 100, output: 50 } }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Approximate cost for this turn')).toHaveTextContent('$1.46');
+      });
+    });
+
+    it('renders the cost row as a non-interactive div when no inputBreakdown is supplied', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({ tokens: { input: 100, output: 50 }, cost: 0.001 }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Toks:/)).toBeInTheDocument();
+      });
+      // No "break down this turn's input tokens" button.
+      expect(
+        screen.queryByRole('button', { name: /break down this turn/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it('makes the cost row a toggle when inputBreakdown is present, and expands the panel on click', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({
+          tokens: { input: 4991, output: 234 },
+          cost: 0.0123,
+          model: 'gpt-4o',
+          breakdown: sampleBreakdown,
+        }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // The toggle's accessible name is its body text (cost / tokens /
+      // model). Match by the title attribute instead.
+      const toggle = await screen.findByTitle(/break down this turn's input tokens/i);
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      // The breakdown list renders the framing row when expanded.
+      expect(screen.getByText('Provider framing')).toBeInTheDocument();
+      // Reconciliation header in the breakdown panel.
+      expect(screen.getByText(/model reported 4,991/i)).toBeInTheDocument();
+    });
+  });
+
   // ─── Suggest-a-prompt button (suggestionPool) ────────────────────────────────
 
   describe('suggestionPool', () => {
