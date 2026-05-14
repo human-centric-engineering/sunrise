@@ -47,6 +47,11 @@ The advisor tab embeds a `<ChatInterface>` component connected to the `pattern-a
 - **Builder handoff**: Clicking the button navigates to `/admin/orchestration/workflows/new?definition=<encoded>`, pre-populating the workflow builder canvas
 - **Pattern context**: When opened from a pattern detail page, `contextType` and `contextId` are forwarded to the chat stream for context-aware responses
 - **Voice input**: When the `pattern-advisor` agent has `enableVoiceInput: true` (set on the agent form's General tab), a microphone button renders between the input and Send. Transcripts are appended to whatever the operator has typed so dictation and typing can mix. The page server-fetches the agent record via `GET /agents?q=pattern-advisor&limit=10` (filtered to the exact slug) so the toggle is read fresh on every page load; a missing or fetch-failed record falls back to text-only chat
+- **Conversation persistence**: `<ChatInterface persistenceKey="learn:advisor">` round-trips messages + `conversationId` through `localStorage` with a 24 h TTL. Operators routinely pivot between Patterns / Advisor / Quiz tabs mid-conversation; persistence keeps the context alive across tab switches and page reloads. Attachment binaries are stripped before write — only text, role, citations, and an attachment-count chip survive
+- **Download transcript**: Top-right action cluster carries a download icon (`<ChatInterface showDownloadButton downloadFilename="pattern-advisor-chat">`) that exports the conversation as Markdown — one section per turn, citations and tool-call traces inlined, no attachment binaries. Filename is `pattern-advisor-chat-YYYY-MM-DD.md`
+- **Clear conversation**: Trash icon in the same top-right cluster (`<ChatInterface showClearButton>`) opens an AlertDialog and resets `messages`, `conversationId`, and the persisted localStorage entry on confirm
+- **Clear input (X)**: An X icon inside the textarea (top-right) appears whenever the field has text and the chat is not streaming. One click empties the field and re-focuses — no confirm dialog. Independent of the conversation-clear trash above
+- **Inline trace + input breakdown**: `<ChatInterface showInlineTrace>` enables both: per-turn `<MessageTrace>` strip under each assistant bubble showing dispatched capabilities, and the toggleable `'inputs'` panel anchored on the cost / tokens / model row that expands `<InputBreakdownList>` for per-section input-token attribution. See `.context/admin/orchestration-chat-interface.md#input-token-breakdown-panel`
 
 ### Workflow detection
 
@@ -64,6 +69,7 @@ The quiz tab embeds a `<ChatInterface>` connected to the `quiz-master` agent for
 - **Score badge**: A `<Badge>` above the chat displays the running score (e.g. `3/5`), parsed from the agent's responses via regex matching of "Score: X/Y" or "Score: X out of Y" patterns (requires "Score:" prefix to avoid false positives on arbitrary fractions). A `<FieldHelp>` popover explains the badge to new users
 - **Score persistence**: Quiz scores are saved to the database via `POST /api/v1/admin/orchestration/quiz-scores`. On mount, the latest persisted score is loaded via `GET` so scores survive page navigations
 - **Voice input**: Same affordance as the advisor tab — when the `quiz-master` agent has `enableVoiceInput: true`, the mic button appears so the operator can answer aloud. Server-fetched on the LearnPage in parallel with the advisor record
+- **Persistence, download, clear, trace, breakdown**: The quiz `<ChatInterface>` is wired with the same set of admin affordances as the advisor (`persistenceKey="learn:quiz"`, `showDownloadButton downloadFilename="quiz-master-chat"`, `showClearButton`, `showInlineTrace`, the in-textarea X for input-clear). See the advisor section above for the full description — only the persistence key and download filename differ
 
 ### Question types
 

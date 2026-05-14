@@ -216,6 +216,42 @@ Internal admin chat surfaces — the Learning Lab pattern advisor and quiz, the 
 
 **Client integration.** The shared admin parser (`components/admin/orchestration/chat/chat-events.ts`) validates every SSE block through a discriminated-union Zod schema so the new `trace` field arrives strongly typed. UI consumers should never reach into `parseSseBlock`'s `data: Record<string, unknown>` for trace fields; route them through `parseChatStreamEvent()` instead.
 
+### Input-token breakdown on the `done` event
+
+When `includeTrace: true`, the streaming handler also attaches an `inputBreakdown` field to the terminal `done` event so admin chat surfaces can explain why a turn consumed `usage.input_tokens` tokens — not just the total. The breakdown is per-section text-token attribution plus a single reconciliation row.
+
+```ts
+| {
+    type: 'done';
+    tokenUsage: TokenUsage;
+    costUsd: number;
+    provider?: string;
+    model?: string;
+    inputBreakdown?: InputBreakdown; // present iff includeTrace was set
+  }
+```
+
+`InputBreakdown` (defined in `types/orchestration.ts`):
+
+| Field                 | Required | Source                                                                                                                                                                                                                               |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `systemPrompt`        | Yes      | `estimateTokens` on the resolved system prompt (+ brand-voice block if any)                                                                                                                                                          |
+| `userMessage`         | Yes      | `estimateTokens` on the new user message                                                                                                                                                                                             |
+| `contextBlock`        | No       | `estimateTokens` on the `[Entity context]` block when one was framed                                                                                                                                                                 |
+| `userMemories`        | No       | `estimateTokens` on the `[User memories]` block plus a `count` chip                                                                                                                                                                  |
+| `conversationSummary` | No       | `estimateTokens` on the rolling summary when it was emitted instead of verbatim history                                                                                                                                              |
+| `conversationHistory` | No       | Sum of per-message text tokens with `messageCount` + `droppedCount` chips                                                                                                                                                            |
+| `toolDefinitions`     | No       | For OpenAI models, `countOpenAiToolDefinitionTokens` formats tools as a TypeScript namespace declaration and counts the formatted body (`+ 5` envelope adjustment). For other providers, `JSON.stringify(toolDefinitions)` length    |
+| `attachments`         | No       | Flat `ATTACHMENT_OVERHEAD_TOKENS` per attachment plus a `count` chip (vision tokens are charged dynamically per tile and absorbed by `framingOverhead` below)                                                                        |
+| `framingOverhead`     | No       | **Reconciliation row.** `usage.inputTokens − sum(other sections)`. Captures per-message scaffolding, tool envelope, assistant priming, tool-call history wrappers, vision tokens, and tokeniser drift the local sum cannot attribute |
+| `totalEstimated`      | Yes      | After reconciliation, this equals `usage.inputTokens` exactly. Before reconciliation (or when `usage` is unavailable) it's the local-estimator sum                                                                                   |
+
+**Reconciliation contract.** `buildDoneEvent` in `streaming-handler.ts` calls `reconcileBreakdownToActual(breakdown, usage.inputTokens)` before emitting the event. This guarantees the popover total always matches the model's reported number — any drift between the section sums and `usage.input_tokens` lands in the labelled `framingOverhead` row rather than leaving the operator to wonder where the missing tokens went. When `usage` is absent (e.g. the LLM call failed before reporting usage), reconciliation is a no-op and `totalEstimated` stays as the local sum.
+
+**OpenAI tool-definition counter.** `lib/orchestration/chat/openai-token-counter.ts` exports `countOpenAiToolDefinitionTokens(tools, modelId)` and the helper `formatToolsForOpenAi`. OpenAI doesn't tokenise raw JSON for tool schemas — internally each tool is reformatted as `type funcName = (_: { … }) => any;` inside a `namespace functions { … }` block, then tokenised. The counter mirrors that format and uses `pickEncoder` to route to `o200k_base` for gpt-4o / gpt-4.1 / o-series and `cl100k_base` for older gpt-4 / gpt-3.5. For non-OpenAI providers the streaming handler falls back to the raw JSON estimate — any residual drift is captured by `framingOverhead`.
+
+**Client integration.** The breakdown is rendered by `<InputBreakdownList>` inside the assistant meta-strip's `'inputs'` panel (see `.context/admin/orchestration-chat-interface.md`). The same Zod discriminated union in `chat-events.ts` validates the wire shape — `inputBreakdownSchema` matches the type table above.
+
 ## In-chat approvals
 
 When an agent calls the `run_workflow` capability and the workflow pauses on a `human_approval` step, the chat handler surfaces the pause inline so the end user can Approve or Reject without leaving the conversation.
