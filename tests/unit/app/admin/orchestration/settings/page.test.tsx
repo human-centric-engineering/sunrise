@@ -149,7 +149,7 @@ describe('OrchestrationSettingsPage', () => {
   // so a regression that broke any one of the chat/providers/
   // embeddings/audio error branches would have been invisible without
   // this coverage.
-  it('calls logger.error for each of the five helpers and passes defaults when serverFetch throws', async () => {
+  it('calls logger.error for each of the six helpers and passes defaults when serverFetch throws', async () => {
     const fetchError = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchError);
 
@@ -157,7 +157,7 @@ describe('OrchestrationSettingsPage', () => {
 
     const form = screen.getByTestId('settings-form');
     expect(form).toHaveAttribute('data-settings', JSON.stringify(defaults));
-    expect(logger.error).toHaveBeenCalledTimes(5);
+    expect(logger.error).toHaveBeenCalledTimes(6);
     expect(logger.error).toHaveBeenCalledWith('settings page: fetch failed', fetchError);
     expect(logger.error).toHaveBeenCalledWith(
       'settings page: chat models fetch failed',
@@ -170,6 +170,10 @@ describe('OrchestrationSettingsPage', () => {
     );
     expect(logger.error).toHaveBeenCalledWith(
       'settings page: audio models fetch failed',
+      fetchError
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'settings page: embedding matrix fetch failed',
       fetchError
     );
   });

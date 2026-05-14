@@ -1097,6 +1097,16 @@ export interface OrchestrationSettings {
    * input across every agent at once.
    */
   documentInputGloballyEnabled: boolean;
+  /**
+   * FK to `AiProviderModel.id` — the embedding model the vector
+   * columns are currently sized for. Null means "use the legacy
+   * provider-priority resolver"; the operator hasn't picked yet.
+   *
+   * Changing this requires running `npm run embeddings:reset` and
+   * re-uploading documents because pgvector locks dimension at the
+   * column level. See `lib/orchestration/knowledge/embedder.ts`.
+   */
+  activeEmbeddingModelId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

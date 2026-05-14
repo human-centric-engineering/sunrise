@@ -2081,6 +2081,13 @@ export const updateOrchestrationSettingsSchema = z
     voiceInputGloballyEnabled: z.boolean().optional(),
     imageInputGloballyEnabled: z.boolean().optional(),
     documentInputGloballyEnabled: z.boolean().optional(),
+    /**
+     * FK to `AiProviderModel.id` for the active embedding model. The
+     * route handler validates that the id resolves to an active row
+     * with `capabilities ∋ 'embedding'` and a non-null `dimensions`.
+     * `null` clears the pick and falls back to the legacy resolver.
+     */
+    activeEmbeddingModelId: z.string().min(1).max(64).nullable().optional(),
     inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
@@ -2178,7 +2185,8 @@ export const updateOrchestrationSettingsSchema = z
       v.embedAllowedOrigins !== undefined ||
       v.voiceInputGloballyEnabled !== undefined ||
       v.imageInputGloballyEnabled !== undefined ||
-      v.documentInputGloballyEnabled !== undefined,
+      v.documentInputGloballyEnabled !== undefined ||
+      v.activeEmbeddingModelId !== undefined,
     {
       message: 'At least one field must be provided',
     }
