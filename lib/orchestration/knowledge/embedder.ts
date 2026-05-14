@@ -14,22 +14,29 @@ import { calculateEmbeddingCost, logCost } from '@/lib/orchestration/llm/cost-tr
 import { CostOperation } from '@/types/orchestration';
 
 /**
- * Static fallback embedding model. Only used when the
- * `AiOrchestrationSettings.defaultModels.embeddings` slot is empty
- * AND the registry's computed defaults can't supply one — typically
- * a fresh install before the wizard ran.
+ * Static fallback embedding model. Only used when neither
+ * `AiOrchestrationSettings.activeEmbeddingModelId` is set nor the
+ * legacy `defaultModels.embeddings` slot has a value — typically a
+ * fresh install before the wizard ran.
  */
 const DEFAULT_MODEL = 'text-embedding-3-small';
-const DEFAULT_DIMENSIONS = 1536;
+const FALLBACK_DIMENSIONS = 1536;
 const DEFAULT_BATCH_SIZE = 100;
 
 /** Rate limit: pause between batches (ms) */
 const BATCH_DELAY_MS = 200;
 
-/** Provenance info returned alongside embedding vectors */
+/**
+ * Provenance info returned alongside embedding vectors. `dimensions` is
+ * persisted to `AiKnowledgeChunk.embeddingDimension` /
+ * `AiMessageEmbedding.embeddingDimension` so search-time validation
+ * (Phase 4) can detect drift between the stored vectors and the
+ * currently-active model.
+ */
 export interface EmbeddingProvenance {
   model: string;
   provider: string;
+  dimensions: number;
   embeddedAt: Date;
 }
 
@@ -37,18 +44,148 @@ interface EmbeddingProvider {
   baseUrl: string;
   apiKey: string | null;
   model: string;
+  /** Output dimension of `model`. Recorded as provenance and (if `schemaCompatible`) requested via the `dimensions` API parameter. */
+  dimensions: number;
+  /**
+   * True when `model` accepts the OpenAI-style `dimensions` parameter
+   * (text-embedding-3-*, voyage-3, …) and so can be coerced to a non-
+   * native dim. False for fixed-dim models like nomic-embed-text. Drives
+   * whether `callEmbeddingApi` sends `dimensions` to non-Voyage hosts.
+   */
+  schemaCompatible: boolean;
   isLocal: boolean;
   providerType: string;
 }
 
 /**
- * Resolve the embedding provider from AiProviderConfig or fall back to defaults.
+ * If `AiOrchestrationSettings.activeEmbeddingModelId` is set, resolve
+ * the embedder against that explicit choice. Returns `null` if the
+ * setting is absent or points at a model that can't currently be used
+ * (chat-only model, missing provider config, missing dimensions); the
+ * caller falls back to provider-priority resolution.
  *
- * Checks for an active provider with embedding support. For OpenAI,
- * uses the standard API. For Ollama and other OpenAI-compatible providers,
- * uses their /v1/embeddings endpoint.
+ * This is the path that lets operators pick from `AiProviderModel`
+ * rows in the admin UI rather than living with the implicit Voyage →
+ * local → OpenAI ordering.
+ */
+async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null> {
+  const settings = await prisma.aiOrchestrationSettings
+    .findFirst({
+      where: { slug: 'global' },
+      select: { activeEmbeddingModelId: true },
+    })
+    .catch(() => null);
+
+  const modelId = settings?.activeEmbeddingModelId;
+  if (!modelId) {
+    return null;
+  }
+
+  const model = await prisma.aiProviderModel
+    .findUnique({
+      where: { id: modelId },
+      select: {
+        providerSlug: true,
+        modelId: true,
+        dimensions: true,
+        schemaCompatible: true,
+        capabilities: true,
+        isActive: true,
+      },
+    })
+    .catch(() => null);
+
+  if (!model || !model.isActive) {
+    logger.warn(
+      'Active embedding model is missing or inactive; falling back to provider priority',
+      {
+        activeEmbeddingModelId: modelId,
+      }
+    );
+    return null;
+  }
+
+  if (!model.capabilities.includes('embedding')) {
+    logger.warn('Active embedding model lacks the embedding capability; falling back', {
+      activeEmbeddingModelId: modelId,
+      capabilities: model.capabilities,
+    });
+    return null;
+  }
+
+  if (!model.dimensions || model.dimensions <= 0) {
+    logger.warn('Active embedding model has no dimensions recorded; falling back', {
+      activeEmbeddingModelId: modelId,
+      modelId: model.modelId,
+    });
+    return null;
+  }
+
+  const providerConfig = await prisma.aiProviderConfig
+    .findFirst({
+      where: { slug: model.providerSlug, isActive: true },
+    })
+    .catch(() => null);
+
+  if (!providerConfig) {
+    logger.warn('Active embedding model has no matching active provider config; falling back', {
+      activeEmbeddingModelId: modelId,
+      providerSlug: model.providerSlug,
+    });
+    return null;
+  }
+
+  const apiKey = providerConfig.apiKeyEnvVar
+    ? (process.env[providerConfig.apiKeyEnvVar] ?? null)
+    : null;
+
+  // Voyage uses its own canonical base URL when none is set; everyone
+  // else needs an explicit `baseUrl`. Bail to fallback if a non-Voyage
+  // provider is missing it.
+  const baseUrl =
+    providerConfig.baseUrl ??
+    (providerConfig.providerType === 'voyage' ? 'https://api.voyageai.com/v1' : null);
+
+  if (!baseUrl) {
+    logger.warn('Active embedding provider has no baseUrl configured; falling back', {
+      activeEmbeddingModelId: modelId,
+      providerSlug: model.providerSlug,
+    });
+    return null;
+  }
+
+  return {
+    baseUrl,
+    apiKey,
+    model: model.modelId,
+    dimensions: model.dimensions,
+    schemaCompatible: model.schemaCompatible ?? false,
+    isLocal: providerConfig.isLocal,
+    providerType: providerConfig.providerType,
+  };
+}
+
+/**
+ * Resolve the embedding provider.
+ *
+ * Preference order:
+ *   1. `AiOrchestrationSettings.activeEmbeddingModelId` — the explicit
+ *      operator pick, with dim and model coming from `AiProviderModel`.
+ *   2. The legacy provider-priority chain: Voyage → local → OpenAI-
+ *      compatible → OPENAI_API_KEY direct. Used until the operator
+ *      picks a model, and as a safety net if the picked model becomes
+ *      invalid (deactivated, dim cleared, provider config removed).
+ *
+ * The fallback always reports `FALLBACK_DIMENSIONS` (1536) because all
+ * of its concrete branches are configured to produce 1536-dim vectors
+ * today.
  */
 async function resolveProvider(): Promise<EmbeddingProvider> {
+  const active = await resolveActiveEmbeddingConfig();
+  if (active) {
+    return active;
+  }
+
   // Check for configured providers that support embeddings
   const providers = await prisma.aiProviderConfig.findMany({
     where: { isActive: true },
@@ -70,24 +207,33 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       baseUrl: voyageProvider.baseUrl ?? 'https://api.voyageai.com/v1',
       apiKey,
       model: 'voyage-3',
+      dimensions: FALLBACK_DIMENSIONS,
+      schemaCompatible: true, // voyage-3 supports `output_dimension`
       isLocal: false,
       providerType: 'voyage',
     };
   }
 
-  // Prefer a local provider for embeddings (cheaper/faster)
+  // Prefer a local provider for embeddings (cheaper/faster). Local
+  // models (nomic-embed-text) produce a fixed native dim and ignore
+  // `dimensions`; `schemaCompatible: false` keeps us from sending it.
   const localProvider = providers.find((p) => p.isLocal);
   if (localProvider?.baseUrl) {
     return {
       baseUrl: localProvider.baseUrl,
       apiKey: localProvider.apiKeyEnvVar ? (process.env[localProvider.apiKeyEnvVar] ?? null) : null,
       model: 'nomic-embed-text',
+      dimensions: FALLBACK_DIMENSIONS,
+      schemaCompatible: false,
       isLocal: true,
       providerType: localProvider.providerType,
     };
   }
 
-  // Fall back to OpenAI-compatible provider
+  // Fall back to OpenAI-compatible provider. Without an explicit
+  // active-model pick, only the canonical text-embedding-3-* family is
+  // assumed schema-compatible — other openai-compatible hosts may
+  // error on `dimensions`, so default to false.
   const openaiCompatible = providers.find(
     (p) => p.providerType === 'openai-compatible' && p.baseUrl
   );
@@ -95,10 +241,13 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     const apiKey = openaiCompatible.apiKeyEnvVar
       ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
       : null;
+    const model = settingsModel || DEFAULT_MODEL;
     return {
       baseUrl: openaiCompatible.baseUrl,
       apiKey,
-      model: settingsModel || DEFAULT_MODEL,
+      model,
+      dimensions: FALLBACK_DIMENSIONS,
+      schemaCompatible: isOpenAiSchemaCompatibleModel(model),
       isLocal: false,
       providerType: 'openai-compatible',
     };
@@ -112,13 +261,26 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
         'or configure an embedding provider in the admin settings.'
     );
   }
+  const model = settingsModel || DEFAULT_MODEL;
   return {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: openaiKey,
-    model: settingsModel || DEFAULT_MODEL,
+    model,
+    dimensions: FALLBACK_DIMENSIONS,
+    schemaCompatible: isOpenAiSchemaCompatibleModel(model),
     isLocal: false,
     providerType: 'openai-compatible',
   };
+}
+
+/**
+ * Matches OpenAI's text-embedding-3-* family (the only OpenAI embedding
+ * models that accept the `dimensions` parameter). Used by the legacy
+ * provider-priority fallback; the active-model path consults the
+ * registry's `schemaCompatible` flag directly.
+ */
+function isOpenAiSchemaCompatibleModel(model: string): boolean {
+  return /^text-embedding-3-/.test(model);
 }
 
 /**
@@ -141,15 +303,17 @@ async function callEmbeddingApi(
     input,
   };
 
-  // Voyage-specific parameters: input_type and output_dimension
+  // Voyage uses its own param name (`output_dimension`) and always
+  // accepts an `input_type`. Drive both from the resolved provider.
   if (provider.providerType === 'voyage') {
     body['input_type'] = inputType ?? 'document';
-    body['output_dimension'] = DEFAULT_DIMENSIONS;
-  }
-
-  // Request specific dimensions for OpenAI models that support it
-  if (provider.providerType !== 'voyage' && provider.model === DEFAULT_MODEL && !provider.isLocal) {
-    body['dimensions'] = DEFAULT_DIMENSIONS;
+    body['output_dimension'] = provider.dimensions;
+  } else if (provider.schemaCompatible) {
+    // OpenAI-style `dimensions` parameter — only safe for models
+    // explicitly flagged schema-compatible (text-embedding-3-* and
+    // anything an operator has registered as such). Sending it to a
+    // model that doesn't support it errors on some hosts.
+    body['dimensions'] = provider.dimensions;
   }
 
   const response = await fetch(url, {
@@ -227,6 +391,8 @@ export interface EmbedTextResult {
   embedding: number[];
   model: string;
   provider: string;
+  /** Output dimension of `embedding`, persisted by callers as provenance. */
+  dimensions: number;
   /** Input tokens billed for this call, as reported by the provider (or estimated). */
   inputTokens: number;
   /** Local-provider calls cost $0; rate-table misses also produce 0. */
@@ -274,6 +440,7 @@ export async function embedText(
     embedding: embeddings[0],
     model: provider.model,
     provider: provider.providerType,
+    dimensions: provider.dimensions,
     inputTokens,
     costUsd: cost.totalCostUsd,
   };
@@ -360,6 +527,7 @@ export async function embedBatch(
     provenance: {
       model: provider.model,
       provider: provider.providerType,
+      dimensions: provider.dimensions,
       embeddedAt,
     },
   };

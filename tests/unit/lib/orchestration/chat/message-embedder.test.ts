@@ -38,11 +38,12 @@ import {
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
-const FAKE_EMBEDDING = Array.from({ length: 1024 }, (_, i) => i * 0.001);
+const FAKE_EMBEDDING = Array.from({ length: 1536 }, (_, i) => i * 0.001);
 const FAKE_EMBED_RESULT = {
   embedding: FAKE_EMBEDDING,
   model: 'text-embedding-3-small',
   provider: 'openai',
+  dimensions: 1536,
   inputTokens: 10,
   costUsd: 0,
 };

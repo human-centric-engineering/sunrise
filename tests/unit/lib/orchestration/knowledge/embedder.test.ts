@@ -14,6 +14,13 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiProviderConfig: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    aiOrchestrationSettings: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    aiProviderModel: {
+      findUnique: vi.fn().mockResolvedValue(null),
     },
   },
 }));
@@ -87,6 +94,9 @@ describe('resolveProvider (via embedText)', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default: no operator-picked active embedding model. Tests that
+    // exercise the active-model path override this explicitly.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
   });
@@ -336,6 +346,9 @@ describe('embedText', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default: no operator-picked active embedding model. Tests that
+    // exercise the active-model path override this explicitly.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
   });
@@ -492,6 +505,9 @@ describe('embedBatch', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default: no operator-picked active embedding model. Tests that
+    // exercise the active-model path override this explicitly.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
   });

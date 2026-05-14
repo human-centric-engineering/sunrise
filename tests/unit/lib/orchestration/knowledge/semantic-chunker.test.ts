@@ -165,7 +165,12 @@ describe('chunkBySemanticBreakpoints', () => {
 
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: clusteredVectors(2, 4),
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -198,7 +203,12 @@ describe('chunkBySemanticBreakpoints', () => {
 
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: clusteredVectors(2, 4),
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -227,7 +237,12 @@ describe('chunkBySemanticBreakpoints', () => {
     sameVector[0] = 1;
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: Array.from({ length: bigSentences.length }, () => [...sameVector]),
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -259,7 +274,12 @@ describe('chunkBySemanticBreakpoints', () => {
       'One sentence here. Two sentences here. Three sentences here. Four sentences here.';
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: orthogonalVectors(2), // only 2 vectors for 4 sentences
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     await expect(chunkBySemanticBreakpoints(text)).rejects.toThrow(
@@ -284,7 +304,12 @@ describe('chunkBySemanticBreakpoints', () => {
 
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: [ortho1, ortho2, zero, ortho3],
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -310,7 +335,12 @@ describe('chunkBySemanticBreakpoints', () => {
       'Tiny sentence one. Tiny sentence two. Tiny sentence three. Tiny sentence four. Tiny sentence five.';
     mockEmbedBatch.mockResolvedValueOnce({
       embeddings: orthogonalVectors(5),
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -401,7 +431,12 @@ describe('chunkBySemanticBreakpoints', () => {
         [0, 0, 0, 1, 0, 0],
         [0, 0, 0, 0, 1, 0],
       ],
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -434,7 +469,12 @@ describe('chunkBySemanticBreakpoints', () => {
         [0, 0, 0, 1, 0, 0],
         [0, 0, 0, 0, 1, 0],
       ],
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {
@@ -468,7 +508,12 @@ describe('chunkBySemanticBreakpoints', () => {
         [0, 1, 0, 0],
         [0, 1, 0, 0],
       ],
-      provenance: { provider: 'mock', model: 'mock', embeddedAt: new Date('2024-01-01') },
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
     });
 
     const result = await chunkBySemanticBreakpoints(text, {

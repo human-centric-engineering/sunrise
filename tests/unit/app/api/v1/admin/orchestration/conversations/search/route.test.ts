@@ -42,11 +42,12 @@ import { GET } from '@/app/api/v1/admin/orchestration/conversations/search/route
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
-const FAKE_EMBEDDING = Array.from({ length: 1024 }, (_, i) => i * 0.001);
+const FAKE_EMBEDDING = Array.from({ length: 1536 }, (_, i) => i * 0.001);
 const FAKE_EMBED_RESULT = {
   embedding: FAKE_EMBEDDING,
   model: 'text-embedding-3-small',
   provider: 'openai',
+  dimensions: 1536,
   inputTokens: 10,
   costUsd: 0,
 };
@@ -242,6 +243,7 @@ describe('GET /conversations/search', () => {
       embedding: [0.1, NaN, 0.3, Infinity, 0.5],
       model: 'text-embedding-3-small',
       provider: 'openai',
+      dimensions: 5,
       inputTokens: 10,
       costUsd: 0,
     });

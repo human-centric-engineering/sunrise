@@ -25,6 +25,7 @@ vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
     embedding: new Array(1536).fill(0),
     model: 'text-embedding-3-small',
     provider: 'openai',
+    dimensions: 1536,
     inputTokens: 10,
     costUsd: 0,
   }),
@@ -84,6 +85,7 @@ describe('searchKnowledge', () => {
       embedding: new Array(1536).fill(0),
       model: 'text-embedding-3-small',
       provider: 'openai',
+      dimensions: 1536,
       inputTokens: 10,
       costUsd: 0,
     });
@@ -311,6 +313,7 @@ describe('searchKnowledge — hybrid mode', () => {
       embedding: new Array(1536).fill(0),
       model: 'text-embedding-3-small',
       provider: 'openai',
+      dimensions: 1536,
       inputTokens: 10,
       costUsd: 0,
     });

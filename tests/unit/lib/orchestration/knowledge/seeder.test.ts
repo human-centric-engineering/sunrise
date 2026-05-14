@@ -94,6 +94,7 @@ function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
     provenance: {
       model: 'test-model',
       provider: 'test-provider',
+      dimensions: 1536,
       embeddedAt: new Date('2026-01-01'),
     },
   };
