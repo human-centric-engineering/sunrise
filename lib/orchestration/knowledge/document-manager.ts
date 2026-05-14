@@ -126,11 +126,11 @@ async function insertChunks(
         id, "chunkKey", "documentId", content, embedding,
         "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata,
-        "embeddingModel", "embeddingProvider", "embeddedAt"
+        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
         $5, $6, $7, $8, $9, $10, $11::jsonb,
-        $12, $13, $14
+        $12, $13, $14, $15
       )`,
       chunk.id,
       documentId,
@@ -145,6 +145,7 @@ async function insertChunks(
       JSON.stringify(null),
       provenance.model,
       provenance.provider,
+      provenance.dimensions,
       provenance.embeddedAt
     );
   }

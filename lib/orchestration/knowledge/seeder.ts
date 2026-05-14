@@ -250,12 +250,14 @@ export async function embedChunks(): Promise<{
        SET embedding = $1::vector,
            "embeddingModel" = $3,
            "embeddingProvider" = $4,
-           "embeddedAt" = $5
+           "embeddingDimension" = $5,
+           "embeddedAt" = $6
        WHERE id = $2`,
       embeddingStr,
       pending[i].id,
       provenance.model,
       provenance.provider,
+      provenance.dimensions,
       provenance.embeddedAt
     );
   }

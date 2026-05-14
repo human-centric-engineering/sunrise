@@ -76,7 +76,10 @@ describe('queueMessageEmbedding', () => {
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO ai_message_embedding'),
         'msg-2',
-        expect.stringContaining('[')
+        expect.stringContaining('['),
+        FAKE_EMBED_RESULT.model,
+        FAKE_EMBED_RESULT.provider,
+        FAKE_EMBED_RESULT.dimensions
       );
     });
   });
@@ -133,6 +136,9 @@ describe('queueMessageEmbedding', () => {
     await vi.waitFor(() => {
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('ON CONFLICT'),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
         expect.anything(),
         expect.anything()
       );
