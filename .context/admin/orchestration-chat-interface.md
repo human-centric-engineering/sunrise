@@ -4,23 +4,24 @@ Reusable SSE streaming chat component for embedding in admin panels. Lives at `c
 
 ## Props
 
-| Prop                     | Type                                          | Required | Default | Purpose                                                                                                          |
-| ------------------------ | --------------------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `agentSlug`              | `string`                                      | Yes      | —       | Agent to call via `POST /chat/stream`                                                                            |
-| `agentId`                | `string`                                      | No       | —       | Agent row id — required alongside `voiceInputEnabled` to render the mic. Sent to `/chat/transcribe` for routing. |
-| `voiceInputEnabled`      | `boolean`                                     | No       | `false` | Opt-in flag for the mic affordance. See [Voice input](#voice-input) below.                                       |
-| `contextType`            | `string`                                      | No       | —       | Context type forwarded in chat request                                                                           |
-| `contextId`              | `string`                                      | No       | —       | Context ID forwarded in chat request                                                                             |
-| `starterPrompts`         | `string[]`                                    | No       | —       | Buttons shown when no messages exist                                                                             |
-| `className`              | `string`                                      | No       | —       | Additional classes for the outer container                                                                       |
-| `embedded`               | `boolean`                                     | No       | `false` | Compact mode (no card wrapper, `h-full flex-col`)                                                                |
-| `onCapabilityResult`     | `(slug: string, result: unknown) => void`     | No       | —       | Fires on `capability_result` SSE events                                                                          |
-| `onStreamComplete`       | `(fullText: string) => void`                  | No       | —       | Fires with complete assistant text on `done` event                                                               |
-| `enableTypingAnimation`  | `boolean`                                     | No       | `false` | Token-by-token typing animation via rAF                                                                          |
-| `typingAnimationOptions` | `{ chunkSize?: number; intervalMs?: number }` | No       | —       | Typing animation speed config                                                                                    |
-| `showClearButton`        | `boolean`                                     | No       | `false` | Show trash icon to clear/reset conversation                                                                      |
-| `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                                                                              |
-| `showInlineTrace`        | `boolean`                                     | No       | `false` | Admin-only diagnostic. Sends `includeTrace: true` and renders `<MessageTrace>` per assistant turn.               |
+| Prop                     | Type                                          | Required | Default | Purpose                                                                                                              |
+| ------------------------ | --------------------------------------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `agentSlug`              | `string`                                      | Yes      | —       | Agent to call via `POST /chat/stream`                                                                                |
+| `agentId`                | `string`                                      | No       | —       | Agent row id — required alongside `voiceInputEnabled` to render the mic. Sent to `/chat/transcribe` for routing.     |
+| `voiceInputEnabled`      | `boolean`                                     | No       | `false` | Opt-in flag for the mic affordance. See [Voice input](#voice-input) below.                                           |
+| `contextType`            | `string`                                      | No       | —       | Context type forwarded in chat request                                                                               |
+| `contextId`              | `string`                                      | No       | —       | Context ID forwarded in chat request                                                                                 |
+| `starterPrompts`         | `string[]`                                    | No       | —       | Buttons shown when no messages exist                                                                                 |
+| `className`              | `string`                                      | No       | —       | Additional classes for the outer container                                                                           |
+| `embedded`               | `boolean`                                     | No       | `false` | Compact mode (no card wrapper, `h-full flex-col`)                                                                    |
+| `onCapabilityResult`     | `(slug: string, result: unknown) => void`     | No       | —       | Fires on `capability_result` SSE events                                                                              |
+| `onStreamComplete`       | `(fullText: string) => void`                  | No       | —       | Fires with complete assistant text on `done` event                                                                   |
+| `enableTypingAnimation`  | `boolean`                                     | No       | `false` | Token-by-token typing animation via rAF                                                                              |
+| `typingAnimationOptions` | `{ chunkSize?: number; intervalMs?: number }` | No       | —       | Typing animation speed config                                                                                        |
+| `showClearButton`        | `boolean`                                     | No       | `false` | Show trash icon to clear/reset conversation                                                                          |
+| `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                                                                                  |
+| `showInlineTrace`        | `boolean`                                     | No       | `false` | Admin-only diagnostic. Sends `includeTrace: true` and renders `<MessageTrace>` per assistant turn.                   |
+| `suggestionPool`         | `readonly string[]`                           | No       | —       | Pool of suggestion strings drawn by the in-chat lightbulb button (visible once messages exist). Click → random fill. |
 
 ## Modes
 
@@ -81,6 +82,14 @@ Raw error text is never forwarded to the DOM. The AbortController is cleaned up 
 ### Reconnection
 
 Network failures trigger up to 3 reconnect attempts with exponential backoff (1s, 2s, 4s cap). HTTP-level errors (429, 4xx, 5xx) are not retriable and show specific error messages via `getUserFacingError()`. During reconnection, a warning banner shows "Connection interrupted. Reconnecting..." with an amber `AlertTriangle` icon. After all retries are exhausted, a "Connection Lost" error is displayed. Note: `AgentTestChat` deliberately does **not** retry — chat POSTs are not idempotent, so retrying would duplicate the message on the server.
+
+### Suggest-a-prompt button (`suggestionPool`)
+
+A small lightbulb icon button rendered in the input row when (a) `suggestionPool` is non-empty and (b) the conversation has at least one message. Click → random pool entry replaces the textarea value (focus returns to the textarea so the operator can edit before sending). Hidden while streaming.
+
+Independent of `starterPrompts`: the starter grid is the pre-conversation affordance shown when `messages.length === 0`; the lightbulb button is the mid-conversation re-roll. Both should usually draw from the same pool — the Learning Lab advisor wires both from `lib/orchestration/learn/advisor-prompts.ts`.
+
+The button is generic — any caller can pass a `suggestionPool` to get the same affordance. Not enabled by default.
 
 ### Inline trace annotations (`showInlineTrace`)
 

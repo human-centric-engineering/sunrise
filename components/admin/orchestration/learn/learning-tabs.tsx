@@ -11,6 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { API } from '@/lib/api/endpoints';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import { extractWorkflowDefinition } from '@/lib/orchestration/utils/extract-workflow-definition';
+import {
+  ADVISOR_PROMPT_STRINGS,
+  sampleAdvisorPrompts,
+} from '@/lib/orchestration/learn/advisor-prompts';
 import type { PatternSummary } from '@/types/orchestration';
 
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
@@ -42,12 +46,13 @@ interface LearningTabsProps {
 const ALLOWED_TABS = ['patterns', 'advisor', 'quiz'] as const;
 type LearningTab = (typeof ALLOWED_TABS)[number];
 
-const ADVISOR_PROMPTS = [
-  'What pattern should I use for content moderation?',
-  'Compare chain vs parallel patterns',
-  'Design a customer support workflow',
-  'Explain human-in-the-loop tradeoffs',
-];
+/**
+ * Number of starter prompts shown above the advisor input at the
+ * start of each new conversation. Drawn fresh from the pool defined
+ * in `@/lib/orchestration/learn/advisor-prompts` so an operator who
+ * clears the chat gets a different set on the next visit.
+ */
+const ADVISOR_STARTER_COUNT = 5;
 
 const QUIZ_PROMPTS = [
   "Start a quiz — I'm a beginner",
@@ -90,6 +95,15 @@ export function LearningTabs({
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
+  // Five prompts sampled from the advisor pool on mount. Re-rolled
+  // when the operator clears the advisor conversation (see the
+  // `onConversationCleared` callback on the advisor `ChatInterface`)
+  // so revisits get a different set rather than the same four
+  // questions every time. Lazy-init via `() => ...` keeps the random
+  // sample stable across re-renders.
+  const [advisorStarters, setAdvisorStarters] = useState<string[]>(() =>
+    sampleAdvisorPrompts(ADVISOR_STARTER_COUNT)
+  );
 
   useEffect(() => {
     fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS)
@@ -164,8 +178,17 @@ export function LearningTabs({
             embedded
             contextType={contextType}
             contextId={contextId}
-            starterPrompts={ADVISOR_PROMPTS}
+            starterPrompts={advisorStarters}
+            // Full pool (all 68) feeds the in-chat lightbulb button so
+            // a mid-conversation re-roll isn't limited to the five
+            // visible starters.
+            suggestionPool={ADVISOR_PROMPT_STRINGS}
             onStreamComplete={handleStreamComplete}
+            // Re-sample the starters when the operator clears the
+            // chat so the next conversation gets a fresh five.
+            onConversationCleared={() =>
+              setAdvisorStarters(sampleAdvisorPrompts(ADVISOR_STARTER_COUNT))
+            }
             // Admin learning surface — show inline tool-call diagnostics
             // so the advisor's knowledge-base lookups and capability use
             // are visible to the operator.

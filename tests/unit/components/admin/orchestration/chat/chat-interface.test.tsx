@@ -1637,4 +1637,86 @@ describe('ChatInterface', () => {
       expect(screen.getByTestId('message-trace')).toHaveTextContent('1 failed');
     });
   });
+
+  // ─── Suggest-a-prompt button (suggestionPool) ────────────────────────────────
+
+  describe('suggestionPool', () => {
+    const POOL = ['Prompt A', 'Prompt B', 'Prompt C'];
+
+    it('does not render the suggest button when the conversation is empty', () => {
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      expect(screen.queryByLabelText(/suggest a prompt/i)).not.toBeInTheDocument();
+    });
+
+    it('does not render the suggest button when the pool is empty', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={[]} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Hi.')).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/suggest a prompt/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the suggest button once a turn has been sent', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggest a prompt/i)).toBeInTheDocument();
+      });
+    });
+
+    it('fills the input with a pool entry when the suggest button is clicked', async () => {
+      // Pin Math.random so the test is deterministic about which
+      // entry lands in the textarea. Other tests in this file run
+      // under the real RNG; this one wraps and restores around the
+      // click only.
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggest a prompt/i)).toBeInTheDocument();
+      });
+
+      // rng → 0 picks index 0 of the pool.
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        await user.click(screen.getByLabelText(/suggest a prompt/i));
+        const textarea = screen.getByPlaceholderText(/type a message/i);
+        expect(textarea.value).toBe('Prompt A');
+      } finally {
+        rng.mockRestore();
+      }
+    });
+  });
 });

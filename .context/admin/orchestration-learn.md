@@ -38,7 +38,8 @@ The advisor tab embeds a `<ChatInterface>` component connected to the `pattern-a
 
 ### Features
 
-- **Starter prompts**: Pre-defined questions displayed when no messages exist
+- **Starter prompts**: Five questions sampled randomly on mount from the 68-prompt pool in `lib/orchestration/learn/advisor-prompts.ts`. Every one of the 21 agentic design patterns is represented in the pool. The five are re-sampled when the operator clears the conversation so revisits get a fresh set
+- **Suggest a prompt button**: A lightbulb icon in the input row (appears once the conversation has at least one message) fills the textarea with a random pool entry. Operators can re-roll until they find a useful question. Wired via `<ChatInterface suggestionPool={ADVISOR_PROMPT_STRINGS}>`
 - **Streaming chat**: SSE-based real-time responses with capability invocations
 - **Workflow recommendations**: When the advisor outputs a `workflow-definition` code block, a "Create this workflow" button appears
 - **Builder handoff**: Clicking the button navigates to `/admin/orchestration/workflows/new?definition=<encoded>`, pre-populating the workflow builder canvas
