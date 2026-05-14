@@ -51,6 +51,7 @@ const versionSnapshotSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().nullable().optional(),
+  maxHistoryMessages: z.number().int().nullable().optional(),
   retentionDays: z.number().int().nullable().optional(),
   providerConfig: z.unknown().optional(),
   monthlyBudgetUsd: z.number().nullable().optional(),
@@ -158,6 +159,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.citationGuardMode = snapshot.citationGuardMode;
     if (snapshot.maxHistoryTokens !== undefined)
       updateData.maxHistoryTokens = snapshot.maxHistoryTokens;
+    if (snapshot.maxHistoryMessages !== undefined)
+      updateData.maxHistoryMessages = snapshot.maxHistoryMessages;
     if (snapshot.retentionDays !== undefined) updateData.retentionDays = snapshot.retentionDays;
     if (snapshot.providerConfig !== undefined)
       updateData.providerConfig = snapshot.providerConfig as Prisma.InputJsonValue;

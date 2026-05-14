@@ -90,11 +90,35 @@ export interface SearchFilters {
 }
 
 /**
+ * Embedding provenance + billing data for a knowledge-search call.
+ * Re-exported here so the chat capability and any other call site can
+ * surface the per-query embedding cost back to the user without
+ * round-tripping through `embedText` separately.
+ */
+export interface KnowledgeSearchEmbedding {
+  model: string;
+  provider: string;
+  inputTokens: number;
+  costUsd: number;
+}
+
+/** Full return shape for `searchKnowledgeWithEmbedding`. */
+export interface KnowledgeSearchResponse {
+  results: KnowledgeSearchResult[];
+  embedding: KnowledgeSearchEmbedding;
+}
+
+/**
  * Search the knowledge base using hybrid vector + keyword search.
  *
  * Embeds the query, then performs cosine similarity search via pgvector's
  * <=> operator. Optionally boosts results that match keywords via
  * PostgreSQL's full-text search (to_tsvector/plainto_tsquery).
+ *
+ * Most callers only need the results array; use
+ * {@link searchKnowledgeWithEmbedding} when the embedding provenance
+ * (model id, token usage, cost) is needed — e.g. the chat capability
+ * rolling embedding cost into the turn's `sideEffectModels` total.
  *
  * @param query - Natural language search query
  * @param filters - Optional metadata filters
@@ -108,12 +132,30 @@ export async function searchKnowledge(
   limit: number = DEFAULT_LIMIT,
   threshold: number = DEFAULT_THRESHOLD
 ): Promise<KnowledgeSearchResult[]> {
+  const { results } = await searchKnowledgeWithEmbedding(query, filters, limit, threshold);
+  return results;
+}
+
+/**
+ * Same as {@link searchKnowledge} but additionally returns the
+ * embedding provenance (model, provider, tokens, cost) so callers can
+ * attribute the per-query embedding spend to their request — currently
+ * used by the chat handler to roll it into the turn's side-effect
+ * model summary.
+ */
+export async function searchKnowledgeWithEmbedding(
+  query: string,
+  filters?: SearchFilters,
+  limit: number = DEFAULT_LIMIT,
+  threshold: number = DEFAULT_THRESHOLD
+): Promise<KnowledgeSearchResponse> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
 
   const weights = await resolveSearchWeights();
 
   // Generate query embedding (pass 'query' input type for Voyage optimisation)
-  const queryEmbedding = await embedText(query, 'query');
+  const embedResult = await embedText(query, 'query');
+  const queryEmbedding = embedResult.embedding;
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
   // Build WHERE clauses for metadata filters
@@ -171,10 +213,19 @@ export async function searchKnowledge(
 
   const whereClause = conditions.join(' AND ');
 
-  if (weights.hybridEnabled) {
-    return runHybridSearch({ query, weights, params, paramIdx, whereClause });
-  }
-  return runVectorOnlySearch({ query, weights, params, paramIdx, whereClause });
+  const results = weights.hybridEnabled
+    ? await runHybridSearch({ query, weights, params, paramIdx, whereClause })
+    : await runVectorOnlySearch({ query, weights, params, paramIdx, whereClause });
+
+  return {
+    results,
+    embedding: {
+      model: embedResult.model,
+      provider: embedResult.provider,
+      inputTokens: embedResult.inputTokens,
+      costUsd: embedResult.costUsd,
+    },
+  };
 }
 
 interface SearchBranchInput {

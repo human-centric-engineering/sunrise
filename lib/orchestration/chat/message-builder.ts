@@ -19,8 +19,10 @@ import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
 import {
   estimateMessagesTokens,
+  estimateTokens,
   truncateToTokenBudget,
 } from '@/lib/orchestration/chat/token-estimator';
+import type { InputBreakdown, InputBreakdownPart } from '@/types/orchestration';
 
 /**
  * Estimated token cost per attachment (image/document).
@@ -67,6 +69,16 @@ export interface BuildMessagesArgs {
    * chars / 3.5 heuristic.
    */
   modelId?: string;
+  /**
+   * Per-agent override for the message-count cap. When set, this
+   * supersedes the platform default {@link MAX_HISTORY_MESSAGES} for
+   * this turn only — the rolling-summary path already substitutes a
+   * `[Conversation summary of N earlier messages]` block for anything
+   * dropped, so older context survives via summary rather than verbatim.
+   * `0` is meaningful: a fully-stateless agent that never re-sends
+   * prior turns. `null`/`undefined` ⇒ use the platform default.
+   */
+  maxHistoryMessages?: number | null;
 }
 
 /**
@@ -74,31 +86,72 @@ export interface BuildMessagesArgs {
  * context, prior conversation rows, and the new user turn.
  */
 export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
+  return buildMessagesAndBreakdown(args).messages;
+}
+
+export interface BuildMessagesResult {
+  messages: LlmMessage[];
+  /**
+   * Per-section input-token breakdown for the initial LLM call. Does
+   * not include `toolDefinitions` (those are passed separately by the
+   * caller). Tokens are estimated via the configured tokeniser.
+   */
+  breakdown: InputBreakdown;
+}
+
+/**
+ * Same as {@link buildMessages} but also returns an estimated breakdown
+ * of the input-token usage attributed to each section (system prompt,
+ * context block, user memories, conversation summary, history, user
+ * message, attachments). The streaming handler forwards this breakdown
+ * on the `done` SSE event so admin chat surfaces can explain why a
+ * tiny user message can still cost hundreds of input tokens.
+ */
+export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessagesResult {
+  const modelId = args.modelId;
+
   const systemPrompt = args.brandVoiceInstructions
     ? `${args.systemInstructions}\n\n[Brand Voice]\n${args.brandVoiceInstructions}`
     : args.systemInstructions;
   const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
 
+  const breakdown: InputBreakdown = {
+    systemPrompt: makePart(systemPrompt, modelId),
+    userMessage: makePart(args.newUserMessage, modelId),
+    totalEstimated: 0,
+  };
+
   if (args.contextBlock) {
     messages.push({ role: 'system', content: args.contextBlock });
+    breakdown.contextBlock = makePart(args.contextBlock, modelId);
   }
 
   if (args.userMemories && args.userMemories.length > 0) {
     const formatted = args.userMemories.map((m) => `- ${m.key}: ${m.value}`).join('\n');
-    messages.push({
-      role: 'system',
-      content: `[User memories]\nThe following are things you have previously remembered about this user:\n${formatted}`,
-    });
+    const memoryBlock = `[User memories]\nThe following are things you have previously remembered about this user:\n${formatted}`;
+    messages.push({ role: 'system', content: memoryBlock });
+    breakdown.userMemories = {
+      ...makePart(memoryBlock, modelId),
+      count: args.userMemories.length,
+    };
   }
 
   const history = args.history;
   let truncated = history;
   let droppedCount = 0;
 
+  // Resolve the message-count cap. Per-agent override wins; the platform
+  // default applies when the agent leaves it unset. `0` is honoured —
+  // a stateless agent gets no prior history (verbatim), only summary.
+  const messageCap =
+    typeof args.maxHistoryMessages === 'number' && args.maxHistoryMessages >= 0
+      ? args.maxHistoryMessages
+      : MAX_HISTORY_MESSAGES;
+
   // Hard cap to avoid loading too many messages
-  if (history.length > MAX_HISTORY_MESSAGES) {
-    droppedCount = history.length - MAX_HISTORY_MESSAGES;
-    truncated = history.slice(-MAX_HISTORY_MESSAGES);
+  if (history.length > messageCap) {
+    droppedCount = history.length - messageCap;
+    truncated = messageCap > 0 ? history.slice(-messageCap) : [];
   }
 
   // Token-aware truncation: if we know the context window, calculate
@@ -139,10 +192,9 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
 
   if (droppedCount > 0) {
     if (args.conversationSummary) {
-      messages.push({
-        role: 'system',
-        content: `[Conversation summary of ${droppedCount} earlier messages]\n\n${args.conversationSummary}`,
-      });
+      const summaryBlock = `[Conversation summary of ${droppedCount} earlier messages]\n\n${args.conversationSummary}`;
+      messages.push({ role: 'system', content: summaryBlock });
+      breakdown.conversationSummary = makePart(summaryBlock, modelId);
     } else {
       messages.push({
         role: 'system',
@@ -151,6 +203,9 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
     }
   }
 
+  let historyChars = 0;
+  let historyTokens = 0;
+  let historyMessageCount = 0;
   for (const row of truncated) {
     const role = normaliseRole(row.role);
     // Skip empty-content assistant messages — these are persisted as
@@ -167,6 +222,18 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
     } else {
       messages.push({ role, content: row.content });
     }
+    historyChars += row.content.length;
+    historyTokens += estimateTokens(row.content, modelId);
+    historyMessageCount += 1;
+  }
+
+  if (historyMessageCount > 0 || droppedCount > 0) {
+    breakdown.conversationHistory = {
+      tokens: historyTokens,
+      chars: historyChars,
+      messageCount: historyMessageCount,
+      droppedCount,
+    };
   }
 
   // Build the user message — multimodal if attachments are present
@@ -195,10 +262,33 @@ export function buildMessages(args: BuildMessagesArgs): LlmMessage[] {
       }
     }
     messages.push({ role: 'user', content: parts });
+    breakdown.attachments = {
+      tokens: args.attachments.length * ATTACHMENT_OVERHEAD_TOKENS,
+      count: args.attachments.length,
+    };
   } else {
     messages.push({ role: 'user', content: args.newUserMessage });
   }
-  return messages;
+
+  breakdown.totalEstimated =
+    breakdown.systemPrompt.tokens +
+    (breakdown.contextBlock?.tokens ?? 0) +
+    (breakdown.userMemories?.tokens ?? 0) +
+    (breakdown.conversationSummary?.tokens ?? 0) +
+    (breakdown.conversationHistory?.tokens ?? 0) +
+    (breakdown.attachments?.tokens ?? 0) +
+    breakdown.userMessage.tokens;
+
+  return { messages, breakdown };
+}
+
+/** Build a breakdown part for a single text chunk. Includes the raw text. */
+function makePart(text: string, modelId: string | undefined): InputBreakdownPart {
+  return {
+    tokens: estimateTokens(text, modelId),
+    chars: text.length,
+    content: text,
+  };
 }
 
 /**

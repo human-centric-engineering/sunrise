@@ -2590,7 +2590,15 @@ describe('rolling conversation summarization', () => {
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({ id: 'conv-summ', summary: null, summaryUpToMessageId: null })
     );
-    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue('summary-text');
+    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      summary: 'summary-text',
+      fellBack: false,
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0,
+    });
 
     const provider = mockProvider([
       [
@@ -3927,5 +3935,133 @@ describe('attachment gate', () => {
     });
     await collect(streamChat(baseRequest));
     expect(assertModelSupportsAttachments).not.toHaveBeenCalled();
+  });
+
+  // ─── includeTrace opt-in ─────────────────────────────────────────────────
+
+  describe('includeTrace', () => {
+    function setupToolTurn() {
+      const provider = mockProvider([
+        [
+          { type: 'text', content: 'Looking it up. ' },
+          {
+            type: 'tool_call',
+            toolCall: { id: 'tc1', name: 'lookup_order', arguments: { orderId: 'o_1' } },
+          },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'tool_use' },
+        ],
+        [
+          { type: 'text', content: 'Here is the answer.' },
+          { type: 'done', usage: { inputTokens: 6, outputTokens: 4 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: { id: 'o_1' },
+      });
+      return provider;
+    }
+
+    it('omits the trace field from capability_result when includeTrace is unset', async () => {
+      setupToolTurn();
+      const events = await collect(streamChat(baseRequest));
+      const cap = events.find((e) => (e as { type: string }).type === 'capability_result') as {
+        type: 'capability_result';
+        trace?: unknown;
+      };
+      expect(cap).toBeDefined();
+      expect(cap.trace).toBeUndefined();
+    });
+
+    it('attaches a trace object with args + latency + success when includeTrace: true', async () => {
+      setupToolTurn();
+      const events = await collect(streamChat({ ...baseRequest, includeTrace: true }));
+      const cap = events.find((e) => (e as { type: string }).type === 'capability_result') as {
+        type: 'capability_result';
+        trace?: {
+          slug: string;
+          arguments: { orderId: string };
+          latencyMs: number;
+          success: boolean;
+          errorCode?: string;
+          resultPreview?: string;
+        };
+      };
+      expect(cap.trace).toBeDefined();
+      expect(cap.trace?.slug).toBe('lookup_order');
+      expect(cap.trace?.arguments).toEqual({ orderId: 'o_1' });
+      expect(cap.trace?.success).toBe(true);
+      expect(cap.trace?.errorCode).toBeUndefined();
+      // Latency must be non-negative (real clock-derived value)
+      expect(cap.trace?.latencyMs).toBeGreaterThanOrEqual(0);
+      // resultPreview is the truncated JSON of the dispatch result
+      expect(cap.trace?.resultPreview).toContain('o_1');
+    });
+
+    it('captures errorCode on a failing dispatch when includeTrace: true', async () => {
+      const provider = mockProvider([
+        [
+          {
+            type: 'tool_call',
+            toolCall: { id: 'tc1', name: 'lookup_order', arguments: { orderId: 'x' } },
+          },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
+        ],
+        [
+          { type: 'text', content: 'Sorry, no luck.' },
+          { type: 'done', usage: { inputTokens: 6, outputTokens: 4 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: false,
+        error: { code: 'not_found', message: 'no such order' },
+      });
+
+      const events = await collect(streamChat({ ...baseRequest, includeTrace: true }));
+      const cap = events.find((e) => (e as { type: string }).type === 'capability_result') as {
+        type: 'capability_result';
+        trace?: { success: boolean; errorCode?: string };
+      };
+      expect(cap.trace?.success).toBe(false);
+      expect(cap.trace?.errorCode).toBe('not_found');
+    });
+
+    it('persists toolCalls onto the terminal assistant message metadata', async () => {
+      setupToolTurn();
+      await collect(streamChat({ ...baseRequest, includeTrace: true }));
+
+      const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+      const assistantCalls = createCalls.filter(
+        (c: unknown[]) => (c[0] as { data: { role: string } }).data.role === 'assistant'
+      );
+      // The handler persists one assistant row per LLM iteration (here 2 — interim + terminal).
+      const terminal = assistantCalls[assistantCalls.length - 1][0] as {
+        data: { metadata?: { toolCalls?: Array<{ slug: string }> } };
+      };
+      expect(terminal.data.metadata?.toolCalls).toBeDefined();
+      expect(terminal.data.metadata?.toolCalls?.[0]?.slug).toBe('lookup_order');
+    });
+
+    it('does not persist toolCalls when includeTrace is unset', async () => {
+      setupToolTurn();
+      await collect(streamChat(baseRequest));
+
+      const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+      const assistantCalls = createCalls.filter(
+        (c: unknown[]) => (c[0] as { data: { role: string } }).data.role === 'assistant'
+      );
+      for (const call of assistantCalls) {
+        const meta = (call[0] as { data: { metadata?: Record<string, unknown> } }).data.metadata;
+        expect(meta?.toolCalls).toBeUndefined();
+      }
+    });
   });
 });

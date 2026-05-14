@@ -66,6 +66,60 @@ export const IMAGE_USD_PER_IMAGE = 0.001275;
  */
 export const PDF_USD_PER_PDF = 0.005;
 
+/**
+ * Embedding model rates in USD per million input tokens.
+ *
+ * Hardcoded for v1 because the runtime `getModel(...)` lookup is sourced
+ * from OpenRouter's chat-completion catalogue, which doesn't carry
+ * embedding models. Mirrors the seed values in
+ * `prisma/seeds/009-provider-models.ts` so admins running the seeded
+ * registry see the same numbers in cost reports.
+ *
+ * Unknown / unseeded embedding models fall back to `0` — recorded for
+ * volume tracking, but treated as free until promoted into this map or
+ * the `AiProviderModel` table. Local providers (Ollama nomic-embed-text,
+ * etc.) are intentionally absent: the `provider.isLocal` flag flips them
+ * to `isLocal: true` in `logCost` so they always cost $0.
+ */
+export const EMBEDDING_USD_PER_MILLION_TOKENS: Record<string, number> = {
+  'text-embedding-3-small': 0.02,
+  'text-embedding-3-large': 0.13,
+  'text-embedding-ada-002': 0.1,
+  'voyage-3': 0.06,
+  'voyage-3-lite': 0.02,
+  'voyage-large-2': 0.12,
+  'voyage-code-2': 0.12,
+};
+
+/**
+ * Compute the USD cost of an embedding call from the model id and the
+ * input-token count reported by the provider's `usage.prompt_tokens`.
+ * Returns zeroed costs for unknown models (with a debug log) so an
+ * out-of-table model still produces an `AiCostLog` row for volume
+ * tracking — just without dollar attribution until added.
+ *
+ * Always returns `isLocal: false` — "rate unknown" is NOT "local". The
+ * caller is responsible for setting `isLocal` from `provider.isLocal`
+ * (true Ollama-style local models) via `logCost`'s OR. An earlier
+ * version inferred local-ness from a zero rate, which incorrectly
+ * tagged unmapped cloud embeddings (a brand-new OpenAI/Voyage model
+ * the rate table hasn't caught up with) as local and polluted the
+ * `calculateLocalSavings` report.
+ */
+export function calculateEmbeddingCost(modelId: string, inputTokens: number): ComputedCost {
+  if (!Number.isFinite(inputTokens) || inputTokens <= 0) {
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
+  }
+  const ratePerMillion = EMBEDDING_USD_PER_MILLION_TOKENS[modelId] ?? 0;
+  const totalCostUsd = (inputTokens / 1_000_000) * ratePerMillion;
+  return {
+    inputCostUsd: totalCostUsd,
+    outputCostUsd: 0,
+    totalCostUsd,
+    isLocal: false,
+  };
+}
+
 /** Parameters for `logCost`. */
 export interface LogCostParams {
   agentId?: string;
@@ -214,11 +268,14 @@ export function calculateCost(
 export async function logCost(params: LogCostParams): Promise<AiCostLog | null> {
   const isTranscription = params.operation === 'transcription';
   const isVision = params.operation === 'vision';
+  const isEmbedding = params.operation === 'embedding';
   let cost: ComputedCost;
   if (isTranscription) {
     cost = calculateTranscriptionCost(params.durationMs ?? 0);
   } else if (isVision) {
     cost = calculateAttachmentCost(params.imageCount ?? 0, params.pdfCount ?? 0);
+  } else if (isEmbedding) {
+    cost = calculateEmbeddingCost(params.model, params.inputTokens);
   } else {
     cost = calculateCost(params.model, params.inputTokens, params.outputTokens);
   }

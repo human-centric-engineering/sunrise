@@ -132,6 +132,7 @@ export const POST = withAdminAuth(async (request, session) => {
         outputGuardMode: bundled.outputGuardMode ?? null,
         citationGuardMode: bundled.citationGuardMode ?? null,
         maxHistoryTokens: bundled.maxHistoryTokens ?? null,
+        maxHistoryMessages: bundled.maxHistoryMessages ?? null,
         retentionDays: bundled.retentionDays ?? null,
         visibility: bundled.visibility ?? 'internal',
         // `knowledgeCategories` is dropped in Phase 6 — older bundles still

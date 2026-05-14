@@ -81,7 +81,7 @@ async function generateAndStoreEmbedding(messageId: string, content: string): Pr
   // Truncate very long messages to save embedding costs
   const truncated = content.length > 8000 ? content.slice(0, 8000) : content;
 
-  const embedding = await embedText(truncated, 'document');
+  const { embedding } = await embedText(truncated, 'document');
   const embeddingStr = `[${embedding.join(',')}]`;
 
   await prisma.$executeRawUnsafe(

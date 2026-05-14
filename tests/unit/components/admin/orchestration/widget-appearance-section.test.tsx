@@ -105,7 +105,7 @@ describe('WidgetAppearanceSection', () => {
         })
       );
     });
-    await waitFor(() => expect(screen.getByText(/^Saved$/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/^Saved\b/)).toBeInTheDocument());
   });
 
   it('blocks save when the primary colour is not a valid hex', async () => {

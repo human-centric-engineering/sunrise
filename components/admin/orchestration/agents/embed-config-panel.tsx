@@ -259,81 +259,119 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
         </div>
 
         {/* Token list */}
-        {tokens.length === 0 ? (
-          <p className="text-muted-foreground py-4 text-center text-sm">
-            No embed tokens yet. Create one to get started.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {tokens.map((t) => (
-              <div key={t.id} className="rounded-md border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{t.label || 'Untitled'}</span>
-                      <Badge variant={t.isActive ? 'default' : 'secondary'}>
-                        {t.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </div>
-                    <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-                      {t.token}
-                    </p>
-                    {t.allowedOrigins.length > 0 && (
-                      <p className="text-muted-foreground mt-0.5 text-xs">
-                        Origins: {t.allowedOrigins.join(', ')}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => copyToClipboard(getSnippet(t.token), t.id)}
-                      title="Copy embed snippet"
-                      aria-label={`Copy embed snippet for ${t.label || 'token'}`}
-                    >
-                      {copied === t.id ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-500" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleToggle(t.id, !t.isActive)}
-                      title={t.isActive ? 'Deactivate' : 'Activate'}
-                      aria-label={`${t.isActive ? 'Deactivate' : 'Activate'} ${t.label || 'token'}`}
-                    >
-                      {t.isActive ? (
-                        <Power className="h-3.5 w-3.5" />
-                      ) : (
-                        <PowerOff className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleDelete(t.id)}
-                      title="Delete token"
-                      aria-label={`Delete ${t.label || 'token'}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Embed snippet */}
-                <div className="bg-muted mt-2 rounded p-2">
-                  <code className="text-xs break-all">{getSnippet(t.token)}</code>
-                </div>
-              </div>
-            ))}
+        <div className="space-y-2">
+          <div className="flex items-baseline gap-2">
+            <h4 className="text-sm font-medium">Created tokens</h4>
+            <span className="text-muted-foreground text-xs">
+              {tokens.length === 0
+                ? 'none yet'
+                : `${tokens.length} ${tokens.length === 1 ? 'token' : 'tokens'}`}
+            </span>
           </div>
-        )}
+          {tokens.length === 0 ? (
+            <p className="text-muted-foreground rounded-md border border-dashed py-4 text-center text-sm">
+              No embed tokens yet. Create one above to get started.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {tokens.map((t) => (
+                <div key={t.id} className="rounded-md border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={
+                            t.label ? 'text-sm font-medium' : 'text-muted-foreground text-sm italic'
+                          }
+                        >
+                          {t.label || 'Unlabelled embed token'}
+                        </span>
+                        <Badge variant={t.isActive ? 'default' : 'secondary'}>
+                          {t.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </div>
+                      <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
+                        {t.token}
+                      </p>
+                      {t.allowedOrigins.length > 0 && (
+                        <p className="text-muted-foreground mt-0.5 text-xs">
+                          Origins: {t.allowedOrigins.join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => copyToClipboard(getSnippet(t.token), t.id)}
+                        title="Copy embed snippet"
+                        aria-label={`Copy embed snippet for ${t.label || 'token'}`}
+                      >
+                        {copied === t.id ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleToggle(t.id, !t.isActive)}
+                        title={t.isActive ? 'Deactivate' : 'Activate'}
+                        aria-label={`${t.isActive ? 'Deactivate' : 'Activate'} ${t.label || 'token'}`}
+                      >
+                        {t.isActive ? (
+                          <Power className="h-3.5 w-3.5" />
+                        ) : (
+                          <PowerOff className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleDelete(t.id)}
+                        title="Delete token"
+                        aria-label={`Delete ${t.label || 'token'}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Embed snippet */}
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-muted-foreground text-xs tracking-wide uppercase">
+                        Install snippet
+                      </p>
+                      <p className="text-muted-foreground text-[11px]">
+                        Use the <Copy className="-mt-0.5 mr-0.5 inline h-3 w-3" />
+                        copy button to grab it
+                      </p>
+                    </div>
+                    <p className="text-muted-foreground text-xs leading-snug">
+                      Paste this <code className="font-mono">&lt;script&gt;</code> tag into the HTML
+                      of every page on the partner site that should show the chat widget — most
+                      teams add it once to the shared site template (just before the closing{' '}
+                      <code className="font-mono">&lt;/body&gt;</code> tag, or anywhere inside{' '}
+                      <code className="font-mono">&lt;head&gt;</code>). The widget mounts as a small
+                      chat bubble in the bottom-right corner of every visited page; no other code is
+                      needed. If the site restricts which third-party origins can embed scripts,
+                      make sure <code className="font-mono">{appUrl || 'this app'}</code> is on the
+                      allow-list.
+                    </p>
+                    <div className="bg-muted rounded p-2">
+                      <code className="text-xs break-all">{getSnippet(t.token)}</code>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

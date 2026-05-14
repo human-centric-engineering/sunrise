@@ -76,6 +76,7 @@ const agentFormSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: z.enum(['internal', 'public', 'invite_only']),
   rateLimitRpm: z.number().int().min(1).max(10000).nullable().optional(),
@@ -172,6 +173,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
       citationGuardMode: (agent?.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
+      maxHistoryMessages: agent?.maxHistoryMessages ?? null,
       retentionDays: agent?.retentionDays ?? null,
       visibility: (agent?.visibility as AgentFormData['visibility']) ?? 'internal',
       rateLimitRpm: agent?.rateLimitRpm ?? null,
@@ -990,6 +992,40 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             )}
           </div>
 
+          <div className="grid gap-2">
+            <Label htmlFor="maxHistoryMessages">
+              Memory length (messages){' '}
+              <FieldHelp title="Behavioural memory length">
+                How many prior messages this agent remembers verbatim per turn. Older messages get
+                rolled into a rolling summary that&apos;s persisted on the conversation row, so
+                older context survives even when dropped from the live history — just in compressed
+                form. Leave blank to use the platform default (50).
+                <br />
+                <br />
+                Lower this for stateless or single-turn agents (e.g. classifiers, summarisers); use
+                <code className="font-mono"> 0</code> for &ldquo;no verbatim history at all&rdquo;.
+                Raise it for support concierges that benefit from a long memory. Distinct from
+                <em> Max history tokens</em> above: that knob protects the model&apos;s context
+                window; this one controls cost and behaviour even when the window has plenty of
+                room.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="maxHistoryMessages"
+              type="number"
+              min={0}
+              max={500}
+              placeholder="Use platform default (50)"
+              {...register('maxHistoryMessages', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.maxHistoryMessages && (
+              <p className="text-destructive text-xs">{errors.maxHistoryMessages.message}</p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2 rounded-md border p-3">
               <Label htmlFor="inputGuardMode">
@@ -1267,6 +1303,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                       citationGuardMode:
                         (fresh.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
                       maxHistoryTokens: fresh.maxHistoryTokens ?? null,
+                      maxHistoryMessages: fresh.maxHistoryMessages ?? null,
                       retentionDays: fresh.retentionDays ?? null,
                       visibility: (fresh.visibility as AgentFormData['visibility']) ?? 'internal',
                       rateLimitRpm: fresh.rateLimitRpm ?? null,
@@ -1302,6 +1339,10 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
               documentInputEnabled={currentDocumentInput}
               showClearButton
               persistenceKey={`agent-test-chat:${agent.id}`}
+              // Internal test surface — surface tool-call diagnostics
+              // so the author can see exactly which capabilities the
+              // model invoked and inspect their arguments.
+              showInlineTrace
               className="h-[500px]"
             />
           ) : (

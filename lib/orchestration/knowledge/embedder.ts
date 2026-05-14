@@ -10,6 +10,8 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { calculateEmbeddingCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { CostOperation } from '@/types/orchestration';
 
 /**
  * Static fallback embedding model. Only used when the
@@ -126,7 +128,7 @@ async function callEmbeddingApi(
   provider: EmbeddingProvider,
   input: string | string[],
   inputType?: 'document' | 'query'
-): Promise<number[][]> {
+): Promise<{ embeddings: number[][]; inputTokens: number }> {
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/embeddings`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
@@ -180,20 +182,72 @@ async function callEmbeddingApi(
 
   const embeddingResponseSchema = z.object({
     data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
+    // `usage.prompt_tokens` is reported by OpenAI / Voyage; Ollama and
+    // some self-hosted providers omit it. Parse defensively so the
+    // happy path doesn't fail when usage is absent.
+    usage: z
+      .object({
+        prompt_tokens: z.number().optional(),
+        total_tokens: z.number().optional(),
+      })
+      .optional(),
   });
   const result = embeddingResponseSchema.parse(await response.json());
 
-  // Sort by index to maintain input order
-  return result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+  const inputTokens =
+    result.usage?.prompt_tokens ?? result.usage?.total_tokens ?? estimateEmbeddingTokens(input);
+
+  return {
+    embeddings: result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding),
+    inputTokens,
+  };
+}
+
+/**
+ * Heuristic fallback for providers that don't return `usage` (Ollama,
+ * some OpenAI-compatible local servers). ~4 chars/token matches the
+ * o200k_base / cl100k_base density for English prose closely enough
+ * for billing-volume tracking; under-counting here would *under-bill*
+ * embeddings, so we round up to be safe.
+ */
+function estimateEmbeddingTokens(input: string | string[]): number {
+  const texts = Array.isArray(input) ? input : [input];
+  let chars = 0;
+  for (const t of texts) chars += t.length;
+  return Math.ceil(chars / 4);
+}
+
+/**
+ * Result of a single-text embedding call. Carries the vector plus the
+ * provenance and billing data so callers (chat handler, MCP server, …)
+ * can attribute the call to a turn / request without re-resolving the
+ * provider config.
+ */
+export interface EmbedTextResult {
+  embedding: number[];
+  model: string;
+  provider: string;
+  /** Input tokens billed for this call, as reported by the provider (or estimated). */
+  inputTokens: number;
+  /** Local-provider calls cost $0; rate-table misses also produce 0. */
+  costUsd: number;
 }
 
 /**
  * Generate an embedding vector for a single text string.
  *
+ * Writes an `AiCostLog` row (best-effort, fire-and-forget) so embeddings
+ * count toward the global / per-agent spend totals the same way chat
+ * completions do. Failure to log never propagates to the caller — the
+ * embedding vector is the contract.
+ *
  * @param text - The text to embed
- * @returns Embedding vector (default 1536 dimensions)
+ * @returns Embedding vector plus the provider/model/cost provenance.
  */
-export async function embedText(text: string, inputType?: 'document' | 'query'): Promise<number[]> {
+export async function embedText(
+  text: string,
+  inputType?: 'document' | 'query'
+): Promise<EmbedTextResult> {
   const provider = await resolveProvider();
 
   logger.debug('Generating embedding', {
@@ -202,8 +256,27 @@ export async function embedText(text: string, inputType?: 'document' | 'query'):
     textLength: text.length,
   });
 
-  const results = await callEmbeddingApi(provider, text, inputType);
-  return results[0];
+  const { embeddings, inputTokens } = await callEmbeddingApi(provider, text, inputType);
+  const cost = calculateEmbeddingCost(provider.model, inputTokens);
+
+  // Best-effort cost log. Embeddings should never fail a caller because
+  // of an accounting write.
+  void logCost({
+    model: provider.model,
+    provider: provider.providerType,
+    inputTokens,
+    outputTokens: 0,
+    operation: CostOperation.EMBEDDING,
+    isLocal: provider.isLocal || cost.isLocal,
+  });
+
+  return {
+    embedding: embeddings[0],
+    model: provider.model,
+    provider: provider.providerType,
+    inputTokens,
+    costUsd: cost.totalCostUsd,
+  };
 }
 
 /** Result of a batch embedding operation */
@@ -226,6 +299,7 @@ export async function embedBatch(
 ): Promise<EmbedBatchResult> {
   const provider = await resolveProvider();
   const allEmbeddings: number[][] = [];
+  let totalInputTokens = 0;
 
   logger.info('Starting batch embedding', {
     totalTexts: texts.length,
@@ -247,13 +321,14 @@ export async function embedBatch(
       batchSize: batch.length,
     });
 
-    const embeddings = await callEmbeddingApi(provider, batch, inputType);
+    const { embeddings, inputTokens } = await callEmbeddingApi(provider, batch, inputType);
     if (embeddings.length !== batch.length) {
       throw new Error(
         `Embedding API returned ${embeddings.length} embeddings for ${batch.length} texts`
       );
     }
     allEmbeddings.push(...embeddings);
+    totalInputTokens += inputTokens;
 
     // Rate limit between batches (skip for last batch)
     if (i + batchSize < texts.length) {
@@ -264,6 +339,20 @@ export async function embedBatch(
   logger.info('Batch embedding complete', {
     totalTexts: texts.length,
     totalEmbeddings: allEmbeddings.length,
+    totalInputTokens,
+  });
+
+  // Best-effort: one cost row for the whole batch. Document-ingestion
+  // batches typically run from the admin UI rather than per-turn, so a
+  // rolled-up row keeps `AiCostLog` from exploding on bulk imports.
+  const cost = calculateEmbeddingCost(provider.model, totalInputTokens);
+  void logCost({
+    model: provider.model,
+    provider: provider.providerType,
+    inputTokens: totalInputTokens,
+    outputTokens: 0,
+    operation: CostOperation.EMBEDDING,
+    isLocal: provider.isLocal || cost.isLocal,
   });
 
   return {

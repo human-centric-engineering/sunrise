@@ -287,12 +287,15 @@ describe('ChatInterface', () => {
     await user.type(input, 'Tell me about deposit rules');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    // Marker chip and panel both render in the assistant message.
+    // Marker chip and panel heading render straight away; the panel
+    // contents are only revealed once the user expands the (default-
+    // collapsed) sources list.
     await waitFor(() => {
       expect(screen.getByLabelText('Citation 1')).toBeInTheDocument();
       expect(screen.getByText('Sources (1)')).toBeInTheDocument();
-      expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     });
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
+    expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
   });
 
   it('does not transform [N] literals when no citations event fires', async () => {
@@ -639,6 +642,111 @@ describe('ChatInterface', () => {
     expect(deleteCall[1].method).toBe('DELETE');
 
     expect(onCleared).toHaveBeenCalledOnce();
+  });
+
+  // ─── Download transcript tests ─────────────────────────────────────────────
+
+  it('shows download button when showDownloadButton is true and messages exist', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello!'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" showDownloadButton />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /download transcript/i })).toBeInTheDocument();
+  });
+
+  it('does not show download button when no messages have been sent', () => {
+    render(<ChatInterface agentSlug="test-agent" showDownloadButton />);
+    expect(screen.queryByRole('button', { name: /download transcript/i })).not.toBeInTheDocument();
+  });
+
+  it('triggers a markdown blob download when the download button is clicked', async () => {
+    const user = userEvent.setup();
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Hello!'),
+      doneFrame(),
+    ]);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    render(
+      <ChatInterface agentSlug="test-agent" showDownloadButton downloadFilename="my-transcript" />
+    );
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /download transcript/i }));
+
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob;
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('text/markdown;charset=utf-8');
+    expect(clickSpy).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+
+    clickSpy.mockRestore();
+  });
+
+  // ─── Input-clear (in-textarea X) tests ─────────────────────────────────────
+
+  it('does not show the input-clear X when the textarea is empty', () => {
+    render(<ChatInterface agentSlug="test-agent" />);
+    expect(screen.queryByRole('button', { name: /clear input/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the input-clear X once the operator types into the textarea', async () => {
+    const user = userEvent.setup();
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'draft message');
+
+    expect(screen.getByRole('button', { name: /clear input/i })).toBeInTheDocument();
+  });
+
+  it('clicking the input-clear X empties the textarea without touching the conversation', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'something I changed my mind about');
+    expect(input).toHaveValue('something I changed my mind about');
+
+    await user.click(screen.getByRole('button', { name: /clear input/i }));
+
+    expect(input).toHaveValue('');
+    // No network calls — clearing input must not delete the conversation.
+    expect(fetchMock).not.toHaveBeenCalled();
+    // X disappears once the field is empty.
+    expect(screen.queryByRole('button', { name: /clear input/i })).not.toBeInTheDocument();
   });
 
   // ─── Thinking indicator tests ──────────────────────────────────────────────
@@ -1406,6 +1514,608 @@ describe('ChatInterface', () => {
       input.dispatchEvent(event);
 
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Inline trace (admin diagnostic strip) ───────────────────────────────────
+
+  describe('showInlineTrace', () => {
+    function capabilityFrameWithTrace(
+      slug: string,
+      result: unknown,
+      trace: Record<string, unknown>
+    ): string {
+      return `event: capability_result\ndata: ${JSON.stringify({ capabilitySlug: slug, result, trace })}\n\n`;
+    }
+
+    it('sends includeTrace: true on the POST body when enabled', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+      expect(body.includeTrace).toBe(true);
+    });
+
+    it('omits includeTrace from the POST body by default', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+      expect(body.includeTrace).toBeUndefined();
+    });
+
+    it('renders the MessageTrace strip when a trace-bearing capability_result arrives', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        capabilityFrameWithTrace(
+          'search_knowledge_base',
+          { success: true },
+          {
+            slug: 'search_knowledge_base',
+            arguments: { query: 'reset password' },
+            latencyMs: 215,
+            success: true,
+            resultPreview: '{"results":[]}',
+          }
+        ),
+        contentFrame('Done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-trace')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 tool');
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('215ms');
+    });
+
+    it('does not render the MessageTrace strip when showInlineTrace is false even if trace arrives', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        capabilityFrameWithTrace(
+          'search_knowledge_base',
+          { success: true },
+          {
+            slug: 'search_knowledge_base',
+            arguments: {},
+            latencyMs: 50,
+            success: true,
+          }
+        ),
+        contentFrame('Done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // Wait for streaming to settle before asserting absence.
+      await waitFor(() => {
+        expect(screen.getByText('Done.')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
+    });
+
+    it('aggregates traces from a parallel capability_results batch', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        `event: capability_results\ndata: ${JSON.stringify({
+          results: [
+            {
+              capabilitySlug: 'a',
+              result: { success: true },
+              trace: { slug: 'a', arguments: {}, latencyMs: 30, success: true },
+            },
+            {
+              capabilitySlug: 'b',
+              result: { success: false, error: { code: 'oops', message: 'bad' } },
+              trace: {
+                slug: 'b',
+                arguments: {},
+                latencyMs: 30,
+                success: false,
+                errorCode: 'oops',
+              },
+            },
+          ],
+        })}\n\n`,
+        contentFrame('All done.'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'help');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('message-trace')).toHaveTextContent('2 tools');
+      });
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 failed');
+    });
+  });
+
+  // ─── Cost / tokens / model meta strip ────────────────────────────────────────
+
+  describe('cost row + input-breakdown toggle', () => {
+    function doneFrameRich(opts: {
+      tokens?: { input: number; output: number };
+      cost?: number;
+      model?: string;
+      breakdown?: Record<string, unknown>;
+    }): string {
+      const payload: Record<string, unknown> = {};
+      if (opts.tokens) {
+        payload.tokenUsage = {
+          inputTokens: opts.tokens.input,
+          outputTokens: opts.tokens.output,
+          totalTokens: opts.tokens.input + opts.tokens.output,
+        };
+      }
+      if (typeof opts.cost === 'number') payload.costUsd = opts.cost;
+      if (opts.model) payload.model = opts.model;
+      if (opts.breakdown) payload.inputBreakdown = opts.breakdown;
+      return `event: done\ndata: ${JSON.stringify(payload)}\n\n`;
+    }
+
+    const sampleBreakdown = {
+      systemPrompt: { tokens: 120, chars: 480, content: 'You are helpful.' },
+      userMessage: { tokens: 8, chars: 32, content: 'Hi' },
+      framingOverhead: { tokens: 200, chars: 0 },
+      totalEstimated: 328,
+    };
+
+    it('renders the cost / tokens / model summary line when showInlineTrace is on', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({
+          tokens: { input: 4991, output: 234 },
+          cost: 0.0123,
+          model: 'gpt-4o-mini',
+        }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Toks:/)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/4,991 input, 234 output/)).toBeInTheDocument();
+      expect(screen.getByTitle('Approximate cost for this turn (main LLM only)')).toHaveTextContent(
+        '$0.0123'
+      );
+      expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
+    });
+
+    it('formats sub-cent costs with four decimals and $1+ costs with two', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({ cost: 1.4567, tokens: { input: 100, output: 50 } }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByTitle('Approximate cost for this turn (main LLM only)')
+        ).toHaveTextContent('$1.46');
+      });
+    });
+
+    it('renders the cost row as a non-interactive div when no inputBreakdown is supplied', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({ tokens: { input: 100, output: 50 }, cost: 0.001 }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Toks:/)).toBeInTheDocument();
+      });
+      // No "break down this turn's input tokens" button.
+      expect(
+        screen.queryByRole('button', { name: /break down this turn/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it('makes the cost row a toggle when inputBreakdown is present, and expands the panel on click', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Done.'),
+        doneFrameRich({
+          tokens: { input: 4991, output: 234 },
+          cost: 0.0123,
+          model: 'gpt-4o',
+          breakdown: sampleBreakdown,
+        }),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" showInlineTrace />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // The toggle's accessible name is its body text (cost / tokens /
+      // model). Match by the title attribute instead.
+      const toggle = await screen.findByTitle(/break down this turn's input tokens/i);
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      // The breakdown list renders the framing row when expanded.
+      expect(screen.getByText('Provider framing')).toBeInTheDocument();
+      // Reconciliation header in the breakdown panel.
+      expect(screen.getByText(/model reported 4,991/i)).toBeInTheDocument();
+    });
+  });
+
+  // ─── Suggest-a-prompt button (suggestionPool) ────────────────────────────────
+
+  describe('suggestionPool', () => {
+    const POOL = ['Prompt A', 'Prompt B', 'Prompt C'];
+
+    it('does not render the suggest button when the conversation is empty', () => {
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      expect(screen.queryByLabelText(/suggest a prompt/i)).not.toBeInTheDocument();
+    });
+
+    it('does not render the suggest button when the pool is empty', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={[]} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Hi.')).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/suggest a prompt/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the suggest button once a turn has been sent', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggest a prompt/i)).toBeInTheDocument();
+      });
+    });
+
+    it('fills the input with a pool entry when the suggest button is clicked', async () => {
+      // Pin Math.random so the test is deterministic about which
+      // entry lands in the textarea. Other tests in this file run
+      // under the real RNG; this one wraps and restores around the
+      // click only.
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('Hi.'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(<ChatInterface agentSlug="test-agent" suggestionPool={POOL} />);
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hi');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggest a prompt/i)).toBeInTheDocument();
+      });
+
+      // rng → 0 picks index 0 of the pool.
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0);
+      try {
+        await user.click(screen.getByLabelText(/suggest a prompt/i));
+        const textarea = screen.getByPlaceholderText(/type a message/i);
+        if (!(textarea instanceof HTMLTextAreaElement)) {
+          throw new Error('expected a textarea');
+        }
+        expect(textarea.value).toBe('Prompt A');
+      } finally {
+        rng.mockRestore();
+      }
+    });
+  });
+
+  // ─── Starter randomise button (onResampleStarters) ───────────────────────────
+
+  describe('onResampleStarters', () => {
+    it('does not render the shuffle button when the callback is absent', () => {
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the shuffle button when starters and the callback are present', () => {
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={() => {}}
+        />
+      );
+      expect(screen.getByLabelText(/randomise suggestions/i)).toBeInTheDocument();
+    });
+
+    it('invokes the callback on click', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      expect(onResample).toHaveBeenCalledOnce();
+    });
+
+    it('moves the shuffle button into the Suggested-prompts disclosure once the conversation starts', async () => {
+      // Pre-conversation it lives next to "Try asking:"; post-first-turn
+      // it relocates to the disclosure header so operators can still
+      // re-roll without scrolling back to the empty state.
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={() => {}}
+        />
+      );
+      expect(screen.getByLabelText(/randomise suggestions/i)).toBeInTheDocument();
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      await waitFor(() => {
+        // The pre-conversation grid is gone; the disclosure has taken over.
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      // Still exactly one shuffle button — only its location changed.
+      expect(screen.getAllByLabelText(/randomise suggestions/i)).toHaveLength(1);
+    });
+  });
+
+  // ─── Mid-conversation "Suggested prompts" disclosure ──────────────────────────
+
+  describe('suggested prompts disclosure (post-first-turn)', () => {
+    async function sendFirstTurn(user: ReturnType<typeof userEvent.setup>) {
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+    }
+
+    it('does not render the disclosure when no messages have been sent', () => {
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      expect(screen.queryByRole('button', { name: /suggested prompts/i })).not.toBeInTheDocument();
+    });
+
+    it('renders the disclosure header after the first turn', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+    });
+
+    it('keeps the disclosure body hidden until the operator opens it', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['Alpha', 'Beta']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('suggested-prompts-panel')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      const panel = screen.getByTestId('suggested-prompts-panel');
+      expect(panel).toBeInTheDocument();
+      expect(panel).toHaveTextContent('Alpha');
+      expect(panel).toHaveTextContent('Beta');
+    });
+
+    it('sends a prompt and closes-on-send when the user clicks a suggestion inside the panel', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: stream });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['Alpha', 'Beta']} />);
+      // First turn — sets messages.length > 0.
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+
+      // Open the disclosure and click a suggestion.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      // Re-stub fetch for the second turn so the prompt click triggers
+      // a fresh stream — the first stub is single-use (already drained).
+      const stream2 = makeSseStream([
+        startFrame('conv-1', 'msg-2'),
+        contentFrame('ok'),
+        doneFrame(),
+      ]);
+      fetchMock.mockResolvedValueOnce({ ok: true, body: stream2 });
+      await user.click(screen.getByRole('button', { name: 'Alpha' }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+      });
+      const second = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<
+        string,
+        unknown
+      >;
+      expect(second.message).toBe('Alpha');
+    });
+
+    it('shows the shuffle icon inside the disclosure when onResampleStarters is set', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      // The shuffle icon sits next to the disclosure header — it
+      // works regardless of whether the panel is open.
+      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      expect(onResample).toHaveBeenCalledOnce();
+    });
+
+    it('omits the shuffle icon when the caller has no resample handler (e.g. quiz)', async () => {
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="quiz-master" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+    });
+
+    it('auto-randomises every time the user opens the disclosure', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+
+      // First open → resample fires once.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(1);
+
+      // Close → no resample on collapse.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(1);
+
+      // Re-open → resamples again.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not throw when opening the disclosure without a resample handler', async () => {
+      // Quiz path: no callback. The header still toggles the panel
+      // open and the absence of `onResampleStarters` must not crash.
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="quiz-master" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(screen.getByTestId('suggested-prompts-panel')).toBeInTheDocument();
     });
   });
 });

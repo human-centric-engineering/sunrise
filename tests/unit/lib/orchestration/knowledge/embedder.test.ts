@@ -479,10 +479,11 @@ describe('embedText', () => {
       ])
     );
 
-    // embedText returns results[0] — the first after sorting by index
+    // embedText returns { embedding, … } where embedding is results[0]
+    // — the first after sorting by index.
     const result = await embedText('test');
 
-    expect(result).toEqual(vecA);
+    expect(result.embedding).toEqual(vecA);
   });
 });
 

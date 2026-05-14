@@ -7,7 +7,7 @@
  * markers without a matching citation get the "hallucinated" treatment.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -45,7 +45,8 @@ describe('MessageWithCitations', () => {
     expect(link2).toHaveAttribute('href', '#citation-2');
   });
 
-  it('renders the citations panel with one entry per citation', () => {
+  it('renders the citations panel with one entry per citation', async () => {
+    const user = userEvent.setup();
     const citations = [
       makeCitation({ marker: 1, documentName: 'Tenancy Guide', section: 'Page 12' }),
       makeCitation({
@@ -56,7 +57,9 @@ describe('MessageWithCitations', () => {
       }),
     ];
     render(<MessageWithCitations content="Foo [1] [2]" citations={citations} />);
+    // Sources panel is collapsed by default — expand it to inspect rows.
     expect(screen.getByText('Sources (2)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /sources \(2\)/i }));
     expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     expect(screen.getByText('Renters Reform Act')).toBeInTheDocument();
     expect(screen.getByText(/Notice must give two months/)).toBeInTheDocument();
@@ -73,7 +76,8 @@ describe('MessageWithCitations', () => {
     );
   });
 
-  it('falls back to patternName when documentName is missing', () => {
+  it('falls back to patternName when documentName is missing', async () => {
+    const user = userEvent.setup();
     const citations = [
       makeCitation({
         documentName: null,
@@ -81,6 +85,7 @@ describe('MessageWithCitations', () => {
       }),
     ];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
@@ -88,16 +93,20 @@ describe('MessageWithCitations', () => {
     const user = userEvent.setup();
     render(<MessageWithCitations content="See [1]" citations={[makeCitation()]} />);
     const toggle = screen.getByRole('button', { name: /sources \(1\)/i });
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await user.click(toggle);
+    // Panel starts collapsed — the body of the message is the primary
+    // content; sources expand on demand.
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('omits the section span when section is null', () => {
+  it('omits the section span when section is null', async () => {
+    const user = userEvent.setup();
     const citations = [makeCitation({ section: null })];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     const list = screen.getByRole('list');
     expect(within(list).queryByText(/·/)).not.toBeInTheDocument();
   });
@@ -106,8 +115,8 @@ describe('MessageWithCitations', () => {
     const user = userEvent.setup();
     render(<MessageWithCitations content="See [1]" citations={[makeCitation({ marker: 1 })]} />);
     const toggle = screen.getByRole('button', { name: /sources \(1\)/i });
-    // Collapse the panel first so we can verify the click re-opens it.
-    await user.click(toggle);
+    // Panel is collapsed by default; clicking a citation marker should
+    // expand it so the target row is visible.
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await user.click(screen.getByLabelText('Citation 1'));
@@ -147,11 +156,61 @@ describe('MessageWithCitations', () => {
     expect(screen.getByLabelText('Citation 2')).toBeInTheDocument();
   });
 
-  it('omits the excerpt paragraph when the excerpt is empty', () => {
+  it('omits the excerpt paragraph when the excerpt is empty', async () => {
+    const user = userEvent.setup();
     const citations = [makeCitation({ excerpt: '' })];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     // The list item still renders the document name, but no excerpt <p>.
     expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     expect(screen.queryByText(/deposit must be protected/)).not.toBeInTheDocument();
+  });
+
+  it('expands citation markers inside every supported markdown wrapper', () => {
+    const citations = Array.from({ length: 8 }, (_, i) =>
+      makeCitation({ marker: i + 1, chunkId: `c${i + 1}` })
+    );
+    // One marker per element type so every entry in the Markdown
+    // component override map is exercised (h1-h6, li, blockquote).
+    const content = [
+      '# H1 [1]',
+      '',
+      '## H2 [2]',
+      '',
+      '### H3 [3]',
+      '',
+      '#### H4 [4]',
+      '',
+      '##### H5 [5]',
+      '',
+      '###### H6 [6]',
+      '',
+      '- list item [7]',
+      '',
+      '> blockquote [8]',
+    ].join('\n');
+    render(<MessageWithCitations content={content} citations={citations} />);
+    for (let marker = 1; marker <= 8; marker++) {
+      expect(screen.getByLabelText(`Citation ${marker}`)).toBeInTheDocument();
+    }
+  });
+
+  it('invokes the onCitationClick callback in external panel mode instead of opening an inline panel', async () => {
+    const user = userEvent.setup();
+    const onCitationClick = vi.fn();
+    render(
+      <MessageWithCitations
+        content="See [1] for context."
+        citations={[makeCitation({ marker: 1 })]}
+        panelMode="external"
+        onCitationClick={onCitationClick}
+      />
+    );
+
+    // No inline Sources panel in external mode.
+    expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Citation 1'));
+    expect(onCitationClick).toHaveBeenCalledOnce();
   });
 });

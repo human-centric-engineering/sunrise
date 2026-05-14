@@ -28,6 +28,15 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 
 vi.mock('@/lib/orchestration/knowledge/search', () => ({
   searchKnowledge: vi.fn().mockResolvedValue([]),
+  searchKnowledgeWithEmbedding: vi.fn().mockResolvedValue({
+    results: [],
+    embedding: {
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      inputTokens: 10,
+      costUsd: 0,
+    },
+  }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -40,7 +49,7 @@ const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 const { BaseCapability } = await import('@/lib/orchestration/capabilities/base-capability');
 const { CostOperation } = await import('@/types/orchestration');
-const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
+const { searchKnowledgeWithEmbedding } = await import('@/lib/orchestration/knowledge/search');
 const { SearchKnowledgeCapability } =
   await import('@/lib/orchestration/capabilities/built-in/search-knowledge');
 const { registerTracer, resetTracer } = await import('@/lib/orchestration/tracing/registry');
@@ -566,21 +575,29 @@ describe('CapabilityDispatcher', () => {
 
   describe('search_knowledge_base dispatch integration', () => {
     it('routes dispatch through SearchKnowledgeCapability and returns results', async () => {
-      const mockSearchKnowledge = searchKnowledge as ReturnType<typeof vi.fn>;
-      mockSearchKnowledge.mockResolvedValue([
-        {
-          chunk: {
-            id: 'chunk-1',
-            documentId: 'doc-1',
-            content: 'ReAct pattern',
-            patternNumber: 1,
-            patternName: 'ReAct',
-            section: 'Overview',
+      const mockSearch = searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>;
+      mockSearch.mockResolvedValue({
+        results: [
+          {
+            chunk: {
+              id: 'chunk-1',
+              documentId: 'doc-1',
+              content: 'ReAct pattern',
+              patternNumber: 1,
+              patternName: 'ReAct',
+              section: 'Overview',
+            },
+            documentName: 'Agentic Design Patterns',
+            similarity: 0.92,
           },
-          documentName: 'Agentic Design Patterns',
-          similarity: 0.92,
+        ],
+        embedding: {
+          model: 'text-embedding-3-small',
+          provider: 'openai',
+          inputTokens: 10,
+          costUsd: 0,
         },
-      ]);
+      });
 
       capabilityDispatcher.register(new SearchKnowledgeCapability());
       mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'search_knowledge_base' })]);
@@ -607,7 +624,7 @@ describe('CapabilityDispatcher', () => {
           },
         ],
       });
-      expect(mockSearchKnowledge).toHaveBeenCalledWith('ReAct pattern', undefined, 10, 0.7);
+      expect(mockSearch).toHaveBeenCalledWith('ReAct pattern', undefined, 10, 0.7);
     });
   });
 

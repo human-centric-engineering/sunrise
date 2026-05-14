@@ -23,7 +23,15 @@
 import type { AiAgent, AiConversation, AiMessage, Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import type { ChatEvent, Citation, MessageMetadata, PendingApproval } from '@/types/orchestration';
+import type {
+  ChatEvent,
+  Citation,
+  InputBreakdown,
+  MessageMetadata,
+  PendingApproval,
+  SideEffectModelUsage,
+  ToolCallTrace,
+} from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -49,7 +57,12 @@ import {
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
-import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
+import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
+import {
+  countOpenAiToolDefinitionTokens,
+  isOpenAiModel,
+} from '@/lib/orchestration/chat/openai-token-counter';
 import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
@@ -106,6 +119,86 @@ async function withToolTimeout<T>(
   } finally {
     clearTimeout(timer!);
   }
+}
+
+/**
+ * Build a {@link ToolCallTrace} from a dispatch outcome. Keeps the
+ * per-tool admin diagnostic shape consistent across the single-tool and
+ * parallel-tool branches of the loop.
+ *
+ * `resultPreview` is truncated to ~480 chars so the persisted metadata
+ * column stays well below the Prisma row-size budget even after a many-
+ * tool turn. The full result is still available on the tool-role
+ * message's `metadata.result` for any caller that needs it.
+ */
+function buildToolCallTrace(
+  slug: string,
+  args: unknown,
+  result: unknown,
+  latencyMs: number
+): ToolCallTrace {
+  const success =
+    typeof result === 'object' && result !== null && 'success' in result
+      ? (result as { success: unknown }).success === true
+      : false;
+  const errorObj =
+    typeof result === 'object' &&
+    result !== null &&
+    'error' in result &&
+    typeof (result as { error: unknown }).error === 'object' &&
+    (result as { error: unknown }).error !== null
+      ? ((result as { error: { code?: unknown } }).error as { code?: unknown })
+      : null;
+  const errorCode = typeof errorObj?.code === 'string' ? errorObj.code : undefined;
+
+  let resultPreview: string | undefined;
+  try {
+    const json = JSON.stringify(result);
+    if (json) resultPreview = json.length > 480 ? `${json.slice(0, 477)}...` : json;
+  } catch {
+    // Non-serialisable result (cyclic, BigInt) — skip preview rather than throw.
+  }
+
+  const sideEffectModel = extractSideEffectModel(result);
+
+  return {
+    slug,
+    arguments: args,
+    latencyMs,
+    success,
+    ...(errorCode ? { errorCode } : {}),
+    ...(resultPreview ? { resultPreview } : {}),
+    ...(sideEffectModel ? { sideEffectModel } : {}),
+  };
+}
+
+/**
+ * Capabilities that invoke a secondary model (currently
+ * `search_knowledge_base`, which embeds the query) attach a
+ * `SideEffectModelUsage` shape to `CapabilityResult.metadata` so the
+ * chat handler can roll the spend into the turn summary without
+ * knowing the slug. Structurally validated here so a malformed entry
+ * is dropped instead of corrupting the assistant metadata column.
+ */
+function extractSideEffectModel(result: unknown): SideEffectModelUsage | undefined {
+  if (typeof result !== 'object' || result === null) return undefined;
+  const meta = (result as { metadata?: unknown }).metadata;
+  if (typeof meta !== 'object' || meta === null) return undefined;
+  const raw = (meta as { sideEffectModel?: unknown }).sideEffectModel;
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r['model'] !== 'string') return undefined;
+  if (r['kind'] !== 'embedding' && r['kind'] !== 'summarizer') return undefined;
+  const out: SideEffectModelUsage = {
+    kind: r['kind'],
+    model: r['model'],
+  };
+  if (typeof r['provider'] === 'string') out.provider = r['provider'];
+  if (typeof r['callCount'] === 'number') out.callCount = r['callCount'];
+  if (typeof r['inputTokens'] === 'number') out.inputTokens = r['inputTokens'];
+  if (typeof r['outputTokens'] === 'number') out.outputTokens = r['outputTokens'];
+  if (typeof r['costUsd'] === 'number') out.costUsd = r['costUsd'];
+  return out;
 }
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
@@ -481,15 +574,23 @@ export class StreamingChatHandler {
 
       // Rolling summary — when history exceeds the window, summarize
       // the oldest messages and persist the summary for future turns.
+      // Agent-level maxHistoryMessages override controls when the cap
+      // kicks in (also drives the same threshold inside message-builder
+      // so the summary covers exactly the dropped messages).
       let conversationSummary: string | undefined;
+      let summarizerSideEffect: SideEffectModelUsage | undefined;
       const historyRows = history.map((m) => ({
         role: m.role,
         content: m.content,
         toolCallId: m.toolCallId,
       }));
+      const effectiveMessageCap =
+        typeof agent.maxHistoryMessages === 'number' && agent.maxHistoryMessages >= 0
+          ? agent.maxHistoryMessages
+          : MAX_HISTORY_MESSAGES;
 
-      if (historyRows.length > MAX_HISTORY_MESSAGES) {
-        const droppedCount = historyRows.length - MAX_HISTORY_MESSAGES;
+      if (historyRows.length > effectiveMessageCap) {
+        const droppedCount = historyRows.length - effectiveMessageCap;
         const droppedMessages = historyRows.slice(0, droppedCount);
         const lastDroppedId = history[droppedCount - 1]?.id ?? null;
 
@@ -498,11 +599,29 @@ export class StreamingChatHandler {
           conversationSummary = conversation.summary;
         } else {
           yield { type: 'status', message: 'Summarizing conversation history...' };
-          conversationSummary = await summarizeMessages(
+          const summarizeResult = await summarizeMessages(
             droppedMessages,
             resolvedBinding.providerSlug,
             resolvedFallbackProviders
           );
+          conversationSummary = summarizeResult.summary;
+          if (!summarizeResult.fellBack && summarizeResult.model) {
+            summarizerSideEffect = {
+              kind: 'summarizer',
+              model: summarizeResult.model,
+              ...(summarizeResult.provider ? { provider: summarizeResult.provider } : {}),
+              callCount: 1,
+              ...(typeof summarizeResult.inputTokens === 'number'
+                ? { inputTokens: summarizeResult.inputTokens }
+                : {}),
+              ...(typeof summarizeResult.outputTokens === 'number'
+                ? { outputTokens: summarizeResult.outputTokens }
+                : {}),
+              ...(typeof summarizeResult.costUsd === 'number'
+                ? { costUsd: summarizeResult.costUsd }
+                : {}),
+            };
+          }
           // Persist for future turns
           await prisma.aiConversation.update({
             where: { id: conversation.id },
@@ -529,7 +648,7 @@ export class StreamingChatHandler {
       const modelInfo = getModel(resolvedModel);
       const contextWindowTokens = agent.maxHistoryTokens ?? modelInfo?.maxContext ?? undefined;
 
-      let messages: LlmMessage[] = buildMessages({
+      const { messages: initialMessages, breakdown: initialBreakdown } = buildMessagesAndBreakdown({
         systemInstructions: agent.systemInstructions,
         contextBlock,
         history: historyRows,
@@ -541,7 +660,9 @@ export class StreamingChatHandler {
         contextWindowTokens,
         reserveTokens: agent.maxTokens ?? undefined,
         modelId: resolvedModel,
+        maxHistoryMessages: agent.maxHistoryMessages,
       });
+      let messages: LlmMessage[] = initialMessages;
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
       const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
@@ -549,6 +670,40 @@ export class StreamingChatHandler {
         description: def.description,
         parameters: def.parameters,
       }));
+
+      // Admin-only: enrich the input breakdown with tool-definition
+      // tokens so the chat UI can attribute scaffolding cost back to
+      // capability schemas. Counting the serialised JSON over-estimates
+      // slightly (providers strip whitespace), which keeps the strip
+      // honest as an upper bound.
+      if (request.includeTrace && toolDefinitions.length > 0) {
+        // OpenAI doesn't tokenise the raw JSON of tool definitions —
+        // internally each tool is reformatted into a TypeScript
+        // namespace declaration. Counting the reformatted body matches
+        // the model's actual attribution. For non-OpenAI providers
+        // (Anthropic, Gemini) we fall back to the JSON serialisation,
+        // which is still a conservative upper bound; the
+        // `framingOverhead` row absorbs whatever drift remains so the
+        // total reconciles to `usage.inputTokens` exactly.
+        const useOpenAiCounter = isOpenAiModel(resolvedModel);
+        const { tokens, formatted } = useOpenAiCounter
+          ? countOpenAiToolDefinitionTokens(toolDefinitions, resolvedModel)
+          : (() => {
+              const json = JSON.stringify(toolDefinitions);
+              return {
+                tokens: estimateTokens(json, resolvedModel),
+                formatted: json,
+              };
+            })();
+        initialBreakdown.toolDefinitions = {
+          tokens,
+          chars: formatted.length,
+          count: toolDefinitions.length,
+          names: toolDefinitions.map((t) => t.name),
+          content: formatted,
+        };
+        initialBreakdown.totalEstimated += tokens;
+      }
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
         resolvedBinding.providerSlug,
@@ -583,6 +738,15 @@ export class StreamingChatHandler {
       // and persisted on the terminal assistant message metadata.
       const citations: Citation[] = [];
       let nextCitationMarker = 1;
+
+      /**
+       * Per-tool diagnostics accumulated across the whole turn. Populated
+       * only when `request.includeTrace === true`. Each dispatch (single
+       * or parallel branch) pushes one entry. Attached to the terminal
+       * assistant message metadata so the post-hoc viewer can render
+       * the same `<MessageTrace>` component without replaying the loop.
+       */
+      const turnToolCalls: ToolCallTrace[] = [];
 
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
@@ -875,6 +1039,25 @@ export class StreamingChatHandler {
           if (isTerminalTurn && citations.length > 0) {
             assistantMetadata.citations = citations;
           }
+          // Admin-only: attach per-tool diagnostics to the terminal
+          // assistant message so the post-hoc trace viewer can render
+          // the same `<MessageTrace>` strip from persisted state.
+          if (isTerminalTurn && request.includeTrace && turnToolCalls.length > 0) {
+            assistantMetadata.toolCalls = turnToolCalls;
+          }
+          // Surface every model that ran on this turn — not just the
+          // main LLM. Embeddings (per `search_knowledge_base` call) and
+          // the rolling summariser get aggregated here so the cost
+          // strip can render them alongside `modelUsed`.
+          if (isTerminalTurn) {
+            const sideEffects = aggregateSideEffectModels(
+              turnToolCalls.map((t) => t.sideEffectModel),
+              summarizerSideEffect
+            );
+            if (sideEffects.length > 0) {
+              assistantMetadata.sideEffectModels = sideEffects;
+            }
+          }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
@@ -943,7 +1126,16 @@ export class StreamingChatHandler {
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
-          yield buildDoneEvent(resolvedModel, u, resolvedProviderSlug);
+          yield buildDoneEvent(
+            resolvedModel,
+            u,
+            resolvedProviderSlug,
+            request.includeTrace ? initialBreakdown : undefined,
+            aggregateSideEffectModels(
+              turnToolCalls.map((t) => t.sideEffectModel),
+              summarizerSideEffect
+            )
+          );
           return;
         }
 
@@ -1086,7 +1278,18 @@ export class StreamingChatHandler {
           nextCitationMarker = extracted.nextMarker;
           const augmentedResult = extracted.augmentedResult;
 
-          yield { type: 'capability_result', capabilitySlug: tc.name, result: augmentedResult };
+          const singleLatencyMs = Date.now() - dispatchStart;
+          const singleTrace = request.includeTrace
+            ? buildToolCallTrace(tc.name, tc.arguments, augmentedResult, singleLatencyMs)
+            : undefined;
+          if (singleTrace) turnToolCalls.push(singleTrace);
+
+          yield {
+            type: 'capability_result',
+            capabilitySlug: tc.name,
+            result: augmentedResult,
+            ...(singleTrace ? { trace: singleTrace } : {}),
+          };
 
           await this.persistMessage({
             conversationId: conversation.id,
@@ -1107,7 +1310,7 @@ export class StreamingChatHandler {
             eventType: 'capability_result',
             capabilitySlug: tc.name,
             outputData: augmentedResult,
-            executionTimeMs: Date.now() - dispatchStart,
+            executionTimeMs: singleLatencyMs,
           });
 
           if (request.contextType && request.contextId) {
@@ -1135,7 +1338,16 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
+            yield buildDoneEvent(
+              resolvedModel,
+              usage,
+              resolvedProviderSlug,
+              request.includeTrace ? initialBreakdown : undefined,
+              aggregateSideEffectModels(
+                turnToolCalls.map((t) => t.sideEffectModel),
+                summarizerSideEffect
+              )
+            );
             return;
           }
 
@@ -1206,13 +1418,25 @@ export class StreamingChatHandler {
           );
           const parallelDispatchEndMs = Date.now() - parallelDispatchStart;
 
-          const results: Array<{ capabilitySlug: string; result: unknown }> = [];
+          const results: Array<{
+            capabilitySlug: string;
+            result: unknown;
+            trace?: ToolCallTrace;
+          }> = [];
           const toolResultMessages: LlmMessage[] = [];
           let anySkipFollowup = false;
 
           // Process skipped tools first
           for (const { tc, result } of skippedResults) {
-            results.push({ capabilitySlug: tc.name, result });
+            const skippedTrace = request.includeTrace
+              ? buildToolCallTrace(tc.name, tc.arguments, result, 0)
+              : undefined;
+            if (skippedTrace) turnToolCalls.push(skippedTrace);
+            results.push({
+              capabilitySlug: tc.name,
+              result,
+              ...(skippedTrace ? { trace: skippedTrace } : {}),
+            });
             await this.persistMessage({
               conversationId: conversation.id,
               role: 'tool',
@@ -1282,7 +1506,15 @@ export class StreamingChatHandler {
             nextCitationMarker = extracted.nextMarker;
             const augmentedResult = extracted.augmentedResult;
 
-            results.push({ capabilitySlug: tc.name, result: augmentedResult });
+            const parallelTrace = request.includeTrace
+              ? buildToolCallTrace(tc.name, tc.arguments, augmentedResult, parallelDispatchEndMs)
+              : undefined;
+            if (parallelTrace) turnToolCalls.push(parallelTrace);
+            results.push({
+              capabilitySlug: tc.name,
+              result: augmentedResult,
+              ...(parallelTrace ? { trace: parallelTrace } : {}),
+            });
 
             await this.persistMessage({
               conversationId: conversation.id,
@@ -1347,7 +1579,16 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
+            yield buildDoneEvent(
+              resolvedModel,
+              usage,
+              resolvedProviderSlug,
+              request.includeTrace ? initialBreakdown : undefined,
+              aggregateSideEffectModels(
+                turnToolCalls.map((t) => t.sideEffectModel),
+                summarizerSideEffect
+              )
+            );
             return;
           }
 
@@ -1670,11 +1911,18 @@ function extractPendingApproval(slug: string, result: unknown): PendingApproval 
 function buildDoneEvent(
   model: string,
   usage: { inputTokens: number; outputTokens: number } | null,
-  providerSlug?: string | null
+  providerSlug?: string | null,
+  inputBreakdown?: InputBreakdown,
+  sideEffectModels?: SideEffectModelUsage[]
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
   const costUsd = usage ? calculateCost(model, inputTokens, outputTokens).totalCostUsd : 0;
+  const reconciled = inputBreakdown
+    ? reconcileBreakdownToActual(inputBreakdown, inputTokens)
+    : undefined;
+  const cleanSideEffects =
+    sideEffectModels && sideEffectModels.length > 0 ? sideEffectModels : undefined;
   return {
     type: 'done',
     tokenUsage: {
@@ -1685,5 +1933,84 @@ function buildDoneEvent(
     costUsd,
     provider: providerSlug ?? undefined,
     model,
+    ...(reconciled ? { inputBreakdown: reconciled } : {}),
+    ...(cleanSideEffects ? { sideEffectModels: cleanSideEffects } : {}),
+  };
+}
+
+/**
+ * Roll an array of per-tool side-effect model entries plus the optional
+ * summariser invocation into a deduplicated list keyed on `kind+model`.
+ * Numeric fields are summed across calls; `callCount` reflects how many
+ * underlying calls were merged into each entry. Order is preserved
+ * from first-seen so the embedding row (from the earliest tool call)
+ * lands above the summariser in the UI strip when both appear.
+ */
+function aggregateSideEffectModels(
+  perTool: ReadonlyArray<SideEffectModelUsage | undefined>,
+  summarizer: SideEffectModelUsage | undefined
+): SideEffectModelUsage[] {
+  const byKey = new Map<string, SideEffectModelUsage>();
+  const order: string[] = [];
+  const merge = (entry: SideEffectModelUsage | undefined): void => {
+    if (!entry) return;
+    const key = `${entry.kind}::${entry.model}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...entry, callCount: entry.callCount ?? 1 });
+      order.push(key);
+      return;
+    }
+    existing.callCount = (existing.callCount ?? 1) + (entry.callCount ?? 1);
+    if (typeof entry.inputTokens === 'number') {
+      existing.inputTokens = (existing.inputTokens ?? 0) + entry.inputTokens;
+    }
+    if (typeof entry.outputTokens === 'number') {
+      existing.outputTokens = (existing.outputTokens ?? 0) + entry.outputTokens;
+    }
+    if (typeof entry.costUsd === 'number') {
+      existing.costUsd = (existing.costUsd ?? 0) + entry.costUsd;
+    }
+  };
+  for (const e of perTool) merge(e);
+  merge(summarizer);
+  return order.map((k) => byKey.get(k)!);
+}
+
+/**
+ * Reconcile the locally-estimated input breakdown against the provider's
+ * actual reported `inputTokens` count. The per-section text-token
+ * estimates stay as they are (those are attribution — they show how
+ * much *content* each part contributes); the leftover delta is moved
+ * into `framingOverhead` so the breakdown total is **exactly** equal
+ * to the model's reported number.
+ *
+ * Why this works: the model returns `usage.input_tokens` (OpenAI) /
+ * `usage.input_tokens` (Anthropic) on every chat response — that's the
+ * authoritative count. Our local estimator is unavoidably imperfect
+ * (provider scaffolding around messages, tool-envelope tokens, the
+ * provider's exact tokeniser drift). Rather than try to predict every
+ * source of drift, we surface it as a single labelled `framingOverhead`
+ * row so the popover always sums to the real total.
+ */
+function reconcileBreakdownToActual(
+  breakdown: InputBreakdown,
+  actualInputTokens: number
+): InputBreakdown {
+  if (!actualInputTokens || actualInputTokens <= 0) return breakdown;
+  const sumSections =
+    breakdown.systemPrompt.tokens +
+    (breakdown.contextBlock?.tokens ?? 0) +
+    (breakdown.userMemories?.tokens ?? 0) +
+    (breakdown.conversationSummary?.tokens ?? 0) +
+    (breakdown.conversationHistory?.tokens ?? 0) +
+    (breakdown.toolDefinitions?.tokens ?? 0) +
+    (breakdown.attachments?.tokens ?? 0) +
+    breakdown.userMessage.tokens;
+  const overhead = actualInputTokens - sumSections;
+  return {
+    ...breakdown,
+    ...(overhead > 0 ? { framingOverhead: { tokens: overhead, chars: 0 } } : {}),
+    totalEstimated: actualInputTokens,
   };
 }

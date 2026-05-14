@@ -311,7 +311,8 @@ describe('ConversationTraceViewer', () => {
   });
 
   describe('Citations rehydration', () => {
-    it('renders the sources panel and marker links from persisted metadata.citations', () => {
+    it('renders the sources panel and marker links from persisted metadata.citations', async () => {
+      const user = userEvent.setup();
       render(
         <ConversationTraceViewer
           messages={[
@@ -339,8 +340,11 @@ describe('ConversationTraceViewer', () => {
         />
       );
 
+      // Marker link and the heading button are visible without expansion;
+      // the source row contents only render after the user opens the panel.
       expect(screen.getByLabelText('Citation 1')).toHaveAttribute('href', '#citation-1');
       expect(screen.getByText('Sources (1)')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
       expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
       expect(screen.getByText(/within 30 days of receipt/)).toBeInTheDocument();
     });
@@ -399,6 +403,55 @@ describe('ConversationTraceViewer', () => {
 
       expect(screen.getByText('Answer body.')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /sources/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Tool-call trace rehydration', () => {
+    it('renders MessageTrace from persisted toolCalls metadata', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Looked it up.',
+              metadata: {
+                modelUsed: 'claude-sonnet-4-6',
+                toolCalls: [
+                  {
+                    slug: 'lookup_order',
+                    arguments: { orderId: 'o_1' },
+                    latencyMs: 142,
+                    success: true,
+                    resultPreview: '{"id":"o_1"}',
+                  },
+                ],
+              },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('message-trace')).toBeInTheDocument();
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('1 tool');
+      expect(screen.getByTestId('message-trace')).toHaveTextContent('142ms');
+    });
+
+    it('does not render MessageTrace for legacy messages without toolCalls', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'Pre-trace answer.',
+              metadata: { modelUsed: 'claude-sonnet-4-6' },
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
     });
   });
 });

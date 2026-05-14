@@ -110,6 +110,17 @@ vi.mock('@/lib/orchestration/chat/message-builder', () => ({
     { role: 'system', content: 'You are helpful.' },
     { role: 'user', content: 'Hello' },
   ]),
+  buildMessagesAndBreakdown: vi.fn().mockReturnValue({
+    messages: [
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'Hello' },
+    ],
+    breakdown: {
+      systemPrompt: { tokens: 8, chars: 16 },
+      userMessage: { tokens: 5, chars: 5 },
+      totalEstimated: 13,
+    },
+  }),
 }));
 
 vi.mock('@/lib/orchestration/chat/message-embedder', () => ({

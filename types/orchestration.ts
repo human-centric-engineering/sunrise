@@ -537,17 +537,171 @@ export type ChatEvent =
   | { type: 'start'; conversationId: string; messageId: string }
   | { type: 'content'; delta: string }
   | { type: 'status'; message: string }
-  | { type: 'capability_result'; capabilitySlug: string; result: unknown }
+  | {
+      type: 'capability_result';
+      capabilitySlug: string;
+      result: unknown;
+      /**
+       * Admin-only diagnostic payload — populated when the chat request
+       * sets `includeTrace: true`. Carries the validated arguments, the
+       * dispatch latency, success state and any error code so internal
+       * surfaces (learning lab, agent test tab, evaluation runner) can
+       * render an inline `<MessageTrace>` strip under the assistant turn.
+       * Omitted for consumer surfaces so tool arguments never leak.
+       */
+      trace?: ToolCallTrace;
+    }
   | {
       type: 'capability_results';
-      results: Array<{ capabilitySlug: string; result: unknown }>;
+      results: Array<{ capabilitySlug: string; result: unknown; trace?: ToolCallTrace }>;
     }
   | { type: 'warning'; code: string; message: string }
   | { type: 'content_reset'; reason: string }
   | { type: 'citations'; citations: Citation[] }
   | { type: 'approval_required'; pendingApproval: PendingApproval }
-  | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
+  | {
+      type: 'done';
+      tokenUsage: TokenUsage;
+      costUsd: number;
+      provider?: string;
+      model?: string;
+      /**
+       * Admin-only: per-component estimate of input-token usage so the
+       * UI can show why a small user message can still cost hundreds
+       * of tokens (system prompt, tool schemas, history, etc.).
+       *
+       * Only present when the request opted in via `includeTrace: true`.
+       * The total is an *estimate* via the model's tokeniser; it should
+       * be close to but not identical to `tokenUsage.inputTokens`.
+       */
+      inputBreakdown?: InputBreakdown;
+      /**
+       * Additional models invoked during this turn beyond the main chat
+       * LLM — embeddings fired by `search_knowledge_base`, the rolling
+       * conversation summariser, etc. Aggregated server-side so the
+       * cost summary can mention them without per-call plumbing on the
+       * client. Empty / absent when no side-effect models ran.
+       */
+      sideEffectModels?: SideEffectModelUsage[];
+    }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * A model invocation that happened during a chat turn but isn't the
+ * main LLM completion. Surfaces in the admin cost-summary strip so
+ * operators can see *all* the model spend for a turn — currently
+ * `embedding` (per `search_knowledge_base` query and per persisted
+ * message) and `summarizer` (when the rolling history-summary path
+ * fires) populate this list. `costUsd` may be `0` for local providers
+ * (Ollama, etc.) or when the model is missing from the registry.
+ */
+export interface SideEffectModelUsage {
+  kind: 'embedding' | 'summarizer';
+  model: string;
+  provider?: string;
+  /** Number of distinct calls aggregated into this entry (defaults to 1). */
+  callCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+/**
+ * One slice of input-token usage attributed to a specific source
+ * (system prompt, tool definitions, history, user message, …).
+ *
+ * `content` is the exact text that was tokenised. It may be omitted for
+ * categories where the raw text is too large to ship or already
+ * available elsewhere (e.g. the conversation history — visible in the
+ * chat bubbles already).
+ */
+export interface InputBreakdownPart {
+  tokens: number;
+  chars: number;
+  content?: string;
+}
+
+/**
+ * Per-component breakdown of the input prompt sent to the LLM for one
+ * turn. All sections are optional except `systemPrompt` and
+ * `userMessage` — those two always exist. Values are estimates from
+ * the model's tokeniser and should be treated as approximate.
+ */
+export interface InputBreakdown {
+  systemPrompt: InputBreakdownPart;
+  contextBlock?: InputBreakdownPart;
+  userMemories?: InputBreakdownPart & { count: number };
+  conversationSummary?: InputBreakdownPart;
+  /**
+   * Conversation history (prior user/assistant/tool turns). Content
+   * omitted because it's already visible in the chat thread above.
+   */
+  conversationHistory?: InputBreakdownPart & {
+    messageCount: number;
+    droppedCount: number;
+  };
+  /** Tool / capability definitions serialised as JSON schemas. */
+  toolDefinitions?: InputBreakdownPart & { count: number; names: string[] };
+  /** Estimated tokens consumed by binary attachments (images, PDFs). */
+  attachments?: { tokens: number; count: number };
+  userMessage: InputBreakdownPart;
+  /**
+   * Per-message scaffolding the provider adds around our content: role
+   * markers, message delimiters, the tool envelope, assistant priming,
+   * and any tokeniser drift the local estimate doesn't capture.
+   *
+   * Computed as `usage.inputTokens − sum(other sections)` on the
+   * `done` event so the breakdown total always equals the model's
+   * reported input-token count exactly. Omitted when the LLM call
+   * failed before usage was reported (then `totalEstimated` falls back
+   * to the local-estimator sum).
+   */
+  framingOverhead?: InputBreakdownPart;
+  /**
+   * Total input tokens for the turn. After reconciliation against the
+   * model's reported `usage.inputTokens`, this equals the model's count
+   * exactly; before reconciliation it's the local-estimator sum.
+   */
+  totalEstimated: number;
+}
+
+/**
+ * Inline diagnostic captured per capability dispatch for admin chat
+ * surfaces. Mirrors what the dispatcher already records internally
+ * (args, latency, success) plus the resolved USD cost figure when the
+ * underlying `logCost` calculation is reusable.
+ *
+ * Persisted on the assistant message as `MessageMetadata.toolCalls` so
+ * the post-hoc conversation trace viewer can render the same component
+ * without recomputing from tool-role messages.
+ */
+export interface ToolCallTrace {
+  /** Capability slug, e.g. `search_knowledge_base`. */
+  slug: string;
+  /** Validated arguments the LLM passed to the capability. */
+  arguments: unknown;
+  /** Wall-clock dispatch duration. */
+  latencyMs: number;
+  /** USD cost attributed to this call when known; omitted otherwise. */
+  costUsd?: number;
+  success: boolean;
+  errorCode?: string;
+  /**
+   * Truncated stringified result for inline preview — kept compact so
+   * persisted JSON metadata stays well under Prisma's column budget.
+   */
+  resultPreview?: string;
+  /**
+   * If the capability invoked a secondary model (e.g. the embedding
+   * model for `search_knowledge_base`), describe that call here so the
+   * chat handler can roll it up into the turn's
+   * {@link SideEffectModelUsage} aggregate. Stored per-call here so
+   * the post-hoc trace viewer can attribute it to the originating tool;
+   * the aggregated total goes on the assistant message metadata
+   * separately.
+   */
+  sideEffectModel?: SideEffectModelUsage;
+}
 
 /**
  * Carried on `approval_required` ChatEvent and persisted on
@@ -622,6 +776,21 @@ export interface MessageMetadata {
    * the underlying execution row reaches a terminal state.
    */
   pendingApproval?: PendingApproval;
+  /**
+   * Per-tool dispatch diagnostics aggregated across the assistant
+   * turn. Populated only when the chat request opts in via
+   * `includeTrace: true` (admin internal surfaces). Drives the inline
+   * `<MessageTrace>` strip both live (during streaming) and post-hoc
+   * (in the conversation trace viewer).
+   */
+  toolCalls?: ToolCallTrace[];
+  /**
+   * Additional model invocations during the turn beyond the main LLM
+   * (embeddings, the rolling summariser). Mirrors the `done` event's
+   * `sideEffectModels` field so the cost-summary strip can render the
+   * full picture even on reloads / when replayed from history.
+   */
+  sideEffectModels?: SideEffectModelUsage[];
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;

@@ -27,6 +27,12 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(),
+  calculateCost: vi.fn(() => ({
+    inputCostUsd: 0,
+    outputCostUsd: 0,
+    totalCostUsd: 0,
+    isLocal: false,
+  })),
 }));
 
 import { logger } from '@/lib/logging';
@@ -92,7 +98,12 @@ describe('summarizeMessages', () => {
     mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
 
     const result = await summarizeMessages(MESSAGES, 'anthropic', []);
-    expect(result).toBe('The user asked about deployment.');
+    expect(result.summary).toBe('The user asked about deployment.');
+    expect(result.fellBack).toBe(false);
+    expect(result.model).toBe('claude-haiku-4-5');
+    expect(result.provider).toBe('anthropic');
+    expect(result.inputTokens).toBe(100);
+    expect(result.outputTokens).toBe(50);
   });
 
   it('logs cost via logCost after success', async () => {
@@ -115,7 +126,8 @@ describe('summarizeMessages', () => {
 
   it('returns fallback string when messages array is empty', async () => {
     const result = await summarizeMessages([], 'anthropic', []);
-    expect(result).toContain('Summary unavailable');
+    expect(result.summary).toContain('Summary unavailable');
+    expect(result.fellBack).toBe(true);
     expect(mockGetProvider).not.toHaveBeenCalled();
   });
 
@@ -123,7 +135,8 @@ describe('summarizeMessages', () => {
     mockGetProvider.mockRejectedValue(new Error('Provider unreachable'));
 
     const result = await summarizeMessages(MESSAGES, 'anthropic', []);
-    expect(result).toContain('Summary unavailable');
+    expect(result.summary).toContain('Summary unavailable');
+    expect(result.fellBack).toBe(true);
   });
 
   it('logs a warning on provider error', async () => {
@@ -142,7 +155,8 @@ describe('summarizeMessages', () => {
     mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
 
     const result = await summarizeMessages(MESSAGES, 'anthropic', []);
-    expect(result).toContain('Summary unavailable');
+    expect(result.summary).toContain('Summary unavailable');
+    expect(result.fellBack).toBe(true);
   });
 
   it('logs stringified non-Error rejection value and returns fallback', async () => {
@@ -163,6 +177,7 @@ describe('summarizeMessages', () => {
     );
 
     // Assert: fallback message is returned (never throws)
-    expect(result).toContain('Summary unavailable');
+    expect(result.summary).toContain('Summary unavailable');
+    expect(result.fellBack).toBe(true);
   });
 });

@@ -117,6 +117,81 @@ describe('buildMessages', () => {
     expect(messages[markerIdx + 1].content).toBe('msg 5');
   });
 
+  describe('maxHistoryMessages override', () => {
+    it('uses the per-agent override instead of MAX_HISTORY_MESSAGES when set', () => {
+      // Pick a value distinctly lower than the platform default so we can
+      // see the override winning even when the agent has plenty of room.
+      const cap = 5;
+      const history = Array.from({ length: cap + 3 }, (_, i) => ({
+        role: 'user',
+        content: `msg ${i}`,
+      }));
+
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: cap,
+      });
+
+      const marker = messages.find((m) =>
+        getTextContent(m.content).includes('older messages omitted')
+      );
+      expect(marker?.content).toContain('3 older messages omitted');
+      // Oldest kept is `msg 3` (history length 8, kept 5, dropped 3).
+      const markerIdx = messages.indexOf(marker!);
+      expect(messages[markerIdx + 1].content).toBe('msg 3');
+    });
+
+    it('honours `0` as a stateless agent (drops all verbatim history)', () => {
+      const history = Array.from({ length: 3 }, (_, i) => ({
+        role: 'user',
+        content: `msg ${i}`,
+      }));
+
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 0,
+      });
+
+      // No verbatim history rows should survive — only the omission
+      // marker plus the new user message.
+      const verbatim = messages.filter(
+        (m) => m.role === 'user' && getTextContent(m.content).startsWith('msg ')
+      );
+      expect(verbatim).toHaveLength(0);
+      const marker = messages.find((m) =>
+        getTextContent(m.content).includes('older messages omitted')
+      );
+      expect(marker?.content).toContain('3 older messages omitted');
+    });
+
+    it('falls back to MAX_HISTORY_MESSAGES when the override is null/undefined', () => {
+      const history = Array.from({ length: MAX_HISTORY_MESSAGES + 2 }, (_, i) => ({
+        role: 'user',
+        content: `msg ${i}`,
+      }));
+
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: null,
+      });
+
+      const marker = messages.find((m) =>
+        getTextContent(m.content).includes('older messages omitted')
+      );
+      // Platform default kicks in: 2 should be dropped.
+      expect(marker?.content).toContain('2 older messages omitted');
+    });
+  });
+
   it('maps rows with toolCallId to tool-role messages', () => {
     const messages = buildMessages({
       systemInstructions: 'sys',

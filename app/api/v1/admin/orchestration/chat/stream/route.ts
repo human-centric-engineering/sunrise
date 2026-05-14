@@ -108,6 +108,13 @@ export const POST = withAdminAuth(async (request, session) => {
     attachments: body.attachments,
     requestId,
     signal: request.signal,
+    // Admin route: clients opt in to inline trace annotations by setting
+    // `includeTrace: true` (Learning Lab, agent test tab, evaluation
+    // runner). Falsy/absent → no trace field, identical wire shape to
+    // consumer chat — defence in depth so internal scores and args
+    // cannot leak even if a non-admin route mistakenly imports this
+    // module.
+    includeTrace: body.includeTrace === true,
   });
 
   return sseResponse(events, { signal: request.signal });

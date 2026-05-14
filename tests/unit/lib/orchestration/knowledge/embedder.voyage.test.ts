@@ -406,8 +406,8 @@ describe('embedText() inputType parameter', () => {
     // Act
     const result = await embedText('test', 'query');
 
-    // Assert
-    expect(result).toEqual(expectedVector);
+    // Assert — embedText returns { embedding, model, provider, ... }
+    expect(result.embedding).toEqual(expectedVector);
   });
 });
 

@@ -52,6 +52,7 @@ const agentBackupSchema = z.object({
   outputGuardMode: z.string().nullable().optional().default(null),
   citationGuardMode: z.string().nullable().optional().default(null),
   maxHistoryTokens: z.number().nullable().optional().default(null),
+  maxHistoryMessages: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),
   providerConfig: z.unknown().nullable().optional().default(null),
   // widgetConfig (item 7). Opaque on the wire — resolveWidgetConfig

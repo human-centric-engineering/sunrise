@@ -48,10 +48,12 @@ function mapKind(otel: OtelModule, kind: SpanKind | undefined): Otel.SpanKind {
 function mapStatus(otel: OtelModule, status: SpanStatus): Otel.SpanStatus {
   switch (status.code) {
     case 'ok':
-      return {
-        code: otel.SpanStatusCode.OK,
-        ...(status.message ? { message: status.message } : {}),
-      };
+      // Per the OTEL specification, status description must be ignored
+      // for OK and UNSET codes — it's only meaningful on ERROR. Drop
+      // the message at the adapter rather than relying on the SDK to
+      // strip it (older sdk-trace-base versions did; current ones
+      // preserve it on the span, which violates the spec).
+      return { code: otel.SpanStatusCode.OK };
     case 'error':
       return {
         code: otel.SpanStatusCode.ERROR,

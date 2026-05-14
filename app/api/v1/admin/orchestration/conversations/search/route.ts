@@ -54,7 +54,8 @@ export const GET = withAdminAuth(async (request, session) => {
   // to lexical search.
   let queryEmbedding: number[];
   try {
-    queryEmbedding = await embedText(q, 'query');
+    const embedResult = await embedText(q, 'query');
+    queryEmbedding = embedResult.embedding;
   } catch (err: unknown) {
     log.warn('Conversation semantic search unavailable — embedding failed', {
       error: err instanceof Error ? err.message : String(err),

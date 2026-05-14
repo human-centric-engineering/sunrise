@@ -42,6 +42,15 @@ export interface ChatRequest {
   requestId?: string;
   /** Abort mid-stream. Forwarded into LlmOptions.signal. */
   signal?: AbortSignal;
+  /**
+   * Admin-only diagnostic opt-in. When `true`, the handler attaches a
+   * `trace` field to each `capability_result` event (validated args,
+   * latency, success/error) and persists a `toolCalls[]` array on the
+   * terminal assistant message metadata. Default `false` — consumer
+   * routes leave this unset so tool arguments and internal scores
+   * never leak through public chat surfaces.
+   */
+  includeTrace?: boolean;
 }
 
 /** Return type of `streamChat` and `StreamingChatHandler.run`. */

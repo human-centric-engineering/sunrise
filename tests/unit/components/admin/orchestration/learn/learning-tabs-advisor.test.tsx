@@ -32,20 +32,32 @@ vi.mock('next/navigation', () => ({
   usePathname: vi.fn(() => '/admin/orchestration/learn'),
 }));
 
-// Capture the onStreamComplete prop so we can invoke it manually
+// Capture the onStreamComplete and onConversationCleared props so we
+// can invoke them manually from the test body.
 let capturedOnStreamComplete: ((text: string) => void) | undefined;
+let capturedOnConversationCleared: (() => void) | undefined;
+let capturedOnResampleStarters: (() => void) | undefined;
+let capturedSuggestionPool: readonly string[] | undefined;
 
 vi.mock('@/components/admin/orchestration/chat/chat-interface', () => ({
   ChatInterface: (props: {
     agentSlug: string;
     starterPrompts?: string[];
+    suggestionPool?: readonly string[];
     onStreamComplete?: (text: string) => void;
+    onConversationCleared?: () => void;
+    onResampleStarters?: () => void;
   }) => {
     capturedOnStreamComplete = props.onStreamComplete;
+    capturedOnConversationCleared = props.onConversationCleared;
+    capturedOnResampleStarters = props.onResampleStarters;
+    capturedSuggestionPool = props.suggestionPool;
     return (
       <div data-testid="chat-interface" data-agent={props.agentSlug}>
         {props.starterPrompts?.map((p) => (
-          <span key={p}>{p}</span>
+          <span key={p} data-testid="advisor-starter">
+            {p}
+          </span>
         ))}
       </div>
     );
@@ -158,5 +170,72 @@ describe('LearningTabs — Advisor workflow integration', () => {
     });
 
     expect(screen.queryByText(/create this workflow/i)).not.toBeInTheDocument();
+  });
+
+  describe('advisor starter prompts and suggestion pool', () => {
+    it('renders exactly 5 starter prompts on the advisor tab', async () => {
+      const user = userEvent.setup();
+      render(<LearningTabs patterns={MOCK_PATTERNS} />);
+      await user.click(screen.getByRole('tab', { name: /advisor/i }));
+      expect(screen.getAllByTestId('advisor-starter')).toHaveLength(5);
+    });
+
+    it('passes the full pattern-tagged pool through as suggestionPool', async () => {
+      const user = userEvent.setup();
+      render(<LearningTabs patterns={MOCK_PATTERNS} />);
+      await user.click(screen.getByRole('tab', { name: /advisor/i }));
+      // ≥64 prompts is the contract — the pool tests pin the exact
+      // floor; here we just confirm the wiring delivers the array.
+      expect(capturedSuggestionPool).toBeDefined();
+      expect((capturedSuggestionPool ?? []).length).toBeGreaterThanOrEqual(64);
+    });
+
+    it('re-rolls the starters when the advisor shuffle handler fires', async () => {
+      const user = userEvent.setup();
+      render(<LearningTabs patterns={MOCK_PATTERNS} />);
+      await user.click(screen.getByRole('tab', { name: /advisor/i }));
+
+      const before = screen.getAllByTestId('advisor-starter').map((el) => el.textContent ?? '');
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.05);
+      try {
+        act(() => {
+          capturedOnResampleStarters?.();
+        });
+      } finally {
+        rng.mockRestore();
+      }
+      const after = screen.getAllByTestId('advisor-starter').map((el) => el.textContent ?? '');
+      expect(after).toHaveLength(5);
+      const same =
+        new Set(before).size === new Set(after).size &&
+        [...new Set(before)].every((p) => new Set(after).has(p));
+      expect(same).toBe(false);
+    });
+
+    it('re-rolls the starters when the operator clears the conversation', async () => {
+      const user = userEvent.setup();
+      render(<LearningTabs patterns={MOCK_PATTERNS} />);
+      await user.click(screen.getByRole('tab', { name: /advisor/i }));
+
+      const before = screen.getAllByTestId('advisor-starter').map((el) => el.textContent ?? '');
+      // Pin Math.random so the re-roll lands on a deterministic
+      // (and crucially, different) set of prompts.
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.9);
+      try {
+        act(() => {
+          capturedOnConversationCleared?.();
+        });
+      } finally {
+        rng.mockRestore();
+      }
+      const after = screen.getAllByTestId('advisor-starter').map((el) => el.textContent ?? '');
+      expect(after).toHaveLength(5);
+      // The two arrays must differ — same length, different members.
+      // We compare as sets so the test isn't sensitive to ordering.
+      const beforeSet = new Set(before);
+      const afterSet = new Set(after);
+      const same = beforeSet.size === afterSet.size && [...beforeSet].every((p) => afterSet.has(p));
+      expect(same).toBe(false);
+    });
   });
 });

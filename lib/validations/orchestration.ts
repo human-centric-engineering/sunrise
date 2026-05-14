@@ -126,6 +126,13 @@ export const createAgentSchema = z.object({
     .max(2000000, 'Max history tokens must be at most 2,000,000')
     .nullable()
     .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
+    .nullable()
+    .optional(),
   retentionDays: z
     .number()
     .int('Retention days must be an integer')
@@ -236,6 +243,13 @@ export const updateAgentSchema = z.object({
     .int('Max history tokens must be an integer')
     .min(1000, 'Max history tokens must be at least 1000')
     .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
     .nullable()
     .optional(),
   retentionDays: z
@@ -810,6 +824,7 @@ const bundledAgentSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
   // `knowledgeCategories` was the legacy free-text scoping field on AiAgent.
@@ -1727,6 +1742,15 @@ export const chatStreamRequestSchema = z.object({
 
   /** File attachments (images, documents) — max 10 per message, ~25 MB combined. */
   attachments: chatAttachmentsArraySchema.optional(),
+
+  /**
+   * Admin-only: when true, the streaming handler attaches a `trace` field
+   * to each `capability_result` event (validated args, latency, success)
+   * and persists a `toolCalls[]` array on the assistant message metadata.
+   * Defaults to false — consumer routes never set this, so internal
+   * arguments and scores cannot leak through public surfaces.
+   */
+  includeTrace: z.boolean().optional(),
 });
 
 /**
@@ -2641,7 +2665,7 @@ export const createApiKeySchema = z.object({
 // ---------- Message Metadata (Prisma JSON rehydration) ----------
 
 /** Citation shape stored on assistant message metadata. */
-const citationSchema = z.object({
+export const citationSchema = z.object({
   marker: z.number().int().positive(),
   chunkId: z.string(),
   documentId: z.string(),
@@ -2676,6 +2700,25 @@ export const pendingApprovalSchema = z.object({
   rejectToken: z.string().min(1).max(2048),
 });
 
+/**
+ * Per-capability dispatch diagnostic, persisted on an assistant message
+ * as `MessageMetadata.toolCalls[]` when the chat request opts in via
+ * `includeTrace: true`. Mirrors the `ToolCallTrace` TypeScript type in
+ * `types/orchestration.ts`. Bounds (`slug` length, `errorCode` length,
+ * `resultPreview` length) are deliberately tight so the persisted JSON
+ * column stays well below the configured row-size budget even after a
+ * many-tool turn.
+ */
+export const toolCallTraceSchema = z.object({
+  slug: z.string().min(1).max(120),
+  arguments: z.unknown(),
+  latencyMs: z.number().nonnegative(),
+  costUsd: z.number().nonnegative().optional(),
+  success: z.boolean(),
+  errorCode: z.string().min(1).max(120).optional(),
+  resultPreview: z.string().max(2000).optional(),
+});
+
 export const messageMetadataSchema = z.object({
   tokenUsage: z
     .object({
@@ -2688,6 +2731,8 @@ export const messageMetadataSchema = z.object({
   costUsd: z.number().optional(),
   citations: z.array(citationSchema).optional(),
   pendingApproval: pendingApprovalSchema.optional(),
+  /** Per-tool dispatch diagnostics — admin-only, gated by `includeTrace`. */
+  toolCalls: z.array(toolCallTraceSchema).max(64).optional(),
 });
 
 // ============================================================================

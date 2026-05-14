@@ -109,8 +109,9 @@ One card per `AiMessage`, ordered by `createdAt asc`. Each card shows:
 - **Content** — plain `<p>` with `whitespace-pre-wrap` for non-tool roles; `<pre>` monospace block for tool messages (tool output is raw JSON/text).
 - **Metadata bar** — inline chips for `modelUsed`, `tokenUsage.input` (`"N in"`), `tokenUsage.output` (`"N out"`), `latencyMs` (`"N ms"`), `costUsd` (`"$0.0000"`). Row only renders if at least one field is present.
 - **Raw toggle** — only appears when `metadata` has at least one key. Expands a `<pre>` with `JSON.stringify(metadata, null, 2)`.
+- **Inline tool-call trace** — when an assistant message carries `metadata.toolCalls` (populated by the streaming handler whenever the live request set `includeTrace: true`), `<MessageTrace>` (`components/admin/orchestration/chat/message-trace.tsx`) renders a collapsible strip with one card per dispatched capability: slug, args JSON, latency, success state, optional cost, and a result preview. Pre-trace conversations omit `toolCalls` entirely and the strip is absent. See `.context/orchestration/chat.md#inline-trace-annotations-admin-only` for the full wire contract.
 
-The viewer does **not** render tool-call spans, a collapsible tree, a parent/child linkage via `toolCallId`, or any execution-style trace visualisation. `toolCallId` is on the wire type but unused by the component.
+`toolCallId` is on the wire type but unused by the component — the tool-call linkage is reconstructed from the denormalised `toolCalls[]` array on the assistant turn rather than from cross-message parent/child references.
 
 ## Tagging
 

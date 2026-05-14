@@ -9,7 +9,10 @@
 
 import { z } from 'zod';
 import { logger } from '@/lib/logging';
-import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
+import {
+  searchKnowledgeWithEmbedding,
+  type SearchFilters,
+} from '@/lib/orchestration/knowledge/search';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type {
@@ -17,6 +20,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
+import type { SideEffectModelUsage } from '@/types/orchestration';
 
 const DEFAULT_LIMIT = 10;
 const DEFAULT_THRESHOLD = 0.7;
@@ -119,27 +123,44 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
       filters.includeSystemScope = access.includeSystemScope;
     }
 
-    const results = await searchKnowledge(
+    const { results, embedding } = await searchKnowledgeWithEmbedding(
       args.query,
       Object.keys(filters).length > 0 ? filters : undefined,
       DEFAULT_LIMIT,
       DEFAULT_THRESHOLD
     );
 
-    return this.success({
-      results: results.map((r) => ({
-        chunkId: r.chunk.id,
-        documentId: r.chunk.documentId,
-        documentName: r.documentName ?? null,
-        content: r.chunk.content,
-        patternNumber: r.chunk.patternNumber,
-        patternName: r.chunk.patternName,
-        section: r.chunk.section,
-        similarity: r.similarity,
-        ...(r.vectorScore !== undefined ? { vectorScore: r.vectorScore } : {}),
-        ...(r.keywordScore !== undefined ? { keywordScore: r.keywordScore } : {}),
-        ...(r.finalScore !== undefined ? { finalScore: r.finalScore } : {}),
-      })),
-    });
+    const sideEffectModel: SideEffectModelUsage = {
+      kind: 'embedding',
+      model: embedding.model,
+      provider: embedding.provider,
+      callCount: 1,
+      inputTokens: embedding.inputTokens,
+      costUsd: embedding.costUsd,
+    };
+
+    return {
+      success: true,
+      data: {
+        results: results.map((r) => ({
+          chunkId: r.chunk.id,
+          documentId: r.chunk.documentId,
+          documentName: r.documentName ?? null,
+          content: r.chunk.content,
+          patternNumber: r.chunk.patternNumber,
+          patternName: r.chunk.patternName,
+          section: r.chunk.section,
+          similarity: r.similarity,
+          ...(r.vectorScore !== undefined ? { vectorScore: r.vectorScore } : {}),
+          ...(r.keywordScore !== undefined ? { keywordScore: r.keywordScore } : {}),
+          ...(r.finalScore !== undefined ? { finalScore: r.finalScore } : {}),
+        })),
+      },
+      // The chat handler reads `sideEffectModel` here to aggregate
+      // embedding spend into the turn's cost summary. The field is
+      // structured, not the free-form `metadata` value, so admin
+      // surfaces don't need to special-case the key shape.
+      metadata: { sideEffectModel },
+    };
   }
 }

@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/orchestration/knowledge/search', () => ({
   searchKnowledge: vi.fn(),
+  searchKnowledgeWithEmbedding: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
@@ -25,7 +26,24 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-const { searchKnowledge } = await import('@/lib/orchestration/knowledge/search');
+const { searchKnowledgeWithEmbedding } = await import('@/lib/orchestration/knowledge/search');
+
+const FAKE_EMBED = {
+  model: 'text-embedding-3-small',
+  provider: 'openai',
+  inputTokens: 10,
+  costUsd: 0,
+};
+
+/**
+ * Build the `{ results, embedding }` envelope the capability expects
+ * from `searchKnowledgeWithEmbedding`. The legacy `searchKnowledge` mock
+ * remains in the test setup because other capabilities still consume it;
+ * any test that asserts on it is migrated to the new mock here.
+ */
+function withEmbed(results: unknown[]): { results: unknown[]; embedding: typeof FAKE_EMBED } {
+  return { results, embedding: FAKE_EMBED };
+}
 const { resolveAgentDocumentAccess } =
   await import('@/lib/orchestration/knowledge/resolveAgentDocumentAccess');
 const { SearchKnowledgeCapability } =
@@ -64,13 +82,15 @@ beforeEach(() => {
 
 describe('SearchKnowledgeCapability', () => {
   it('calls searchKnowledge without filters when the resolver returns full access and no args are set', async () => {
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([makeChunk()]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(
+      withEmbed([makeChunk()])
+    );
     const cap = new SearchKnowledgeCapability();
 
     const result = await cap.execute({ query: 'reason + act' }, context);
 
     expect(resolveAgentDocumentAccess).toHaveBeenCalledWith('a1');
-    expect(searchKnowledge).toHaveBeenCalledWith('reason + act', undefined, 10, 0.7);
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith('reason + act', undefined, 10, 0.7);
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       results: [{ chunkId: 'c1', patternNumber: 1, similarity: 0.91 }],
@@ -78,12 +98,17 @@ describe('SearchKnowledgeCapability', () => {
   });
 
   it('passes the patternNumber filter when pattern_number is supplied', async () => {
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     await cap.execute({ query: 'plan', pattern_number: 7 }, context);
 
-    expect(searchKnowledge).toHaveBeenCalledWith('plan', { patternNumber: 7 }, 10, 0.7);
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
+      'plan',
+      { patternNumber: 7 },
+      10,
+      0.7
+    );
   });
 
   it('passes documentIds + includeSystemScope when the resolver returns restricted access', async () => {
@@ -92,12 +117,12 @@ describe('SearchKnowledgeCapability', () => {
       documentIds: ['doc-1', 'doc-2'],
       includeSystemScope: true,
     });
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     await cap.execute({ query: 'refund policy' }, context);
 
-    expect(searchKnowledge).toHaveBeenCalledWith(
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
       'refund policy',
       { documentIds: ['doc-1', 'doc-2'], includeSystemScope: true },
       10,
@@ -106,7 +131,7 @@ describe('SearchKnowledgeCapability', () => {
   });
 
   it('passes the documentId filter when document_id is supplied', async () => {
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     await cap.execute(
@@ -114,7 +139,7 @@ describe('SearchKnowledgeCapability', () => {
       context
     );
 
-    expect(searchKnowledge).toHaveBeenCalledWith(
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
       'clause',
       { documentId: '550e8400-e29b-41d4-a716-446655440000' },
       10,
@@ -131,7 +156,7 @@ describe('SearchKnowledgeCapability', () => {
       documentIds: [grantedDoc, 'doc-other'],
       includeSystemScope: true,
     });
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     await cap.execute(
@@ -143,7 +168,7 @@ describe('SearchKnowledgeCapability', () => {
       context
     );
 
-    expect(searchKnowledge).toHaveBeenCalledWith(
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
       'liability',
       {
         patternNumber: 2,
@@ -184,17 +209,17 @@ describe('SearchKnowledgeCapability', () => {
         message: expect.stringContaining('not accessible'),
       },
     });
-    expect(searchKnowledge).not.toHaveBeenCalled();
+    expect(searchKnowledgeWithEmbedding).not.toHaveBeenCalled();
   });
 
   it('allows document_id without restriction when the agent has full access', async () => {
     vi.mocked(resolveAgentDocumentAccess).mockResolvedValue({ mode: 'full' });
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     await cap.execute({ query: 'q', document_id: '550e8400-e29b-41d4-a716-446655440000' }, context);
 
-    expect(searchKnowledge).toHaveBeenCalledWith(
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
       'q',
       { documentId: '550e8400-e29b-41d4-a716-446655440000' },
       10,
@@ -203,12 +228,17 @@ describe('SearchKnowledgeCapability', () => {
   });
 
   it('returns { results: [] } when the search returns nothing (not an error)', async () => {
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(withEmbed([]));
     const cap = new SearchKnowledgeCapability();
 
     const result = await cap.execute({ query: 'obscure topic' }, context);
 
-    expect(result).toEqual({ success: true, data: { results: [] } });
+    // The capability also stashes a `sideEffectModel` on `metadata` so the
+    // chat handler can roll embedding cost into the turn — assert only the
+    // shape the consumer (the LLM-facing payload) sees.
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ results: [] });
+    expect(result.metadata?.sideEffectModel).toMatchObject({ kind: 'embedding' });
   });
 
   it('rejects empty queries via validate()', () => {
@@ -224,7 +254,7 @@ describe('SearchKnowledgeCapability', () => {
 
   it('propagates searchKnowledge rejection when the vector store is unavailable', async () => {
     const storeError = new Error('vector store unavailable');
-    (searchKnowledge as ReturnType<typeof vi.fn>).mockRejectedValue(storeError);
+    (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockRejectedValue(storeError);
     const cap = new SearchKnowledgeCapability();
 
     await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow(
@@ -238,6 +268,6 @@ describe('SearchKnowledgeCapability', () => {
     const cap = new SearchKnowledgeCapability();
 
     await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow('connection timeout');
-    expect(searchKnowledge).not.toHaveBeenCalled();
+    expect(searchKnowledgeWithEmbedding).not.toHaveBeenCalled();
   });
 });

@@ -25,7 +25,18 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, Send, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Lightbulb,
+  Loader2,
+  Send,
+  Shuffle,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 import {
   AlertDialog,
@@ -43,14 +54,35 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
+import { parseChatStreamEvent } from '@/components/admin/orchestration/chat/chat-events';
 import { getUserFacingError, type UserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
-import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
-import type { Citation, PendingApproval } from '@/types/orchestration';
+import {
+  CitationsList,
+  MessageWithCitations,
+} from '@/components/admin/orchestration/chat/message-with-citations';
+import {
+  ToolCallsList,
+  formatTraceLatency,
+  summarizeToolCalls,
+} from '@/components/admin/orchestration/chat/message-trace';
+import { InputBreakdownList } from '@/components/admin/orchestration/chat/input-breakdown-list';
+import type {
+  Citation,
+  InputBreakdown,
+  PendingApproval,
+  SideEffectModelUsage,
+  TokenUsage,
+  ToolCallTrace,
+} from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
-import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
+import {
+  AttachmentPickerButton,
+  AttachmentThumbnailStrip,
+} from '@/components/admin/orchestration/chat/attachment-picker-button';
+import type { AttachmentEntry } from '@/lib/hooks/use-attachments';
 import { IMAGE_ATTACHMENT_MIME, DOCUMENT_ATTACHMENT_MIME } from '@/lib/hooks/use-attachments';
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 
@@ -115,12 +147,41 @@ export interface ChatInterfaceProps {
   contextId?: string;
   /** Starter prompt buttons shown when no messages exist. */
   starterPrompts?: string[];
+  /**
+   * When provided, renders a small shuffle icon next to the "Try
+   * asking:" heading. Clicking it invokes this callback — the parent
+   * owns the prompt pool and is expected to swap `starterPrompts` for
+   * a fresh sample. Omit the prop on surfaces whose starters are
+   * static (no need to render a button that would do nothing).
+   */
+  onResampleStarters?: () => void;
   /** Additional class names for the outer container. */
   className?: string;
   /** Compact mode for embedding in tabs/panels (no card wrapper). */
   embedded?: boolean;
   /** Fires when a `capability_result` event arrives. */
   onCapabilityResult?: (slug: string, result: unknown) => void;
+  /**
+   * Admin-only: when true, the request opts into per-capability trace
+   * annotations and the chat renders an inline `<MessageTrace>` strip
+   * under each assistant message (tool slug, args, latency, success).
+   * Default `false` so consumer use of this component (if any future
+   * surface reuses it) keeps the redacted wire shape.
+   *
+   * Render this only inside admin route groups — the strip exposes
+   * raw tool arguments and internal slugs.
+   */
+  showInlineTrace?: boolean;
+  /**
+   * Pool of suggestion strings drawn on demand by an in-chat
+   * lightbulb button rendered next to the textarea. The button only
+   * appears once the conversation has started (`messages.length > 0`)
+   * and is hidden while streaming. Clicking it replaces the current
+   * input with a random pool entry — the operator can then edit
+   * before sending. Independent of `starterPrompts`: starters are the
+   * pre-conversation grid; the pool is the mid-conversation pick.
+   */
+  suggestionPool?: readonly string[];
   /** Fires with the full assistant text when streaming completes. */
   onStreamComplete?: (fullText: string) => void;
   /** Enable token-by-token typing animation. Default: true (terminal feel). */
@@ -131,6 +192,19 @@ export interface ChatInterfaceProps {
   showClearButton?: boolean;
   /** Fires after conversation is cleared. */
   onConversationCleared?: () => void;
+  /**
+   * Show a "download transcript" button that serializes the current
+   * messages to a Markdown file. Default: false. Useful on long-running
+   * surfaces (Learn advisor/quiz) where the operator may want to keep a
+   * copy of the conversation. Citations and tool-call traces are
+   * included; attachment binaries are not.
+   */
+  showDownloadButton?: boolean;
+  /**
+   * Filename stem used for the downloaded transcript (no extension).
+   * Defaults to the `agentSlug` so each surface gets a distinct name.
+   */
+  downloadFilename?: string;
   /**
    * When set, the conversation is persisted to `localStorage` under
    * this key after each turn settles and rehydrated on mount. Useful
@@ -157,11 +231,35 @@ interface ChatMessage {
    * when a `run_workflow` capability paused on a `human_approval` step. */
   pendingApproval?: PendingApproval;
   /**
+   * Per-capability dispatch diagnostics accumulated across the turn —
+   * populated when the chat surface enables `showInlineTrace`. Drives
+   * the `<MessageTrace>` strip rendered under the assistant bubble.
+   */
+  toolCalls?: ToolCallTrace[];
+  /**
    * Number of attachments the user submitted with this turn. Rendered
    * as a small "📎 N file(s)" chip below the bubble so attachment-only
    * sends don't read as an empty message.
    */
   attachmentCount?: number;
+  /** Approximate cost of this turn in USD (LLM + capabilities). Admin-only. */
+  costUsd?: number;
+  /** Token accounting for this turn. Admin-only. */
+  tokenUsage?: TokenUsage;
+  /** Model id reported on the `done` event. Admin-only. */
+  modelUsed?: string;
+  /**
+   * Per-section input-token breakdown supplied by the server. Powers
+   * the "why N input tokens?" popover. Admin-only.
+   */
+  inputBreakdown?: InputBreakdown;
+  /**
+   * Additional models invoked during this turn beyond the main chat
+   * LLM — embeddings fired by `search_knowledge_base`, the rolling
+   * conversation summariser, etc. Rendered as extra rows under the
+   * main `Cost · Tokens · Model` line in the admin trace strip.
+   */
+  sideEffectModels?: SideEffectModelUsage[];
 }
 
 interface PersistedChatState {
@@ -169,6 +267,273 @@ interface PersistedChatState {
   savedAt: number;
   conversationId: string | null;
   messages: ChatMessage[];
+}
+
+/**
+ * Append per-capability traces to the in-flight assistant message at
+ * the tail of the message list. No-op when the tail is not an
+ * assistant message — this can happen on the first capability_result
+ * of a turn before any text has streamed, but the assistant placeholder
+ * is always appended at send-time so the guard is a defensive belt.
+ */
+/**
+ * Format a USD cost for the inline admin strip. Sub-cent values keep
+ * four decimals so they don't all collapse to "$0.00"; larger amounts
+ * fall back to standard two-decimal currency.
+ */
+function formatCostUsd(value: number): string {
+  if (!Number.isFinite(value)) return '$0.0000';
+  if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+type MetaPanel = 'sources' | 'tools' | 'inputs';
+
+interface AssistantMetaStripProps {
+  message: ChatMessage;
+  /** Which diagnostic panel — if any — is expanded under this message. */
+  expanded: MetaPanel | null;
+  onToggle: (panel: MetaPanel) => void;
+  /** Admin gate — when false the strip stays hidden. */
+  showInlineTrace: boolean;
+}
+
+/**
+ * Single horizontal strip under an assistant message that combines the
+ * Sources toggle, the Tools (capabilities) toggle, and the per-turn
+ * cost summary. The expanded panel (citations list or tool-call list)
+ * renders below the strip when one is selected. Mutually exclusive —
+ * opening one collapses the other so the vertical footprint stays
+ * compact even on turns that ship both kinds of diagnostics.
+ */
+/**
+ * Compact one-liner showing the per-turn cost, token usage, and model.
+ * Used both as the body of the (clickable) input-breakdown toggle and
+ * as a static label when there's no breakdown to expand.
+ */
+function CostSummary({ message }: { message: ChatMessage }): React.ReactElement {
+  return (
+    <>
+      {typeof message.costUsd === 'number' && (
+        <span title="Approximate cost for this turn (main LLM only)">
+          ≈ {formatCostUsd(message.costUsd)}
+        </span>
+      )}
+      {message.tokenUsage && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span title="Tokens for this turn">
+            Toks: {message.tokenUsage.inputTokens.toLocaleString()} input,{' '}
+            {message.tokenUsage.outputTokens.toLocaleString()} output
+          </span>
+        </>
+      )}
+      {message.modelUsed && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono" title="Main chat LLM model for this turn">
+            {message.modelUsed}
+          </span>
+        </>
+      )}
+      {message.sideEffectModels && message.sideEffectModels.length > 0 && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span
+            className="opacity-80"
+            title="Additional models invoked during this turn — expand to see"
+          >
+            +{message.sideEffectModels.length} model
+            {message.sideEffectModels.length === 1 ? '' : 's'}
+          </span>
+        </>
+      )}
+    </>
+  );
+}
+
+function AssistantMetaStrip({
+  message,
+  expanded,
+  onToggle,
+  showInlineTrace,
+}: AssistantMetaStripProps): React.ReactElement | null {
+  const hasCitations = !!message.citations && message.citations.length > 0;
+  const hasToolCalls = showInlineTrace && !!message.toolCalls && message.toolCalls.length > 0;
+  const hasInputBreakdown = showInlineTrace && !!message.inputBreakdown;
+  const hasSideEffectModels =
+    showInlineTrace && !!message.sideEffectModels && message.sideEffectModels.length > 0;
+  // The cost row is clickable when there's any "what made this turn cost
+  // what it did?" detail to expand — input-token breakdown OR side-effect
+  // model rows. We bundle both into the same expand target so the strip
+  // stays one row of toggles, not two.
+  const hasInputDetail = hasInputBreakdown || hasSideEffectModels;
+  const hasCost = showInlineTrace && (typeof message.costUsd === 'number' || !!message.tokenUsage);
+
+  // Citations always render their toggle (regardless of `showInlineTrace`)
+  // because they exist on consumer turns too. Tools + inputs + cost are
+  // admin-only.
+  if (!hasCitations && !hasToolCalls && !hasInputDetail && !hasCost) return null;
+
+  const toolSummary = hasToolCalls ? summarizeToolCalls(message.toolCalls!) : null;
+
+  return (
+    <>
+      <div className="border-border/60 mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t pt-2 text-[11px] tabular-nums">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          {hasCitations && (
+            <button
+              type="button"
+              onClick={() => onToggle('sources')}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              aria-expanded={expanded === 'sources'}
+            >
+              {expanded === 'sources' ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              Sources ({message.citations!.length})
+            </button>
+          )}
+          {hasToolCalls && toolSummary && (
+            <button
+              type="button"
+              onClick={() => onToggle('tools')}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              aria-expanded={expanded === 'tools'}
+              aria-controls="message-trace-details"
+              data-testid="message-trace"
+            >
+              {expanded === 'tools' ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              <span>
+                {toolSummary.count} tool{toolSummary.count === 1 ? '' : 's'} ·{' '}
+                {formatTraceLatency(toolSummary.totalLatencyMs)}
+              </span>
+              {toolSummary.failed > 0 && (
+                <span
+                  className="text-amber-700 dark:text-amber-300"
+                  title={`${toolSummary.failed} call${toolSummary.failed === 1 ? '' : 's'} failed`}
+                >
+                  · {toolSummary.failed} failed
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+
+        {hasCost &&
+          (hasInputDetail ? (
+            <button
+              type="button"
+              onClick={() => onToggle('inputs')}
+              className="text-muted-foreground hover:text-foreground flex flex-wrap items-baseline gap-x-1"
+              aria-expanded={expanded === 'inputs'}
+              aria-controls="input-breakdown-details"
+              title={
+                hasInputBreakdown
+                  ? "Click to break down this turn's input tokens and other-model costs"
+                  : 'Click to see the costs of additional models invoked this turn'
+              }
+            >
+              {expanded === 'inputs' ? (
+                <ChevronDown className="h-3 w-3 self-center" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3 self-center" aria-hidden="true" />
+              )}
+              <CostSummary message={message} />
+            </button>
+          ) : (
+            <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-1">
+              <CostSummary message={message} />
+            </div>
+          ))}
+      </div>
+
+      {expanded === 'sources' && hasCitations && <CitationsList citations={message.citations!} />}
+      {expanded === 'tools' && hasToolCalls && (
+        <ToolCallsList toolCalls={message.toolCalls!} id="message-trace-details" />
+      )}
+      {expanded === 'inputs' && hasInputDetail && (
+        <InputBreakdownList
+          breakdown={message.inputBreakdown}
+          reportedInputTokens={message.tokenUsage?.inputTokens}
+          model={message.modelUsed}
+          sideEffectModels={message.sideEffectModels}
+        />
+      )}
+    </>
+  );
+}
+
+function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMessage[] {
+  if (traces.length === 0) return prev;
+  const updated = [...prev];
+  const last = updated[updated.length - 1];
+  if (!last || last.role !== 'assistant') return prev;
+  updated[updated.length - 1] = {
+    ...last,
+    toolCalls: [...(last.toolCalls ?? []), ...traces],
+  };
+  return updated;
+}
+
+/**
+ * Serialize the chat messages to a Markdown transcript. Includes
+ * citations and tool-call traces (where present) so downloaded
+ * transcripts retain the same diagnostic detail the operator saw on
+ * screen. Attachment binaries are not embedded — only a count chip.
+ */
+function serializeTranscript(
+  messages: ChatMessage[],
+  meta: { agentSlug: string; conversationId: string | null }
+): string {
+  const lines: string[] = [];
+  lines.push(`# Chat transcript — ${meta.agentSlug}`);
+  lines.push('');
+  lines.push(`- Exported: ${new Date().toISOString()}`);
+  if (meta.conversationId) lines.push(`- Conversation ID: ${meta.conversationId}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const msg of messages) {
+    const speaker = msg.role === 'user' ? 'User' : 'Assistant';
+    lines.push(`## ${speaker}`);
+    lines.push('');
+    if (msg.content) {
+      lines.push(msg.content);
+      lines.push('');
+    }
+    if (msg.attachmentCount && msg.attachmentCount > 0) {
+      lines.push(`_📎 ${msg.attachmentCount} attachment(s)_`);
+      lines.push('');
+    }
+    if (msg.citations && msg.citations.length > 0) {
+      lines.push('**Sources:**');
+      for (const c of msg.citations) {
+        const name = c.documentName ?? c.documentId;
+        const section = c.section ? ` — ${c.section}` : '';
+        lines.push(`- [${c.marker}] ${name}${section}`);
+      }
+      lines.push('');
+    }
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      lines.push('**Tool calls:**');
+      for (const t of msg.toolCalls) {
+        const status = t.success === false ? 'failed' : 'ok';
+        const ms = typeof t.latencyMs === 'number' ? ` (${t.latencyMs}ms)` : '';
+        lines.push(`- \`${t.slug}\` — ${status}${ms}`);
+      }
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -182,14 +547,19 @@ export function ChatInterface({
   contextType,
   contextId,
   starterPrompts,
+  onResampleStarters,
   className,
   embedded = false,
   onCapabilityResult,
+  showInlineTrace = false,
+  suggestionPool,
   onStreamComplete,
   enableTypingAnimation = true,
   typingAnimationOptions = { chunkSize: 2 },
   showClearButton = false,
   onConversationCleared,
+  showDownloadButton = false,
+  downloadFilename,
   persistenceKey,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -200,12 +570,35 @@ export function ChatInterface({
   const [error, setError] = useState<UserFacingError | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Mid-conversation "Suggested prompts" disclosure. Default closed so
+  // it doesn't compete with the assistant text below; opens on click
+  // and stays open until the operator collapses it. Independent of
+  // the pre-conversation starter grid.
+  const [showSuggestedPrompts, setShowSuggestedPrompts] = useState(false);
+  /**
+   * Per-message diagnostic-panel state. Each entry is keyed by the
+   * message's index in {@link messages} and stores which of the
+   * Sources/Tools panels is currently expanded under that message
+   * (mutually exclusive — only one at a time so the meta strip stays
+   * compact). Reset implicitly on conversation clear since the keys
+   * are tied to message indices.
+   */
+  const [expandedPanels, setExpandedPanels] = useState<Record<number, MetaPanel | null>>({});
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const attachmentsControlRef = useRef<{ clear: () => void } | null>(null);
+  const attachmentsControlRef = useRef<{
+    clear: () => void;
+    remove: (id: string) => void;
+  } | null>(null);
   const attachmentsEnabled = imageInputEnabled || documentInputEnabled;
+  // Lifted entries list so the thumbnail strip can render above the
+  // input row (where it doesn't fight the row's flex layout) while
+  // the paperclip button itself sits inline between the textarea and
+  // the mic. State stays inside `AttachmentPickerButton`; this list
+  // is read-only here, mutated by removing via the controlsRef.
+  const [attachmentEntries, setAttachmentEntries] = useState<AttachmentEntry[]>([]);
 
   // Auto-resize the message textarea to fit its content, capped at the
   // max-height set on the element. `useLayoutEffect` runs before paint so
@@ -411,6 +804,7 @@ export function ChatInterface({
               contextType,
               contextId,
               ...(submittedAttachments.length > 0 ? { attachments: submittedAttachments } : {}),
+              ...(showInlineTrace ? { includeTrace: true } : {}),
             }),
           });
 
@@ -484,6 +878,16 @@ export function ChatInterface({
                 if (typeof slug === 'string') {
                   onCapabilityResult?.(slug, parsed.data.result);
                 }
+                if (showInlineTrace) {
+                  // Re-validate through the typed parser so we never hand
+                  // unknown server payloads into UI state — the new
+                  // `trace` shape only flows when admin clients opted in.
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'capability_result' && typed.trace) {
+                    const trace = typed.trace;
+                    setMessages((prev) => appendToolTrace(prev, [trace]));
+                  }
+                }
               } else if (
                 parsed.type === 'capability_results' &&
                 Array.isArray(parsed.data.results)
@@ -499,6 +903,17 @@ export function ChatInterface({
                       (r as Record<string, unknown>).capabilitySlug as string,
                       (r as Record<string, unknown>).result
                     );
+                  }
+                }
+                if (showInlineTrace) {
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'capability_results') {
+                    const traces = typed.results
+                      .map((entry) => entry.trace)
+                      .filter((t): t is ToolCallTrace => t !== undefined);
+                    if (traces.length > 0) {
+                      setMessages((prev) => appendToolTrace(prev, traces));
+                    }
                   }
                 }
               } else if (parsed.type === 'warning' && typeof parsed.data.message === 'string') {
@@ -535,6 +950,40 @@ export function ChatInterface({
               } else if (parsed.type === 'done') {
                 setWarning(null);
                 typing.flush();
+                if (showInlineTrace) {
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'done') {
+                    const costUsd = typed.costUsd;
+                    const tokenUsage = typed.tokenUsage;
+                    const modelUsed = typed.model;
+                    const inputBreakdown = typed.inputBreakdown;
+                    const sideEffectModels = typed.sideEffectModels;
+                    if (
+                      typeof costUsd === 'number' ||
+                      tokenUsage !== undefined ||
+                      typeof modelUsed === 'string' ||
+                      inputBreakdown !== undefined ||
+                      (sideEffectModels && sideEffectModels.length > 0)
+                    ) {
+                      setMessages((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+                        if (!last || last.role !== 'assistant') return prev;
+                        updated[updated.length - 1] = {
+                          ...last,
+                          ...(typeof costUsd === 'number' ? { costUsd } : {}),
+                          ...(tokenUsage ? { tokenUsage } : {}),
+                          ...(typeof modelUsed === 'string' ? { modelUsed } : {}),
+                          ...(inputBreakdown ? { inputBreakdown } : {}),
+                          ...(sideEffectModels && sideEffectModels.length > 0
+                            ? { sideEffectModels }
+                            : {}),
+                        };
+                        return updated;
+                      });
+                    }
+                  }
+                }
                 onStreamComplete?.(fullText);
                 return;
               }
@@ -636,6 +1085,22 @@ export function ChatInterface({
     onConversationCleared?.();
   }, [conversationId, typing, onConversationCleared]);
 
+  const handleDownload = useCallback(() => {
+    if (typeof window === 'undefined' || messages.length === 0) return;
+    const transcript = serializeTranscript(messages, { agentSlug, conversationId });
+    const blob = new Blob([transcript], { type: 'text/markdown;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const stem = downloadFilename ?? agentSlug;
+    const date = new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${stem}-${date}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }, [messages, agentSlug, conversationId, downloadFilename]);
+
   const handleSend = useCallback(
     (e?: { preventDefault?: () => void; stopPropagation?: () => void }) => {
       e?.preventDefault?.();
@@ -650,40 +1115,146 @@ export function ChatInterface({
     streaming && msg.role === 'assistant' && !msg.content && i === messages.length - 1;
 
   const content = (
-    <div className={cn('flex flex-col', embedded ? 'h-full' : 'h-[500px]', className)}>
-      {/* Messages area */}
-      <div className="relative flex-1 space-y-3 overflow-y-auto p-3">
-        {/* Clear button */}
-        {showClearButton && messages.length > 0 && !streaming && (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="absolute top-2 right-2 z-10 h-7 w-7"
-                aria-label="Clear conversation"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will remove all messages. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        )}
+    <div className={cn('relative flex flex-col', embedded ? 'h-full' : 'h-[500px]', className)}>
+      {/* Top-right action cluster — anchored to the outer (non-scrolling)
+          container so the buttons stay visible regardless of how far the
+          messages area is scrolled. Download saves a transcript copy;
+          the trash button resets the entire conversation (destructive,
+          keeps the AlertDialog confirm). The in-textarea X button below
+          is a separate affordance that clears only the input field. */}
+      {messages.length > 0 && !streaming && (showDownloadButton || showClearButton) && (
+        <div className="bg-background/80 absolute top-2 right-2 z-10 flex items-center gap-1 rounded-md backdrop-blur-sm">
+          {showDownloadButton && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              aria-label="Download transcript"
+              onClick={handleDownload}
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {showClearButton && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  aria-label="Clear conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will remove all messages. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </div>
+      )}
 
+      {/* Suggested prompts disclosure — appears after the first turn
+          so operators can grab a new question without scrolling to
+          the input. Mirrors the pre-conversation starter grid (same
+          prompts, same shuffle icon) but lives in a collapsible row
+          beneath the top action cluster. Hidden while streaming so
+          the toggle button doesn't fight the "Cancel" affordances. */}
+      {messages.length > 0 && starterPrompts && starterPrompts.length > 0 && !streaming && (
+        <div className="border-border/60 border-b px-3 py-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                // Re-sample on every open so the user gets fresh
+                // prompts each time the panel reveals — same UX as
+                // pressing the shuffle icon, but folded into the
+                // open gesture. Closing is a no-op. Surfaces without
+                // a pool (quiz) leave `onResampleStarters` unset and
+                // simply toggle.
+                if (!showSuggestedPrompts) {
+                  onResampleStarters?.();
+                }
+                setShowSuggestedPrompts((v) => !v);
+              }}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs font-medium"
+              aria-expanded={showSuggestedPrompts}
+              aria-controls="suggested-prompts-panel"
+            >
+              {showSuggestedPrompts ? (
+                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              )}
+              Suggested prompts
+            </button>
+            {onResampleStarters && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground hover:text-foreground h-6 w-6"
+                onClick={() => onResampleStarters()}
+                aria-label="Randomise suggestions"
+                title="Randomise suggestions"
+              >
+                <Shuffle className="h-3 w-3" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+          {showSuggestedPrompts && (
+            <div
+              id="suggested-prompts-panel"
+              className="mt-2 flex flex-wrap gap-2"
+              data-testid="suggested-prompts-panel"
+            >
+              {starterPrompts.map((prompt) => (
+                <Button
+                  key={prompt}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void sendMessageWrapped(prompt)}
+                  disabled={streaming}
+                >
+                  {prompt}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Messages area */}
+      <div className="flex-1 space-y-3 overflow-y-auto p-3">
         {showStarters && (
           <div className="flex flex-col items-center justify-center gap-2 py-8">
-            <p className="text-muted-foreground mb-2 text-sm">Try asking:</p>
+            <div className="text-muted-foreground mb-2 flex items-center gap-1 text-sm">
+              <span>Try asking:</span>
+              {onResampleStarters && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-foreground h-6 w-6"
+                  onClick={() => onResampleStarters()}
+                  aria-label="Randomise suggestions"
+                  title="Randomise suggestions"
+                  disabled={streaming}
+                >
+                  <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              )}
+            </div>
             <div className="flex flex-wrap justify-center gap-2">
               {starterPrompts.map((prompt) => (
                 <Button
@@ -717,6 +1288,10 @@ export function ChatInterface({
                       <MessageWithCitations
                         content={msg.content}
                         citations={msg.citations}
+                        panelMode="external"
+                        onCitationClick={() =>
+                          setExpandedPanels((prev) => ({ ...prev, [i]: 'sources' }))
+                        }
                         trailingInline={
                           isStreamingTail ? (
                             <span className="terminal-caret text-foreground" aria-hidden="true">
@@ -732,6 +1307,17 @@ export function ChatInterface({
                         onResolved={(_action, followup) => sendFollowupWhenIdle(followup)}
                       />
                     )}
+                    <AssistantMetaStrip
+                      message={msg}
+                      expanded={expandedPanels[i] ?? null}
+                      onToggle={(panel) =>
+                        setExpandedPanels((prev) => ({
+                          ...prev,
+                          [i]: prev[i] === panel ? null : panel,
+                        }))
+                      }
+                      showInlineTrace={showInlineTrace}
+                    />
                     {/* Inline status during streaming — shown below content */}
                     {streaming && msg.content && i === messages.length - 1 && status && (
                       <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
@@ -758,6 +1344,43 @@ export function ChatInterface({
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Session cost summary — admin diagnostic strip, sums all assistant turns */}
+      {showInlineTrace &&
+        (() => {
+          let totalCost = 0;
+          let totalIn = 0;
+          let totalOut = 0;
+          let costTurns = 0;
+          for (const m of messages) {
+            if (m.role !== 'assistant') continue;
+            if (typeof m.costUsd === 'number') {
+              totalCost += m.costUsd;
+              costTurns += 1;
+            }
+            if (m.tokenUsage) {
+              totalIn += m.tokenUsage.inputTokens;
+              totalOut += m.tokenUsage.outputTokens;
+            }
+          }
+          if (costTurns === 0 && totalIn === 0 && totalOut === 0) return null;
+          return (
+            <div className="text-muted-foreground border-border/60 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t px-3 py-1.5 text-[11px] tabular-nums">
+              <span className="text-foreground font-medium">Session</span>
+              {costTurns > 0 && (
+                <span title={`Sum across ${costTurns} turn${costTurns === 1 ? '' : 's'}`}>
+                  ≈ {formatCostUsd(totalCost)}
+                </span>
+              )}
+              {(totalIn > 0 || totalOut > 0) && (
+                <span title="Total input / output tokens across the session">
+                  {totalIn.toLocaleString()} input tokens · {totalOut.toLocaleString()} output
+                  tokens
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
       {/* Warning (reconnecting) */}
       {warning && (
@@ -787,32 +1410,97 @@ export function ChatInterface({
         component robust whether mounted standalone or nested.
       */}
       <div className="flex flex-col gap-2 border-t p-3">
-        <div className="flex items-end gap-2">
-          <Textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={streaming}
-            rows={1}
-            // Auto-grows up to ~8 lines (160px). The autosize effect
-            // below resets and recomputes height on every value change.
-            // `resize-none` hides the manual drag handle so the textarea
-            // looks like a single-line input that just happens to grow.
-            className="max-h-[160px] min-h-[36px] resize-none py-2 leading-snug"
-            onKeyDown={(e) => {
-              // Skip Enter-to-send while an IME composition is in
-              // progress (Japanese/Chinese input). The composition
-              // confirmation also dispatches Enter; treating it as
-              // "send" would drop the in-progress glyph.
-              if (e.nativeEvent.isComposing) return;
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                handleSend(e);
-              }
-            }}
+        {attachmentsEnabled && attachmentEntries.length > 0 && (
+          <AttachmentThumbnailStrip
+            attachments={attachmentEntries}
+            remove={(id) => attachmentsControlRef.current?.remove(id)}
           />
+        )}
+        <div className="flex items-end gap-2">
+          <div className="relative flex-1">
+            <Textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type a message..."
+              disabled={streaming}
+              rows={1}
+              // Auto-grows up to ~8 lines (160px). The autosize effect
+              // below resets and recomputes height on every value change.
+              // `resize-none` hides the manual drag handle so the textarea
+              // looks like a single-line input that just happens to grow.
+              // `pr-9` reserves room for the in-field clear button so
+              // long input doesn't slide under the X icon.
+              className="max-h-[160px] min-h-[36px] resize-none py-2 pr-9 leading-snug"
+              onKeyDown={(e) => {
+                // Skip Enter-to-send while an IME composition is in
+                // progress (Japanese/Chinese input). The composition
+                // confirmation also dispatches Enter; treating it as
+                // "send" would drop the in-progress glyph.
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSend(e);
+                }
+              }}
+            />
+            {input.length > 0 && !streaming && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="text-muted-foreground hover:text-foreground absolute top-1 right-1 h-7 w-7"
+                aria-label="Clear input"
+                title="Clear input"
+                onClick={() => {
+                  setInput('');
+                  inputRef.current?.focus();
+                }}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+          {suggestionPool && suggestionPool.length > 0 && messages.length > 0 && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 shrink-0"
+              aria-label="Suggest a prompt"
+              title="Suggest a prompt"
+              disabled={streaming}
+              onClick={() => {
+                // Random pick from the pool. Replaces the current
+                // input — the operator clicked this on purpose, and
+                // appending would silently grow a long buffer when
+                // they hit the button repeatedly.
+                const idx = Math.floor(Math.random() * suggestionPool.length);
+                const next = suggestionPool[idx];
+                if (typeof next === 'string') setInput(next);
+                inputRef.current?.focus();
+              }}
+            >
+              <Lightbulb className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
+          {attachmentsEnabled && (
+            <AttachmentPickerButton
+              acceptMime={[
+                ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
+                ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
+              ]}
+              disabled={streaming}
+              controlsRef={attachmentsControlRef}
+              onAttachmentsChange={setAttachments}
+              onEntriesChange={setAttachmentEntries}
+              onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
+              inlineThumbnails={false}
+              pasteTarget={inputRef}
+              className="h-9 w-9"
+            />
+          )}
           {voiceInputEnabled && agentId && (
             <MicButton
               agentId={agentId}
@@ -830,6 +1518,10 @@ export function ChatInterface({
                   message: msg,
                 })
               }
+              // Match the textarea's 36px min-height so the three icon
+              // buttons (paperclip / mic / send) line up flush with the
+              // input rather than sitting short above its bottom edge.
+              className="h-9 w-9"
             />
           )}
           <Button
@@ -837,6 +1529,9 @@ export function ChatInterface({
             size="sm"
             onClick={(e) => handleSend(e)}
             disabled={streaming || (!input.trim() && attachments.length === 0)}
+            // See note on the MicButton above — h-9 keeps the row of
+            // icon buttons aligned to the textarea height.
+            className="h-9 w-9"
           >
             {streaming ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -846,18 +1541,6 @@ export function ChatInterface({
             <span className="sr-only">Send</span>
           </Button>
         </div>
-        {attachmentsEnabled && (
-          <AttachmentPickerButton
-            acceptMime={[
-              ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
-              ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
-            ]}
-            disabled={streaming}
-            controlsRef={attachmentsControlRef}
-            onAttachmentsChange={setAttachments}
-            onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
-          />
-        )}
       </div>
     </div>
   );

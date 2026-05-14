@@ -45,18 +45,18 @@ for await (const event of streamChat({
 
 Everything is exported from `@/lib/orchestration/chat`:
 
-| Export                 | Kind     | Purpose                                                                     |
-| ---------------------- | -------- | --------------------------------------------------------------------------- |
-| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                       |
-| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations |
-| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try          |
-| `ChatRequest`          | type     | Input shape (see below)                                                     |
-| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
-| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
-| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `50`)                                  |
-| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
-| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
-| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
+| Export                 | Kind     | Purpose                                                                                                                                                                   |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
+| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
+| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
+| `ChatRequest`          | type     | Input shape (see below)                                                                                                                                                   |
+| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
+| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                                                                                                                             |
+| `MAX_HISTORY_MESSAGES` | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
+| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
+| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                                                                                                                     |
+| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -74,6 +74,7 @@ interface ChatRequest {
   attachments?: { name: string; mimeType: string; data: string }[];
   requestId?: string;
   signal?: AbortSignal;
+  includeTrace?: boolean;
 }
 ```
 
@@ -82,6 +83,7 @@ interface ChatRequest {
 - `entityContext` is opaque to the handler — it's passed straight through to `CapabilityContext.entityContext` so capabilities can read it.
 - `requestId` is a correlation ID for structured log tracing. When provided, the handler creates a scoped logger via `logger.withContext({ requestId })` so all log entries from the chat turn are traceable. The chat stream route extracts this from the `x-request-id` header automatically.
 - `signal` is forwarded into every `provider.chatStream` call.
+- `includeTrace` is the admin-only opt-in for inline tool-call diagnostics. See [Inline trace annotations](#inline-trace-annotations-admin-only) below.
 
 ## `ChatEvent` Lifecycle
 
@@ -175,6 +177,80 @@ When the LLM grounds a response in retrieved knowledge, the handler accumulates 
 Currently `search_knowledge_base` is the only citation-producing capability; the registry list lives in `lib/orchestration/chat/citations.ts#CITATION_PRODUCING_SLUGS`. Adding a new capability to the set is a one-line change once its result envelope matches the expected shape.
 
 Citations are attached only to the **terminal** assistant message (the one that contains the `[N]` markers). Interim tool-call turns do not carry citations because the LLM has not yet produced grounded text.
+
+## Inline trace annotations (admin only)
+
+Internal admin chat surfaces — the Learning Lab pattern advisor and quiz, the agent test tab on the agent edit form, the evaluation runner — display _why_ a response was produced: which capabilities the model invoked, with what arguments, at what latency, and whether each call succeeded. The diagnostic strip renders under each assistant bubble (small grey text, collapsible to per-tool cards) and is also rehydrated post-hoc by the conversation trace viewer.
+
+**Opting in.** The chat request takes a new `includeTrace?: boolean` flag (`ChatRequest` in `lib/orchestration/chat/types.ts`). Default `false`. The admin streaming route — `app/api/v1/admin/orchestration/chat/stream/route.ts` — forwards the client's choice. Consumer routes (`/api/v1/chat/stream`, `/api/v1/embed/chat/stream`) never set the flag, so consumer event payloads keep their existing shape.
+
+**Event shape additions** (additive — old clients ignore them):
+
+```ts
+| {
+    type: 'capability_result';
+    capabilitySlug: string;
+    result: unknown;
+    trace?: ToolCallTrace; // present iff includeTrace was set
+  }
+| {
+    type: 'capability_results';
+    results: Array<{ capabilitySlug: string; result: unknown; trace?: ToolCallTrace }>;
+  }
+```
+
+`ToolCallTrace` (defined in `types/orchestration.ts`):
+
+| Field           | Source                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `slug`          | Capability slug, e.g. `search_knowledge_base`                                                     |
+| `arguments`     | Validated args passed to `capabilityDispatcher.dispatch`                                          |
+| `latencyMs`     | `Date.now() - dispatchStart` (per-call for the single branch, batch-wide for the parallel branch) |
+| `success`       | Derived from `CapabilityResult.success`                                                           |
+| `errorCode`     | `CapabilityResult.error.code` when present                                                        |
+| `resultPreview` | First ~480 chars of `JSON.stringify(result)` — keeps the persisted JSON column compact            |
+
+**Persistence.** When `includeTrace: true`, the streaming handler also writes the accumulated `ToolCallTrace[]` onto the _terminal_ assistant message's `metadata.toolCalls`. The conversation trace viewer reads this through `messageMetadataSchema` and renders the same `<MessageTrace>` component used live. Pre-trace conversations have no `toolCalls` field and the strip is simply absent — no migration required.
+
+**Wire-format guarantee.** The consumer route does not thread `includeTrace` into `streamChat`, even if a client sets the flag in its POST body. A regression test in `tests/unit/app/api/v1/chat/stream/route.test.ts` locks this in: a body with `includeTrace: true` must result in `streamChat()` being called without that field. If you add a new consumer-facing chat surface, follow the same pattern — leave the flag unset.
+
+**Client integration.** The shared admin parser (`components/admin/orchestration/chat/chat-events.ts`) validates every SSE block through a discriminated-union Zod schema so the new `trace` field arrives strongly typed. UI consumers should never reach into `parseSseBlock`'s `data: Record<string, unknown>` for trace fields; route them through `parseChatStreamEvent()` instead.
+
+### Input-token breakdown on the `done` event
+
+When `includeTrace: true`, the streaming handler also attaches an `inputBreakdown` field to the terminal `done` event so admin chat surfaces can explain why a turn consumed `usage.input_tokens` tokens — not just the total. The breakdown is per-section text-token attribution plus a single reconciliation row.
+
+```ts
+| {
+    type: 'done';
+    tokenUsage: TokenUsage;
+    costUsd: number;
+    provider?: string;
+    model?: string;
+    inputBreakdown?: InputBreakdown; // present iff includeTrace was set
+  }
+```
+
+`InputBreakdown` (defined in `types/orchestration.ts`):
+
+| Field                 | Required | Source                                                                                                                                                                                                                               |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `systemPrompt`        | Yes      | `estimateTokens` on the resolved system prompt (+ brand-voice block if any)                                                                                                                                                          |
+| `userMessage`         | Yes      | `estimateTokens` on the new user message                                                                                                                                                                                             |
+| `contextBlock`        | No       | `estimateTokens` on the `[Entity context]` block when one was framed                                                                                                                                                                 |
+| `userMemories`        | No       | `estimateTokens` on the `[User memories]` block plus a `count` chip                                                                                                                                                                  |
+| `conversationSummary` | No       | `estimateTokens` on the rolling summary when it was emitted instead of verbatim history                                                                                                                                              |
+| `conversationHistory` | No       | Sum of per-message text tokens with `messageCount` + `droppedCount` chips                                                                                                                                                            |
+| `toolDefinitions`     | No       | For OpenAI models, `countOpenAiToolDefinitionTokens` formats tools as a TypeScript namespace declaration and counts the formatted body (`+ 5` envelope adjustment). For other providers, `JSON.stringify(toolDefinitions)` length    |
+| `attachments`         | No       | Flat `ATTACHMENT_OVERHEAD_TOKENS` per attachment plus a `count` chip (vision tokens are charged dynamically per tile and absorbed by `framingOverhead` below)                                                                        |
+| `framingOverhead`     | No       | **Reconciliation row.** `usage.inputTokens − sum(other sections)`. Captures per-message scaffolding, tool envelope, assistant priming, tool-call history wrappers, vision tokens, and tokeniser drift the local sum cannot attribute |
+| `totalEstimated`      | Yes      | After reconciliation, this equals `usage.inputTokens` exactly. Before reconciliation (or when `usage` is unavailable) it's the local-estimator sum                                                                                   |
+
+**Reconciliation contract.** `buildDoneEvent` in `streaming-handler.ts` calls `reconcileBreakdownToActual(breakdown, usage.inputTokens)` before emitting the event. This guarantees the popover total always matches the model's reported number — any drift between the section sums and `usage.input_tokens` lands in the labelled `framingOverhead` row rather than leaving the operator to wonder where the missing tokens went. When `usage` is absent (e.g. the LLM call failed before reporting usage), reconciliation is a no-op and `totalEstimated` stays as the local sum.
+
+**OpenAI tool-definition counter.** `lib/orchestration/chat/openai-token-counter.ts` exports `countOpenAiToolDefinitionTokens(tools, modelId)` and the helper `formatToolsForOpenAi`. OpenAI doesn't tokenise raw JSON for tool schemas — internally each tool is reformatted as `type funcName = (_: { … }) => any;` inside a `namespace functions { … }` block, then tokenised. The counter mirrors that format and uses `pickEncoder` to route to `o200k_base` for gpt-4o / gpt-4.1 / o-series and `cl100k_base` for older gpt-4 / gpt-3.5. For non-OpenAI providers the streaming handler falls back to the raw JSON estimate — any residual drift is captured by `framingOverhead`.
+
+**Client integration.** The breakdown is rendered by `<InputBreakdownList>` inside the assistant meta-strip's `'inputs'` panel (see `.context/admin/orchestration-chat-interface.md`). The same Zod discriminated union in `chat-events.ts` validates the wire shape — `inputBreakdownSchema` matches the type table above.
 
 ## In-chat approvals
 
@@ -270,11 +346,13 @@ Reasoning plus acting is a reflex loop.
 
 ## Rolling Conversation Summary
 
-When conversation history exceeds `MAX_HISTORY_MESSAGES` (50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+When conversation history exceeds the effective message-count cap (`AiAgent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`, default 50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+
+The same effective cap drives both the summary trigger here and the verbatim-history truncation inside `buildMessages`, so the summary always covers exactly the messages that got dropped from the live history. Agents that set `maxHistoryMessages` to a smaller value see summarisation kick in earlier; agents that set it to `0` get a pure-summary view of all prior turns (no verbatim history on any turn).
 
 **How it works:**
 
-1. After loading history, if `history.length > MAX_HISTORY_MESSAGES`, the handler checks whether a persisted summary exists on `AiConversation.summary` and whether it's stale (via `summaryUpToMessageId`).
+1. After loading history, if `history.length > effectiveCap`, the handler checks whether a persisted summary exists on `AiConversation.summary` and whether it's stale (via `summaryUpToMessageId`).
 2. If stale or missing: yields a `{ type: 'status', message: 'Summarizing conversation history...' }` event, calls `summarizeMessages()` on the dropped portion, and persists the result.
 3. The summary is passed to `buildMessages()` which emits it as a `[Conversation summary of N earlier messages]` system message instead of the old `[... N older messages omitted ...]` marker.
 
@@ -346,7 +424,7 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 ### `summarizer.ts` — rolling history summary
 
 - Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs)` returning a string.
-- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > MAX_HISTORY_MESSAGES`.
+- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > effectiveCap` (where `effectiveCap = agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`).
 - Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
 - Logs cost as a `CostOperation.CHAT` row with `agentId: 'system'` and `conversationId: 'summary'`.
 - **Never throws.** Any failure (provider down, LLM error, empty response) returns `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` so the chat turn keeps moving.
@@ -496,7 +574,7 @@ The message builder supports token-aware truncation to prevent exceeding model c
 
 Token estimation is **per-provider tokeniser-aware** — the streaming handler passes the agent's `model` into `buildMessages()`, which routes to `tokeniserForModel(modelId)`. OpenAI models get exact counts via `gpt-tokenizer` (`o200k_base` / `cl100k_base`); Anthropic, Gemini, and Llama-family get calibrated approximators that overestimate by 5–10% for safety. See [`llm-providers.md` → Tokenisation](./llm-providers.md#tokenisation).
 
-When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 50` limit.
+When `contextWindowTokens` is not set, the handler falls back to the message-count cap (`agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`, default 50).
 
 **Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
 
