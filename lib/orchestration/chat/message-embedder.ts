@@ -81,15 +81,25 @@ async function generateAndStoreEmbedding(messageId: string, content: string): Pr
   // Truncate very long messages to save embedding costs
   const truncated = content.length > 8000 ? content.slice(0, 8000) : content;
 
-  const { embedding } = await embedText(truncated, 'document');
+  const { embedding, model, provider, dimensions } = await embedText(truncated, 'document');
   const embeddingStr = `[${embedding.join(',')}]`;
 
   await prisma.$executeRawUnsafe(
-    `INSERT INTO ai_message_embedding (id, "messageId", embedding)
-     VALUES (gen_random_uuid(), $1, $2::vector)
-     ON CONFLICT ("messageId") DO UPDATE SET embedding = $2::vector`,
+    `INSERT INTO ai_message_embedding (
+       id, "messageId", embedding,
+       "embeddingModel", "embeddingProvider", "embeddingDimension"
+     )
+     VALUES (gen_random_uuid(), $1, $2::vector, $3, $4, $5)
+     ON CONFLICT ("messageId") DO UPDATE
+       SET embedding = $2::vector,
+           "embeddingModel" = $3,
+           "embeddingProvider" = $4,
+           "embeddingDimension" = $5`,
     messageId,
-    embeddingStr
+    embeddingStr,
+    model,
+    provider,
+    dimensions
   );
 
   logger.debug('Message embedding stored', { messageId });

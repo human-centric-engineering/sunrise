@@ -151,6 +151,12 @@ const navSections: NavSection[] = [
         icon: Activity,
         items: [
           {
+            href: '/admin/orchestration/knowledge',
+            label: 'Knowledge Base',
+            icon: BookOpen,
+            description: 'Docs and patterns',
+          },
+          {
             href: '/admin/orchestration/approvals',
             label: 'Approval Queue',
             icon: ShieldCheck,
@@ -163,10 +169,10 @@ const navSections: NavSection[] = [
             description: 'Runtime history',
           },
           {
-            href: '/admin/orchestration/knowledge',
-            label: 'Knowledge Base',
-            icon: BookOpen,
-            description: 'Docs and patterns',
+            href: '/admin/orchestration/evaluations',
+            label: 'Testing',
+            icon: ClipboardCheck,
+            description: 'Evaluations & experiments',
           },
           {
             href: '/admin/orchestration/analytics',
@@ -179,12 +185,6 @@ const navSections: NavSection[] = [
             label: 'Costs & Budget',
             icon: DollarSign,
             description: 'Spend and alerts',
-          },
-          {
-            href: '/admin/orchestration/evaluations',
-            label: 'Testing',
-            icon: ClipboardCheck,
-            description: 'Evaluations & experiments',
           },
           {
             href: '/admin/orchestration/audit-log',

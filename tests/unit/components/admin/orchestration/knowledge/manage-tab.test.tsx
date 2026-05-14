@@ -55,6 +55,7 @@ function makeDocument(
 ) {
   return {
     id: overrides.id ?? 'doc-1',
+    knowledgeBaseId: 'kb_default',
     name: overrides.name ?? 'My Document',
     fileName: overrides.fileName ?? 'doc.pdf',
     fileHash: 'abc123',

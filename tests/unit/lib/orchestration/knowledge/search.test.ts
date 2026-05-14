@@ -25,9 +25,12 @@ vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
     embedding: new Array(1536).fill(0),
     model: 'text-embedding-3-small',
     provider: 'openai',
+    dimensions: 1536,
     inputTokens: 10,
     costUsd: 0,
   }),
+  // Default: no active model → search-side validation is a no-op.
+  getActiveEmbeddingModelSummary: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -46,7 +49,8 @@ vi.mock('@/lib/orchestration/settings', () => ({
 // Import SUT and mock modules after mocks are registered
 const { searchKnowledge, getPatternDetail, listPatterns } =
   await import('@/lib/orchestration/knowledge/search');
-const { embedText } = await import('@/lib/orchestration/knowledge/embedder');
+const { embedText, getActiveEmbeddingModelSummary } =
+  await import('@/lib/orchestration/knowledge/embedder');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 
 // --- Helpers ---
@@ -84,6 +88,7 @@ describe('searchKnowledge', () => {
       embedding: new Array(1536).fill(0),
       model: 'text-embedding-3-small',
       provider: 'openai',
+      dimensions: 1536,
       inputTokens: 10,
       costUsd: 0,
     });
@@ -301,6 +306,100 @@ describe('searchKnowledge', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// Active-model drift detection
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('searchKnowledge — active model validation', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(embedText).mockResolvedValue({
+      embedding: new Array(1536).fill(0),
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      dimensions: 1536,
+      inputTokens: 10,
+      costUsd: 0,
+    });
+  });
+
+  it('throws a directive error when stored chunk dim differs from the active model dim', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'voyage-3',
+      dimensions: 1024,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 42 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findFirst).mockResolvedValue({
+      embeddingModel: 'text-embedding-3-small',
+    } as never);
+
+    await expect(searchKnowledge('whatever')).rejects.toThrow(/embeddings:reset/);
+    // Must short-circuit before paying for the embedding round-trip
+    expect(embedText).not.toHaveBeenCalled();
+  });
+
+  it("names each mismatched dimension's count and exemplar model when the corpus is partially re-embedded", async () => {
+    // Partial-state corruption: an aborted reset left some chunks at the
+    // old 1536-dim and some at the new 1024-dim. groupBy catches both.
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'voyage-3',
+      dimensions: 1024,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 17 } },
+      { embeddingDimension: 1024, _count: { _all: 8 } },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.findFirst)
+      .mockResolvedValueOnce({ embeddingModel: 'text-embedding-3-small' } as never)
+      .mockResolvedValueOnce({ embeddingModel: 'voyage-3' } as never);
+
+    await expect(searchKnowledge('whatever')).rejects.toThrow(
+      /17 chunk\(s\) embedded by "text-embedding-3-small" at 1536 dims/
+    );
+    // The matching-dim group (1024) must not appear in the error
+    expect(embedText).not.toHaveBeenCalled();
+  });
+
+  it('skips validation when no active model is set (legacy fallback path)', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue(null);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
+    expect(prisma.aiKnowledgeChunk.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('skips validation when the corpus has no chunks with a recorded dimension yet', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
+  });
+
+  it('skips validation when every chunk group matches the active dimension', async () => {
+    vi.mocked(getActiveEmbeddingModelSummary).mockResolvedValue({
+      modelId: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    vi.mocked(prisma.aiKnowledgeChunk.groupBy).mockResolvedValue([
+      { embeddingDimension: 1536, _count: { _all: 50 } },
+    ] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+
+    await expect(searchKnowledge('whatever')).resolves.toEqual([]);
+    expect(embedText).toHaveBeenCalled();
+    // No exemplar lookup needed when nothing's mismatched
+    expect(prisma.aiKnowledgeChunk.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // Hybrid mode (BM25-flavoured + vector blend)
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -311,6 +410,7 @@ describe('searchKnowledge — hybrid mode', () => {
       embedding: new Array(1536).fill(0),
       model: 'text-embedding-3-small',
       provider: 'openai',
+      dimensions: 1536,
       inputTokens: 10,
       costUsd: 0,
     });

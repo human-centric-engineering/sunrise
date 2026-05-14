@@ -97,6 +97,7 @@ function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
     provenance: {
       model: 'test-model',
       provider: 'test-provider',
+      dimensions: 1536,
       embeddedAt: new Date('2026-01-01'),
     },
   };
@@ -186,6 +187,7 @@ describe('uploadDocument', () => {
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',
+        knowledgeBaseId: 'kb_default',
       },
     });
   });

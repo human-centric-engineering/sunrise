@@ -1038,14 +1038,6 @@ curl /api/v1/admin/orchestration/knowledge/embedding-status
 
 Returns `{ total, embedded, pending, hasActiveProvider }`. `hasActiveProvider` is `true` when either an active `AiProviderConfig` exists or `OPENAI_API_KEY` is set in env. Rate-limited.
 
-### Meta-tags
-
-```bash
-curl /api/v1/admin/orchestration/knowledge/meta-tags
-```
-
-Returns all distinct category and keyword values across chunks, grouped by scope (`app` vs `system`), with chunk and document counts per value. Used by the upload form for category autocomplete and by the meta-tag panel. Rate-limited.
-
 ### Graph
 
 ```bash

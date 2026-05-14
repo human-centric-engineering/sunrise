@@ -85,6 +85,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   voiceInputGloballyEnabled: true,
   imageInputGloballyEnabled: true,
   documentInputGloballyEnabled: true,
+  activeEmbeddingModelId: null,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

@@ -1930,8 +1930,9 @@ describe('ChatInterface', () => {
 
     it('moves the shuffle button into the Suggested-prompts disclosure once the conversation starts', async () => {
       // Pre-conversation it lives next to "Try asking:"; post-first-turn
-      // it relocates to the disclosure header so operators can still
-      // re-roll without scrolling back to the empty state.
+      // it relocates inside the disclosure (only visible when open) so
+      // operators can still re-roll without scrolling back to the empty
+      // state but the closed-disclosure header stays uncluttered.
       const user = userEvent.setup();
       const stream = makeSseStream([
         startFrame('conv-1', 'msg-1'),
@@ -1955,7 +1956,10 @@ describe('ChatInterface', () => {
         // The pre-conversation grid is gone; the disclosure has taken over.
         expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
       });
-      // Still exactly one shuffle button — only its location changed.
+      // Disclosure starts closed — shuffle is hidden until the operator
+      // opens it. Opening reveals exactly one shuffle button.
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
       expect(screen.getAllByLabelText(/randomise suggestions/i)).toHaveLength(1);
     });
   });
@@ -2061,10 +2065,15 @@ describe('ChatInterface', () => {
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
       });
-      // The shuffle icon sits next to the disclosure header — it
-      // works regardless of whether the panel is open.
-      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      // Shuffle is hidden while the disclosure is closed so the header
+      // row stays uncluttered. Opening the disclosure also re-rolls
+      // (onResample fires from the open gesture); a subsequent click on
+      // the now-visible shuffle icon re-rolls again.
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
       expect(onResample).toHaveBeenCalledOnce();
+      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      expect(onResample).toHaveBeenCalledTimes(2);
     });
 
     it('omits the shuffle icon when the caller has no resample handler (e.g. quiz)', async () => {

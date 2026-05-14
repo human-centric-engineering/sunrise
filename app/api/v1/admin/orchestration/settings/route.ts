@@ -62,6 +62,36 @@ export const PATCH = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, updateOrchestrationSettingsSchema);
 
+  // Validate the active-embedding-model FK against the model matrix. The
+  // Zod schema only enforces "non-empty string", since the foreign key
+  // is a cuid we can't refine sync. The runtime needs an active embedding-
+  // capable row with a non-null `dimensions` (the embedder enforces these
+  // same gates in `resolveActiveEmbeddingConfig`), so reject early if any
+  // gate fails — otherwise the failure only surfaces on the next chat
+  // turn / search call.
+  if (body.activeEmbeddingModelId !== undefined && body.activeEmbeddingModelId !== null) {
+    const model = await prisma.aiProviderModel.findUnique({
+      where: { id: body.activeEmbeddingModelId },
+      select: { isActive: true, capabilities: true, dimensions: true },
+    });
+    if (
+      !model ||
+      !model.isActive ||
+      !model.capabilities.includes('embedding') ||
+      !model.dimensions ||
+      model.dimensions <= 0
+    ) {
+      return errorResponse(
+        'activeEmbeddingModelId must reference an active AiProviderModel with capability:"embedding" and a non-null `dimensions`',
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { field: 'activeEmbeddingModelId', value: body.activeEmbeddingModelId },
+        }
+      );
+    }
+  }
+
   // Defence-in-depth: validate the embeddings slot against the DB-backed
   // embedding-model registry. The Zod schema only enforces a non-empty
   // string here (the chat-only `getModel()` lookup that backs the other
@@ -210,6 +240,11 @@ export const PATCH = withAdminAuth(async (request, session) => {
     // Schema's `.transform` already normalised each entry to its
     // canonical `.origin` form — write straight through.
     updateData.embedAllowedOrigins = body.embedAllowedOrigins as unknown as Prisma.InputJsonValue;
+  }
+  if (body.activeEmbeddingModelId !== undefined) {
+    updateData.activeEmbeddingModel = body.activeEmbeddingModelId
+      ? { connect: { id: body.activeEmbeddingModelId } }
+      : { disconnect: true };
   }
 
   const row = await prisma.aiOrchestrationSettings.upsert({

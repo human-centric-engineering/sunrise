@@ -38,11 +38,12 @@ import {
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
-const FAKE_EMBEDDING = Array.from({ length: 1024 }, (_, i) => i * 0.001);
+const FAKE_EMBEDDING = Array.from({ length: 1536 }, (_, i) => i * 0.001);
 const FAKE_EMBED_RESULT = {
   embedding: FAKE_EMBEDDING,
   model: 'text-embedding-3-small',
   provider: 'openai',
+  dimensions: 1536,
   inputTokens: 10,
   costUsd: 0,
 };
@@ -75,7 +76,10 @@ describe('queueMessageEmbedding', () => {
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO ai_message_embedding'),
         'msg-2',
-        expect.stringContaining('[')
+        expect.stringContaining('['),
+        FAKE_EMBED_RESULT.model,
+        FAKE_EMBED_RESULT.provider,
+        FAKE_EMBED_RESULT.dimensions
       );
     });
   });
@@ -132,6 +136,9 @@ describe('queueMessageEmbedding', () => {
     await vi.waitFor(() => {
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('ON CONFLICT'),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
         expect.anything(),
         expect.anything()
       );

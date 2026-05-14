@@ -207,8 +207,8 @@ export function KnowledgeAccessSection({
                 </p>
                 <p className="mt-2">
                   Tags control <em>which</em> docs an agent can search. To improve <em>how</em> a
-                  doc ranks for a query, see <em>Indexed keywords</em> on the Knowledge → Manage tab
-                  — that&apos;s a separate concept.
+                  doc ranks for a query, use the per-row <em>Enrich keywords</em> action on the
+                  Knowledge → Manage tab — that&apos;s a separate concept.
                 </p>
               </FieldHelp>
             </Label>

@@ -47,6 +47,14 @@ vi.mock('@/lib/db/client', () => ({
       // Default: every audio-shaped id matches; specific tests
       // override per case.
       findFirst: vi.fn(async () => ({ id: 'cm_audio_001' })),
+      // activeEmbeddingModelId validation: PATCH looks up the FK and
+      // checks `isActive`, `capabilities`, and `dimensions`. Default:
+      // valid embedding-capable row; specific tests override.
+      findUnique: vi.fn(async () => ({
+        isActive: true,
+        capabilities: ['embedding'],
+        dimensions: 1536,
+      })),
     },
   },
 }));
@@ -137,6 +145,7 @@ function makeSettingsRow(
     maxMessagesPerConversation: number | null;
     embedAllowedOrigins: unknown;
     voiceInputGloballyEnabled: boolean;
+    activeEmbeddingModelId: string | null;
   }> = {}
 ) {
   return {
@@ -162,6 +171,7 @@ function makeSettingsRow(
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     voiceInputGloballyEnabled: true as boolean,
+    activeEmbeddingModelId: null as string | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -601,6 +611,33 @@ describe('Admin Orchestration — /settings', () => {
       const body = await parseJson<{ data: { searchConfig: unknown } }>(res);
       expect(body.data.searchConfig).toBeNull();
     });
+
+    it('accepts activeEmbeddingModelId when matrix row is embedding-capable and active', async () => {
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValueOnce({
+        isActive: true,
+        capabilities: ['embedding'],
+        dimensions: 1536,
+      } as never);
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ activeEmbeddingModelId: 'cm_embed_openai' }) as never
+      );
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_embed_openai' }));
+
+      expect(res.status).toBe(200);
+    });
+
+    it('clears activeEmbeddingModelId when set to null', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ activeEmbeddingModelId: null }) as never
+      );
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: null }));
+
+      expect(res.status).toBe(200);
+      // Null bypasses the matrix lookup — explicit clear, no validation hop.
+      expect(vi.mocked(prisma.aiProviderModel.findUnique)).not.toHaveBeenCalled();
+    });
   });
 
   describe('PATCH — Validation errors', () => {
@@ -948,6 +985,52 @@ describe('Admin Orchestration — /settings', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
       expect(body.error.details?.task).toBe('audio');
       expect(body.error.details?.value).toBe('groq::whisper-1');
+    });
+
+    it('rejects activeEmbeddingModelId pointing at an inactive model (400)', async () => {
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValueOnce({
+        isActive: false,
+        capabilities: ['embedding'],
+        dimensions: 1536,
+      } as never);
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_inactive' }));
+      const body = await parseJson<{ error: { code: string } }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('rejects activeEmbeddingModelId pointing at a chat-only model (400)', async () => {
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValueOnce({
+        isActive: true,
+        capabilities: ['chat'],
+        dimensions: null,
+      } as never);
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_chat_only' }));
+
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects activeEmbeddingModelId on a model with no dimensions recorded (400)', async () => {
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValueOnce({
+        isActive: true,
+        capabilities: ['embedding'],
+        dimensions: null,
+      } as never);
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_no_dim' }));
+
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects activeEmbeddingModelId that does not resolve to any row (400)', async () => {
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValueOnce(null as never);
+
+      const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_missing' }));
+
+      expect(res.status).toBe(400);
     });
   });
 

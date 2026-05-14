@@ -1198,7 +1198,7 @@ export function ChatInterface({
               )}
               Suggested prompts
             </button>
-            {onResampleStarters && (
+            {onResampleStarters && showSuggestedPrompts && (
               <Button
                 type="button"
                 variant="ghost"
@@ -1223,8 +1223,12 @@ export function ChatInterface({
                   key={prompt}
                   variant="outline"
                   size="sm"
-                  onClick={() => void sendMessageWrapped(prompt)}
+                  onClick={() => {
+                    setShowSuggestedPrompts(false);
+                    void sendMessageWrapped(prompt);
+                  }}
                   disabled={streaming}
+                  className="h-auto max-w-full justify-start py-2 text-left text-xs leading-snug whitespace-normal"
                 >
                   {prompt}
                 </Button>
@@ -1255,7 +1259,7 @@ export function ChatInterface({
                 </Button>
               )}
             </div>
-            <div className="flex flex-wrap justify-center gap-2">
+            <div className="flex w-full max-w-2xl flex-col gap-2">
               {starterPrompts.map((prompt) => (
                 <Button
                   key={prompt}
@@ -1263,6 +1267,7 @@ export function ChatInterface({
                   size="sm"
                   onClick={() => void sendMessageWrapped(prompt)}
                   disabled={streaming}
+                  className="h-auto justify-start py-2 text-left text-xs leading-snug whitespace-normal"
                 >
                   {prompt}
                 </Button>
@@ -1276,7 +1281,13 @@ export function ChatInterface({
             streaming && msg.role === 'assistant' && i === messages.length - 1 && !!msg.content;
           return (
             <div key={i} className="flex font-mono text-sm leading-relaxed">
-              <span className="text-muted-foreground shrink-0 pr-2 select-none" aria-hidden="true">
+              <span
+                className={cn(
+                  'shrink-0 pr-2 select-none',
+                  msg.role === 'user' ? 'text-primary' : 'text-muted-foreground'
+                )}
+                aria-hidden="true"
+              >
                 {msg.role === 'user' ? '❯' : ' '}
               </span>
               <div className="min-w-0 flex-1">
@@ -1325,7 +1336,11 @@ export function ChatInterface({
                   </>
                 ) : (
                   <div>
-                    {msg.content && <span className="whitespace-pre-wrap">{msg.content}</span>}
+                    {msg.content && (
+                      <span className="text-primary font-medium whitespace-pre-wrap">
+                        {msg.content}
+                      </span>
+                    )}
                     {msg.attachmentCount && msg.attachmentCount > 0 && (
                       <span
                         className={cn(

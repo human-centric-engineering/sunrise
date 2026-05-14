@@ -15,7 +15,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import { embedText, getActiveEmbeddingModelSummary } from '@/lib/orchestration/knowledge/embedder';
 import type { KnowledgeSearchResult, PatternSummary, SearchConfig } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
 
@@ -63,6 +63,70 @@ async function resolveSearchWeights(): Promise<ResolvedSearchWeights> {
     hybridEnabled: config?.hybridEnabled === true,
     bm25Weight: config?.bm25Weight ?? DEFAULT_BM25_WEIGHT,
   };
+}
+
+/**
+ * Fail fast when the operator has picked a new active embedding model
+ * (changing dim) but hasn't re-embedded the corpus yet. Without this
+ * check, the search would still call out to the embedder, spend a
+ * round-trip, then crash on the SQL cast — a confusing failure mode.
+ *
+ * Skips silently when:
+ *   - no active model is set (legacy fallback path; stored vectors
+ *     are 1536 by construction and the embedder produces 1536),
+ *   - the corpus is empty (no chunks to compare against),
+ *   - stored chunks have no `embeddingDimension` recorded yet (rows
+ *     pre-dating Phase 1 — they were 1536, by construction).
+ *
+ * Uses `groupBy(embeddingDimension)` rather than a single-row sample so
+ * a partially-re-embedded corpus (some chunks at the old dim, some at
+ * the new) is caught even when the `findFirst` happens to land on a
+ * matching row. The query is cheap — at most one row per distinct
+ * dimension in the corpus — and the aggregated counts feed a clearer
+ * error message when there's drift.
+ */
+async function assertActiveModelMatchesStoredVectors(): Promise<void> {
+  const active = await getActiveEmbeddingModelSummary();
+  if (!active) return;
+
+  const dimensionGroups = await prisma.aiKnowledgeChunk.groupBy({
+    by: ['embeddingDimension'],
+    where: { embeddingDimension: { not: null } },
+    _count: { _all: true },
+  });
+
+  if (dimensionGroups.length === 0) return;
+
+  const mismatched = dimensionGroups.filter((g) => g.embeddingDimension !== active.dimensions);
+  if (mismatched.length === 0) return;
+
+  // Surface one stored model name per mismatched dimension so the
+  // operator sees what produced the rows without spelunking through
+  // chunks themselves. `embeddingModel` can be null on legacy rows; the
+  // ?? 'unknown' guard preserves that case.
+  const exemplars = await Promise.all(
+    mismatched.map(async (g) => {
+      const row = await prisma.aiKnowledgeChunk.findFirst({
+        where: { embeddingDimension: g.embeddingDimension },
+        select: { embeddingModel: true },
+      });
+      return {
+        dimension: g.embeddingDimension,
+        count: g._count._all,
+        model: row?.embeddingModel ?? 'unknown',
+      };
+    })
+  );
+
+  const summary = exemplars
+    .map((e) => `${e.count} chunk(s) embedded by "${e.model}" at ${e.dimension} dims`)
+    .join('; ');
+
+  throw new Error(
+    `Embedding model mismatch: the active model "${active.modelId}" produces ` +
+      `${active.dimensions}-dim vectors, but the corpus contains: ${summary}. ` +
+      'Run `npm run embeddings:reset` and re-upload documents to apply the new model.'
+  );
 }
 
 /** Search filter options */
@@ -150,6 +214,8 @@ export async function searchKnowledgeWithEmbedding(
   threshold: number = DEFAULT_THRESHOLD
 ): Promise<KnowledgeSearchResponse> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
+
+  await assertActiveModelMatchesStoredVectors();
 
   const weights = await resolveSearchWeights();
 
@@ -267,6 +333,7 @@ async function runVectorOnlySearch({
       c.metadata,
       c."embeddingModel",
       c."embeddingProvider",
+      c."embeddingDimension",
       c."embeddedAt",
       d.name AS "documentName",
       (c.embedding <=> $1::vector) AS distance,
@@ -364,6 +431,7 @@ async function runHybridSearch({
         c.metadata,
         c."embeddingModel",
         c."embeddingProvider",
+        c."embeddingDimension",
         c."embeddedAt",
         d.name AS "documentName",
         (c.embedding <=> $1::vector) AS distance,
@@ -432,6 +500,7 @@ function pickChunk(row: AiKnowledgeChunk): AiKnowledgeChunk {
     estimatedTokens: row.estimatedTokens,
     embeddingModel: row.embeddingModel,
     embeddingProvider: row.embeddingProvider,
+    embeddingDimension: row.embeddingDimension,
     embeddedAt: row.embeddedAt,
     metadata: row.metadata,
   };

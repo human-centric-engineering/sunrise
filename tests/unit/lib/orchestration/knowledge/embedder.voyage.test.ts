@@ -23,6 +23,13 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiProviderConfig: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    aiOrchestrationSettings: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    aiProviderModel: {
+      findUnique: vi.fn().mockResolvedValue(null),
     },
   },
 }));
@@ -110,6 +117,7 @@ describe('resolveProvider() Voyage preference (via embedText)', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
     process.env['VOYAGE_API_KEY'] = 'voy-test-key';
@@ -248,6 +256,7 @@ describe('callEmbeddingApi() Voyage-specific parameters (via embedText)', () => 
 
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
     process.env['VOYAGE_API_KEY'] = 'voy-key';
@@ -372,6 +381,7 @@ describe('embedText() inputType parameter', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
     process.env['VOYAGE_API_KEY'] = 'voy-key';
@@ -420,6 +430,7 @@ describe('embedBatch() inputType parameter', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     savedEnv = process.env;
     process.env = { ...savedEnv };
     process.env['VOYAGE_API_KEY'] = 'voy-key';

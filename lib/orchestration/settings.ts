@@ -93,6 +93,7 @@ export function hydrateSettings(row: {
   voiceInputGloballyEnabled?: boolean | null;
   imageInputGloballyEnabled?: boolean | null;
   documentInputGloballyEnabled?: boolean | null;
+  activeEmbeddingModelId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -164,6 +165,7 @@ export function hydrateSettings(row: {
     voiceInputGloballyEnabled: row.voiceInputGloballyEnabled ?? true,
     imageInputGloballyEnabled: row.imageInputGloballyEnabled ?? true,
     documentInputGloballyEnabled: row.documentInputGloballyEnabled ?? true,
+    activeEmbeddingModelId: row.activeEmbeddingModelId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

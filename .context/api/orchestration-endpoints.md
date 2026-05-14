@@ -80,7 +80,6 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/graph`                        | GET                | Knowledge graph data (nodes + links)                                                                 | 5.1     |
 | `/knowledge/embeddings`                   | GET                | UMAP-projected 2D coordinates for every embedded chunk (drives the Visualize tab's Embedding space)  | 9.1     |
 | `/knowledge/embedding-status`             | GET                | Embedding coverage stats + provider availability                                                     | 3.3     |
-| `/knowledge/meta-tags`                    | GET                | Distinct categories and keywords with chunk/doc counts                                               | 9.0     |
 | `/embedding-models`                       | GET                | Static registry of embedding models (filterable)                                                     | 7.0     |
 | `/conversations`                          | GET                | List caller's conversations                                                                          | 3.3     |
 | `/conversations/:id`                      | GET, DELETE        | Read / delete one of the caller's conversations                                                      | 3.3     |
@@ -752,32 +751,6 @@ Returns chunk metadata plus a 2D UMAP projection of each chunk's 1,536-dimension
 ### `GET /knowledge/embedding-status`
 
 Lightweight status endpoint returning `{ total, embedded, pending, hasActiveProvider }`. Used by the Knowledge Base, Advisor, and Quiz UI to show an embedding coverage banner when search is partially available.
-
-### `GET /knowledge/meta-tags`
-
-Returns all distinct category and keyword values across knowledge base chunks, with counts of how many chunks and documents use each value. Used by the manage tab to display a meta-tags panel and by the upload form to power category autocomplete.
-
-**Auth:** `withAdminAuth` + `adminLimiter`
-
-**Response** (grouped by document scope):
-
-```json
-{
-  "success": true,
-  "data": {
-    "app": {
-      "categories": [{ "value": "sales", "chunkCount": 15, "documentCount": 3 }],
-      "keywords": [{ "value": "pricing", "chunkCount": 5, "documentCount": 1 }]
-    },
-    "system": {
-      "categories": [{ "value": "patterns", "chunkCount": 20, "documentCount": 1 }],
-      "keywords": []
-    }
-  }
-}
-```
-
-`app` contains tags from user-uploaded documents; `system` contains tags from the built-in seeded patterns. Categories come from the `category` column; keywords are extracted by unnesting the comma-separated `keywords` column via `string_to_array`. The SQL JOINs to `ai_knowledge_document` to get the `scope` field.
 
 ---
 

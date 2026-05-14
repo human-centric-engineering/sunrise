@@ -135,6 +135,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns/:number', () => {
           estimatedTokens: 50,
           embeddingModel: null,
           embeddingProvider: null,
+          embeddingDimension: null,
           embeddedAt: null,
           metadata: null,
         },

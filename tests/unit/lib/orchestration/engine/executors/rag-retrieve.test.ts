@@ -92,6 +92,7 @@ describe('executeRagRetrieve', () => {
           estimatedTokens: null,
           embeddingModel: null,
           embeddingProvider: null,
+          embeddingDimension: null,
           embeddedAt: null,
           metadata: null,
         },

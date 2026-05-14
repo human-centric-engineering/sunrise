@@ -1,6 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import {
+  ActiveEmbeddingModelForm,
+  type ActiveEmbeddingModelOption,
+} from '@/components/admin/orchestration/active-embedding-model-form';
 import { DefaultModelsForm } from '@/components/admin/orchestration/default-models-form';
 import {
   SettingsForm,
@@ -185,14 +189,56 @@ async function getAudioModels(): Promise<
   }
 }
 
+interface EmbeddingMatrixRowApi {
+  id: string;
+  modelId: string;
+  providerSlug: string;
+  name: string;
+  dimensions: number | null;
+}
+
+async function getEmbeddingMatrixRows(): Promise<ActiveEmbeddingModelOption[]> {
+  // The "active embedding model" picker is FK-driven, so it needs the
+  // `AiProviderModel.id` for each row — `getEmbeddingModels()` above
+  // returns the registry shape (bare model id, no FK), which is fine
+  // for the chat-task embeddings dropdown but not for this picker.
+  // Filter to embedding-capable, active rows; the form additionally
+  // requires a non-null `dimensions` and drops rows that lack it.
+  try {
+    const res = await serverFetch(
+      `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=embedding&isActive=true&limit=100`
+    );
+    if (!res.ok) return [];
+    const body = await parseApiResponse<EmbeddingMatrixRowApi[]>(res);
+    if (!body.success) return [];
+    return body.data
+      .filter(
+        (row): row is EmbeddingMatrixRowApi & { dimensions: number } =>
+          typeof row.dimensions === 'number' && row.dimensions > 0
+      )
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        modelId: row.modelId,
+        providerSlug: row.providerSlug,
+        dimensions: row.dimensions,
+      }));
+  } catch (err) {
+    logger.error('settings page: embedding matrix fetch failed', err);
+    return [];
+  }
+}
+
 export default async function OrchestrationSettingsPage() {
-  const [fullSettings, models, providers, embeddingModels, audioModels] = await Promise.all([
-    getSettings(),
-    getChatModels(),
-    getProviders(),
-    getEmbeddingModels(),
-    getAudioModels(),
-  ]);
+  const [fullSettings, models, providers, embeddingModels, audioModels, embeddingMatrixRows] =
+    await Promise.all([
+      getSettings(),
+      getChatModels(),
+      getProviders(),
+      getEmbeddingModels(),
+      getAudioModels(),
+      getEmbeddingMatrixRows(),
+    ]);
 
   // The narrow `OrchestrationSettings` shape that `SettingsForm` accepts
   // is a structural subset of the full singleton, so we can hand the
@@ -231,6 +277,11 @@ export default async function OrchestrationSettingsPage() {
         providers={providers}
         embeddingModels={embeddingModels}
         audioModels={audioModels}
+      />
+
+      <ActiveEmbeddingModelForm
+        initialActiveEmbeddingModelId={fullSettings?.activeEmbeddingModelId ?? null}
+        options={embeddingMatrixRows}
       />
 
       <SettingsForm initialSettings={formSettings} />
