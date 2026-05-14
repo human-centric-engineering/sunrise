@@ -382,9 +382,11 @@ describe('OtelTracer', () => {
       // Assert
       const spans = exporter.getFinishedSpans();
       expect(spans[0].status.code).toBe(otelApi.SpanStatusCode.OK);
-      // Per OTEL spec, status description is ignored unless code is ERROR.
-      // sdk-trace-base@2.7+ enforces this — the adapter forwards `message`
-      // but the SDK drops it on the span.
+      // Per OTEL spec, status description is ignored unless code is
+      // ERROR. The adapter drops the message before forwarding so we
+      // don't depend on which sdk-trace-base version is installed —
+      // current versions preserve `message` on the span regardless of
+      // code, which would otherwise violate the spec.
       expect(spans[0].status.message).toBeUndefined();
     });
 
