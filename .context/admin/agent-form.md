@@ -60,6 +60,14 @@ shadcn `<Slider>` from 0 to 2 with step 0.05. Readout shows the current value to
 
 Number input. Default 4096. Validation min 1, max 200_000.
 
+### Max history tokens
+
+Optional number input (`AiAgent.maxHistoryTokens`). Overrides the context-window budget when building the prompt. Leave blank to use the model's full context window. Validation min 1 000, max 2 000 000. **This is the token knob** — it protects the model's context window from overflow.
+
+### Memory length (messages)
+
+Optional number input (`AiAgent.maxHistoryMessages`). Per-agent override for the message-count cap on conversation history. Validation min 0, max 500. Leave blank to use the platform default (`MAX_HISTORY_MESSAGES`, currently 50). **This is the behavioural knob** — distinct from _Max history tokens_ above. Use it to control how far back the agent remembers verbatim, even when the context window has plenty of room. `0` means "stateless agent: no prior history re-sent each turn"; older context still survives via the rolling summary that the streaming handler maintains on `AiConversation.summary`.
+
 ### Monthly budget (USD)
 
 Optional number input. When set, the chat handler rejects new turns once MTD spend exceeds the cap. Leave blank to disable.

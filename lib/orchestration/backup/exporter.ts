@@ -35,6 +35,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         outputGuardMode: true,
         citationGuardMode: true,
         maxHistoryTokens: true,
+        maxHistoryMessages: true,
         retentionDays: true,
         providerConfig: true,
         widgetConfig: true,

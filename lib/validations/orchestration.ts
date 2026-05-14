@@ -126,6 +126,13 @@ export const createAgentSchema = z.object({
     .max(2000000, 'Max history tokens must be at most 2,000,000')
     .nullable()
     .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
+    .nullable()
+    .optional(),
   retentionDays: z
     .number()
     .int('Retention days must be an integer')
@@ -236,6 +243,13 @@ export const updateAgentSchema = z.object({
     .int('Max history tokens must be an integer')
     .min(1000, 'Max history tokens must be at least 1000')
     .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
     .nullable()
     .optional(),
   retentionDays: z
@@ -810,6 +824,7 @@ const bundledAgentSchema = z.object({
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
+  maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
   retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
   visibility: agentVisibilitySchema.default('internal'),
   // `knowledgeCategories` was the legacy free-text scoping field on AiAgent.

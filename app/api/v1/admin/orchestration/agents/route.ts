@@ -150,6 +150,7 @@ export const POST = withAdminAuth(async (request, session) => {
         outputGuardMode: body.outputGuardMode ?? null,
         citationGuardMode: body.citationGuardMode ?? null,
         maxHistoryTokens: body.maxHistoryTokens ?? null,
+        maxHistoryMessages: body.maxHistoryMessages ?? null,
         retentionDays: body.retentionDays ?? null,
         visibility: body.visibility ?? 'internal',
         rateLimitRpm: body.rateLimitRpm ?? null,

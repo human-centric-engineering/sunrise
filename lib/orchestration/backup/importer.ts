@@ -121,6 +121,7 @@ export async function importOrchestrationConfig(
             outputGuardMode: agent.outputGuardMode,
             citationGuardMode: agent.citationGuardMode,
             maxHistoryTokens: agent.maxHistoryTokens,
+            maxHistoryMessages: agent.maxHistoryMessages,
             retentionDays: agent.retentionDays,
             providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,

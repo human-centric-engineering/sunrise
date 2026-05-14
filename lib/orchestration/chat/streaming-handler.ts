@@ -541,15 +541,22 @@ export class StreamingChatHandler {
 
       // Rolling summary — when history exceeds the window, summarize
       // the oldest messages and persist the summary for future turns.
+      // Agent-level maxHistoryMessages override controls when the cap
+      // kicks in (also drives the same threshold inside message-builder
+      // so the summary covers exactly the dropped messages).
       let conversationSummary: string | undefined;
       const historyRows = history.map((m) => ({
         role: m.role,
         content: m.content,
         toolCallId: m.toolCallId,
       }));
+      const effectiveMessageCap =
+        typeof agent.maxHistoryMessages === 'number' && agent.maxHistoryMessages >= 0
+          ? agent.maxHistoryMessages
+          : MAX_HISTORY_MESSAGES;
 
-      if (historyRows.length > MAX_HISTORY_MESSAGES) {
-        const droppedCount = historyRows.length - MAX_HISTORY_MESSAGES;
+      if (historyRows.length > effectiveMessageCap) {
+        const droppedCount = historyRows.length - effectiveMessageCap;
         const droppedMessages = historyRows.slice(0, droppedCount);
         const lastDroppedId = history[droppedCount - 1]?.id ?? null;
 
@@ -601,6 +608,7 @@ export class StreamingChatHandler {
         contextWindowTokens,
         reserveTokens: agent.maxTokens ?? undefined,
         modelId: resolvedModel,
+        maxHistoryMessages: agent.maxHistoryMessages,
       });
       let messages: LlmMessage[] = initialMessages;
 

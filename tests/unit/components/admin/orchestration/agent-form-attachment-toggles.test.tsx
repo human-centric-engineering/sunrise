@@ -155,6 +155,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     visibility: 'internal',
     fallbackProviders: [],
     maxHistoryTokens: null,
+    maxHistoryMessages: null,
     retentionDays: null,
     widgetConfig: null,
     enableVoiceInput: false,

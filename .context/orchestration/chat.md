@@ -45,18 +45,18 @@ for await (const event of streamChat({
 
 Everything is exported from `@/lib/orchestration/chat`:
 
-| Export                 | Kind     | Purpose                                                                     |
-| ---------------------- | -------- | --------------------------------------------------------------------------- |
-| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                       |
-| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations |
-| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try          |
-| `ChatRequest`          | type     | Input shape (see below)                                                     |
-| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                        |
-| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                               |
-| `MAX_HISTORY_MESSAGES` | const    | History truncation target (currently `50`)                                  |
-| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                       |
-| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                       |
-| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                               |
+| Export                 | Kind     | Purpose                                                                                                                                                                   |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
+| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
+| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
+| `ChatRequest`          | type     | Input shape (see below)                                                                                                                                                   |
+| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
+| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                                                                                                                             |
+| `MAX_HISTORY_MESSAGES` | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
+| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
+| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                                                                                                                     |
+| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -310,11 +310,13 @@ Reasoning plus acting is a reflex loop.
 
 ## Rolling Conversation Summary
 
-When conversation history exceeds `MAX_HISTORY_MESSAGES` (50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+When conversation history exceeds the effective message-count cap (`AiAgent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`, default 50), the streaming handler generates a concise LLM summary of the dropped messages instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+
+The same effective cap drives both the summary trigger here and the verbatim-history truncation inside `buildMessages`, so the summary always covers exactly the messages that got dropped from the live history. Agents that set `maxHistoryMessages` to a smaller value see summarisation kick in earlier; agents that set it to `0` get a pure-summary view of all prior turns (no verbatim history on any turn).
 
 **How it works:**
 
-1. After loading history, if `history.length > MAX_HISTORY_MESSAGES`, the handler checks whether a persisted summary exists on `AiConversation.summary` and whether it's stale (via `summaryUpToMessageId`).
+1. After loading history, if `history.length > effectiveCap`, the handler checks whether a persisted summary exists on `AiConversation.summary` and whether it's stale (via `summaryUpToMessageId`).
 2. If stale or missing: yields a `{ type: 'status', message: 'Summarizing conversation history...' }` event, calls `summarizeMessages()` on the dropped portion, and persists the result.
 3. The summary is passed to `buildMessages()` which emits it as a `[Conversation summary of N earlier messages]` system message instead of the old `[... N older messages omitted ...]` marker.
 
@@ -386,7 +388,7 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 ### `summarizer.ts` — rolling history summary
 
 - Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs)` returning a string.
-- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > MAX_HISTORY_MESSAGES`.
+- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > effectiveCap` (where `effectiveCap = agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`).
 - Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
 - Logs cost as a `CostOperation.CHAT` row with `agentId: 'system'` and `conversationId: 'summary'`.
 - **Never throws.** Any failure (provider down, LLM error, empty response) returns `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` so the chat turn keeps moving.
@@ -536,7 +538,7 @@ The message builder supports token-aware truncation to prevent exceeding model c
 
 Token estimation is **per-provider tokeniser-aware** — the streaming handler passes the agent's `model` into `buildMessages()`, which routes to `tokeniserForModel(modelId)`. OpenAI models get exact counts via `gpt-tokenizer` (`o200k_base` / `cl100k_base`); Anthropic, Gemini, and Llama-family get calibrated approximators that overestimate by 5–10% for safety. See [`llm-providers.md` → Tokenisation](./llm-providers.md#tokenisation).
 
-When `contextWindowTokens` is not set, the handler falls back to the fixed `MAX_HISTORY_MESSAGES = 50` limit.
+When `contextWindowTokens` is not set, the handler falls back to the message-count cap (`agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`, default 50).
 
 **Key files:** `lib/orchestration/chat/token-estimator.ts`, `lib/orchestration/chat/message-builder.ts`
 

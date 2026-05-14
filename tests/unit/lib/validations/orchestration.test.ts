@@ -193,6 +193,38 @@ describe('createAgentSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  describe('maxHistoryMessages bounds', () => {
+    it('accepts 0 (stateless agent)', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: 0 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts the upper bound (500)', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: 500 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts null (use platform default)', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: null });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects negative values', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects values above the cap (500)', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: 501 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects non-integers', () => {
+      const result = createAgentSchema.safeParse({ ...VALID_AGENT, maxHistoryMessages: 10.5 });
+      expect(result.success).toBe(false);
+    });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

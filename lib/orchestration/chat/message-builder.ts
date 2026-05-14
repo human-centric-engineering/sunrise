@@ -69,6 +69,16 @@ export interface BuildMessagesArgs {
    * chars / 3.5 heuristic.
    */
   modelId?: string;
+  /**
+   * Per-agent override for the message-count cap. When set, this
+   * supersedes the platform default {@link MAX_HISTORY_MESSAGES} for
+   * this turn only — the rolling-summary path already substitutes a
+   * `[Conversation summary of N earlier messages]` block for anything
+   * dropped, so older context survives via summary rather than verbatim.
+   * `0` is meaningful: a fully-stateless agent that never re-sends
+   * prior turns. `null`/`undefined` ⇒ use the platform default.
+   */
+  maxHistoryMessages?: number | null;
 }
 
 /**
@@ -130,10 +140,18 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   let truncated = history;
   let droppedCount = 0;
 
+  // Resolve the message-count cap. Per-agent override wins; the platform
+  // default applies when the agent leaves it unset. `0` is honoured —
+  // a stateless agent gets no prior history (verbatim), only summary.
+  const messageCap =
+    typeof args.maxHistoryMessages === 'number' && args.maxHistoryMessages >= 0
+      ? args.maxHistoryMessages
+      : MAX_HISTORY_MESSAGES;
+
   // Hard cap to avoid loading too many messages
-  if (history.length > MAX_HISTORY_MESSAGES) {
-    droppedCount = history.length - MAX_HISTORY_MESSAGES;
-    truncated = history.slice(-MAX_HISTORY_MESSAGES);
+  if (history.length > messageCap) {
+    droppedCount = history.length - messageCap;
+    truncated = messageCap > 0 ? history.slice(-messageCap) : [];
   }
 
   // Token-aware truncation: if we know the context window, calculate

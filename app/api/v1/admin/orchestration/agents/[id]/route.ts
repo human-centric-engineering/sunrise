@@ -146,6 +146,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.outputGuardMode !== undefined) data.outputGuardMode = body.outputGuardMode;
   if (body.citationGuardMode !== undefined) data.citationGuardMode = body.citationGuardMode;
   if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
+  if (body.maxHistoryMessages !== undefined) data.maxHistoryMessages = body.maxHistoryMessages;
   if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
   if (body.enableVoiceInput !== undefined) data.enableVoiceInput = body.enableVoiceInput;
   if (body.enableImageInput !== undefined) data.enableImageInput = body.enableImageInput;
@@ -202,6 +203,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'outputGuardMode',
     'citationGuardMode',
     'maxHistoryTokens',
+    'maxHistoryMessages',
     'retentionDays',
     'providerConfig',
     'monthlyBudgetUsd',
@@ -303,6 +305,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           outputGuardMode: current.outputGuardMode,
           citationGuardMode: current.citationGuardMode,
           maxHistoryTokens: current.maxHistoryTokens,
+          maxHistoryMessages: current.maxHistoryMessages,
           retentionDays: current.retentionDays,
           providerConfig: current.providerConfig,
           monthlyBudgetUsd: current.monthlyBudgetUsd,

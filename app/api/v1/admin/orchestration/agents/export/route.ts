@@ -99,6 +99,7 @@ export const POST = withAdminAuth(async (request, session) => {
         outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
         citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
         maxHistoryTokens: agent.maxHistoryTokens,
+        maxHistoryMessages: agent.maxHistoryMessages,
         retentionDays: agent.retentionDays,
         visibility: visibilitySchema.parse(agent.visibility),
         topicBoundaries: agent.topicBoundaries,
