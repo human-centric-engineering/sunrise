@@ -10,6 +10,18 @@
  * `fullText` and `displayedLength` are stored in refs (not state) to avoid
  * re-render storms — only one `setState` fires per animation frame.
  *
+ * **Architecture note.** The rAF chain is driven entirely from refs and
+ * does not loop through React state to keep itself alive. `appendDelta`
+ * kicks the first frame when the chain isn't running; each `tick` reads
+ * the latest `fullTextRef` and schedules the next frame from inside
+ * itself. An earlier version routed every delta through a
+ * `setAnimationSignal((s) => s + 1)` indirection that triggered a
+ * cleanup-and-reschedule cycle in a `useEffect`; under React 19 + bursty
+ * SSE that pattern tripped "Maximum update depth exceeded" because each
+ * delta cancelled and re-scheduled rAF without ever yielding to the
+ * browser. Keeping the loop ref-driven avoids React's update accounting
+ * entirely.
+ *
  * When `disabled` is true the hook acts as a pass-through: `appendDelta`
  * immediately updates `displayText` with no buffering.
  *
@@ -59,24 +71,25 @@ export function useTypingAnimation(
   const [displayText, setDisplayText] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
 
-  // Signal state: incremented to trigger the animation effect
-  const [animationSignal, setAnimationSignal] = useState(0);
-
   const fullTextRef = useRef('');
   const displayedLengthRef = useRef(0);
   const rafIdRef = useRef<number | null>(null);
   const chunkSizeRef = useRef(chunkSize);
 
-  // Keep chunkSize ref in sync
+  // Keep chunkSize ref in sync — read by `tick` on every iteration so
+  // operator-driven changes (rare) propagate without restarting.
   useEffect(() => {
     chunkSizeRef.current = chunkSize;
   }, [chunkSize]);
 
-  // Animation loop driven by effect — avoids self-referencing useCallback
-  useEffect(() => {
-    if (animationSignal === 0) return;
-
-    const tick = (): void => {
+  // Start a fresh rAF chain. The inner `step` is a function declaration
+  // (hoisted within `startAnimation`'s scope), which is how we get
+  // self-referencing recursion without the React-Compiler "accessed
+  // before it is declared" diagnostic that fires when a `useCallback`
+  // body references itself. Every closure-captured value here is a ref
+  // or a stable state setter, so `useCallback([])` is correct.
+  const startAnimation = useCallback((): void => {
+    function step(): void {
       const full = fullTextRef.current;
       const current = displayedLengthRef.current;
 
@@ -91,24 +104,17 @@ export function useTypingAnimation(
       setDisplayText(full.slice(0, next));
 
       if (next < full.length) {
-        rafIdRef.current = requestAnimationFrame(tick);
+        // Tail-recurse via rAF. New deltas that arrive between frames
+        // simply extend `fullTextRef.current`; the next iteration picks
+        // them up automatically without needing to be "kicked" again.
+        rafIdRef.current = requestAnimationFrame(step);
       } else {
         rafIdRef.current = null;
         setIsAnimating(false);
       }
-    };
-
-    if (rafIdRef.current === null) {
-      rafIdRef.current = requestAnimationFrame(tick);
     }
-
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
-  }, [animationSignal]);
+    rafIdRef.current = requestAnimationFrame(step);
+  }, []);
 
   const appendDelta = useCallback(
     (delta: string) => {
@@ -120,11 +126,16 @@ export function useTypingAnimation(
         return;
       }
 
-      // Signal the animation effect to start/continue
-      setIsAnimating(true);
-      setAnimationSignal((s) => s + 1);
+      // Only kick the rAF chain when one isn't already running. Bursty
+      // SSE deltas during an active animation just extend the buffer —
+      // the in-flight step reads `fullTextRef.current` each iteration
+      // and naturally catches up.
+      if (rafIdRef.current === null) {
+        setIsAnimating(true);
+        startAnimation();
+      }
     },
-    [disabled]
+    [disabled, startAnimation]
   );
 
   const flush = useCallback(() => {
@@ -146,6 +157,17 @@ export function useTypingAnimation(
     displayedLengthRef.current = 0;
     setDisplayText('');
     setIsAnimating(false);
+  }, []);
+
+  // Cancel any in-flight rAF on unmount so the tick doesn't try to
+  // setState on a torn-down component.
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
   }, []);
 
   return { displayText, isAnimating, appendDelta, flush, reset };

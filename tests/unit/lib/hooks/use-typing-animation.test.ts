@@ -247,4 +247,60 @@ describe('lib/hooks/use-typing-animation', () => {
     expect(result.current.displayText).toBe('');
     expect(result.current.isAnimating).toBe(false);
   });
+
+  // ── Regression: bursty appendDelta during an in-flight animation ──────────
+  // The previous implementation routed every delta through a setState-driven
+  // signal that re-ran a useEffect, cancelling and re-scheduling rAF on each
+  // call. Under bursty SSE that tripped React 19's "Maximum update depth
+  // exceeded" guard. The current implementation kicks rAF only when the
+  // chain isn't running and lets the in-flight tick pick up extra buffer
+  // by re-reading `fullTextRef.current` each iteration.
+
+  it('bursty appendDelta calls produce at most one pending rAF (no schedule storm)', () => {
+    const { result } = renderHook(() => useTypingAnimation({ chunkSize: 2 }));
+
+    act(() => {
+      result.current.appendDelta('chunk-1 ');
+      result.current.appendDelta('chunk-2 ');
+      result.current.appendDelta('chunk-3 ');
+      result.current.appendDelta('chunk-4 ');
+      result.current.appendDelta('chunk-5');
+    });
+
+    // Five rapid deltas must schedule exactly one rAF — the first one
+    // kicks the chain, the rest just extend the buffer. Anything more
+    // would mean we're back to the cancel/re-schedule loop that
+    // triggered the max-depth error.
+    expect(rafCallbacks).toHaveLength(1);
+    expect(cancelAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it('new deltas arriving between ticks are picked up by the in-flight chain', () => {
+    const { result } = renderHook(() => useTypingAnimation({ chunkSize: 3 }));
+
+    act(() => {
+      result.current.appendDelta('Hello');
+    });
+
+    // Drain one tick — partial reveal of the initial buffer.
+    act(() => {
+      const cb = rafCallbacks.shift();
+      cb?.();
+    });
+    expect(result.current.displayText).toBe('Hel');
+
+    // New delta arrives mid-animation; the running tick should absorb
+    // it without needing a fresh kick.
+    act(() => {
+      result.current.appendDelta(' there');
+    });
+    // No new rAF beyond the one the prior tick scheduled for itself.
+    expect(rafCallbacks).toHaveLength(1);
+
+    act(() => {
+      drainRaf();
+    });
+    expect(result.current.displayText).toBe('Hello there');
+    expect(result.current.isAnimating).toBe(false);
+  });
 });
