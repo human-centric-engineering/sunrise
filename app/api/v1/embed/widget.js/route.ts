@@ -157,6 +157,43 @@ export function GET(request: NextRequest): Response {
           padding: 6px 12px; border-radius: 12px 12px 12px 0;
           display: inline-block; max-width: 85%;
         }
+        /* Markdown rendering inside assistant bubbles. The bubble's
+           pre-wrap whitespace handling is preserved on text nodes, but
+           block elements (p/ul/ol/h*) get their default margins reset so
+           the first/last child doesn't push the bubble out of shape. */
+        .msg.assistant span > :first-child { margin-top: 0; }
+        .msg.assistant span > :last-child { margin-bottom: 0; }
+        .msg.assistant span p { margin: 0 0 8px; }
+        .msg.assistant span ul,
+        .msg.assistant span ol { margin: 4px 0 8px; padding-left: 20px; }
+        .msg.assistant span li { margin-bottom: 4px; }
+        .msg.assistant span li > p { margin: 0; }
+        .msg.assistant span h1,
+        .msg.assistant span h2,
+        .msg.assistant span h3,
+        .msg.assistant span h4,
+        .msg.assistant span h5,
+        .msg.assistant span h6 { margin: 8px 0 4px; font-size: 1em; font-weight: 600; }
+        .msg.assistant span strong { font-weight: 600; }
+        .msg.assistant span em { font-style: italic; }
+        .msg.assistant span code {
+          background: color-mix(in srgb, var(--sw-text) 8%, transparent);
+          padding: 1px 4px; border-radius: 3px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 0.9em;
+        }
+        .msg.assistant span pre {
+          background: color-mix(in srgb, var(--sw-text) 6%, transparent);
+          padding: 8px; border-radius: 4px; overflow-x: auto;
+          margin: 4px 0 8px;
+        }
+        .msg.assistant span pre code { background: transparent; padding: 0; }
+        .msg.assistant span blockquote {
+          margin: 4px 0 8px; padding-left: 8px;
+          border-left: 2px solid var(--sw-border);
+          opacity: 0.85;
+        }
+        .msg.assistant span a { color: var(--sw-primary); text-decoration: underline; }
         .cite-marker {
           display: inline-flex; align-items: center; justify-content: center;
           min-width: 16px; height: 16px; padding: 0 4px; margin: 0 2px;
@@ -948,11 +985,255 @@ export function GET(request: NextRequest): Response {
       var div = document.createElement('div');
       div.className = 'msg ' + role;
       var span = document.createElement('span');
-      span.textContent = content;
+      // User messages stay as plain text — they're the user's own input
+      // echoed back, no markdown interpretation. Assistant streams go
+      // through renderMarkdownInto via setAssistantText below.
+      if (role === 'assistant') {
+        setAssistantText(span, content || '');
+      } else {
+        span.textContent = content;
+      }
       div.appendChild(span);
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return span;
+    }
+
+    // Re-renders an assistant span as markdown. Safe against XSS: every
+    // node is built via document.createElement + textContent / appendChild;
+    // raw HTML in the source text becomes an inert text node, not a real
+    // element. Called on every streaming delta and again after citations
+    // arrive (renderCitations re-runs this then walks the DOM to swap
+    // [N] markers in text nodes for cite-marker chips).
+    function setAssistantText(span, text) {
+      span.textContent = '';
+      renderMarkdownInto(span, text || '');
+    }
+
+    // Minimal markdown → DOM renderer. Supports the formatting the LLM
+    // actually emits in chat: bold/italic/code spans, fenced and inline
+    // code, ATX headings, bullet/ordered lists, paragraphs, blockquotes
+    // and links. Anything more exotic (tables, footnotes, html blocks)
+    // falls through as literal text — that's the trade for not pulling
+    // a full parser into the embed bundle.
+    function renderMarkdownInto(parent, text) {
+      // Normalise line endings so block detection is deterministic.
+      var src = String(text).replace(/\\r\\n?/g, '\\n');
+      var lines = src.split('\\n');
+      var i = 0;
+      while (i < lines.length) {
+        var line = lines[i];
+        // Skip blank-line separators between blocks.
+        if (/^\\s*$/.test(line)) { i++; continue; }
+
+        // Fenced code block: \`\`\`lang? ... \`\`\`
+        var fence = line.match(/^\\s*\`\`\`(.*)$/);
+        if (fence) {
+          var buf = [];
+          i++;
+          while (i < lines.length && !/^\\s*\`\`\`\\s*$/.test(lines[i])) {
+            buf.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) i++; // consume closing fence
+          var pre = document.createElement('pre');
+          var codeEl = document.createElement('code');
+          codeEl.textContent = buf.join('\\n');
+          pre.appendChild(codeEl);
+          parent.appendChild(pre);
+          continue;
+        }
+
+        // ATX heading: # … ###### (1–6 leading hashes + space).
+        var hMatch = line.match(/^(#{1,6})\\s+(.*)$/);
+        if (hMatch) {
+          var lvl = hMatch[1].length;
+          var h = document.createElement('h' + lvl);
+          renderInlineInto(h, hMatch[2]);
+          parent.appendChild(h);
+          i++;
+          continue;
+        }
+
+        // Blockquote: > … (one or more consecutive lines).
+        if (/^>\\s?/.test(line)) {
+          var qbuf = [];
+          while (i < lines.length && /^>\\s?/.test(lines[i])) {
+            qbuf.push(lines[i].replace(/^>\\s?/, ''));
+            i++;
+          }
+          var bq = document.createElement('blockquote');
+          renderMarkdownInto(bq, qbuf.join('\\n'));
+          parent.appendChild(bq);
+          continue;
+        }
+
+        // Unordered list: -, *, or + followed by a space.
+        if (/^\\s*[-*+]\\s+/.test(line)) {
+          var ul = document.createElement('ul');
+          while (i < lines.length && /^\\s*[-*+]\\s+/.test(lines[i])) {
+            var liU = document.createElement('li');
+            renderInlineInto(liU, lines[i].replace(/^\\s*[-*+]\\s+/, ''));
+            ul.appendChild(liU);
+            i++;
+          }
+          parent.appendChild(ul);
+          continue;
+        }
+
+        // Ordered list: digit(s) then a dot/paren and a space.
+        if (/^\\s*\\d+[.)]\\s+/.test(line)) {
+          var ol = document.createElement('ol');
+          while (i < lines.length && /^\\s*\\d+[.)]\\s+/.test(lines[i])) {
+            var liO = document.createElement('li');
+            renderInlineInto(liO, lines[i].replace(/^\\s*\\d+[.)]\\s+/, ''));
+            ol.appendChild(liO);
+            i++;
+          }
+          parent.appendChild(ol);
+          continue;
+        }
+
+        // Paragraph: consecutive non-blank, non-block lines joined with
+        // an explicit <br> for in-paragraph newlines (matches the LLM's
+        // typical intent — single newlines are visible line breaks).
+        var pbuf = [line];
+        i++;
+        while (i < lines.length && !/^\\s*$/.test(lines[i]) && !isBlockStart(lines[i])) {
+          pbuf.push(lines[i]);
+          i++;
+        }
+        var p = document.createElement('p');
+        for (var pi = 0; pi < pbuf.length; pi++) {
+          if (pi > 0) p.appendChild(document.createElement('br'));
+          renderInlineInto(p, pbuf[pi]);
+        }
+        parent.appendChild(p);
+      }
+    }
+
+    function isBlockStart(line) {
+      return /^\\s*$/.test(line)
+        || /^(#{1,6})\\s+/.test(line)
+        || /^\\s*[-*+]\\s+/.test(line)
+        || /^\\s*\\d+[.)]\\s+/.test(line)
+        || /^>\\s?/.test(line)
+        || /^\\s*\`\`\`/.test(line);
+    }
+
+    // Renders inline markdown — bold (**…**), italic (*…* or _…_),
+    // inline code (\`…\`) and links ([text](url)) — into a parent
+    // element. Citation markers [N] are left as literal text nodes so
+    // substituteCitationMarkers can swap them after the fact.
+    function renderInlineInto(parent, text) {
+      // Order matters: code spans are matched first so their contents
+      // are treated literally and don't get re-parsed for bold/italic.
+      var pattern = /(\`[^\`\\n]+\`)|(\\*\\*[^*\\n]+\\*\\*)|(__[^_\\n]+__)|(\\*[^*\\n]+\\*)|(_[^_\\n]+_)|(\\[([^\\]\\n]+)\\]\\(([^)\\s]+)\\))/g;
+      var lastIndex = 0;
+      var match;
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          parent.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        if (match[1]) {
+          var c = document.createElement('code');
+          c.textContent = match[1].slice(1, -1);
+          parent.appendChild(c);
+        } else if (match[2]) {
+          var s = document.createElement('strong');
+          s.textContent = match[2].slice(2, -2);
+          parent.appendChild(s);
+        } else if (match[3]) {
+          var s2 = document.createElement('strong');
+          s2.textContent = match[3].slice(2, -2);
+          parent.appendChild(s2);
+        } else if (match[4]) {
+          var e = document.createElement('em');
+          e.textContent = match[4].slice(1, -1);
+          parent.appendChild(e);
+        } else if (match[5]) {
+          var e2 = document.createElement('em');
+          e2.textContent = match[5].slice(1, -1);
+          parent.appendChild(e2);
+        } else if (match[6]) {
+          // Link [text](url). Sanitise the URL — only http/https/mailto
+          // are allowed through; other schemes (javascript:, data:) get
+          // rendered as plain text so the bubble can't open an exec
+          // vector even with a maliciously crafted upstream document.
+          var label = match[7];
+          var url = match[8];
+          if (/^(https?:|mailto:)/i.test(url)) {
+            var a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = label;
+            parent.appendChild(a);
+          } else {
+            parent.appendChild(document.createTextNode(match[6]));
+          }
+        }
+        lastIndex = pattern.lastIndex;
+      }
+      if (lastIndex < text.length) {
+        parent.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+    }
+
+    // Walks every text node under \`root\` and replaces [N] runs with
+    // cite-marker chips. Called after renderMarkdownInto so the markers
+    // can sit inside formatted spans (e.g. inside **bold** or a list
+    // item) without breaking the markdown structure.
+    function substituteCitationMarkers(root, validMarkers) {
+      var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+      var nodes = [];
+      var n;
+      while ((n = walker.nextNode())) nodes.push(n);
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (!/\\[\\d+\\]/.test(node.nodeValue)) continue;
+        var parts = node.nodeValue.split(/(\\[\\d+\\])/g);
+        var frag = document.createDocumentFragment();
+        for (var p = 0; p < parts.length; p++) {
+          var m = parts[p].match(/^\\[(\\d+)\\]$/);
+          if (m) {
+            frag.appendChild(buildCiteMarker(parseInt(m[1], 10), !!validMarkers[parseInt(m[1], 10)]));
+          } else if (parts[p]) {
+            frag.appendChild(document.createTextNode(parts[p]));
+          }
+        }
+        node.parentNode.replaceChild(frag, node);
+      }
+    }
+
+    function buildCiteMarker(n, isValid) {
+      // Use <button> for valid markers so they're focusable and tappable;
+      // hallucinated markers stay as <span> (non-interactive — there's
+      // nothing to navigate to) but get an aria-label for screen readers.
+      var sup;
+      if (isValid) {
+        sup = document.createElement('button');
+        sup.type = 'button';
+        sup.setAttribute('aria-label', 'Source ' + n);
+        sup.title = 'Source ' + n;
+        (function (markerN) {
+          sup.addEventListener('click', function () {
+            var msg = sup.closest('.msg');
+            if (!msg) return;
+            var target = msg.querySelector('[data-cite-id="' + markerN + '"]');
+            if (target && typeof target.scrollIntoView === 'function') {
+              target.scrollIntoView({ block: 'nearest' });
+            }
+          });
+        })(n);
+      } else {
+        sup = document.createElement('span');
+        sup.setAttribute('aria-label', 'Unmatched citation marker ' + n);
+        sup.title = 'Marker [' + n + '] has no matching citation';
+      }
+      sup.className = 'cite-marker' + (isValid ? '' : ' cite-bad');
+      sup.textContent = String(n);
+      return sup;
     }
 
     // Re-renders an assistant bubble with [N] markers replaced by superscript
@@ -968,45 +1249,11 @@ export function GET(request: NextRequest): Response {
       for (var i = 0; i < citations.length; i++) {
         validMarkers[citations[i].marker] = true;
       }
+      // Re-render the markdown so formatting survives the citation pass,
+      // then walk text nodes to swap [N] runs for cite-marker chips.
       span.textContent = '';
-      var parts = fullText.split(/(\\[\\d+\\])/g);
-      for (var p = 0; p < parts.length; p++) {
-        var part = parts[p];
-        var match = part.match(/^\\[(\\d+)\\]$/);
-        if (match) {
-          var n = parseInt(match[1], 10);
-          var isValid = !!validMarkers[n];
-          // Use <button> for valid markers so they're focusable and tappable;
-          // hallucinated markers stay as <span> (non-interactive — there's
-          // nothing to navigate to) but get an aria-label for screen readers.
-          var sup;
-          if (isValid) {
-            sup = document.createElement('button');
-            sup.type = 'button';
-            sup.setAttribute('aria-label', 'Source ' + n);
-            sup.title = 'Source ' + n;
-            (function (markerN) {
-              sup.addEventListener('click', function () {
-                var msg = sup.closest('.msg');
-                if (!msg) return;
-                var target = msg.querySelector('[data-cite-id="' + markerN + '"]');
-                if (target && typeof target.scrollIntoView === 'function') {
-                  target.scrollIntoView({ block: 'nearest' });
-                }
-              });
-            })(n);
-          } else {
-            sup = document.createElement('span');
-            sup.setAttribute('aria-label', 'Unmatched citation marker ' + n);
-            sup.title = 'Marker [' + n + '] has no matching citation';
-          }
-          sup.className = 'cite-marker' + (isValid ? '' : ' cite-bad');
-          sup.textContent = String(n);
-          span.appendChild(sup);
-        } else if (part) {
-          span.appendChild(document.createTextNode(part));
-        }
-      }
+      renderMarkdownInto(span, fullText);
+      substituteCitationMarkers(span, validMarkers);
 
       var msgDiv = span.parentElement;
       if (!msgDiv) return;
@@ -1409,7 +1656,7 @@ export function GET(request: NextRequest): Response {
                 assistantSpan.textContent = '';
               } else if (evt.type === 'content' && typeof evt.data.delta === 'string') {
                 fullText += evt.data.delta;
-                assistantSpan.textContent = fullText;
+                setAssistantText(assistantSpan, fullText);
                 messagesEl.scrollTop = messagesEl.scrollHeight;
                 statusEl.style.display = 'none';
               } else if (evt.type === 'content_reset') {
@@ -1423,7 +1670,11 @@ export function GET(request: NextRequest): Response {
               } else if (evt.type === 'approval_required' && evt.data.pendingApproval) {
                 renderApprovalCard(evt.data.pendingApproval);
               } else if (evt.type === 'error') {
-                assistantSpan.textContent = fullText || 'Something went wrong.';
+                if (fullText) {
+                  setAssistantText(assistantSpan, fullText);
+                } else {
+                  assistantSpan.textContent = 'Something went wrong.';
+                }
                 // Drop any citations panel that may have been appended
                 // earlier in the stream — keeping it next to a generic
                 // error bubble would mislead the user.
@@ -1440,7 +1691,11 @@ export function GET(request: NextRequest): Response {
             read();
           }).catch(function(err) {
             if (err && err.name === 'AbortError') return;
-            assistantSpan.textContent = fullText || 'Connection lost.';
+            if (fullText) {
+              setAssistantText(assistantSpan, fullText);
+            } else {
+              assistantSpan.textContent = 'Connection lost.';
+            }
             endStream();
           });
         }
