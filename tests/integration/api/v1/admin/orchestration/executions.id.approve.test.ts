@@ -45,11 +45,16 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+vi.mock('@/lib/orchestration/scheduling', () => ({
+  resumeApprovedExecution: vi.fn(() => Promise.resolve()),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -194,6 +199,12 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(updateArg.where.status).toBe('paused_for_approval');
     expect(updateArg.data.status).toBe('pending');
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
+
+    // Regression: the admin approval route must trigger resume so the run
+    // continues immediately instead of waiting for the maintenance tick.
+    // Channel routes already do this; the admin route used to skip it,
+    // which left runs sitting in PENDING after approval.
+    expect(resumeApprovedExecution).toHaveBeenCalledWith(EXECUTION_ID);
   });
 
   it('returns 400 when notes exceeds 5000 characters', async () => {

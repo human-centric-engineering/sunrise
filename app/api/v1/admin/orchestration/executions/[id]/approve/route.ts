@@ -21,10 +21,12 @@ import { NotFoundError, ValidationError, ConflictError } from '@/lib/api/errors'
 import { validateRequestBody } from '@/lib/api/validation';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { logger } from '@/lib/logging';
 import { approveExecutionBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { executeApproval } from '@/lib/orchestration/approval-actions';
 import { isApproverInTrace } from '@/lib/orchestration/approval-scoping';
+import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -61,6 +63,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       notes: body.notes,
       approvalPayload: body.approvalPayload,
       actorLabel: `admin:${session.user.id}`,
+    });
+    // Fire-and-forget drain so the run continues immediately after approval
+    // instead of waiting for the maintenance tick's `processPendingExecutions`
+    // sweep (~2 min stale threshold + ~60s cron interval). Matches the
+    // chat/embed approval routes in `approval-route-helpers.ts`. The admin
+    // approvals UI already promises "The workflow will resume" — this makes
+    // that promise true without requiring an external cron caller.
+    void resumeApprovedExecution(id).catch((err: unknown) => {
+      logger.error('admin approve: resumeApprovedExecution failed', err, { executionId: id });
     });
     return successResponse(result);
   } catch (err) {
