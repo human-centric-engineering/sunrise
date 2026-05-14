@@ -58,6 +58,10 @@ import {
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
 import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
+import {
+  countOpenAiToolDefinitionTokens,
+  isOpenAiModel,
+} from '@/lib/orchestration/chat/openai-token-counter';
 import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
@@ -613,15 +617,32 @@ export class StreamingChatHandler {
       // slightly (providers strip whitespace), which keeps the strip
       // honest as an upper bound.
       if (request.includeTrace && toolDefinitions.length > 0) {
-        const toolsJson = JSON.stringify(toolDefinitions);
+        // OpenAI doesn't tokenise the raw JSON of tool definitions —
+        // internally each tool is reformatted into a TypeScript
+        // namespace declaration. Counting the reformatted body matches
+        // the model's actual attribution. For non-OpenAI providers
+        // (Anthropic, Gemini) we fall back to the JSON serialisation,
+        // which is still a conservative upper bound; the
+        // `framingOverhead` row absorbs whatever drift remains so the
+        // total reconciles to `usage.inputTokens` exactly.
+        const useOpenAiCounter = isOpenAiModel(resolvedModel);
+        const { tokens, formatted } = useOpenAiCounter
+          ? countOpenAiToolDefinitionTokens(toolDefinitions, resolvedModel)
+          : (() => {
+              const json = JSON.stringify(toolDefinitions);
+              return {
+                tokens: estimateTokens(json, resolvedModel),
+                formatted: json,
+              };
+            })();
         initialBreakdown.toolDefinitions = {
-          tokens: estimateTokens(toolsJson, resolvedModel),
-          chars: toolsJson.length,
+          tokens,
+          chars: formatted.length,
           count: toolDefinitions.length,
           names: toolDefinitions.map((t) => t.name),
-          content: toolsJson,
+          content: formatted,
         };
-        initialBreakdown.totalEstimated += initialBreakdown.toolDefinitions.tokens;
+        initialBreakdown.totalEstimated += tokens;
       }
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
