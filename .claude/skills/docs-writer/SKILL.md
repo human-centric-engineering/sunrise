@@ -1,29 +1,10 @@
 ---
 name: docs-writer
-version: 1.0.0
 description: |
   Documentation writer for Sunrise's .context/ substrate. Creates and updates
   documentation following established patterns: actionable over descriptive,
   project-specific quirks, anti-patterns first, verified against actual code.
   Use when adding documentation for new features or updating existing docs.
-
-triggers:
-  - 'document this'
-  - 'update documentation'
-  - 'write docs for'
-  - 'add to .context'
-  - 'document the'
-
-contexts:
-  - '.context/substrate.md'
-  - '.context/guidelines.md'
-  - '.context/workflow.md'
-  - 'CLAUDE.md'
-
-parameters:
-  doc_location: '.context/'
-  format: 'markdown'
-  style: 'ai-optimized'
 ---
 
 # Documentation Writer Skill

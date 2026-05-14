@@ -1,6 +1,5 @@
 ---
 name: orchestration-agent-architect
-version: 1.0.0
 description: |
   Architect for Sunrise's agent orchestration system. Designs agentic solutions
   by selecting from 21 design patterns, composing multi-pattern architectures,
@@ -10,36 +9,6 @@ description: |
   agent that can look up orders", "design an AI pipeline", or "why is my agent
   hallucinating". This skill handles the DESIGN phase; the orchestration-solution-builder
   skill handles IMPLEMENTATION.
-
-triggers:
-  - 'design an agent'
-  - 'I need an agent'
-  - 'build me a chatbot'
-  - 'agentic solution'
-  - 'agent architecture'
-  - 'which patterns should I use'
-  - 'why is my agent'
-  - 'debug agent'
-  - 'agent keeps hallucinating'
-  - 'optimize agent costs'
-
-contexts:
-  - '.context/orchestration/meta/functional-specification.md'
-  - '.context/admin/orchestration.md'
-  - '.context/admin/orchestration-solution-builder.md'
-  - '.context/orchestration/engine.md'
-  - 'lib/orchestration/engine/step-registry.ts'
-  - 'types/orchestration.ts'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - zod: '/colinhacks/zod'
-
-parameters:
-  pattern_count: 21
-  sunrise_step_types: 15
-  sunrise_templates: 12
 ---
 
 # Agent Architect

@@ -1,6 +1,5 @@
 ---
 name: orchestration-solution-builder
-version: 1.0.0
 description: |
   End-to-end orchestration solution builder for Sunrise. Takes a business
   problem — "build me a customer support chatbot", "I need an AI assistant
@@ -10,49 +9,6 @@ description: |
   from problem description to running system. Use when building complete
   agentic solutions, implementing an architecture from agent-architect, or
   setting up a new agent system from scratch.
-
-triggers:
-  - 'build orchestration solution'
-  - 'build agentic solution'
-  - 'create agent system'
-  - 'build agent pipeline'
-  - 'implement orchestration'
-  - 'implement this design'
-  - 'end to end agent'
-  - 'build me a chatbot'
-  - 'I need an AI assistant that'
-  - 'build a complete agent'
-  - 'set up the whole agent system'
-  - 'implement the agent architecture'
-  - 'build this from scratch'
-
-contexts:
-  - '.context/orchestration/meta/functional-specification.md'
-  - '.context/admin/orchestration.md'
-  - '.context/admin/orchestration-solution-builder.md'
-  - '.context/admin/orchestration-capabilities-guide.md'
-  - '.context/admin/orchestration-workflows-guide.md'
-  - '.context/orchestration/knowledge.md'
-  - '.context/orchestration/engine.md'
-  - '.context/orchestration/capabilities.md'
-  - 'lib/orchestration/capabilities/built-in/*.ts'
-  - 'lib/orchestration/capabilities/registry.ts'
-  - 'lib/orchestration/engine/step-registry.ts'
-  - 'prisma/seeds/data/templates/*.ts'
-  - 'types/orchestration.ts'
-  - 'lib/validations/orchestration.ts'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - zod: '/colinhacks/zod'
-
-parameters:
-  complexity_tiers: ['simple', 'moderate', 'complex']
-  # Fresh installs ship with no providers. The setup wizard creates the
-  # first provider; thereafter agents reference whatever the operator wired.
-  # No hardcoded defaults — the model matrix + agent-resolver pick the
-  # actual model per TaskType (routing / chat / reasoning / embeddings / audio).
 ---
 
 # Solution Builder Skill
