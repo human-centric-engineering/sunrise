@@ -574,6 +574,7 @@ Available type exports from `@/lib/security`:
 
 ## Related Documentation
 
+- [Security Gotchas](./gotchas.md) - Anti-patterns and the right way to use each primitive
 - [Auth Security](../auth/security.md) - Authentication-specific security
 - [API Headers](../api/headers.md) - HTTP headers and middleware
 - [Environment Configuration](../environment/overview.md) - Security-related env vars
