@@ -4,6 +4,32 @@ Document ingestion, chunking, embeddings, and vector search for the agent knowle
 
 **HTTP surface:** see [`admin-api.md`](./admin-api.md) — the "Knowledge Base" section covers the admin routes (`/search`, `/patterns`, `/patterns/:number`, `/documents`, `/documents/:id`, `/documents/:id/rechunk`, `/documents/:id/retry`, `/documents/:id/confirm`, `/documents/:id/chunks`, `/documents/:id/enrich-keywords`, `/documents/bulk`, `/documents/fetch-url`, `/seed`, `/tags`, `/embed`, `/embedding-status`, `/graph`, `/embeddings`).
 
+## Embedding model & KB grouping
+
+Two related concepts that determine where vectors live and how they're sized.
+
+### Active embedding model
+
+`AiOrchestrationSettings.activeEmbeddingModelId` is a nullable FK to `AiProviderModel`. When set, it's the single source of truth for which model the embedder uses and which dimension it produces; when null, the legacy provider-priority resolver runs (Voyage → local → OpenAI, all coerced to 1536).
+
+`resolveActiveEmbeddingConfig()` in `embedder.ts` reads this FK, loads the matrix row, and validates four gates: row exists, `isActive: true`, `capabilities ∋ 'embedding'`, `dimensions > 0`. Failing any gate falls back to the legacy chain with a warning log — the picked model isn't usable, so we don't break embeddings outright.
+
+**Switching models is a multi-step operation.** pgvector locks dimension at the column level, so:
+
+1. Admin picks a new active model on the orchestration settings page.
+2. Operator runs `npm run embeddings:reset` (drops + recreates the vector columns at the new dim, truncates `ai_knowledge_chunk` / `ai_knowledge_document` / `ai_message_embedding`, rebuilds HNSW indexes — **only those three tables**, never `db:reset`).
+3. Operator re-uploads documents through the admin UI.
+
+Skipping step 2 doesn't silently produce wrong results — search calls `assertActiveModelMatchesStoredVectors()` first, which samples one chunk's `embeddingDimension` and throws a directive error pointing at the reset script when it disagrees with the active model. The settings form surfaces the same notice inline after a dim-changing save.
+
+**Provenance.** Every chunk and message-embedding row records the `embeddingModel`, `embeddingProvider`, and `embeddingDimension` that produced its vector. Don't infer dim from model id — matryoshka-truncated `text-embedding-3-large` at 1536 shares the model id with native 3072 but is a different vector space.
+
+### Knowledge bases
+
+`AiKnowledgeBase` is a grouping above documents. Every `AiKnowledgeDocument.knowledgeBaseId` is required; a seeded `kb_default` row catches uploads that don't specify one (production code references `DEFAULT_KNOWLEDGE_BASE_ID` from `document-manager.ts`).
+
+Today the system is single-corpus — every document goes to `kb_default`, the picker UI is intentionally deferred. The model exists now so the future "per-KB embedding model" feature is a non-breaking additive change (add `embeddingSpaceId` to `AiKnowledgeBase`, route writes by space, partition chunks by physical table per dim) rather than a schema refactor. Don't build the per-KB UI until a real multi-corpus use case lands.
+
 ## Tags and Indexed Keywords
 
 Two concepts that look similar but do different things. The current model:
@@ -295,7 +321,7 @@ Chunks are written with `embedding: NULL` when no active embedding provider is c
 
 **Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive — the seed flow also calls it after inserting chunks. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when either `AiProviderConfig` has an active row **or** `OPENAI_API_KEY` is set in env, so the admin UI can disable the "Generate Embeddings" button until at least one is configured.
 
-**Provider priority:** `resolveProvider()` in `embedder.ts` selects the embedding provider in this order: (1) Voyage AI — best retrieval quality, free tier; (2) Local provider (e.g. Ollama) — cheaper/faster; (3) OpenAI-compatible with custom `baseUrl`; (4) OpenAI API directly via `OPENAI_API_KEY`. This chain is internal to the embedder — callers don't specify the provider.
+**Provider resolution.** `resolveProvider()` in `embedder.ts` first checks `AiOrchestrationSettings.activeEmbeddingModelId` via `resolveActiveEmbeddingConfig()`; an operator-picked model wins, with model id + dim + `schemaCompatible` flag coming from the `AiProviderModel` row and `baseUrl` + `apiKey` from the matching `AiProviderConfig`. When no model is picked (or the picked row fails the validity gates), it falls back to the legacy priority chain: (1) Voyage AI; (2) local provider (e.g. Ollama); (3) OpenAI-compatible with custom `baseUrl`; (4) OpenAI API directly via `OPENAI_API_KEY`. The fallback always reports 1536-dim — every branch is configured to produce that. See "Active embedding model" at the top of this doc for the switching workflow.
 
 **Idempotency:** `/embed` only touches chunks with `NULL` embeddings, so it is safe to call repeatedly. A completed run is a cheap no-op.
 
@@ -311,6 +337,10 @@ Chunks are written with `embedding: NULL` when no active embedding provider is c
 
 **Don't** import from `next/*` inside `lib/orchestration/knowledge/` — keep it platform-agnostic. HTTP wrapping lives in `app/api/v1/admin/orchestration/knowledge/*`.
 
+**Don't** change `activeEmbeddingModelId` and skip `npm run embeddings:reset`. Search will refuse to run (`assertActiveModelMatchesStoredVectors` throws) and the message-embedder will crash on the `::vector` cast; both are intentional fail-fast paths, not bugs.
+
+**Don't** run `npm run db:reset` to "fix" a dim mismatch — it wipes users, sessions, settings, providers, and every other table. `npm run embeddings:reset` is narrowly scoped to the three embedding/chunk/document tables.
+
 ## Related Documentation
 
 - [Document Ingestion Pipeline](./document-ingestion.md) — multi-format parser architecture, PDF preview flow
@@ -318,5 +348,6 @@ Chunks are written with `embedding: NULL` when no active embedding provider is c
 - [Capabilities](./capabilities.md) — `search_knowledge_base` and `get_pattern_detail` built-in tools that consume this layer
 - [Streaming Chat](./chat.md) — `buildContext` uses `getPatternDetail` for locked-context injection
 - [Knowledge Base UI](../admin/orchestration-knowledge-ui.md) — admin interface documentation
-- `prisma/schema.prisma` — `AiKnowledgeDocument`, `AiKnowledgeChunk` models
+- `prisma/schema.prisma` — `AiKnowledgeBase`, `AiKnowledgeDocument`, `AiKnowledgeChunk`, `AiMessageEmbedding` models
+- `scripts/embeddings-reset.ts` — narrowly-scoped reset script invoked by `npm run embeddings:reset`
 - `lib/validations/orchestration.ts` — `knowledgeSearchSchema`, `listDocumentsQuerySchema`, `confirmDocumentPreviewSchema`

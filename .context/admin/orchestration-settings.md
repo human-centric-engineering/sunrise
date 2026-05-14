@@ -78,6 +78,16 @@ All fields use `<FieldHelp>` popovers for contextual help.
 
 **Submit:** PATCHes `API.ADMIN.ORCHESTRATION.SETTINGS` with the form values. Sticky save button with dirty-state tracking (includes escalation email changes) and "Saved" indicator.
 
+### `ActiveEmbeddingModelForm`
+
+`components/admin/orchestration/active-embedding-model-form.tsx`
+
+Renders between `DefaultModelsForm` and `SettingsForm`. Picks `AiOrchestrationSettings.activeEmbeddingModelId` — the FK that drives which model the embedder uses and which dimension the `ai_knowledge_chunk` / `ai_message_embedding` vector columns are sized for.
+
+Distinct from the `embeddings` slot in `DefaultModelsForm`: that's the per-task default consumed by `getDefaultModelForTask('embeddings')` (chat-only registry view). This picker is FK-driven against the matrix — only rows with `capabilities ∋ 'embedding'`, `isActive: true`, and non-null `dimensions` appear, populated via `GET /provider-models?capability=embedding&isActive=true`.
+
+The form supports clearing back to the legacy provider-priority fallback (Voyage → local → OpenAI, 1536-dim). After any save that changes the dimension it renders an inline amber notice instructing the operator to run `npm run embeddings:reset` and re-upload — pgvector locks dimension at the column level so the picker alone doesn't migrate stored vectors. See [Knowledge Base — Active embedding model](../orchestration/knowledge.md#active-embedding-model) for the full switching workflow and the search-side validation that catches drift.
+
 ### `BackupPanel`
 
 `components/admin/orchestration/settings/backup-panel.tsx`
