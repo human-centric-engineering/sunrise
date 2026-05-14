@@ -705,7 +705,9 @@ Validated by `approveExecutionBodySchema` (`approvalPayload` optional object, `n
 
 1. Auth + rate limit + CUID + ownership check (cross-user → **404**).
 2. Rejects with **400** if `execution.status !== 'paused_for_approval'`.
-3. Flips the row's `status` from `paused_for_approval` → `running`, persists `approvalPayload` onto the awaiting step's trace entry (marking it `status: 'completed'` with `approvalPayload` merged into its `output`), and returns:
+3. Flips the row's `status` from `paused_for_approval` → `pending`, persists `approvalPayload` onto the awaiting step's trace entry (marking it `status: 'completed'` with `approvalPayload` merged into its `output`).
+4. Fire-and-forget calls `resumeApprovedExecution(id)` (`lib/orchestration/scheduling/scheduler.ts`) to drain the engine immediately. `claimLease` inside `initRun` then transitions `pending → running` and the workflow continues from `currentStep`. Resume failures are caught and logged — they can't fail the approve response, since the approval itself is already committed.
+5. Returns:
 
 ```json
 {
@@ -714,7 +716,7 @@ Validated by `approveExecutionBodySchema` (`approvalPayload` optional object, `n
 }
 ```
 
-The client is then expected to reconnect via `POST /workflows/:id/execute?resumeFromExecutionId=<id>` to drain the remaining events. This keeps the engine stateless between HTTP boundaries.
+The client does not need to reconnect — the engine drains in the background. Clients that want to watch progress can poll `GET /executions/:id` or `GET /executions/:id/status`, or stream events by passing `?resumeFromExecutionId=<id>` to `POST /workflows/:id/execute` if SSE is preferred.
 
 ### Cancel execution
 
