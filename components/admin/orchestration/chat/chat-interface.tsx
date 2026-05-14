@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Download, Lightbulb, Loader2, Send, Trash2 } from 'lucide-react';
+import { AlertTriangle, Download, Lightbulb, Loader2, Send, X } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -943,31 +943,63 @@ export function ChatInterface({
       */}
       <div className="flex flex-col gap-2 border-t p-3">
         <div className="flex items-end gap-2">
-          <Textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={streaming}
-            rows={1}
-            // Auto-grows up to ~8 lines (160px). The autosize effect
-            // below resets and recomputes height on every value change.
-            // `resize-none` hides the manual drag handle so the textarea
-            // looks like a single-line input that just happens to grow.
-            className="max-h-[160px] min-h-[36px] resize-none py-2 leading-snug"
-            onKeyDown={(e) => {
-              // Skip Enter-to-send while an IME composition is in
-              // progress (Japanese/Chinese input). The composition
-              // confirmation also dispatches Enter; treating it as
-              // "send" would drop the in-progress glyph.
-              if (e.nativeEvent.isComposing) return;
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                e.stopPropagation();
-                handleSend(e);
-              }
-            }}
-          />
+          <div className="relative flex-1">
+            <Textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type a message..."
+              disabled={streaming}
+              rows={1}
+              // Auto-grows up to ~8 lines (160px). The autosize effect
+              // below resets and recomputes height on every value change.
+              // `resize-none` hides the manual drag handle so the textarea
+              // looks like a single-line input that just happens to grow.
+              // `pr-9` reserves room for the in-field clear button so
+              // long input doesn't slide under the X icon.
+              className="max-h-[160px] min-h-[36px] resize-none py-2 pr-9 leading-snug"
+              onKeyDown={(e) => {
+                // Skip Enter-to-send while an IME composition is in
+                // progress (Japanese/Chinese input). The composition
+                // confirmation also dispatches Enter; treating it as
+                // "send" would drop the in-progress glyph.
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSend(e);
+                }
+              }}
+            />
+            {showClearButton && messages.length > 0 && !streaming && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground absolute top-1 right-1 h-7 w-7"
+                    aria-label="Clear conversation"
+                    title="Clear conversation"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will remove all messages. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
           {suggestionPool && suggestionPool.length > 0 && messages.length > 0 && (
             <Button
               type="button"
@@ -1009,34 +1041,6 @@ export function ChatInterface({
                 })
               }
             />
-          )}
-          {showClearButton && messages.length > 0 && !streaming && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-9 w-9 shrink-0"
-                  aria-label="Clear conversation"
-                  title="Clear conversation"
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Clear conversation?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will remove all messages. This cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => void handleClear()}>Clear</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
           )}
           <Button
             type="button"
