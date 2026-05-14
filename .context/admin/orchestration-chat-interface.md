@@ -89,7 +89,8 @@ Network failures trigger up to 3 reconnect attempts with exponential backoff (1s
 Once the conversation has at least one message, the pre-conversation "Try asking:" grid is hidden. In its place a collapsible **Suggested prompts** disclosure appears beneath the top action cluster:
 
 - Chevron toggle on the left; default closed so it doesn't compete with the assistant body.
-- Shuffle icon next to the toggle — only renders when `onResampleStarters` is provided. (Quiz Master keeps its static four prompts and gets no shuffle; the advisor reuses its pool sampler.)
+- **Auto-randomises on every open** when `onResampleStarters` is provided — the callback fires on the closed → open transition only (closing is a no-op). Surfaces without a resample handler (e.g. quiz) just toggle the panel; the static prompts stay put.
+- Shuffle icon next to the toggle — only renders when `onResampleStarters` is provided. Useful for explicit re-rolls while the panel is already open. (Quiz Master keeps its static four prompts and gets no shuffle; the advisor reuses its pool sampler.)
 - Expanding the disclosure reveals the same `starterPrompts` as buttons. Clicking one sends it as a fresh user turn and closes the panel implicitly on the next render (the panel hides while streaming).
 
 Hidden during streaming so the toggle button doesn't fight whichever in-flight controls are active.

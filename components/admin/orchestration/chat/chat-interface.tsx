@@ -1095,7 +1095,18 @@ export function ChatInterface({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => setShowSuggestedPrompts((v) => !v)}
+              onClick={() => {
+                // Re-sample on every open so the user gets fresh
+                // prompts each time the panel reveals — same UX as
+                // pressing the shuffle icon, but folded into the
+                // open gesture. Closing is a no-op. Surfaces without
+                // a pool (quiz) leave `onResampleStarters` unset and
+                // simply toggle.
+                if (!showSuggestedPrompts) {
+                  onResampleStarters?.();
+                }
+                setShowSuggestedPrompts((v) => !v);
+              }}
               className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs font-medium"
               aria-expanded={showSuggestedPrompts}
               aria-controls="suggested-prompts-panel"

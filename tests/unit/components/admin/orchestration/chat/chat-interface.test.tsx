@@ -1941,5 +1941,46 @@ describe('ChatInterface', () => {
       });
       expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
     });
+
+    it('auto-randomises every time the user opens the disclosure', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+
+      // First open → resample fires once.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(1);
+
+      // Close → no resample on collapse.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(1);
+
+      // Re-open → resamples again.
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(onResample).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not throw when opening the disclosure without a resample handler', async () => {
+      // Quiz path: no callback. The header still toggles the panel
+      // open and the absence of `onResampleStarters` must not crash.
+      const user = userEvent.setup();
+      render(<ChatInterface agentSlug="quiz-master" starterPrompts={['A', 'B']} />);
+      await sendFirstTurn(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /suggested prompts/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
+      expect(screen.getByTestId('suggested-prompts-panel')).toBeInTheDocument();
+    });
   });
 });
