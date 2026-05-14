@@ -49,7 +49,14 @@ import { useTypingAnimation } from '@/lib/hooks/use-typing-animation';
 import { ThinkingIndicator } from '@/components/admin/orchestration/chat/thinking-indicator';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
-import type { Citation, PendingApproval, ToolCallTrace } from '@/types/orchestration';
+import { InputBreakdownPopover } from '@/components/admin/orchestration/chat/input-breakdown-popover';
+import type {
+  Citation,
+  InputBreakdown,
+  PendingApproval,
+  TokenUsage,
+  ToolCallTrace,
+} from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
 import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
@@ -204,6 +211,17 @@ interface ChatMessage {
    * sends don't read as an empty message.
    */
   attachmentCount?: number;
+  /** Approximate cost of this turn in USD (LLM + capabilities). Admin-only. */
+  costUsd?: number;
+  /** Token accounting for this turn. Admin-only. */
+  tokenUsage?: TokenUsage;
+  /** Model id reported on the `done` event. Admin-only. */
+  modelUsed?: string;
+  /**
+   * Per-section input-token breakdown supplied by the server. Powers
+   * the "why N input tokens?" popover. Admin-only.
+   */
+  inputBreakdown?: InputBreakdown;
 }
 
 interface PersistedChatState {
@@ -220,6 +238,17 @@ interface PersistedChatState {
  * of a turn before any text has streamed, but the assistant placeholder
  * is always appended at send-time so the guard is a defensive belt.
  */
+/**
+ * Format a USD cost for the inline admin strip. Sub-cent values keep
+ * four decimals so they don't all collapse to "$0.00"; larger amounts
+ * fall back to standard two-decimal currency.
+ */
+function formatCostUsd(value: number): string {
+  if (!Number.isFinite(value)) return '$0.0000';
+  if (Math.abs(value) < 1) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
+}
+
 function appendToolTrace(prev: ChatMessage[], traces: ToolCallTrace[]): ChatMessage[] {
   if (traces.length === 0) return prev;
   const updated = [...prev];
@@ -676,6 +705,35 @@ export function ChatInterface({
               } else if (parsed.type === 'done') {
                 setWarning(null);
                 typing.flush();
+                if (showInlineTrace) {
+                  const typed = parseChatStreamEvent(block);
+                  if (typed?.type === 'done') {
+                    const costUsd = typed.costUsd;
+                    const tokenUsage = typed.tokenUsage;
+                    const modelUsed = typed.model;
+                    const inputBreakdown = typed.inputBreakdown;
+                    if (
+                      typeof costUsd === 'number' ||
+                      tokenUsage !== undefined ||
+                      typeof modelUsed === 'string' ||
+                      inputBreakdown !== undefined
+                    ) {
+                      setMessages((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+                        if (!last || last.role !== 'assistant') return prev;
+                        updated[updated.length - 1] = {
+                          ...last,
+                          ...(typeof costUsd === 'number' ? { costUsd } : {}),
+                          ...(tokenUsage ? { tokenUsage } : {}),
+                          ...(typeof modelUsed === 'string' ? { modelUsed } : {}),
+                          ...(inputBreakdown ? { inputBreakdown } : {}),
+                        };
+                        return updated;
+                      });
+                    }
+                  }
+                }
                 onStreamComplete?.(fullText);
                 return;
               }
@@ -912,6 +970,37 @@ export function ChatInterface({
                     {showInlineTrace && msg.toolCalls && msg.toolCalls.length > 0 && (
                       <MessageTrace toolCalls={msg.toolCalls} />
                     )}
+                    {showInlineTrace && (typeof msg.costUsd === 'number' || msg.tokenUsage) && (
+                      <div className="text-muted-foreground border-border/60 mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t pt-2 text-[11px] tabular-nums">
+                        {typeof msg.costUsd === 'number' && (
+                          <span title="Approximate cost for this turn">
+                            ≈ {formatCostUsd(msg.costUsd)}
+                          </span>
+                        )}
+                        {msg.tokenUsage && (
+                          <span className="flex items-baseline gap-1">
+                            {msg.inputBreakdown ? (
+                              <InputBreakdownPopover
+                                breakdown={msg.inputBreakdown}
+                                reportedInputTokens={msg.tokenUsage.inputTokens}
+                              />
+                            ) : (
+                              <span title="Input tokens for this turn">
+                                {msg.tokenUsage.inputTokens.toLocaleString()} input tokens
+                              </span>
+                            )}
+                            <span>
+                              · {msg.tokenUsage.outputTokens.toLocaleString()} output tokens
+                            </span>
+                          </span>
+                        )}
+                        {msg.modelUsed && (
+                          <span className="font-mono" title="Model used for this turn">
+                            {msg.modelUsed}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {/* Inline status during streaming — shown below content */}
                     {streaming && msg.content && i === messages.length - 1 && status && (
                       <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
@@ -938,6 +1027,43 @@ export function ChatInterface({
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Session cost summary — admin diagnostic strip, sums all assistant turns */}
+      {showInlineTrace &&
+        (() => {
+          let totalCost = 0;
+          let totalIn = 0;
+          let totalOut = 0;
+          let costTurns = 0;
+          for (const m of messages) {
+            if (m.role !== 'assistant') continue;
+            if (typeof m.costUsd === 'number') {
+              totalCost += m.costUsd;
+              costTurns += 1;
+            }
+            if (m.tokenUsage) {
+              totalIn += m.tokenUsage.inputTokens;
+              totalOut += m.tokenUsage.outputTokens;
+            }
+          }
+          if (costTurns === 0 && totalIn === 0 && totalOut === 0) return null;
+          return (
+            <div className="text-muted-foreground border-border/60 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t px-3 py-1.5 text-[11px] tabular-nums">
+              <span className="text-foreground font-medium">Session</span>
+              {costTurns > 0 && (
+                <span title={`Sum across ${costTurns} turn${costTurns === 1 ? '' : 's'}`}>
+                  ≈ {formatCostUsd(totalCost)}
+                </span>
+              )}
+              {(totalIn > 0 || totalOut > 0) && (
+                <span title="Total input / output tokens across the session">
+                  {totalIn.toLocaleString()} input tokens · {totalOut.toLocaleString()} output
+                  tokens
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
       {/* Warning (reconnecting) */}
       {warning && (

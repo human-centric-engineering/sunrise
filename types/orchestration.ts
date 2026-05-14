@@ -559,8 +559,67 @@ export type ChatEvent =
   | { type: 'content_reset'; reason: string }
   | { type: 'citations'; citations: Citation[] }
   | { type: 'approval_required'; pendingApproval: PendingApproval }
-  | { type: 'done'; tokenUsage: TokenUsage; costUsd: number; provider?: string; model?: string }
+  | {
+      type: 'done';
+      tokenUsage: TokenUsage;
+      costUsd: number;
+      provider?: string;
+      model?: string;
+      /**
+       * Admin-only: per-component estimate of input-token usage so the
+       * UI can show why a small user message can still cost hundreds
+       * of tokens (system prompt, tool schemas, history, etc.).
+       *
+       * Only present when the request opted in via `includeTrace: true`.
+       * The total is an *estimate* via the model's tokeniser; it should
+       * be close to but not identical to `tokenUsage.inputTokens`.
+       */
+      inputBreakdown?: InputBreakdown;
+    }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * One slice of input-token usage attributed to a specific source
+ * (system prompt, tool definitions, history, user message, …).
+ *
+ * `content` is the exact text that was tokenised. It may be omitted for
+ * categories where the raw text is too large to ship or already
+ * available elsewhere (e.g. the conversation history — visible in the
+ * chat bubbles already).
+ */
+export interface InputBreakdownPart {
+  tokens: number;
+  chars: number;
+  content?: string;
+}
+
+/**
+ * Per-component breakdown of the input prompt sent to the LLM for one
+ * turn. All sections are optional except `systemPrompt` and
+ * `userMessage` — those two always exist. Values are estimates from
+ * the model's tokeniser and should be treated as approximate.
+ */
+export interface InputBreakdown {
+  systemPrompt: InputBreakdownPart;
+  contextBlock?: InputBreakdownPart;
+  userMemories?: InputBreakdownPart & { count: number };
+  conversationSummary?: InputBreakdownPart;
+  /**
+   * Conversation history (prior user/assistant/tool turns). Content
+   * omitted because it's already visible in the chat thread above.
+   */
+  conversationHistory?: InputBreakdownPart & {
+    messageCount: number;
+    droppedCount: number;
+  };
+  /** Tool / capability definitions serialised as JSON schemas. */
+  toolDefinitions?: InputBreakdownPart & { count: number; names: string[] };
+  /** Estimated tokens consumed by binary attachments (images, PDFs). */
+  attachments?: { tokens: number; count: number };
+  userMessage: InputBreakdownPart;
+  /** Sum of all sections — the estimated total input for the turn. */
+  totalEstimated: number;
+}
 
 /**
  * Inline diagnostic captured per capability dispatch for admin chat

@@ -101,27 +101,29 @@ export function MessageWithCitations({
   };
 
   return (
-    <div className={cn(MARKDOWN_BLOCK_CLASSES, className)}>
-      <Markdown
-        components={{
-          p: ({ children, ...props }) => <p {...props}>{transform(children)}</p>,
-          li: ({ children, ...props }) => <li {...props}>{transform(children)}</li>,
-          h1: ({ children, ...props }) => <h1 {...props}>{transform(children)}</h1>,
-          h2: ({ children, ...props }) => <h2 {...props}>{transform(children)}</h2>,
-          h3: ({ children, ...props }) => <h3 {...props}>{transform(children)}</h3>,
-          h4: ({ children, ...props }) => <h4 {...props}>{transform(children)}</h4>,
-          h5: ({ children, ...props }) => <h5 {...props}>{transform(children)}</h5>,
-          h6: ({ children, ...props }) => <h6 {...props}>{transform(children)}</h6>,
-          blockquote: ({ children, ...props }) => (
-            <blockquote {...props}>{transform(children)}</blockquote>
-          ),
-          td: ({ children, ...props }) => <td {...props}>{transform(children)}</td>,
-          th: ({ children, ...props }) => <th {...props}>{transform(children)}</th>,
-        }}
-      >
-        {encoded}
-      </Markdown>
-      {trailingInline}
+    <>
+      <div className={cn(MARKDOWN_BLOCK_CLASSES, className)}>
+        <Markdown
+          components={{
+            p: ({ children, ...props }) => <p {...props}>{transform(children)}</p>,
+            li: ({ children, ...props }) => <li {...props}>{transform(children)}</li>,
+            h1: ({ children, ...props }) => <h1 {...props}>{transform(children)}</h1>,
+            h2: ({ children, ...props }) => <h2 {...props}>{transform(children)}</h2>,
+            h3: ({ children, ...props }) => <h3 {...props}>{transform(children)}</h3>,
+            h4: ({ children, ...props }) => <h4 {...props}>{transform(children)}</h4>,
+            h5: ({ children, ...props }) => <h5 {...props}>{transform(children)}</h5>,
+            h6: ({ children, ...props }) => <h6 {...props}>{transform(children)}</h6>,
+            blockquote: ({ children, ...props }) => (
+              <blockquote {...props}>{transform(children)}</blockquote>
+            ),
+            td: ({ children, ...props }) => <td {...props}>{transform(children)}</td>,
+            th: ({ children, ...props }) => <th {...props}>{transform(children)}</th>,
+          }}
+        >
+          {encoded}
+        </Markdown>
+        {trailingInline}
+      </div>
 
       {hasCitations && (
         <CitationsPanel
@@ -130,7 +132,7 @@ export function MessageWithCitations({
           onToggle={() => setShowSources((v) => !v)}
         />
       )}
-    </div>
+    </>
   );
 }
 
@@ -212,11 +214,11 @@ interface CitationsPanelProps {
 
 function CitationsPanel({ citations, open, onToggle }: CitationsPanelProps): React.ReactElement {
   return (
-    <aside className="border-border/60 mt-3 border-t pt-2">
+    <aside className="border-border/60 mt-2 border-t pt-2">
       <button
         type="button"
         onClick={onToggle}
-        className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs font-medium"
+        className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-[11px] font-medium"
         aria-expanded={open}
       >
         {open ? (
@@ -232,21 +234,28 @@ function CitationsPanel({ citations, open, onToggle }: CitationsPanelProps): Rea
             <li
               key={c.marker}
               id={`citation-${c.marker}`}
-              className="border-border/40 rounded border p-2"
+              className="border-border/40 bg-muted/40 rounded border p-2"
             >
-              <div className="flex items-baseline gap-2">
-                <span className="text-primary bg-primary/10 inline-flex h-4 min-w-4 items-center justify-center rounded-sm px-1 text-[0.65rem] leading-none font-medium">
+              <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-primary bg-primary/10 inline-flex h-4 min-w-4 items-center justify-center rounded-sm px-1 text-[11px] leading-none font-medium">
                   {c.marker}
                 </span>
-                <span className="text-foreground font-medium">
+                <span className="text-foreground text-[11px] font-medium">
                   {c.documentName ?? c.patternName ?? 'Untitled source'}
                 </span>
-                {c.section && <span className="text-muted-foreground">· {c.section}</span>}
-              </div>
+                {c.section && (
+                  <span className="text-muted-foreground text-[11px]">· {c.section}</span>
+                )}
+              </header>
               {c.excerpt && (
-                <p className="text-muted-foreground mt-1 leading-snug whitespace-pre-wrap">
-                  {c.excerpt}
-                </p>
+                <div
+                  className={cn(
+                    MARKDOWN_BLOCK_CLASSES,
+                    'text-muted-foreground mt-1 text-[11px] leading-snug'
+                  )}
+                >
+                  <Markdown>{c.excerpt}</Markdown>
+                </div>
               )}
             </li>
           ))}

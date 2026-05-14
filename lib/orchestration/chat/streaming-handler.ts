@@ -26,6 +26,7 @@ import { logger } from '@/lib/logging';
 import type {
   ChatEvent,
   Citation,
+  InputBreakdown,
   MessageMetadata,
   PendingApproval,
   ToolCallTrace,
@@ -55,7 +56,8 @@ import {
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
-import { buildMessages } from '@/lib/orchestration/chat/message-builder';
+import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
+import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
@@ -583,7 +585,7 @@ export class StreamingChatHandler {
       const modelInfo = getModel(resolvedModel);
       const contextWindowTokens = agent.maxHistoryTokens ?? modelInfo?.maxContext ?? undefined;
 
-      let messages: LlmMessage[] = buildMessages({
+      const { messages: initialMessages, breakdown: initialBreakdown } = buildMessagesAndBreakdown({
         systemInstructions: agent.systemInstructions,
         contextBlock,
         history: historyRows,
@@ -596,6 +598,7 @@ export class StreamingChatHandler {
         reserveTokens: agent.maxTokens ?? undefined,
         modelId: resolvedModel,
       });
+      let messages: LlmMessage[] = initialMessages;
 
       const capabilityDefinitions = await getCapabilityDefinitions(agent.id);
       const toolDefinitions: LlmToolDefinition[] = capabilityDefinitions.map((def) => ({
@@ -603,6 +606,23 @@ export class StreamingChatHandler {
         description: def.description,
         parameters: def.parameters,
       }));
+
+      // Admin-only: enrich the input breakdown with tool-definition
+      // tokens so the chat UI can attribute scaffolding cost back to
+      // capability schemas. Counting the serialised JSON over-estimates
+      // slightly (providers strip whitespace), which keeps the strip
+      // honest as an upper bound.
+      if (request.includeTrace && toolDefinitions.length > 0) {
+        const toolsJson = JSON.stringify(toolDefinitions);
+        initialBreakdown.toolDefinitions = {
+          tokens: estimateTokens(toolsJson, resolvedModel),
+          chars: toolsJson.length,
+          count: toolDefinitions.length,
+          names: toolDefinitions.map((t) => t.name),
+          content: toolsJson,
+        };
+        initialBreakdown.totalEstimated += initialBreakdown.toolDefinitions.tokens;
+      }
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
         resolvedBinding.providerSlug,
@@ -1012,7 +1032,12 @@ export class StreamingChatHandler {
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
-          yield buildDoneEvent(resolvedModel, u, resolvedProviderSlug);
+          yield buildDoneEvent(
+            resolvedModel,
+            u,
+            resolvedProviderSlug,
+            request.includeTrace ? initialBreakdown : undefined
+          );
           return;
         }
 
@@ -1215,7 +1240,12 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
+            yield buildDoneEvent(
+              resolvedModel,
+              usage,
+              resolvedProviderSlug,
+              request.includeTrace ? initialBreakdown : undefined
+            );
             return;
           }
 
@@ -1447,7 +1477,12 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            yield buildDoneEvent(resolvedModel, usage, resolvedProviderSlug);
+            yield buildDoneEvent(
+              resolvedModel,
+              usage,
+              resolvedProviderSlug,
+              request.includeTrace ? initialBreakdown : undefined
+            );
             return;
           }
 
@@ -1770,7 +1805,8 @@ function extractPendingApproval(slug: string, result: unknown): PendingApproval 
 function buildDoneEvent(
   model: string,
   usage: { inputTokens: number; outputTokens: number } | null,
-  providerSlug?: string | null
+  providerSlug?: string | null,
+  inputBreakdown?: InputBreakdown
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
@@ -1785,5 +1821,6 @@ function buildDoneEvent(
     costUsd,
     provider: providerSlug ?? undefined,
     model,
+    ...(inputBreakdown ? { inputBreakdown } : {}),
   };
 }
