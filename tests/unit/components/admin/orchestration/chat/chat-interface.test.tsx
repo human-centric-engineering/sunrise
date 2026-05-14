@@ -287,12 +287,15 @@ describe('ChatInterface', () => {
     await user.type(input, 'Tell me about deposit rules');
     await user.click(screen.getByRole('button', { name: /send/i }));
 
-    // Marker chip and panel both render in the assistant message.
+    // Marker chip and panel heading render straight away; the panel
+    // contents are only revealed once the user expands the (default-
+    // collapsed) sources list.
     await waitFor(() => {
       expect(screen.getByLabelText('Citation 1')).toBeInTheDocument();
       expect(screen.getByText('Sources (1)')).toBeInTheDocument();
-      expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     });
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
+    expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
   });
 
   it('does not transform [N] literals when no citations event fires', async () => {

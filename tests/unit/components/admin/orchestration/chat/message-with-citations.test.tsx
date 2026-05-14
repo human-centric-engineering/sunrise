@@ -45,7 +45,8 @@ describe('MessageWithCitations', () => {
     expect(link2).toHaveAttribute('href', '#citation-2');
   });
 
-  it('renders the citations panel with one entry per citation', () => {
+  it('renders the citations panel with one entry per citation', async () => {
+    const user = userEvent.setup();
     const citations = [
       makeCitation({ marker: 1, documentName: 'Tenancy Guide', section: 'Page 12' }),
       makeCitation({
@@ -56,7 +57,9 @@ describe('MessageWithCitations', () => {
       }),
     ];
     render(<MessageWithCitations content="Foo [1] [2]" citations={citations} />);
+    // Sources panel is collapsed by default — expand it to inspect rows.
     expect(screen.getByText('Sources (2)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /sources \(2\)/i }));
     expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     expect(screen.getByText('Renters Reform Act')).toBeInTheDocument();
     expect(screen.getByText(/Notice must give two months/)).toBeInTheDocument();
@@ -73,7 +76,8 @@ describe('MessageWithCitations', () => {
     );
   });
 
-  it('falls back to patternName when documentName is missing', () => {
+  it('falls back to patternName when documentName is missing', async () => {
+    const user = userEvent.setup();
     const citations = [
       makeCitation({
         documentName: null,
@@ -81,6 +85,7 @@ describe('MessageWithCitations', () => {
       }),
     ];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     expect(screen.getByText('ReAct')).toBeInTheDocument();
   });
 
@@ -88,16 +93,20 @@ describe('MessageWithCitations', () => {
     const user = userEvent.setup();
     render(<MessageWithCitations content="See [1]" citations={[makeCitation()]} />);
     const toggle = screen.getByRole('button', { name: /sources \(1\)/i });
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await user.click(toggle);
+    // Panel starts collapsed — the body of the message is the primary
+    // content; sources expand on demand.
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('omits the section span when section is null', () => {
+  it('omits the section span when section is null', async () => {
+    const user = userEvent.setup();
     const citations = [makeCitation({ section: null })];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     const list = screen.getByRole('list');
     expect(within(list).queryByText(/·/)).not.toBeInTheDocument();
   });
@@ -106,8 +115,8 @@ describe('MessageWithCitations', () => {
     const user = userEvent.setup();
     render(<MessageWithCitations content="See [1]" citations={[makeCitation({ marker: 1 })]} />);
     const toggle = screen.getByRole('button', { name: /sources \(1\)/i });
-    // Collapse the panel first so we can verify the click re-opens it.
-    await user.click(toggle);
+    // Panel is collapsed by default; clicking a citation marker should
+    // expand it so the target row is visible.
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await user.click(screen.getByLabelText('Citation 1'));
@@ -147,9 +156,11 @@ describe('MessageWithCitations', () => {
     expect(screen.getByLabelText('Citation 2')).toBeInTheDocument();
   });
 
-  it('omits the excerpt paragraph when the excerpt is empty', () => {
+  it('omits the excerpt paragraph when the excerpt is empty', async () => {
+    const user = userEvent.setup();
     const citations = [makeCitation({ excerpt: '' })];
     render(<MessageWithCitations content="See [1]" citations={citations} />);
+    await user.click(screen.getByRole('button', { name: /sources \(1\)/i }));
     // The list item still renders the document name, but no excerpt <p>.
     expect(screen.getByText('Tenancy Guide')).toBeInTheDocument();
     expect(screen.queryByText(/deposit must be protected/)).not.toBeInTheDocument();
