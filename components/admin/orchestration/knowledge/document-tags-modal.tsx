@@ -283,7 +283,8 @@ export function DocumentTagsModal({
               <p>
                 Tags control <em>which</em> docs an agent can search when its knowledge access is
                 set to <strong>Restricted</strong>. To improve <em>how</em> a doc ranks for a query,
-                see <em>Indexed keywords</em> on the Manage tab — that&apos;s a separate concept.
+                use the per-row <em>Enrich keywords</em> action on the Manage tab — that&apos;s a
+                separate concept.
               </p>
               <p className="mt-2">
                 Manage the tag taxonomy under <em>Knowledge → Tags</em>. System-scoped documents are

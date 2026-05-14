@@ -12,19 +12,19 @@ The server page fetches documents from `GET /api/v1/admin/orchestration/knowledg
 
 ## Components
 
-| Component                 | Type   | File                                                                     | Purpose                                                                           |
-| ------------------------- | ------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `KnowledgeView`           | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`            | Tabbed layout (Manage / Explore / Visualize / Errors)                             |
-| `ManageTab`               | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`                | Document table, seed / rechunk / enrich-keywords / delete, Indexed keywords panel |
-| `DocumentUploadZone`      | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`      | Staged file upload with title + tags (inline-create)                              |
-| `PdfPreviewModal`         | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`         | Review/correct PDF extraction before chunking                                     |
-| `DocumentChunksModal`     | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`     | View all chunks for a document                                                    |
-| `ExploreTab`              | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`               | Vector search testing interface                                                   |
-| `VisualizeTab`            | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`             | Interactive knowledge graph (Structure / Embedded views) + view-toggle host       |
-| `EmbeddingProjectionView` | Client | `components/admin/orchestration/knowledge/embedding-projection-view.tsx` | 2D scatter of UMAP-projected chunk embeddings (the "Embedding space" view)        |
-| `ErrorsTab`               | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`                | Failed document recovery                                                          |
-| `CompareProvidersModal`   | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx`   | Embedding model comparison table with guide                                       |
-| `EmbeddingStatusBanner`   | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx`   | Warning banner when embeddings are incomplete                                     |
+| Component                 | Type   | File                                                                     | Purpose                                                                       |
+| ------------------------- | ------ | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `KnowledgeView`           | Client | `components/admin/orchestration/knowledge/knowledge-view.tsx`            | Tabbed layout (Manage / Explore / Visualize / Errors)                         |
+| `ManageTab`               | Client | `components/admin/orchestration/knowledge/manage-tab.tsx`                | Document table with per-row seed / rechunk / enrich-keywords / delete actions |
+| `DocumentUploadZone`      | Client | `components/admin/orchestration/knowledge/document-upload-zone.tsx`      | Staged file upload with title + tags (inline-create)                          |
+| `PdfPreviewModal`         | Client | `components/admin/orchestration/knowledge/pdf-preview-modal.tsx`         | Review/correct PDF extraction before chunking                                 |
+| `DocumentChunksModal`     | Client | `components/admin/orchestration/knowledge/document-chunks-modal.tsx`     | View all chunks for a document                                                |
+| `ExploreTab`              | Client | `components/admin/orchestration/knowledge/explore-tab.tsx`               | Vector search testing interface                                               |
+| `VisualizeTab`            | Client | `components/admin/orchestration/knowledge/visualize-tab.tsx`             | Interactive knowledge graph (Structure / Embedded views) + view-toggle host   |
+| `EmbeddingProjectionView` | Client | `components/admin/orchestration/knowledge/embedding-projection-view.tsx` | 2D scatter of UMAP-projected chunk embeddings (the "Embedding space" view)    |
+| `ErrorsTab`               | Client | `components/admin/orchestration/knowledge/errors-tab.tsx`                | Failed document recovery                                                      |
+| `CompareProvidersModal`   | Client | `components/admin/orchestration/knowledge/compare-providers-modal.tsx`   | Embedding model comparison table with guide                                   |
+| `EmbeddingStatusBanner`   | Client | `components/admin/orchestration/knowledge/embedding-status-banner.tsx`   | Warning banner when embeddings are incomplete                                 |
 
 ## Features
 
@@ -121,16 +121,14 @@ Opened automatically after a PDF upload. Displays:
 - Page-coverage banner: `X% of pages produced text (N of M pages, K chars total)` green/amber — pre-chunking signal. Below 95% indicates scanned pages.
 - Per-page extraction bar strip: one bar per page, height proportional to char count, amber for scanned-suspect pages
 
-### Indexed keywords panel
+### Per-document keyword management
 
-Read-only diagnostic. Displayed below the upload zone when any indexed keywords exist in either scope. Fetched from `GET /knowledge/meta-tags` on mount. Grouped by scope into two collapsible sections:
+There is no aggregated keyword panel — that surface (`GET /knowledge/meta-tags`) was removed alongside the Categories cleanup. Keyword management happens per-document on the Manage tab:
 
-- **App knowledge** (expanded by default) — keywords from user-uploaded documents.
-- **System knowledge** (collapsed by default) — keywords from the built-in Agentic Design Patterns reference. Read-only.
+- The **Enrich keywords** action on each document row (between Rechunk and Delete) opens `DocumentKeywordsModal`, which lists every chunk's current keywords and offers an Enrich / Re-enrich button that runs `POST /knowledge/documents/:id/enrich-keywords` (LLM-over-chunks, writes 3–8 phrases per chunk).
+- For markdown uploads, `<!-- metadata: keywords="…" -->` HTML comments in the source produce keywords at chunk time; the chunker reads them via `parseMetadataComments`.
 
-Each section shows keywords as outline badges, first 30 visible. A "Show all N keywords" / "Show less" toggle reveals the rest. Tooltips show chunk/document counts per keyword.
-
-The panel's purpose is **diagnostic only** — to spot duplicates / typos that hurt BM25 ranking. To actually set keywords on a document, see the **Enrich keywords** per-row action on the document table, or use `<!-- metadata: keywords="…" -->` HTML comments in markdown source.
+See [knowledge.md → Indexed Keywords](../orchestration/knowledge.md#indexed-keywords) for the underlying concept and how the BM25 keyword score feeds hybrid search.
 
 Tags (the access-control concept) have their own dedicated tab — Knowledge → Tags — not surfaced here.
 

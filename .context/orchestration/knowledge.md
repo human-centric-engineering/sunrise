@@ -74,7 +74,7 @@ Two sources today:
 1. **Markdown metadata comments** — `<!-- metadata: keywords="retry,backoff,timeout" -->` anywhere in a markdown doc. The chunker (`chunker.ts:parseMetadataComments`) reads these. **Only markdown is parsed this way** — DOCX, PDF, EPUB, and CSV uploads do not pick up metadata comments.
 2. **Enrich Keywords admin action** — `POST /knowledge/documents/:id/enrich-keywords` (see `lib/orchestration/knowledge/keyword-enricher.ts`). Runs an LLM over each chunk and writes 3–8 keyword phrases. Surfaced as a per-row button on the Manage tab. Costs are logged via `cost-tracker.ts`.
 
-The Manage tab's _Indexed keywords_ panel is a read-only diagnostic. It aggregates distinct keyword values across chunks so operators can spot duplicates / typos that hurt ranking.
+On the Manage tab, the per-row **Enrich keywords** action (between Rechunk and Delete) opens the `DocumentKeywordsModal` showing the current per-chunk keywords for that document and offers an Enrich / Re-enrich button. There is no aggregator panel that lists distinct keyword values across the whole corpus — the removed `/knowledge/meta-tags` route used to back one, but it was dropped alongside the Categories cleanup in Phase 6.
 
 ## Module Layout
 
