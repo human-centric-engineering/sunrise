@@ -1,51 +1,26 @@
 ---
 name: email-designer
-version: 1.0.0
 description: |
-  Expert email template designer for Sunrise. Creates production-ready React Email
-  templates with cross-client compatibility, mobile responsiveness, and clear CTAs.
-  Ensures templates work across Gmail, Outlook, Apple Mail, and other clients.
-  Use when creating new email templates or updating existing ones.
-
-triggers:
-  - 'create email template'
-  - 'build email'
-  - 'design email'
-  - 'new email template'
-
-contexts:
-  - 'emails/**/*.tsx' # Will be created during Phase 3.1
-  - '.context/email/overview.md' # Will be created during Phase 3.1
-
-mcp_integrations:
-  context7:
-    libraries:
-      - react-email: '/react.email/llmstxt' # Primary source
-      - react-email-components: '/resend/react-email' # Component reference
-
-parameters:
-  max_width: 600 # Email width in pixels (standard)
-  mobile_breakpoint: 480
-  compatibility_targets: ['gmail', 'outlook', 'apple-mail', 'yahoo']
+  Email template designer for Sunrise. Builds React Email templates
+  that render reliably across Gmail, Outlook, Apple Mail, and Yahoo:
+  inline styles or `pixelBasedPreset` Tailwind, mobile-responsive
+  600px max-width, clear single-CTA structure, dark-mode safe. Use
+  when creating new templates under `emails/` or updating existing
+  ones (welcome, verify-email, reset-password, invitation,
+  contact-notification, workflow-notification, escalation-notification).
 ---
 
-# Email Designer Skill - Overview
+# Email Designer Skill
 
-## Mission
-
-You are an email template designer for the Sunrise project. Your role is to create production-ready email templates using **React Email** that work reliably across all major email clients while maintaining brand consistency and user experience.
-
-**CRITICAL:** Always use Context7 MCP to get latest React Email patterns before creating templates.
+Production-ready email templates in Sunrise use React Email rendered server-side and dispatched via Resend. The seven templates already in `emails/` (welcome, verify-email, reset-password, invitation, contact-notification, workflow-notification, escalation-notification) are the canonical references — copy their structure when adding a new one.
 
 ## Technology Stack
 
 - **Framework:** React Email (`@react-email/components`)
 - **Rendering:** `@react-email/render` (server-side HTML generation)
-- **Email Service:** Resend (delivery)
-- **Styling:** Inline styles + optional Tailwind (with `pixelBasedPreset` for email compatibility)
-- **Testing:** Vitest (template rendering tests)
-
-**Note:** Supporting documentation files (patterns.md, compatibility.md) will be created in `.claude/skills/email-designer/` after implementing first templates in Phase 3.1.
+- **Delivery:** Resend
+- **Styling:** inline styles, or Tailwind via `pixelBasedPreset` for email-safe utility classes
+- **Testing:** Vitest (template rendering tests in `tests/unit/emails/`)
 
 ## Core Design Principles
 
@@ -71,7 +46,7 @@ You are an email template designer for the Sunrise project. Your role is to crea
 
 - **Transactional:** Verification, password reset, receipts
 - **Notification:** Welcome, invitation, status updates
-- **Marketing:** Announcements, newsletters (not in Phase 3.1)
+- **Marketing:** Announcements, newsletters (not currently in the template set)
 
 ### Step 2: Query React Email Documentation
 
@@ -634,19 +609,12 @@ npm run test -- emails/
 
 ## Related Documentation
 
-**Will be created during/after Phase 3.1 implementation:**
-
-- `.context/email/overview.md` - Email system architecture (Phase 3.1)
-- `.claude/skills/email-designer/patterns.md` - Common email patterns (after first templates)
-- `.claude/skills/email-designer/compatibility.md` - Email client compatibility guide (after testing)
-- `emails/` - Email template examples (Phase 3.1)
-
-**Use for current patterns:**
-
+- `.context/email/overview.md` — email system architecture and sending pipeline
+- `emails/` — production templates (welcome, verify-email, reset-password, invitation, contact-notification, workflow-notification, escalation-notification)
+- `lib/email/send.ts` — `sendEmail` helper that renders a template to HTML and dispatches via Resend
+- `tests/unit/emails/` — rendering tests for the existing templates; mirror this layout for new ones
 - React Email documentation via Context7 (`/react.email/llmstxt`)
 - Resend documentation via Context7 (`/resend/react-email`)
-
-**Note:** Supporting documentation files will be created after implementing the first working email templates in Phase 3.1, following the same pattern as the testing skill (created supporting docs after working code existed).
 
 ## Usage Examples
 

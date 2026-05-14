@@ -1,6 +1,5 @@
 ---
 name: orchestration-capability-builder
-version: 1.0.0
 description: |
   Expert capability builder for Sunrise orchestration. Creates custom agent
   capabilities (tools) that let agents call APIs, look up data, process refunds,
@@ -9,41 +8,6 @@ description: |
   and database setup via the 4-step pipeline: TypeScript class, registry, DB row,
   agent binding. Use when an agent needs a new tool, needs to call an external
   service, or needs to perform actions beyond conversation.
-
-triggers:
-  - 'create capability'
-  - 'build capability'
-  - 'add tool for agent'
-  - 'custom capability'
-  - 'new capability'
-  - 'my agent needs to look up'
-  - 'agent should be able to call'
-  - 'give my agent access to'
-  - 'agent tool that calls'
-  - 'connect agent to API'
-  - 'agent needs to fetch data'
-  - 'add a tool to my agent'
-
-contexts:
-  - 'lib/orchestration/capabilities/base-capability.ts'
-  - 'lib/orchestration/capabilities/types.ts'
-  - 'lib/orchestration/capabilities/registry.ts'
-  - 'lib/orchestration/capabilities/dispatcher.ts'
-  - 'lib/orchestration/capabilities/built-in/*.ts'
-  - 'lib/validations/orchestration.ts'
-  - '.context/admin/orchestration-capabilities-guide.md'
-  - '.context/orchestration/capabilities.md'
-  - 'types/orchestration.ts'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - zod: '/colinhacks/zod'
-
-parameters:
-  execution_types: ['internal', 'api', 'webhook']
-  requires_approval_default: false
-  rate_limit_default: 30
 ---
 
 # Capability Builder Skill

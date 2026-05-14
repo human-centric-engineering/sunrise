@@ -1,28 +1,9 @@
 ---
 name: deployment-guide
-version: 1.0.0
 description: |
   Deployment guide generator for Sunrise. Creates platform-specific deployment
   documentation with environment variable checklists, database setup, and
   troubleshooting guides. Use when deploying to new platforms or updating deployment docs.
-
-triggers:
-  - 'deploy to vercel'
-  - 'railway deployment'
-  - 'self-hosted setup'
-  - 'create deployment guide'
-  - 'docker production'
-  - 'how to deploy'
-
-contexts:
-  - 'Dockerfile'
-  - 'docker-compose*.yml'
-  - '.context/deployment/'
-  - 'next.config.js'
-  - '.env.example'
-
-mcp_integrations:
-  next_devtools: true
 ---
 
 # Deployment Guide Skill - Overview

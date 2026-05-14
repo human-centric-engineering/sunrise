@@ -1,72 +1,49 @@
 ---
 name: page-builder
-version: 1.0.0
 description: |
-  Expert page builder for Sunrise. Creates new pages following route group patterns
-  with proper layouts, metadata, error boundaries, and authentication handling.
-  Use when creating new pages or route groups.
-
-triggers:
-  - 'create a new page'
-  - 'add page for'
-  - 'build the settings page'
-  - 'create protected page'
-  - 'add public page'
-  - 'create new route group'
-
-contexts:
-  - 'app/**/page.tsx'
-  - 'app/**/layout.tsx'
-  - 'app/**/error.tsx'
-  - '.context/architecture/overview.md'
-
-mcp_integrations:
-  next_devtools: true
-  context7:
-    libraries:
-      - { nextjs: '/vercel/next.js' }
-
-parameters:
-  route_groups:
-    - '(auth)' # Authentication pages (login, signup, reset)
-    - '(protected)' # Authenticated routes (dashboard, settings)
-    - '(public)' # Public pages (landing, about, pricing)
+  Page builder for Sunrise. Creates new pages following Next.js 16
+  App Router patterns: route groups, layouts, metadata, async params,
+  Server Components by default, and the project's auth conventions.
+  Knows the four top-level URL segments — `(auth)`, `(protected)`,
+  `(public)` route groups plus the `admin/` regular folder. Use when
+  creating new pages, route groups, or admin sub-routes.
 ---
 
-# Page Builder Skill - Overview
+# Page Builder Skill
 
-## Mission
+Pages in Sunrise are organised by route group (no URL effect) and one regular folder (`admin/`, which **does** create URL segments). Always determine the correct location before creating the page.
 
-You are a page builder for the Sunrise project. Your role is to create new pages following the established **Next.js 16 App Router** patterns including route groups, layouts, metadata, and authentication handling.
+## URL-level layout of `app/`
 
-**CRITICAL:** Pages in Sunrise are organized into route groups. Always determine the correct group before creating a page.
+| Path               | Kind           | URL effect          | Auth      | Use for                                                     |
+| ------------------ | -------------- | ------------------- | --------- | ----------------------------------------------------------- |
+| `app/(auth)/`      | Route group    | None (URLs at root) | No        | Login, signup, password reset, email verification           |
+| `app/(protected)/` | Route group    | None (URLs at root) | Yes       | Dashboard, settings, profile, account                       |
+| `app/(public)/`    | Route group    | None (URLs at root) | No        | Marketing, about, pricing, public landing pages             |
+| `app/admin/`       | Regular folder | Creates `/admin/*`  | Admin     | Admin dashboard and sub-routes (`/admin/orchestration/...`) |
+| `app/api/`         | Regular folder | Creates `/api/*`    | Per-route | Handled by the `api-builder` skill                          |
 
-## Route Group Architecture
+Route groups (`(name)`) organise code without affecting URLs — `app/(protected)/dashboard/page.tsx` lives at `/dashboard`. Regular folders like `admin/` **do** create URL segments — `app/admin/orchestration/page.tsx` lives at `/admin/orchestration`.
 
-### Existing Route Groups
-
-| Group         | Purpose                       | Layout                  | Auth Required |
-| ------------- | ----------------------------- | ----------------------- | ------------- |
-| `(auth)`      | Login, signup, password reset | Centered card, minimal  | No            |
-| `(protected)` | Dashboard, settings, profile  | Header + main container | Yes           |
-| `(public)`    | Landing, about, pricing       | Marketing layout        | No            |
-
-### Decision Tree
+### Decision tree
 
 ```
 Need a new page?
 │
 ├─ Is it an authentication flow? (login, signup, verify)
-│  └─ YES → app/(auth)/[name]/page.tsx
+│  └─ YES → app/(auth)/<name>/page.tsx
 │
-├─ Does it require user to be logged in?
-│  └─ YES → app/(protected)/[name]/page.tsx
+├─ Is it an admin-only page or sub-route under /admin?
+│  └─ YES → app/admin/<name>/page.tsx  (regular folder, creates /admin/<name>)
 │
-├─ Is it a public marketing page?
-│  └─ YES → app/(public)/[name]/page.tsx
+├─ Does it require the user to be logged in?
+│  └─ YES → app/(protected)/<name>/page.tsx
 │
-└─ Needs completely different layout?
-   └─ YES → Create new route group: app/([name])/layout.tsx
+├─ Is it a public marketing or info page?
+│  └─ YES → app/(public)/<name>/page.tsx
+│
+└─ Needs a completely different layout?
+   └─ YES → Create a new route group: app/(<name>)/layout.tsx + page.tsx
 ```
 
 ## 4-Step Workflow

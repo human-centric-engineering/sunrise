@@ -1,6 +1,5 @@
 ---
 name: orchestration-knowledge-builder
-version: 1.0.0
 description: |
   Expert knowledge base builder for Sunrise orchestration. Sets up document
   ingestion, chunking, embeddings, and vector search so agents can answer
@@ -8,46 +7,6 @@ description: |
   lifecycle: upload documents (MD, PDF, EPUB, DOCX), chunk, generate embeddings,
   and scope knowledge to specific agents. Use when agents need to search
   company docs, product information, FAQs, or any document corpus.
-
-triggers:
-  - 'set up knowledge base'
-  - 'upload documents'
-  - 'configure knowledge'
-  - 'add knowledge'
-  - 'knowledge base'
-  - 'document ingestion'
-  - 'rag setup'
-  - 'agent needs to search documents'
-  - 'ground agent in real data'
-  - 'agent should know about our docs'
-  - 'feed documents to agent'
-  - 'agent keeps hallucinating facts'
-  - 'connect agent to our documentation'
-
-contexts:
-  - 'lib/orchestration/knowledge/document-manager.ts'
-  - 'lib/orchestration/knowledge/search.ts'
-  - 'lib/orchestration/knowledge/chunker.ts'
-  - 'lib/orchestration/knowledge/embedder.ts'
-  - 'lib/orchestration/knowledge/seeder.ts'
-  - 'lib/orchestration/knowledge/url-fetcher.ts'
-  - 'lib/orchestration/knowledge/parsers/'
-  - 'lib/orchestration/capabilities/built-in/search-knowledge.ts'
-  - '.context/orchestration/knowledge.md'
-  - '.context/orchestration/document-ingestion.md'
-  - '.context/admin/orchestration-knowledge-ui.md'
-  - 'prisma/seeds/data/chunks/'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - zod: '/colinhacks/zod'
-
-parameters:
-  supported_formats: ['md', 'txt', 'csv', 'epub', 'docx', 'pdf']
-  max_file_size_mb: 50
-  default_top_k: 10
-  default_similarity_threshold: 0.8
 ---
 
 # Knowledge Builder Skill

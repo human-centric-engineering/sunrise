@@ -154,7 +154,6 @@ Use these for implementation tasks:
 | `/test-fix`                         | Apply findings from a `/test-review` report            |
 | `/test-coverage`                    | Find coverage gaps and untested files                  |
 | `/test-triage`                      | Ledger-driven triage for codebase-wide remediation     |
-| `/security-hardener`                | Rate limiting, CORS, CSP                               |
 | `/email-designer`                   | React Email templates                                  |
 | `/docs-writer`                      | Create/update .context/ docs                           |
 | `/docs-audit`                       | Check documentation accuracy                           |

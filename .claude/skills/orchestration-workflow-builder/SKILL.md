@@ -1,6 +1,5 @@
 ---
 name: orchestration-workflow-builder
-version: 1.0.0
 description: |
   Expert workflow builder for Sunrise orchestration. Composes multi-step agent
   pipelines as workflow DAGs — routing requests to different agents, chaining
@@ -8,46 +7,6 @@ description: |
   integrating RAG retrieval. Uses 15 step types, template interpolation, error
   strategies, and budget enforcement. Use when building multi-step agent
   pipelines, adding approval flows, or connecting multiple agents in a sequence.
-
-triggers:
-  - 'create workflow'
-  - 'build workflow'
-  - 'compose workflow'
-  - 'new workflow'
-  - 'workflow steps'
-  - 'workflow dag'
-  - 'multi-step agent pipeline'
-  - 'agent needs approval before'
-  - 'route requests to different agents'
-  - 'chain agent steps together'
-  - 'build me a support pipeline'
-  - 'parallel agent processing'
-  - 'add human approval to workflow'
-
-contexts:
-  - 'lib/orchestration/workflows/validator.ts'
-  - 'lib/orchestration/workflows/semantic-validator.ts'
-  - 'lib/orchestration/engine/orchestration-engine.ts'
-  - 'lib/orchestration/engine/step-registry.ts'
-  - 'lib/orchestration/engine/executors/*.ts'
-  - 'lib/orchestration/engine/llm-runner.ts'
-  - 'lib/orchestration/engine/context.ts'
-  - 'prisma/seeds/data/templates/*.ts'
-  - 'types/orchestration.ts'
-  - '.context/admin/orchestration-workflows-guide.md'
-  - '.context/orchestration/engine.md'
-  - '.context/orchestration/workflows.md'
-  - 'lib/validations/orchestration.ts'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - zod: '/colinhacks/zod'
-
-parameters:
-  step_types: 15
-  error_strategies: ['retry', 'fallback', 'skip', 'fail']
-  template_count: 12
 ---
 
 # Workflow Builder Skill

@@ -1,79 +1,48 @@
 ---
 name: component-builder
-version: 1.0.0
 description: |
-  Expert component builder for Sunrise. Creates reusable React components following
-  shadcn/ui patterns with proper TypeScript interfaces, accessibility, and styling.
-  Use when creating new components or refactoring existing ones.
-
-triggers:
-  - 'create component'
-  - 'build a reusable'
-  - 'add hero section'
-  - 'create marketing component'
-  - 'build pricing table'
-  - 'new component for'
-
-contexts:
-  - 'components/**/*.tsx'
-  - 'components/ui/**/*'
-  - '.context/guidelines.md'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - { shadcn: '/websites/ui_shadcn' }
-      - { tailwindcss: '/websites/tailwindcss' }
+  Component builder for Sunrise. Creates reusable React components
+  following shadcn/ui patterns: TypeScript interfaces, accessibility
+  attributes, Tailwind CSS styling, Server Components by default
+  (`'use client'` only when needed). Use when creating new components
+  under `components/` or refactoring existing ones.
 ---
 
-# Component Builder Skill - Overview
+# Component Builder Skill
 
-## Mission
+Reusable React components in Sunrise follow shadcn/ui patterns over a Tailwind 4 base. Before creating anything new, check the existing primitive in `components/ui/` or a sibling capsule.
 
-You are a component builder for the Sunrise project. Your role is to create reusable React components following **shadcn/ui patterns**, with proper TypeScript interfaces, accessibility attributes, and Tailwind CSS styling.
-
-**CRITICAL:** Always check if a shadcn/ui base component exists before creating from scratch.
+**Critical rule:** always check if a shadcn/ui base component exists before writing from scratch. If it does, install or extend it rather than reimplementing.
 
 ## Component Organization
 
-### Directory Structure
+Components are grouped into **capsules by domain**. `ls components/` to see the current set; the map below lists the major capsules but the directory tree is the source of truth.
 
-```
-components/
-├── ui/                    # shadcn/ui components (auto-generated + custom)
-│   ├── button.tsx         # Base UI primitives
-│   ├── card.tsx
-│   ├── input.tsx
-│   └── ...
-├── forms/                 # Form-related components
-│   ├── login-form.tsx
-│   ├── form-error.tsx
-│   └── ...
-├── layouts/               # Layout components
-│   ├── header.tsx
-│   ├── footer.tsx
-│   └── ...
-├── marketing/             # Marketing page components
-│   ├── hero.tsx
-│   ├── features.tsx
-│   ├── pricing.tsx
-│   └── ...
-├── auth/                  # Auth-related UI
-│   └── logout-button.tsx
-└── shared/                # Shared utility components
-    └── loading-spinner.tsx
-```
+| Capsule                | Purpose                                                                  |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `ui/`                  | shadcn/ui primitives + project-wide UI helpers (Button, Card, FieldHelp) |
+| `forms/`               | Form components (LoginForm, ProfileForm, FormError, PasswordStrength)    |
+| `layouts/`             | Page layout components (Header, Footer, Sidebar)                         |
+| `auth/`                | Auth-specific UI (LogoutButton, session-aware bits)                      |
+| `marketing/`           | Public landing-page sections (Hero, Features, Pricing, FAQ)              |
+| `dashboard/`           | Authenticated dashboard tiles, widgets                                   |
+| `settings/`            | User-settings page components                                            |
+| `admin/`               | Admin-area UI (sidebar, header, feature flags, orchestration sub-tree)   |
+| `admin/orchestration/` | Workflow builder canvas, agent/capability/provider forms, etc.           |
+| `analytics/`           | Analytics dashboards and chart wrappers                                  |
+| `providers/`           | React context providers (theme, analytics, query client)                 |
+| `status/`              | Status indicators, badges, health UI                                     |
+| `cookie-consent/`      | Cookie-consent banner and policy gates                                   |
 
-### Placement Rules
+A few standalone files live at the root (`error-boundary.tsx`, `theme-toggle.tsx`, `maintenance-page.tsx`, `maintenance-wrapper.tsx`) — these are app-wide shells that don't fit a capsule.
 
-| Component Type     | Directory    | Examples                     |
-| ------------------ | ------------ | ---------------------------- |
-| Base primitives    | `ui/`        | Button, Input, Card          |
-| Form components    | `forms/`     | LoginForm, FormError         |
-| Auth UI            | `auth/`      | LogoutButton                 |
-| Marketing sections | `marketing/` | Hero, Features, Pricing      |
-| Page layouts       | `layouts/`   | Header, Footer, Sidebar      |
-| Shared utilities   | `shared/`    | LoadingSpinner, ErrorMessage |
+### Placement rules
+
+- **Reusable primitive shared across capsules** → `ui/`. Anything that could be installed via shadcn or extended from one.
+- **Form-specific** (uses `react-hook-form`, has its own validation flow) → `forms/`.
+- **Domain-bound** (only makes sense in one section of the app) → the capsule for that domain (`admin/`, `dashboard/`, `settings/`, etc.).
+- **App-wide chrome / shells** (used by every page) → component root.
+- **In doubt** → match the closest existing component's location rather than inventing a new capsule.
 
 ## 4-Step Workflow
 

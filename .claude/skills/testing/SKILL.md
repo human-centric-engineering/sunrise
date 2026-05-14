@@ -1,365 +1,244 @@
 ---
 name: testing
-version: 1.0.0
 description: |
-  Expert testing skill for Sunrise. Implements comprehensive testing patterns
-  including unit tests, integration tests, and component tests. Uses hybrid
-  autonomy to handle simple tests autonomously while consulting the user for
-  complex architectural decisions. Use this skill when the user asks to add tests,
-  write tests, implement testing, test code, or work on Phase 2.4.
-
-triggers:
-  - 'add tests'
-  - 'write tests for'
-  - 'test this code'
-  - 'implement testing'
-  - 'phase 2.4'
-
-contexts:
-  - '.claude/skills/testing/templates/*.md'
-  - '.claude/skills/testing/mocking/*.md'
-  - '.claude/skills/testing/priority-guide.md'
-  - '.claude/skills/testing/success-criteria.md'
-  - '.context/testing/*.md'
-  - 'vitest.config.ts'
-  - '__tests__/**/*.test.ts'
-  - 'lib/test-utils/**/*'
-
-mcp_integrations:
-  context7:
-    libraries:
-      - vitest: '/vitejs/vitest'
-      - react-testing-library: '/testing-library/react-testing-library'
-      - testcontainers: '/testcontainers/testcontainers-node'
-  next_devtools: true
-
-parameters:
-  autonomy_level: hybrid
-  complexity_threshold: medium
-  test_coverage_goal: 80
+  Testing lens and quick patterns reference for Sunrise. Apply this skill whenever
+  you create, modify, or audit Vitest tests — unit, integration, or component.
+  Its purpose is to enforce an anti-green-bar mindset (tests must verify what the
+  code *does*, not what mocks return) and route work into the right tool:
+  `/test-plan` → `/test-write` → `/test-review` → `/test-fix` for branch- or
+  module-scoped work, the `test-engineer` agent for spawn-based writing, or
+  hands-on patterns for one-off tests. Use when the user asks to add, write,
+  audit, fix, or review tests.
 ---
 
-# Testing Expert Skill - Overview
+# Testing Skill
 
-## Mission
+A lens, not a workflow. This skill exists to make every test you touch — whether you write it yourself, spawn a test-engineer agent to write it, or run it through `/test-review` — answer one question: **does this test prove the code works, or does it prove the mock works?**
 
-You are a testing expert for the Sunrise project. Your role is to create high-quality, maintainable tests using Vitest, React Testing Library, and Testcontainers. You use **hybrid autonomy**: handle simple tests automatically while consulting the user for complex architectural decisions.
+The structured workflows (`/test-plan`, `/test-write`, `/test-review`, `/test-fix`, `/test-coverage`, `/test-triage`) live in `.claude/commands/`. The agent that physically writes tests (`test-engineer`) lives in `.claude/agents/`. This skill is the shared mindset they all draw from.
 
-## Technology Stack
+---
 
-- **Testing Framework**: Vitest (configured in package.json)
-- **Component Testing**: React Testing Library
-- **Integration Testing**: Hybrid approach
-  - Unit tests: Mocked dependencies (fast)
-  - API integration tests: Testcontainers + real PostgreSQL (production-parity)
-- **Mocking**: Vitest `vi.mock()`
-- **Coverage**: Target 80%+ overall, 90%+ for critical paths
+## The anti-green-bar lens
 
-## 5-Phase Workflow
+A green-bar test passes but verifies nothing. It's worse than no test, because it gives false confidence. **Apply this checklist to every test before moving on.**
 
-### Phase 1: Analyze Code
+### Per-test self-check
 
-1. **Read the target file** to understand what needs testing
-2. **Parse structure**:
-   - Count functions and their complexity
-   - Identify dependencies (Prisma, better-auth, Next.js, logger)
-   - Detect side effects (database, API calls, file I/O)
-   - Note existing patterns (error handling, validation)
-3. **Determine test type**:
-   - Unit test: Pure functions, utilities, validators
-   - Integration test: API routes, database operations
-   - Component test: React components, forms
+1. **Would this test still pass if the function body were deleted (returned `undefined`/`null`/empty)?** If yes — for example, the only assertion is `toBeDefined()` or `toBeTruthy()` — the assertion is too weak. Assert specific values, structures, or side effects.
 
-### Phase 2: Determine Complexity & Autonomy
+2. **Am I asserting something the code computed, or something the mock returned?** If your assertion checks a value that was set via `mockResolvedValue(x)` with no transformation, filtering, mapping, or enrichment by the code under test, the test proves the mock works — not the code. Either:
+   - Assert a **transformed** value (the code filtered, mapped, enriched, or restructured the mock data)
+   - Assert a **side effect** (the code called another dependency with specific arguments derived from inputs)
+   - Assert **structural wrapping** (the code wrapped the data in a response envelope, added metadata, etc.)
 
-Use this decision tree to classify code complexity:
+3. **Does this test verify at least one thing the code DOES, not just what it RETURNS?** Good tests check: was the right query made, were the right arguments passed, was the error logged, was the response shaped correctly? A test that only checks `data === mockData` checks nothing the code did.
 
-**Simple (Full Autonomy)**:
+### When you catch yourself green-barring
 
-- Pure functions with no side effects
-- Zod schema validation
-- Utility functions without external dependencies
-- < 3 functions, cyclomatic complexity < 5
-- **Action**: Generate tests immediately
+Do not ship the test. Instead:
 
-**Medium (Hybrid)**:
+- If the code genuinely transforms the data → fix the assertion to check the transformation.
+- If the code passes data through with no transformation → keep the assertion but **add a side-effect assertion** (e.g. the right Prisma `where` clause was used, the right log line was emitted).
+- If the code does nothing testable → **don't write a vacuous test**. Report it as a finding so the source can be refactored or removed.
 
-- Functions with mockable dependencies
-- Async operations (non-database)
-- 3-5 functions with moderate branching
-- Error handling utilities
-- **Action**: Generate structure, ask about edge cases
+### When tests fail: code bug vs test bug
 
-**Complex (Interactive)**:
+When a test you wrote fails, **do not automatically edit the test to make it pass**. First determine which side is wrong.
 
-- Database operations (Prisma)
-- Authentication calls (better-auth)
-- External API calls
-- File I/O or cryptography
-- > 5 functions or high complexity
-- **Action**: Ask about mock strategy, database setup, test data
+**Evidence the CODE is wrong:**
 
-**Complexity Calculation**:
+- Behavior contradicts the function's name, docstring, or comment
+- Behavior violates a documented contract (CLAUDE.md, `.context/`)
+- The code silently swallows errors that should propagate
+- Obvious logic error (wrong operator, missing null check, off-by-one)
+- The code doesn't match the Zod schema it claims to validate against
 
-```typescript
-function calculateComplexity(code: CodeAnalysis): Complexity {
-  let score = 0;
-
-  // Function count
-  score += code.functionCount * 2;
-
-  // Dependencies
-  if (code.usesPrisma) score += 10;
-  if (code.usesBetterAuth) score += 8;
-  if (code.usesExternalAPI) score += 8;
-  if (code.usesFileSystem) score += 5;
-
-  // Side effects
-  score += code.sideEffects * 3;
-
-  // Branching
-  score += code.branchingFactor * 2;
-
-  // Determine level
-  if (score < 10) return 'simple';
-  if (score < 25) return 'medium';
-  return 'complex';
-}
-```
-
-### Phase 3: Fetch Documentation
-
-**ALWAYS use Context7 MCP** to get up-to-date testing patterns before generating tests.
-
-**For Unit Tests (Vitest)**:
-
-```typescript
-mcp__context7__get -
-  library -
-  docs({
-    context7CompatibleLibraryID: '/vitejs/vitest',
-    topic: 'mocking async functions expect matchers',
-    mode: 'code',
-  });
-```
-
-**For Component Tests (React Testing Library)**:
-
-```typescript
-mcp__context7__get -
-  library -
-  docs({
-    context7CompatibleLibraryID: '/testing-library/react-testing-library',
-    topic: 'testing forms user events queries',
-    mode: 'code',
-  });
-```
-
-**For Integration Tests (Testcontainers)**:
-
-```typescript
-mcp__context7__get -
-  library -
-  docs({
-    context7CompatibleLibraryID: '/testcontainers/testcontainers-node',
-    topic: 'postgresql container setup migrations',
-    mode: 'code',
-  });
-```
-
-**For Next.js-specific patterns**:
-Use the Next.js DevTools MCP server to fetch testing patterns for App Router, Server Components, and Route Handlers.
-
-### Phase 4: Generate Test Files
-
-**File Naming Convention**:
+**Action**: do not silently fix the source. Write the test with the _correct_ expected behavior so it fails, flag it inline with `// BUG:`, and report:
 
 ```
-Source file                          → Test file
-lib/validations/auth.ts             → tests/unit/lib/validations/auth.test.ts
-app/api/v1/users/route.ts           → tests/integration/app/api/v1/users/route.test.ts
-components/forms/login-form.tsx     → tests/unit/components/forms/login-form.test.tsx
+⚠️ SUSPECTED CODE BUG
+File: lib/auth/guards.ts:42
+Expected: 401 for missing session (per API contract)
+Actual: returns 403
+Evidence: CLAUDE.md documents withAuth() returns 401 for unauthenticated
 ```
 
-**Test Directory Structure**:
+**Evidence the TEST is wrong:**
 
-- `tests/unit/` - Unit tests (utilities, helpers, pure functions)
-- `tests/integration/` - Integration tests (API routes, database operations)
-- `tests/helpers/` - Shared test utilities
-- `tests/types/` - Shared mock types and factories
+- You assumed a return shape the code doesn't use
+- You mocked a dependency incorrectly (wrong type, missing fields)
+- You're asserting an implementation detail that changed, not a contract
+- The behavior is intentional and your expectation was based on assumption
 
-**Test Structure (Arrange-Act-Assert)**:
+**Action**: fix the test.
+
+**Default when ambiguous**: treat the code as correct, fix the test, add a `// AMBIGUOUS:` comment so `/test-review` can flag it. **Exception**: if the only way to make the test pass is to assert the exact mock return value with no transformation, that's not ambiguity — it's a mock-proving test. Report it as a suspected code bug; the code should be _doing_ something with the data.
+
+---
+
+## When to use which tool
+
+| Situation                                   | Tool                                                                                 |
+| ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Adding tests for current branch changes     | `/test-plan` → `/test-write plan` → `/test-review` → `/test-fix --all`               |
+| Building out coverage for a critical module | `/test-coverage <path>` → `/test-plan coverage <path>` → `/test-write plan` → review |
+| Auditing test quality on a PR               | `/test-review pr` (posts comment) or `/test-review` (local report)                   |
+| Quick test for 1–2 files                    | `/test-write <file>` (inline plan + execute)                                         |
+| Codebase-wide legacy cleanup                | `/test-triage scan <folder>` → `worklist` → `/test-triage fix <file>`                |
+| One-off ad-hoc test by hand                 | This skill's patterns + the lens above                                               |
+
+The `test-engineer` agent is spawned automatically by `/test-write`. Don't invoke it directly except when explicitly told to (e.g. "spawn a test-engineer subagent to investigate X").
+
+---
+
+## Stack and conventions
+
+- **Framework**: Vitest
+- **Components**: React Testing Library
+- **API integration**: Vitest with mocked Prisma + auth (`tests/integration/...`)
+- **DB integration**: Testcontainers + real PostgreSQL when production-parity matters
+- **Path alias**: always `@/` — never relative imports (enforced by ESLint)
+- **Test location**: `tests/unit/`, `tests/integration/`, `tests/helpers/`, `tests/types/`
+- **Naming**: `tests/<unit|integration>/<mirror-of-source-path>.test.ts`
+
+```
+Source                                  → Test
+lib/validations/auth.ts                 → tests/unit/lib/validations/auth.test.ts
+app/api/v1/users/route.ts               → tests/integration/api/v1/users/route.test.ts
+components/forms/login-form.tsx         → tests/unit/components/forms/login-form.test.tsx
+```
+
+---
+
+## Quick patterns
+
+### AAA structure with type-safe assertions
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { parseJSON, assertDefined } from '@/tests/helpers/assertions';
 
-describe('[Module Name]', () => {
-  // Setup
+describe('ModuleName', () => {
   beforeEach(() => {
-    // Reset mocks, initialize test data
+    /* reset mocks, build inputs */
   });
-
   afterEach(() => {
-    // Cleanup, restore mocks
     vi.restoreAllMocks();
   });
 
-  describe('[Feature/Function Name]', () => {
-    it('should [expected behavior] when [condition]', async () => {
-      // Arrange: Set up test data and mocks
-      const input = createTestData();
-      const mockDependency = vi.fn().mockResolvedValue(expected);
+  it('transforms valid input into the response envelope', async () => {
+    // Arrange
+    const input = makeInput();
 
-      // Act: Execute the function under test
-      const result = await functionUnderTest(input);
+    // Act
+    const result = await fnUnderTest(input);
 
-      // Assert: Verify the outcome
-      expect(result).toMatchObject({ ... });
-      expect(mockDependency).toHaveBeenCalledWith(...);
-    });
-
-    it('should [error behavior] when [error condition]', async () => {
-      // Test error paths
-      const mockDependency = vi.fn().mockRejectedValue(new Error('Test error'));
-
-      await expect(functionUnderTest()).rejects.toThrow('Test error');
-    });
+    // Assert: prove the function did something — not that the mock returned what it returned
+    expect(result).toMatchObject({ success: true, data: { id: input.id, normalised: true } });
   });
 });
 ```
 
-### Phase 5: Verify & Document
-
-**CRITICAL**: All validation steps must pass before marking tests as complete.
-
-1. **Run tests**: `npm test -- [test-file]`
-2. **Run linter**: `npm run lint` - MUST pass with zero errors
-3. **Run type-check**: `npm run type-check` - MUST pass with zero errors
-4. **Run format check**: `npm run format:check` - MUST pass (if it fails, run `npx prettier --write` on edited paths and re-verify)
-5. **Check coverage**: `npm run test:coverage`
-6. **Verify all checks pass**: Tests + lint + types + format all green
-7. **Update documentation**: If new patterns emerge, document in `.context/testing/`
-
-**Shortcut**: Run `npm run validate && npm test` to check everything at once (`validate` covers lint + type-check + format:check).
-
-**DO NOT mark tests as complete unless**:
-
-- ✅ All tests pass
-- ✅ Linting clean (0 errors, 0 warnings in test files)
-- ✅ Type-check clean (0 errors)
-- ✅ Format check clean
-- ✅ Coverage meets targets
-
-## Autonomy Decision Examples
-
-### Autonomous (Simple)
-
-```
-User: "Add tests for lib/utils/password-strength.ts"
-
-Analysis:
-- Pure function ✓
-- No dependencies ✓
-- < 3 functions ✓
-- No side effects ✓
-
-Action: Generate 12 tests immediately
-✓ All tests passing
-✓ Coverage: 100%
-```
-
-### Hybrid (Medium)
-
-```
-User: "Add tests for lib/api/validation.ts"
-
-Analysis:
-- 3 functions (validateRequestBody, validateQueryParams, parsePaginationParams)
-- Async operations ✓
-- Mockable dependencies (NextRequest) ✓
-
-Action: Generate structure, ask about edge cases
-"Generated test structure with 15 tests. Should I add edge case tests for:
-- Malformed JSON errors?
-- Array query parameters?
-- Negative pagination values?
-[Y/n]"
-```
-
-### Interactive (Complex)
-
-```
-User: "Add integration tests for app/api/v1/users/route.ts"
-
-Analysis:
-- Database operations (Prisma) ✓
-- Authentication (better-auth) ✓
-- 2 HTTP methods (GET, POST) ✓
-- Complex business logic ✓
-
-Action: Ask about implementation strategy
-"This requires integration testing decisions:
-
-1. Database strategy?
-   [A] Testcontainers (real PostgreSQL) ← Recommended
-   [B] Mock Prisma client
-
-2. Auth mocking?
-   [A] Mock getSession() ← Faster
-   [B] Real better-auth sessions
-
-3. Test data volume?
-   [A] Minimal (2-3 users)
-   [B] Realistic (10-20 users)
-
-Choose [A/B]:"
-```
-
-## Common Patterns
-
-**See `.context/testing/` for comprehensive documentation**:
-
-- **overview.md** - Testing philosophy, tech stack, test types
-- **patterns.md** - AAA structure, type-safe assertions, shared mock types, parameterized testing, error handling
-- **mocking.md** - Mock strategies by dependency (Prisma, better-auth, Next.js, logger)
-- **decisions.md** - Architectural rationale and ESLint rule decisions
-- **history.md** - Key learnings and solutions (lint/type cycle prevention)
-
-**Quick Reference**:
+### Shared mocks and assertions (always use these — they prevent lint/type cycles)
 
 ```typescript
-// Import shared mock factories (CRITICAL - prevents lint/type cycles)
 import { createMockHeaders, createMockSession, delayed } from '@/tests/types/mocks';
-
-// Import type-safe assertion helpers
 import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
 ```
 
-**Test Templates**: See `templates/` subdirectory for code examples by complexity:
+### API route — mocking Prisma + auth guards
 
-- `simple.md` - Validation schema tests
-- `medium.md` - API utility tests
-- `complex.md` - Integration tests
-- `component.md` - React component tests
+```typescript
+import { GET } from '@/app/api/v1/resource/route';
+import { NextRequest } from 'next/server';
 
-## Related Documentation
+vi.mock('@/lib/auth/guards', () => ({
+  withAuth: (handler: unknown) => handler,
+  withAdminAuth: (handler: unknown) => handler,
+}));
+vi.mock('@/lib/db/client', () => ({
+  prisma: { resource: { findMany: vi.fn(), count: vi.fn() } },
+}));
 
-**Context Documentation** (evergreen patterns and rationale):
+it('strips sensitive fields and returns the envelope', async () => {
+  const { prisma } = await import('@/lib/db/client');
+  vi.mocked(prisma.resource.findMany).mockResolvedValue([
+    { id: '1', name: 'A', secret: 'redacted-source' },
+  ]);
+  vi.mocked(prisma.resource.count).mockResolvedValue(1);
 
-- `.context/testing/overview.md` - Testing philosophy and tech stack
-- `.context/testing/patterns.md` - Best practices and code patterns
-- `.context/testing/mocking.md` - Dependency mocking strategies
-- `.context/testing/decisions.md` - Architectural rationale
-- `.context/testing/history.md` - Key learnings and solutions
+  const req = new NextRequest('http://localhost/api/v1/resource');
+  const res = await GET(req, mockSession);
+  const body = await parseJSON<{ success: true; data: Array<{ id: string }> }>(res);
 
-**Skill Execution Files** (workflow and troubleshooting):
+  // Anti-green-bar: assert a TRANSFORMATION the route applied, not the raw mock
+  expect(body.data[0]).not.toHaveProperty('secret');
+  expect(body.data[0]).toMatchObject({ id: '1', name: 'A' });
+});
+```
 
-- `gotchas.md` - Common pitfalls and solutions
-- `priority-guide.md` - Test creation order and priorities
-- `success-criteria.md` - Coverage thresholds and quality gates
-- `templates/` - Code examples by complexity (simple, medium, complex, component)
+The codebase wraps routes with `withAuth` / `withAdminAuth` from `lib/auth/guards.ts`. Mocking these to identity functions lets you call the handler directly with a stubbed session.
 
-**Shared Code** (import in tests):
+### Component test — assert behaviour, not styling
 
-- `tests/types/mocks.ts` - Mock factories (createMockHeaders, createMockSession, delayed)
-- `tests/helpers/assertions.ts` - Type guards (assertDefined, assertHasProperty, parseJSON)
+```typescript
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
+it('calls onSubmit with form values', async () => {
+  const onSubmit = vi.fn();
+  const user = userEvent.setup();
+
+  render(<MyForm onSubmit={onSubmit} />);
+  await user.type(screen.getByLabelText('Email'), 'a@b.com');
+  await user.click(screen.getByRole('button', { name: /submit/i }));
+
+  expect(onSubmit).toHaveBeenCalledWith({ email: 'a@b.com' });
+});
+```
+
+Templates with fuller examples: `templates/simple.md`, `templates/medium.md`, `templates/complex.md`, `templates/component.md`.
+
+---
+
+## Validation before "done"
+
+A test isn't done until all four pass:
+
+```bash
+npm test               # tests pass
+npm run validate       # lint + type-check + format
+npm run test:coverage  # coverage targets met (see .context/testing/overview.md)
+```
+
+If any fail, fix the underlying issue — never bypass with `--no-verify`, `as any`, or `eslint-disable` without a comment justifying it.
+
+---
+
+## Related material
+
+**Patterns and rationale** (evergreen):
+
+- `.context/testing/overview.md` — philosophy, stack, test types, thresholds
+- `.context/testing/patterns.md` — AAA, type-safe assertions, parameterised tests
+- `.context/testing/mocking.md` — strategies by dependency (Prisma, better-auth, Next.js, logger)
+- `.context/testing/edge-cases.md` — boundary conditions, error paths
+- `.context/testing/async-testing.md` — promises, timers, streams
+- `.context/testing/type-safety.md` — Response.json, type guards
+- `.context/testing/decisions.md` — architectural rationale
+- `.context/testing/history.md` — past learnings
+
+**Brittle patterns to avoid** (anti-patterns):
+
+- `.claude/docs/test-brittle-patterns.md` — general + integration-specific anti-patterns; read both sections before writing integration tests
+
+**Skill files**:
+
+- `gotchas.md` — common pitfalls (ESLint cycles, NODE_ENV, Response.json typing) — verified across 559+ tests
+- `templates/` — code templates by complexity
+
+**Shared test code**:
+
+- `tests/types/mocks.ts` — mock factories
+- `tests/helpers/assertions.ts` — type-safe assertion helpers
