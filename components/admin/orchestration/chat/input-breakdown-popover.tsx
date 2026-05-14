@@ -38,8 +38,10 @@ interface SectionConfig {
   label: string;
   part?: InputBreakdownPart;
   detail?: ReactNode;
-  /** Optional raw text to expand inline. */
+  /** Optional raw text to expand inline (rendered in a monospace block). */
   content?: string;
+  /** Optional rich explanation rendered above any `content` when the row is expanded. */
+  explanation?: ReactNode;
 }
 
 export function InputBreakdownPopover({
@@ -128,10 +130,63 @@ export function InputBreakdownPopover({
       key: 'framingOverhead',
       label: 'Provider framing',
       part: breakdown.framingOverhead,
-      detail: (
-        <span className="text-muted-foreground">
-          per-message scaffolding, tool envelope, priming, tokeniser drift
-        </span>
+      detail: <span className="text-muted-foreground">click to see what this covers</span>,
+      explanation: (
+        <div className="space-y-2 text-[11.5px] leading-relaxed">
+          <p>
+            <strong>What this row is.</strong> The reconciliation line — the difference between the
+            model&rsquo;s reported input-token count and the sum of every other section above. Each
+            section above counts the raw text we sent for that piece of content; this row catches
+            everything the model adds on top that we can&rsquo;t attribute precisely from our side.
+          </p>
+          <div>
+            <strong>What ends up in here:</strong>
+            <ul className="mt-1 ml-3 list-disc space-y-0.5">
+              <li>
+                <strong>Per-message scaffolding.</strong> OpenAI adds ~3 tokens per message for role
+                markers and delimiters (<code className="font-mono">&lt;|im_start|&gt;system</code>,
+                etc.). On a turn with N messages that&rsquo;s ~3N tokens we never see in the section
+                bodies.
+              </li>
+              <li>
+                <strong>Tool-call envelope.</strong> Even with the openai-accurate tool counter
+                wired in, the model still inserts a small wrapper around the <em>tools</em> block (
+                <code className="font-mono"># Tools</code> header, namespace markers,
+                assistant-priming displacement). ~5–15 tokens for the envelope itself.
+              </li>
+              <li>
+                <strong>Assistant priming.</strong> 3 tokens at the very end of every prompt telling
+                the model it&rsquo;s the assistant&rsquo;s turn to respond.
+              </li>
+              <li>
+                <strong>Tool-call history.</strong> Previous assistant turns that called tools
+                encode the function name + <code className="font-mono">tool_call_id</code> +
+                arguments JSON, plus the matching <code className="font-mono">tool</code>-role
+                result message. Our history estimator counts the text but under-counts these
+                wrappers — they can easily add 100–300 tokens per round-trip.
+              </li>
+              <li>
+                <strong>Image / document attachments.</strong> Vision tokens are charged per image
+                tile (a 1024&times;1024 hi-res image is ~765 tokens on gpt-4o); we add a flat
+                overhead per attachment, the rest lands here.
+              </li>
+              <li>
+                <strong>Tokeniser drift.</strong> We tokenise locally with{' '}
+                <code className="font-mono">gpt-tokenizer</code> (`o200k_base` for
+                gpt-4o/4.1/o-series, <code className="font-mono">cl100k_base</code> for older
+                models). It&rsquo;s very close to OpenAI&rsquo;s internal encoder but not
+                bit-identical — last few tokens of drift land here.
+              </li>
+            </ul>
+          </div>
+          <p>
+            <strong>Why it&rsquo;s often the biggest line.</strong> On agents with many bound
+            capabilities or long history, the per-message scaffolding and tool-call wrappers stack
+            up fast. The fix isn&rsquo;t code changes here — it&rsquo;s reducing the prompt: drop
+            unused capabilities, shorten the system prompt, or let the conversation summariser kick
+            in earlier (<code className="font-mono">maxHistoryMessages</code> on the agent config).
+          </p>
+        </div>
       ),
     });
   }
@@ -188,26 +243,28 @@ function Section({ section, totalEstimated }: SectionProps): React.ReactElement 
   const tokens = section.part?.tokens ?? 0;
   const pct = totalEstimated > 0 ? Math.round((tokens / totalEstimated) * 100) : 0;
   const hasContent = !!section.content && section.content.length > 0;
+  const hasExplanation = !!section.explanation;
+  const expandable = hasContent || hasExplanation;
 
   return (
     <li className="p-2">
       <div className="flex items-baseline justify-between gap-2">
         <button
           type="button"
-          onClick={() => hasContent && setOpen((v) => !v)}
+          onClick={() => expandable && setOpen((v) => !v)}
           className={cn(
             'flex min-w-0 flex-1 items-baseline gap-1 text-left text-xs',
-            hasContent ? 'hover:text-foreground cursor-pointer' : 'cursor-default'
+            expandable ? 'hover:text-foreground cursor-pointer' : 'cursor-default'
           )}
-          aria-expanded={hasContent ? open : undefined}
+          aria-expanded={expandable ? open : undefined}
         >
-          {hasContent &&
+          {expandable &&
             (open ? (
               <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
             ) : (
               <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
             ))}
-          {!hasContent && <span className="w-3 shrink-0" aria-hidden="true" />}
+          {!expandable && <span className="w-3 shrink-0" aria-hidden="true" />}
           <span className="font-medium whitespace-nowrap">{section.label}</span>
           {section.detail && (
             <span className="ml-1 min-w-0 text-[11px] break-words">{section.detail}</span>
@@ -217,6 +274,11 @@ function Section({ section, totalEstimated }: SectionProps): React.ReactElement 
           {tokens.toLocaleString()} <span className="opacity-70">· {pct}%</span>
         </span>
       </div>
+      {open && hasExplanation && (
+        <div className="bg-muted/40 text-muted-foreground mt-2 rounded p-3">
+          {section.explanation}
+        </div>
+      )}
       {open && hasContent && section.content && (
         <pre className="bg-muted/60 mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[11px] whitespace-pre-wrap">
           {section.content}
