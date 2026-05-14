@@ -294,6 +294,38 @@ interface AssistantMetaStripProps {
  * opening one collapses the other so the vertical footprint stays
  * compact even on turns that ship both kinds of diagnostics.
  */
+/**
+ * Compact one-liner showing the per-turn cost, token usage, and model.
+ * Used both as the body of the (clickable) input-breakdown toggle and
+ * as a static label when there's no breakdown to expand.
+ */
+function CostSummary({ message }: { message: ChatMessage }): React.ReactElement {
+  return (
+    <>
+      {typeof message.costUsd === 'number' && (
+        <span title="Approximate cost for this turn">≈ {formatCostUsd(message.costUsd)}</span>
+      )}
+      {message.tokenUsage && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span title="Tokens for this turn">
+            Toks: {message.tokenUsage.inputTokens.toLocaleString()} input,{' '}
+            {message.tokenUsage.outputTokens.toLocaleString()} output
+          </span>
+        </>
+      )}
+      {message.modelUsed && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono" title="Model used for this turn">
+            {message.modelUsed}
+          </span>
+        </>
+      )}
+    </>
+  );
+}
+
 function AssistantMetaStrip({
   message,
   expanded,
@@ -311,8 +343,6 @@ function AssistantMetaStrip({
   if (!hasCitations && !hasToolCalls && !hasInputBreakdown && !hasCost) return null;
 
   const toolSummary = hasToolCalls ? summarizeToolCalls(message.toolCalls!) : null;
-  const inputTokens =
-    message.tokenUsage?.inputTokens ?? message.inputBreakdown?.totalEstimated ?? 0;
 
   return (
     <>
@@ -361,49 +391,30 @@ function AssistantMetaStrip({
               )}
             </button>
           )}
-          {hasInputBreakdown && (
+        </div>
+
+        {hasCost &&
+          (hasInputBreakdown ? (
             <button
               type="button"
               onClick={() => onToggle('inputs')}
-              className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-medium"
+              className="text-muted-foreground hover:text-foreground flex flex-wrap items-baseline gap-x-1"
               aria-expanded={expanded === 'inputs'}
               aria-controls="input-breakdown-details"
-              title="Why this turn used this many input tokens"
+              title="Click to break down this turn's input tokens"
             >
               {expanded === 'inputs' ? (
-                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                <ChevronDown className="h-3 w-3 self-center" aria-hidden="true" />
               ) : (
-                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                <ChevronRight className="h-3 w-3 self-center" aria-hidden="true" />
               )}
-              <span>Inputs ({inputTokens.toLocaleString()})</span>
+              <CostSummary message={message} />
             </button>
-          )}
-        </div>
-
-        {hasCost && (
-          <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-1">
-            {typeof message.costUsd === 'number' && (
-              <span title="Approximate cost for this turn">≈ {formatCostUsd(message.costUsd)}</span>
-            )}
-            {message.tokenUsage && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span title="Tokens for this turn">
-                  Toks: {message.tokenUsage.inputTokens.toLocaleString()} input,{' '}
-                  {message.tokenUsage.outputTokens.toLocaleString()} output
-                </span>
-              </>
-            )}
-            {message.modelUsed && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono" title="Model used for this turn">
-                  {message.modelUsed}
-                </span>
-              </>
-            )}
-          </div>
-        )}
+          ) : (
+            <div className="text-muted-foreground flex flex-wrap items-baseline gap-x-1">
+              <CostSummary message={message} />
+            </div>
+          ))}
       </div>
 
       {expanded === 'sources' && hasCitations && <CitationsList citations={message.citations!} />}
