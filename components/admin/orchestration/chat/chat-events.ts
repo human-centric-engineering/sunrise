@@ -27,6 +27,29 @@ const tokenUsageSchema = z.object({
   totalTokens: z.number(),
 });
 
+const inputBreakdownPartSchema = z.object({
+  tokens: z.number(),
+  chars: z.number(),
+  content: z.string().optional(),
+});
+
+const inputBreakdownSchema = z.object({
+  systemPrompt: inputBreakdownPartSchema,
+  contextBlock: inputBreakdownPartSchema.optional(),
+  userMemories: inputBreakdownPartSchema.extend({ count: z.number() }).optional(),
+  conversationSummary: inputBreakdownPartSchema.optional(),
+  conversationHistory: inputBreakdownPartSchema
+    .extend({ messageCount: z.number(), droppedCount: z.number() })
+    .optional(),
+  toolDefinitions: inputBreakdownPartSchema
+    .extend({ count: z.number(), names: z.array(z.string()) })
+    .optional(),
+  attachments: z.object({ tokens: z.number(), count: z.number() }).optional(),
+  userMessage: inputBreakdownPartSchema,
+  framingOverhead: inputBreakdownPartSchema.optional(),
+  totalEstimated: z.number(),
+});
+
 const capabilityResultEntrySchema = z.object({
   capabilitySlug: z.string(),
   result: z.unknown(),
@@ -67,6 +90,7 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
     costUsd: z.number().optional(),
     provider: z.string().optional(),
     model: z.string().optional(),
+    inputBreakdown: inputBreakdownSchema.optional(),
   }),
   z.object({ type: z.literal('error'), code: z.string(), message: z.string() }),
 ]);

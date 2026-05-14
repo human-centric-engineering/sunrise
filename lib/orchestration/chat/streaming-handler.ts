@@ -1811,6 +1811,9 @@ function buildDoneEvent(
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
   const costUsd = usage ? calculateCost(model, inputTokens, outputTokens).totalCostUsd : 0;
+  const reconciled = inputBreakdown
+    ? reconcileBreakdownToActual(inputBreakdown, inputTokens)
+    : undefined;
   return {
     type: 'done',
     tokenUsage: {
@@ -1821,6 +1824,44 @@ function buildDoneEvent(
     costUsd,
     provider: providerSlug ?? undefined,
     model,
-    ...(inputBreakdown ? { inputBreakdown } : {}),
+    ...(reconciled ? { inputBreakdown: reconciled } : {}),
+  };
+}
+
+/**
+ * Reconcile the locally-estimated input breakdown against the provider's
+ * actual reported `inputTokens` count. The per-section text-token
+ * estimates stay as they are (those are attribution — they show how
+ * much *content* each part contributes); the leftover delta is moved
+ * into `framingOverhead` so the breakdown total is **exactly** equal
+ * to the model's reported number.
+ *
+ * Why this works: the model returns `usage.input_tokens` (OpenAI) /
+ * `usage.input_tokens` (Anthropic) on every chat response — that's the
+ * authoritative count. Our local estimator is unavoidably imperfect
+ * (provider scaffolding around messages, tool-envelope tokens, the
+ * provider's exact tokeniser drift). Rather than try to predict every
+ * source of drift, we surface it as a single labelled `framingOverhead`
+ * row so the popover always sums to the real total.
+ */
+function reconcileBreakdownToActual(
+  breakdown: InputBreakdown,
+  actualInputTokens: number
+): InputBreakdown {
+  if (!actualInputTokens || actualInputTokens <= 0) return breakdown;
+  const sumSections =
+    breakdown.systemPrompt.tokens +
+    (breakdown.contextBlock?.tokens ?? 0) +
+    (breakdown.userMemories?.tokens ?? 0) +
+    (breakdown.conversationSummary?.tokens ?? 0) +
+    (breakdown.conversationHistory?.tokens ?? 0) +
+    (breakdown.toolDefinitions?.tokens ?? 0) +
+    (breakdown.attachments?.tokens ?? 0) +
+    breakdown.userMessage.tokens;
+  const overhead = actualInputTokens - sumSections;
+  return {
+    ...breakdown,
+    ...(overhead > 0 ? { framingOverhead: { tokens: overhead, chars: 0 } } : {}),
+    totalEstimated: actualInputTokens,
   };
 }

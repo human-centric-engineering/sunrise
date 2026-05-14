@@ -617,7 +617,23 @@ export interface InputBreakdown {
   /** Estimated tokens consumed by binary attachments (images, PDFs). */
   attachments?: { tokens: number; count: number };
   userMessage: InputBreakdownPart;
-  /** Sum of all sections — the estimated total input for the turn. */
+  /**
+   * Per-message scaffolding the provider adds around our content: role
+   * markers, message delimiters, the tool envelope, assistant priming,
+   * and any tokeniser drift the local estimate doesn't capture.
+   *
+   * Computed as `usage.inputTokens − sum(other sections)` on the
+   * `done` event so the breakdown total always equals the model's
+   * reported input-token count exactly. Omitted when the LLM call
+   * failed before usage was reported (then `totalEstimated` falls back
+   * to the local-estimator sum).
+   */
+  framingOverhead?: InputBreakdownPart;
+  /**
+   * Total input tokens for the turn. After reconciliation against the
+   * model's reported `usage.inputTokens`, this equals the model's count
+   * exactly; before reconciliation it's the local-estimator sum.
+   */
   totalEstimated: number;
 }
 
