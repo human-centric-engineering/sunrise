@@ -738,11 +738,11 @@ describe('ChatInterface', () => {
 
     const input = screen.getByPlaceholderText(/type a message/i);
     await user.type(input, 'something I changed my mind about');
-    expect(input.value).toBe('something I changed my mind about');
+    expect(input).toHaveValue('something I changed my mind about');
 
     await user.click(screen.getByRole('button', { name: /clear input/i }));
 
-    expect(input.value).toBe('');
+    expect(input).toHaveValue('');
     // No network calls — clearing input must not delete the conversation.
     expect(fetchMock).not.toHaveBeenCalled();
     // X disappears once the field is empty.
