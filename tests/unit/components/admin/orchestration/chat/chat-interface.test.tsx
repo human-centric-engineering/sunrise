@@ -1750,10 +1750,72 @@ describe('ChatInterface', () => {
       try {
         await user.click(screen.getByLabelText(/suggest a prompt/i));
         const textarea = screen.getByPlaceholderText(/type a message/i);
+        if (!(textarea instanceof HTMLTextAreaElement)) {
+          throw new Error('expected a textarea');
+        }
         expect(textarea.value).toBe('Prompt A');
       } finally {
         rng.mockRestore();
       }
+    });
+  });
+
+  // ─── Starter randomise button (onResampleStarters) ───────────────────────────
+
+  describe('onResampleStarters', () => {
+    it('does not render the shuffle button when the callback is absent', () => {
+      render(<ChatInterface agentSlug="test-agent" starterPrompts={['A', 'B']} />);
+      expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+    });
+
+    it('renders the shuffle button when starters and the callback are present', () => {
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={() => {}}
+        />
+      );
+      expect(screen.getByLabelText(/randomise suggestions/i)).toBeInTheDocument();
+    });
+
+    it('invokes the callback on click', async () => {
+      const user = userEvent.setup();
+      const onResample = vi.fn();
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={onResample}
+        />
+      );
+      await user.click(screen.getByLabelText(/randomise suggestions/i));
+      expect(onResample).toHaveBeenCalledOnce();
+    });
+
+    it('hides the shuffle button once the conversation has at least one message', async () => {
+      const user = userEvent.setup();
+      const stream = makeSseStream([
+        startFrame('conv-1', 'msg-1'),
+        contentFrame('hi'),
+        doneFrame(),
+      ]);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+      render(
+        <ChatInterface
+          agentSlug="test-agent"
+          starterPrompts={['A', 'B']}
+          onResampleStarters={() => {}}
+        />
+      );
+      expect(screen.getByLabelText(/randomise suggestions/i)).toBeInTheDocument();
+      const input = screen.getByPlaceholderText(/type a message/i);
+      await user.type(input, 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      await waitFor(() => {
+        expect(screen.queryByLabelText(/randomise suggestions/i)).not.toBeInTheDocument();
+      });
     });
   });
 });

@@ -179,6 +179,11 @@ export function LearningTabs({
             contextType={contextType}
             contextId={contextId}
             starterPrompts={advisorStarters}
+            // Shuffle icon next to "Try asking:" swaps the visible
+            // five for a fresh sample without clearing state.
+            onResampleStarters={() =>
+              setAdvisorStarters(sampleAdvisorPrompts(ADVISOR_STARTER_COUNT))
+            }
             // Full pool (all 68) feeds the in-chat lightbulb button so
             // a mid-conversation re-roll isn't limited to the five
             // visible starters.

@@ -22,6 +22,7 @@ Reusable SSE streaming chat component for embedding in admin panels. Lives at `c
 | `onConversationCleared`  | `() => void`                                  | No       | —       | Fires after conversation is cleared                                                                                  |
 | `showInlineTrace`        | `boolean`                                     | No       | `false` | Admin-only diagnostic. Sends `includeTrace: true` and renders `<MessageTrace>` per assistant turn.                   |
 | `suggestionPool`         | `readonly string[]`                           | No       | —       | Pool of suggestion strings drawn by the in-chat lightbulb button (visible once messages exist). Click → random fill. |
+| `onResampleStarters`     | `() => void`                                  | No       | —       | When set, renders a shuffle icon next to "Try asking:" that invokes this callback. Parent owns the resample logic.   |
 
 ## Modes
 

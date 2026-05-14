@@ -25,7 +25,16 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Download, Lightbulb, Loader2, Send, Trash2, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Download,
+  Lightbulb,
+  Loader2,
+  Send,
+  Shuffle,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 import {
   AlertDialog,
@@ -124,6 +133,14 @@ export interface ChatInterfaceProps {
   contextId?: string;
   /** Starter prompt buttons shown when no messages exist. */
   starterPrompts?: string[];
+  /**
+   * When provided, renders a small shuffle icon next to the "Try
+   * asking:" heading. Clicking it invokes this callback — the parent
+   * owns the prompt pool and is expected to swap `starterPrompts` for
+   * a fresh sample. Omit the prop on surfaces whose starters are
+   * static (no need to render a button that would do nothing).
+   */
+  onResampleStarters?: () => void;
   /** Additional class names for the outer container. */
   className?: string;
   /** Compact mode for embedding in tabs/panels (no card wrapper). */
@@ -326,6 +343,7 @@ export function ChatInterface({
   contextType,
   contextId,
   starterPrompts,
+  onResampleStarters,
   className,
   embedded = false,
   onCapabilityResult,
@@ -918,7 +936,23 @@ export function ChatInterface({
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
         {showStarters && (
           <div className="flex flex-col items-center justify-center gap-2 py-8">
-            <p className="text-muted-foreground mb-2 text-sm">Try asking:</p>
+            <div className="text-muted-foreground mb-2 flex items-center gap-1 text-sm">
+              <span>Try asking:</span>
+              {onResampleStarters && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-foreground h-6 w-6"
+                  onClick={() => onResampleStarters()}
+                  aria-label="Randomise suggestions"
+                  title="Randomise suggestions"
+                  disabled={streaming}
+                >
+                  <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
+                </Button>
+              )}
+            </div>
             <div className="flex flex-wrap justify-center gap-2">
               {starterPrompts.map((prompt) => (
                 <Button
