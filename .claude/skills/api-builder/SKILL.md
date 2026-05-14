@@ -1,552 +1,293 @@
 ---
 name: api-builder
-version: 1.0.0
 description: |
-  Expert API endpoint builder for Sunrise. Generates type-safe REST API routes
-  following established patterns: Zod validation, standardized responses,
-  authentication, error handling, and comprehensive tests. Use when creating
-  new API endpoints or modifying existing ones.
-
-triggers:
-  - 'create api endpoint'
-  - 'build api route'
-  - 'add api endpoint'
-  - 'new api route'
-
-contexts:
-  - '.context/api/endpoints.md'
-  - '.context/api/headers.md'
-  - '.context/api/examples.md'
-  - '.context/auth/overview.md'
-  - 'lib/api/**/*'
-  - 'lib/validations/**/*'
-  - 'app/api/v1/**/route.ts'
-
-mcp_integrations:
-  next_devtools: true
-  context7:
-    libraries:
-      - zod: TBC # For validation patterns
-
-parameters:
-  nextjs_version: '16'
-  http_methods: ['GET', 'POST', 'PATCH', 'DELETE']
-  auth_modes: ['public', 'authenticated', 'admin']
-  response_format: 'standardized'
+  Canonical recipe for building API endpoints in Sunrise. Produces routes
+  that match the codebase pattern: Zod validation, `withAuth` / `withAdminAuth`
+  wrappers from `lib/auth/guards.ts`, rate limiting on mutating endpoints,
+  standardised responses, structured route logging, and the standard error
+  envelope. Use when creating new routes under `app/api/v1/` or modifying
+  existing ones. Defers test writing to the `testing` skill / `/test-write`.
 ---
 
-# API Builder Skill - Overview
+# API Builder Skill
 
-## Mission
+Build endpoints that match what's already in the codebase. The patterns below are taken from real routes (`app/api/v1/admin/orchestration/quiz-scores/route.ts`, `app/api/v1/chat/agents/route.ts`, `app/api/v1/contact/route.ts`) — copy them, don't invent your own.
 
-You are an API endpoint builder for the Sunrise project. Your role is to create production-ready REST API endpoints that follow **Next.js 16 App Router** patterns for validation, authentication, error handling, and testing.
+**Critical rule:** routes wrap handlers with `withAuth` / `withAdminAuth` from `lib/auth/guards.ts`. The wrappers handle session lookup, role check, error catching, and the error envelope automatically. **Do not write `try/catch` in the handler.** Throw a typed error (`UnauthorizedError`, `ForbiddenError`, `ValidationError`, `NotFoundError`, `ConflictError`) and the wrapper formats it.
 
-**CRITICAL:** Always use Next.js DevTools MCP (`nextjs_docs`) for latest Next.js patterns. Next.js 16 has breaking changes from v14/15 (async `headers()`, async `cookies()`, etc.).
+---
 
-## Core Patterns
-
-### Standardized Response Format
-
-**Success Response:**
+## The standard envelope
 
 ```typescript
-{
-  success: true,
-  data: { ... },
-  meta?: { page, limit, total }
-}
+// Success
+{ success: true, data: { ... }, meta?: { ... } }
+
+// Error
+{ success: false, error: { code: 'ERROR_CODE', message: '…', details?: { ... } } }
 ```
 
-**Error Response:**
+Use the helpers in `@/lib/api/responses`:
+
+- `successResponse(data, meta?, options?)` — 200 by default; pass `{ status: 201 }` for creates
+- `paginatedResponse(data, { page, limit, total })` — wraps data with pagination meta
+- `errorResponse(message, { code, status, details, headers })` — rarely used directly; throw a typed error instead
+
+---
+
+## Auth wrappers (the only auth pattern routes should use)
 
 ```typescript
-{
-  success: false,
-  error: {
-    code: "ERROR_CODE",
-    message: "Human-readable message",
-    details?: { field: "validation errors" }
-  }
-}
-```
+import { withAuth, withAdminAuth } from '@/lib/auth/guards';
 
-### Next.js 16 Considerations
+// Any authenticated user
+export const GET = withAuth(async (request, session) => {
+  return successResponse({ user: session.user });
+});
 
-**ALWAYS reference Next.js DevTools MCP** for current patterns:
-
-```typescript
-// Query Next.js docs before implementing
-mcp__next_devtools__nextjs_docs({
-  action: 'get',
-  path: 'app/building-your-application/routing/route-handlers',
+// Admin only
+export const POST = withAdminAuth(async (request, session) => {
+  // session is guaranteed to be an admin
 });
 ```
 
-**Key Next.js 16 Changes:**
+The wrappers:
 
-- `headers()` is now async → `const h = await headers()`
-- `cookies()` is now async → `const c = await cookies()`
-- `params` in dynamic routes is now async → `const { id } = await params`
-- Route handlers use `NextRequest` instead of `Request`
+- Resolve the session via `auth.api.getSession({ headers: await headers() })` for you
+- Throw `UnauthorizedError` if no session
+- Throw `ForbiddenError` if `withAdminAuth` and the role isn't admin
+- Route all thrown errors through `handleAPIError(error)` automatically
 
-### Authentication Levels
+Use `getServerSession()` / `requireAuth()` / `requireRole()` from `@/lib/auth/utils` only **outside** route handlers (server components, background jobs, scripts). Inside a route, always use the wrappers.
 
-1. **Public** - No authentication required
-2. **Authenticated** - Valid session required (use `await headers()` + `auth.api.getSession()`)
-3. **Admin** - Admin role required (check `session.user.role === 'ADMIN'`)
+---
 
-### File Structure
+## The canonical recipe
 
-```
-app/api/v1/[resource]/route.ts      → Route handler
-lib/validations/[resource].ts       → Zod schemas
-__tests__/integration/api/[resource]/route.test.ts  → Tests
-```
+A mutating admin endpoint with everything wired correctly. Strip parts you don't need (rate-limit on GETs, request body on listing endpoints) but keep the structure.
 
-## 5-Step Workflow
+### Step 1 — Zod schema
 
-### Step 1: Analyze Requirements
-
-**Gather information:**
-
-- Resource name (e.g., "users", "posts")
-- HTTP methods needed (GET, POST, PATCH, DELETE)
-- Authentication level (public, authenticated, admin)
-- Request/response data structures
-- Business logic requirements
-
-**Determine complexity:**
-
-- Simple: CRUD operations, no complex business logic
-- Medium: Includes validation, filtering, pagination
-- Complex: Multi-step operations, external services, transactions
-
-### Step 2: Create Zod Validation Schemas
-
-**File:** `lib/validations/[resource].ts`
-
-**Pattern:**
+`lib/validations/<domain>.ts`:
 
 ```typescript
 import { z } from 'zod';
 
-export const createResourceSchema = z.object({
-  field1: z.string().min(1).max(100),
-  field2: z.string().email(),
-  // ... more fields
+export const createWidgetSchema = z.object({
+  name: z.string().min(1).max(100),
+  description: z.string().max(500).optional(),
 });
 
-export const updateResourceSchema = createResourceSchema.partial();
-
-export const resourceQuerySchema = z.object({
+export const widgetQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(10),
+  limit: z.coerce.number().int().positive().max(100).default(20),
   q: z.string().optional(),
 });
 
-export type CreateResourceInput = z.infer<typeof createResourceSchema>;
-export type UpdateResourceInput = z.infer<typeof updateResourceSchema>;
-export type ResourceQuery = z.infer<typeof resourceQuerySchema>;
+export type CreateWidgetInput = z.infer<typeof createWidgetSchema>;
+export type WidgetQuery = z.infer<typeof widgetQuerySchema>;
 ```
 
-**Use Context7 for Zod patterns:**
+Reuse what's already in `lib/validations/` — `emailSchema`, `nameSchema`, common pagination fields, etc. — before adding new ones.
 
-```typescript
-// Resolve library ID first (if not already known)
-mcp__context7__resolve_library_id({
-  libraryName: 'zod',
-  query: 'validation schemas for API request body',
-});
+### Step 2 — Route handler
 
-// Then query for patterns
-mcp__context7__query_docs({
-  libraryId: '/colinhacks/zod', // Use resolved ID
-  query: 'validation schemas refine transform',
-});
-```
-
-### Step 3: Generate Route Handler
-
-**File:** `app/api/v1/[resource]/route.ts`
-
-**Template (Next.js 16 Pattern):**
+`app/api/v1/widgets/route.ts`:
 
 ```typescript
 import { NextRequest } from 'next/server';
-import { headers } from 'next/headers'; // Next.js 16: headers() is async
-import { auth } from '@/lib/auth/config';
-import {
-  validateRequestBody,
-  validateQueryParams,
-  parsePaginationParams,
-} from '@/lib/api/validation';
-import { successResponse, paginatedResponse } from '@/lib/api/responses';
-import { handleAPIError, UnauthorizedError, ForbiddenError } from '@/lib/api/errors';
-import { logger } from '@/lib/logging';
+import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { createResourceSchema, resourceQuerySchema } from '@/lib/validations/resource';
+import { successResponse, paginatedResponse } from '@/lib/api/responses';
+import { NotFoundError } from '@/lib/api/errors';
+import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
+import { getRouteLogger } from '@/lib/api/context';
+import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+import { createWidgetSchema, widgetQuerySchema } from '@/lib/validations/widget';
 
-export async function GET(request: NextRequest) {
-  try {
-    // 1. Authentication (Next.js 16: headers() is async)
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
+export const GET = withAdminAuth(async (request, session) => {
+  const log = await getRouteLogger(request);
 
-    if (!session) {
-      throw new UnauthorizedError();
-    }
+  const { page, limit, q } = validateQueryParams(request.nextUrl.searchParams, widgetQuerySchema);
+  const skip = (page - 1) * limit;
 
-    // 2. Validate query parameters
-    const { searchParams } = request.nextUrl;
-    const query = validateQueryParams(searchParams, resourceQuerySchema);
-    const { page, limit, skip } = parsePaginationParams(searchParams);
+  const where = {
+    ownerId: session.user.id,
+    ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
+  };
 
-    // 3. Business logic with parallel queries for performance
-    const where = {
-      // Add filters based on query params
-    };
+  const [data, total] = await Promise.all([
+    prisma.widget.findMany({
+      where,
+      skip,
+      take: limit,
+      select: { id: true, name: true, description: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.widget.count({ where }),
+  ]);
 
-    const [data, total] = await Promise.all([
-      prisma.resource.findMany({
-        where,
-        skip,
-        take: limit,
-        select: {
-          /* only needed fields */
-        },
-      }),
-      prisma.resource.count({ where }),
-    ]);
-
-    // 4. Return paginated response
-    return paginatedResponse(data, { page, limit, total });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    // 1. Authorization (admin only example)
-    const requestHeaders = await headers();
-    const session = await auth.api.getSession({ headers: requestHeaders });
-
-    if (!session) {
-      throw new UnauthorizedError();
-    }
-
-    if (session.user.role !== 'ADMIN') {
-      throw new ForbiddenError('Admin access required');
-    }
-
-    // 2. Validate request body
-    const body = await validateRequestBody(request, createResourceSchema);
-
-    // 3. Business logic
-    const resource = await prisma.resource.create({
-      data: body,
-    });
-
-    // 4. Logging
-    logger.info('Resource created', { resourceId: resource.id });
-
-    // 5. Return response with 201 status
-    return successResponse(resource, undefined, { status: 201 });
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
-```
-
-**Alternative: Using Auth Utility Wrappers**
-
-For cleaner code, you can use the auth utility functions that wrap the `await headers()` pattern:
-
-```typescript
-import { getServerSession, requireRole } from '@/lib/auth/utils';
-
-// Simple authentication check
-const session = await getServerSession();
-if (!session) {
-  throw new UnauthorizedError();
-}
-
-// Or require authentication (throws if not authenticated)
-const session = await requireAuth();
-
-// Or require specific role (throws if not authorized)
-const session = await requireRole('ADMIN');
-```
-
-**Note:** These utilities internally call `await headers()` for you, maintaining Next.js 16 compatibility.
-
-**Key Helpers:**
-
-- `validateRequestBody(request, schema)` - Parse and validate JSON body
-- `validateQueryParams(request, schema)` - Parse and validate query string
-- `successResponse(data, options?)` - Format success response
-- `handleAPIError(error, status?)` - Format error response
-- `getServerSession()` - Get current user session
-- `requireAuth()` - Require authentication (throws if not authenticated)
-- `requireRole(role)` - Require specific role (throws if unauthorized)
-
-### Step 4: Generate Tests
-
-**File:** `__tests__/integration/api/v1/[resource]/route.test.ts`
-
-**Pattern:**
-
-```typescript
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { GET, POST } from '@/app/api/v1/resource/route';
-import { NextRequest } from 'next/server';
-
-vi.mock('@/lib/auth/utils', () => ({
-  getServerSession: vi.fn(),
-  requireRole: vi.fn(),
-}));
-
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    resource: {
-      findMany: vi.fn(),
-      count: vi.fn(),
-      create: vi.fn(),
-    },
-  },
-}));
-
-describe('GET /api/v1/resource', () => {
-  it('should return paginated resources', async () => {
-    const { getServerSession } = await import('@/lib/auth/utils');
-    const { prisma } = await import('@/lib/db/client');
-
-    vi.mocked(getServerSession).mockResolvedValue({
-      user: { id: 'user-1', email: 'test@example.com' },
-    } as any);
-
-    vi.mocked(prisma.resource.findMany).mockResolvedValue([{ id: 'resource-1', name: 'Test' }]);
-    vi.mocked(prisma.resource.count).mockResolvedValue(1);
-
-    const request = new NextRequest('http://localhost:3000/api/v1/resource?page=1&limit=10');
-    const response = await GET(request);
-    const json = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(json.success).toBe(true);
-    expect(json.data).toHaveLength(1);
-    expect(json.meta).toMatchObject({ page: 1, limit: 10, total: 1 });
-  });
-
-  it('should return 401 when not authenticated', async () => {
-    const { getServerSession } = await import('@/lib/auth/utils');
-    vi.mocked(getServerSession).mockResolvedValue(null);
-
-    const request = new NextRequest('http://localhost:3000/api/v1/resource');
-    const response = await GET(request);
-    const json = await response.json();
-
-    expect(response.status).toBe(401);
-    expect(json.success).toBe(false);
-  });
+  log.info('Widgets listed', { count: data.length, total, userId: session.user.id });
+  return paginatedResponse(data, { page, limit, total });
 });
 
-describe('POST /api/v1/resource', () => {
-  it('should create resource when authorized', async () => {
-    const { requireRole } = await import('@/lib/auth/utils');
-    const { prisma } = await import('@/lib/db/client');
+export const POST = withAdminAuth(async (request, session) => {
+  // Rate limit mutating endpoints (CLAUDE.md mandates this for POST/PATCH/DELETE)
+  const clientIP = getClientIP(request);
+  const rateLimit = adminLimiter.check(clientIP);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
-    vi.mocked(requireRole).mockResolvedValue({
-      user: { id: 'admin-1', role: 'ADMIN' },
-    } as any);
+  const log = await getRouteLogger(request);
+  const body = await validateRequestBody(request, createWidgetSchema);
 
-    vi.mocked(prisma.resource.create).mockResolvedValue({
-      id: 'resource-1',
-      name: 'New Resource',
-    } as any);
-
-    const request = new NextRequest('http://localhost:3000/api/v1/resource', {
-      method: 'POST',
-      body: JSON.stringify({ name: 'New Resource' }),
-    });
-
-    const response = await POST(request);
-    const json = await response.json();
-
-    expect(response.status).toBe(201);
-    expect(json.success).toBe(true);
-    expect(json.data.id).toBe('resource-1');
+  const widget = await prisma.widget.create({
+    data: { ...body, ownerId: session.user.id },
+    select: { id: true, name: true, description: true, createdAt: true },
   });
 
-  it('should validate request body', async () => {
-    const { requireRole } = await import('@/lib/auth/utils');
-    vi.mocked(requireRole).mockResolvedValue({ user: { role: 'ADMIN' } } as any);
-
-    const request = new NextRequest('http://localhost:3000/api/v1/resource', {
-      method: 'POST',
-      body: JSON.stringify({ invalid: 'data' }),
-    });
-
-    const response = await POST(request);
-    const json = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(json.success).toBe(false);
-    expect(json.error.code).toBe('VALIDATION_ERROR');
-  });
+  log.info('Widget created', { widgetId: widget.id, userId: session.user.id });
+  return successResponse(widget, undefined, { status: 201 });
 });
 ```
 
-### Step 5: Verify Implementation
+### Step 3 — Dynamic route params (Next.js 16)
 
-**Checklist:**
-
-- [ ] Route handler created with all HTTP methods
-- [ ] Zod schemas created and exported
-- [ ] Authentication/authorization implemented
-- [ ] Request validation using schemas
-- [ ] Error handling with `handleAPIError()`
-- [ ] Standardized response format
-- [ ] Structured logging for important events
-- [ ] Integration tests with mocked dependencies
-- [ ] Tests cover success and error cases
-- [ ] Run `npm run validate` - all checks pass
-- [ ] Run `npm test` - all tests pass
-
-## Reference Documentation
-
-**Always reference these files for patterns:**
-
-- `.context/api/endpoints.md` - Response format, error codes, versioning
-- `.context/api/headers.md` - Security headers, CORS (when needed)
-- `.context/api/examples.md` - Server-side implementation examples
-- `.context/auth/overview.md` - Authentication utilities and patterns
-
-**Helper Functions Reference:**
-
-- `lib/api/validation.ts` - Request validation utilities
-- `lib/api/response.ts` - Response formatting utilities
-- `lib/auth/utils.ts` - Authentication utilities
-- `lib/logging/index.ts` - Structured logging
-
-## Common Patterns
-
-### Pagination
+Params are now async. Apply this anywhere you have `[id]`:
 
 ```typescript
-const params = validateQueryParams(
-  request,
-  z.object({
-    page: z.coerce.number().int().positive().default(1),
-    limit: z.coerce.number().int().positive().max(100).default(10),
-  })
-);
-
-const data = await prisma.resource.findMany({
-  skip: (params.page - 1) * params.limit,
-  take: params.limit,
-});
-
-const total = await prisma.resource.count();
-
-return successResponse(data, {
-  meta: { page: params.page, limit: params.limit, total },
-});
-```
-
-### Filtering
-
-```typescript
-const params = validateQueryParams(
-  request,
-  z.object({
-    q: z.string().optional(),
-    status: z.enum(['active', 'inactive']).optional(),
-  })
-);
-
-const where = {
-  ...(params.q && { name: { contains: params.q, mode: 'insensitive' } }),
-  ...(params.status && { status: params.status }),
-};
-
-const data = await prisma.resource.findMany({ where });
-```
-
-### Nested Resources
-
-```typescript
-// GET /api/v1/users/:userId/posts
-export async function GET(request: NextRequest, { params }: { params: { userId: string } }) {
-  const posts = await prisma.post.findMany({
-    where: { authorId: params.userId },
+export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
+  const { id } = await params;
+  const widget = await prisma.widget.findFirst({
+    where: { id, ownerId: session.user.id },
   });
-  return successResponse(posts);
-}
+  if (!widget) throw new NotFoundError('Widget not found');
+  return successResponse(widget);
+});
 ```
 
-## Error Handling
+Note the generic on `withAuth<{ id: string }>` — that's what types the `params` arg.
 
-**Use `handleAPIError()` for all errors:**
+### Step 4 — Tests
+
+**Defer to the `testing` skill or `/test-write`.** The api-builder skill only produces the route + schema. Hand off testing as a separate step so the anti-green-bar lens applies.
+
+If you need a minimal stub to verify wiring before handing off, mock `withAuth`/`withAdminAuth` as identity functions and call the exported handler directly (see the testing skill's "API route — mocking Prisma + auth guards" section).
+
+---
+
+## Rate limiting
+
+CLAUDE.md mandates rate limiting on **all mutating endpoints** (POST/PATCH/DELETE). The canonical 4-line pattern:
 
 ```typescript
-try {
-  // ... business logic
-} catch (error) {
-  return handleAPIError(error);
-}
+const clientIP = getClientIP(request);
+const rateLimit = adminLimiter.check(clientIP);
+if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 ```
 
-**Custom error codes:**
+**Pick the closest pre-built limiter** from `@/lib/security/rate-limit`. Don't create new ones unless none fit:
+
+| Limiter                    | Use for                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| `authLimiter`              | Login, signup, OAuth callback — keyed by IP, brute-force tight |
+| `passwordResetLimiter`     | Password reset request endpoint                                |
+| `verificationEmailLimiter` | Resend-verification flow                                       |
+| `contactLimiter`           | Public contact form                                            |
+| `apiLimiter`               | Generic authenticated API endpoint, low-volume mutations       |
+| `adminLimiter`             | Admin-only writes                                              |
+| `acceptInviteLimiter`      | Invitation acceptance flow                                     |
+| `inviteLimiter`            | Sending invitations                                            |
+| `uploadLimiter`            | File / document upload endpoints                               |
+| `audioLimiter`             | Speech-to-text and similar audio endpoints                     |
+| `imageLimiter`             | Image generation / upload                                      |
+| `chatLimiter`              | Authenticated chat                                             |
+| `consumerChatLimiter`      | Public consumer chat                                           |
+| `embedChatLimiter`         | Embed widget chat                                              |
+| `cspReportLimiter`         | CSP violation reporter                                         |
+| `inboundLimiter`           | Inbound webhook receivers (Slack, Postmark, generic-HMAC)      |
+| `agentChatLimiter`         | Dynamic per-agent limiter                                      |
+| `apiKeyChatLimiter`        | Dynamic per-API-key limiter                                    |
+
+**Key strategy:**
+
+- Anonymous endpoints (login, signup, contact): `getClientIP(request)`
+- Authenticated, per-user abuse matters: `` `user:${session.user.id}` ``
+- Authenticated, per-key abuse: `` `key:${apiKey.id}` ``
+
+For full security context (CSP, CORS, SSRF guards, sanitisation), see `.context/security/overview.md` and `.context/security/gotchas.md`.
+
+---
+
+## Errors
+
+Throw typed errors from `@/lib/api/errors`. The wrapper catches them and emits the standard envelope:
+
+| Throw                                         | Status | Use when                                                |
+| --------------------------------------------- | ------ | ------------------------------------------------------- |
+| `UnauthorizedError()`                         | 401    | Wrapper handles this for missing sessions               |
+| `ForbiddenError('reason')`                    | 403    | Wrapper handles this for `withAdminAuth` mismatches     |
+| `ValidationError('msg', details?)`            | 400    | Schema-level rejections beyond what Zod already catches |
+| `NotFoundError('Widget not found')`           | 404    | `findFirst` / `findUnique` returned null                |
+| `ConflictError('Widget name already exists')` | 409    | Unique constraint, duplicate slug, etc.                 |
+| `new APIError('CODE', 'msg', status)`         | custom | Anything else — pick a kebab-case code                  |
+
+`validateRequestBody` and `validateQueryParams` throw `ValidationError` automatically when the Zod schema rejects. You don't need to wrap them.
+
+---
+
+## Route logger
+
+Every route gets a logger scoped to the request via `getRouteLogger(request)` from `@/lib/api/context`. It carries the request ID, route, method, and user agent so logs are traceable across the request lifecycle.
 
 ```typescript
-if (!resource) {
-  return handleAPIError(new Error('Resource not found'), 404);
-}
-
-if (unauthorized) {
-  return handleAPIError(new Error('Insufficient permissions'), 403);
-}
+const log = await getRouteLogger(request);
+log.info('Widget created', { widgetId: widget.id, userId: session.user.id });
+log.warn('Suspicious payload', { reason });
 ```
 
-## Testing Strategy
+Always pass structured fields, never interpolate into the message. `log.info('Widget created: ${id}')` is wrong; `log.info('Widget created', { widgetId: id })` is right.
 
-**Unit Tests:** For validation schemas and utility functions
-**Integration Tests:** For API route handlers (mock Prisma and auth)
+---
 
-**Always mock:**
-
-- Database (Prisma client)
-- Authentication (`getServerSession`, `requireAuth`, `requireRole`)
-- External services
-
-**Test coverage:**
-
-- Success cases (200, 201)
-- Validation errors (400)
-- Authentication errors (401)
-- Authorization errors (403)
-- Not found errors (404)
-
-## Usage Examples
-
-**Simple CRUD endpoint:**
+## File layout
 
 ```
-User: "Create a GET /api/v1/posts endpoint that returns paginated posts"
-Assistant: [Creates route with pagination, authentication, tests]
+app/api/v1/<resource>/route.ts                 # GET / POST / etc.
+app/api/v1/<resource>/[id]/route.ts            # one-by-id
+lib/validations/<resource>.ts                  # Zod schemas
+tests/integration/api/v1/<resource>/route.test.ts   # tests (handled by testing skill)
 ```
 
-**Admin-only endpoint:**
+Resources go under `app/api/v1/`. Admin-only routes live at `app/api/v1/admin/<resource>/`. Embed-widget routes live at `app/api/v1/embed/<resource>/`.
 
-```
-User: "Create POST /api/v1/users/invite endpoint for admins to invite users"
-Assistant: [Creates route with admin authorization, validation, invitation logic, tests]
-```
+---
 
-**Complex filtering:**
+## Pre-completion checklist
 
-```
-User: "Add filtering by status and search to GET /api/v1/orders"
-Assistant: [Updates route with query params validation, filtering logic, tests]
-```
+Before declaring the endpoint done:
+
+- [ ] Auth wrapper applied (`withAuth` or `withAdminAuth`) — no manual session resolution
+- [ ] Zod schema in `lib/validations/`, types exported
+- [ ] All input passes through `validateRequestBody` / `validateQueryParams`
+- [ ] Mutating verbs (POST/PATCH/DELETE) have a rate-limit check
+- [ ] Route logger captures the important events (create, update, delete, denial)
+- [ ] `successResponse` / `paginatedResponse` for happy path; throw typed errors otherwise
+- [ ] No `try/catch` in the handler (wrappers handle errors)
+- [ ] Tests handed off to the testing skill / `/test-write`
+- [ ] `npm run validate` passes (lint + type-check + format)
+
+---
+
+## Related material
+
+- `lib/auth/guards.ts` — `withAuth`, `withAdminAuth`
+- `lib/api/responses.ts` — `successResponse`, `paginatedResponse`, `errorResponse`
+- `lib/api/errors.ts` — `APIError`, typed subclasses, `ErrorCodes`, `handleAPIError`
+- `lib/api/validation.ts` — `validateRequestBody`, `validateQueryParams`, `parsePaginationParams`
+- `lib/api/context.ts` — `getRouteLogger`
+- `lib/api/etag.ts` — `computeETag`, `checkConditional` (for cacheable GETs)
+- `.context/api/endpoints.md` — endpoint conventions, error codes, versioning
+- `.context/api/examples.md` — fuller worked examples
+- `.context/security/overview.md` — security primitives reference
+- `.context/security/gotchas.md` — security anti-patterns to avoid
