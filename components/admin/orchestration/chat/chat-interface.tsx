@@ -425,6 +425,7 @@ function AssistantMetaStrip({
         <InputBreakdownList
           breakdown={message.inputBreakdown!}
           reportedInputTokens={message.tokenUsage?.inputTokens}
+          model={message.modelUsed}
         />
       )}
     </>
