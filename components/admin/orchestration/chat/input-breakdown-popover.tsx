@@ -151,7 +151,7 @@ export function InputBreakdownPopover({
           {!compact && ' input tokens'}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[min(28rem,90vw)] p-0" align="start" side="top">
+      <PopoverContent className="w-[min(48rem,95vw)] p-0" align="start" side="top">
         <div className="border-border/60 flex items-baseline justify-between border-b p-3">
           <div className="text-sm font-medium">Input breakdown</div>
           <div className="text-muted-foreground text-[11px] tabular-nums">
@@ -210,7 +210,7 @@ function Section({ section, totalEstimated }: SectionProps): React.ReactElement 
           {!hasContent && <span className="w-3 shrink-0" aria-hidden="true" />}
           <span className="font-medium whitespace-nowrap">{section.label}</span>
           {section.detail && (
-            <span className="ml-1 min-w-0 truncate text-[11px]">{section.detail}</span>
+            <span className="ml-1 min-w-0 text-[11px] break-words">{section.detail}</span>
           )}
         </button>
         <span className="text-muted-foreground shrink-0 text-[11px] tabular-nums">
