@@ -198,6 +198,7 @@ export function LearningTabs({
             // 24 h TTL is enforced inside ChatInterface.
             persistenceKey="learn:advisor"
             showDownloadButton
+            showClearButton
             downloadFilename="pattern-advisor-chat"
             className="h-[600px]"
           />
@@ -246,6 +247,7 @@ export function LearningTabs({
             showInlineTrace
             persistenceKey="learn:quiz"
             showDownloadButton
+            showClearButton
             downloadFilename="quiz-master-chat"
             className="h-[600px]"
           />
