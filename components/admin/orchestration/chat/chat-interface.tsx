@@ -1198,7 +1198,7 @@ export function ChatInterface({
               )}
               Suggested prompts
             </button>
-            {onResampleStarters && (
+            {onResampleStarters && showSuggestedPrompts && (
               <Button
                 type="button"
                 variant="ghost"
@@ -1223,7 +1223,10 @@ export function ChatInterface({
                   key={prompt}
                   variant="outline"
                   size="sm"
-                  onClick={() => void sendMessageWrapped(prompt)}
+                  onClick={() => {
+                    setShowSuggestedPrompts(false);
+                    void sendMessageWrapped(prompt);
+                  }}
                   disabled={streaming}
                 >
                   {prompt}
