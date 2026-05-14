@@ -25,6 +25,7 @@ function makeChunk(content: string, patternNumber = 1): AiKnowledgeChunk {
     estimatedTokens: 100,
     embeddingModel: null,
     embeddingProvider: null,
+    embeddingDimension: null,
     embeddedAt: null,
     metadata: {},
     createdAt: new Date(),

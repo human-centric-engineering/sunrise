@@ -42,6 +42,7 @@ function makeSearchResult(
       estimatedTokens: null,
       embeddingModel: null,
       embeddingProvider: null,
+      embeddingDimension: null,
       embeddedAt: null,
       metadata: null,
       content: 'Chunk content about agents',

@@ -85,6 +85,7 @@ async function seedWithoutEmbeddings(): Promise<void> {
       fileHash,
       status: 'processing',
       uploadedBy: userId,
+      knowledgeBaseId: 'kb_default',
     },
   });
 

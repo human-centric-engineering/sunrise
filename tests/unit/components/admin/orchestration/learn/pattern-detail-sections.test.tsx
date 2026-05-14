@@ -34,6 +34,7 @@ function makeChunk(overrides: Partial<AiKnowledgeChunk> = {}): AiKnowledgeChunk 
     estimatedTokens: 100,
     embeddingModel: null,
     embeddingProvider: null,
+    embeddingDimension: null,
     embeddedAt: null,
     metadata: null,
     ...overrides,

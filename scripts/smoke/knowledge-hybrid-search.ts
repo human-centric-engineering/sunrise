@@ -89,6 +89,7 @@ async function main(): Promise<void> {
       status: 'ready',
       scope: 'app',
       uploadedBy: user.id,
+      knowledgeBaseId: 'kb_default',
     },
     select: { id: true },
   });

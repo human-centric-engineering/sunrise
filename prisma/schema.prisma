@@ -600,11 +600,19 @@ model AiMessage {
   @@map("ai_message")
 }
 
-// Embedding vector for semantic search over conversation messages
+// Embedding vector for semantic search over conversation messages.
+//
+// The `embedding` column dimension is rebuilt by `npm run embeddings:reset`
+// whenever the active embedding model in `AiOrchestrationSettings` changes,
+// since pgvector locks dimension at the column level. Today's active model
+// is `text-embedding-3-small` (1536-dim).
 model AiMessageEmbedding {
-  id        String                      @id @default(cuid())
-  messageId String                      @unique
-  embedding Unsupported("vector(1024)")
+  id                 String                      @id @default(cuid())
+  messageId          String                      @unique
+  embedding          Unsupported("vector(1536)")
+  embeddingModel     String?
+  embeddingProvider  String?
+  embeddingDimension Int?
 
   message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
@@ -678,54 +686,75 @@ model AiUserMemory {
   @@map("ai_user_memory")
 }
 
+// Logical grouping for knowledge documents — a "corpus". Reserved for future
+// per-KB embedding-model selection (Layer 2); today every KB shares the
+// global active embedding model from AiOrchestrationSettings.
+model AiKnowledgeBase {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?  @db.Text
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents AiKnowledgeDocument[]
+
+  @@map("ai_knowledge_base")
+}
+
 // Source documents uploaded to the knowledge base
 model AiKnowledgeDocument {
-  id           String   @id @default(cuid())
-  name         String
-  fileName     String
-  fileHash     String // SHA-256 for deduplication
-  chunkCount   Int      @default(0)
-  status       String // "processing", "ready", "failed"
-  scope        String   @default("app") // "system" | "app"
-  sourceUrl    String? // URL the document was fetched from (null = manual upload)
-  errorMessage String?  @db.Text
-  metadata     Json? // format-specific metadata, preview data for pending_review docs
-  uploadedBy   String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(cuid())
+  knowledgeBaseId String
+  name            String
+  fileName        String
+  fileHash        String // SHA-256 for deduplication
+  chunkCount      Int      @default(0)
+  status          String // "processing", "ready", "failed"
+  scope           String   @default("app") // "system" | "app"
+  sourceUrl       String? // URL the document was fetched from (null = manual upload)
+  errorMessage    String?  @db.Text
+  metadata        Json? // format-specific metadata, preview data for pending_review docs
+  uploadedBy      String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Relations
-  uploader    User                       @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
-  chunks      AiKnowledgeChunk[]
-  tags        AiKnowledgeDocumentTag[]
-  agentGrants AiAgentKnowledgeDocument[]
+  knowledgeBase AiKnowledgeBase            @relation(fields: [knowledgeBaseId], references: [id])
+  uploader      User                       @relation("AiKnowledgeDocumentUploader", fields: [uploadedBy], references: [id])
+  chunks        AiKnowledgeChunk[]
+  tags          AiKnowledgeDocumentTag[]
+  agentGrants   AiAgentKnowledgeDocument[]
 
   @@index([uploadedBy])
   @@index([status])
   @@index([scope])
   @@index([fileHash])
+  @@index([knowledgeBaseId])
   @@map("ai_knowledge_document")
 }
 
 // Vector store for knowledge base content
 model AiKnowledgeChunk {
-  id                String                       @id @default(cuid())
-  chunkKey          String                       @unique
-  documentId        String
-  content           String                       @db.Text
-  embedding         Unsupported("vector(1536)")?
+  id                 String                       @id @default(cuid())
+  chunkKey           String                       @unique
+  documentId         String
+  content            String                       @db.Text
+  embedding          Unsupported("vector(1536)")?
   // GENERATED ALWAYS AS (to_tsvector('english', content || keywords)) STORED — managed by migration, populated by Postgres.
-  searchVector      Unsupported("tsvector")?
-  chunkType         String // "pattern_section", "pattern_overview", "glossary", etc.
-  patternNumber     Int?
-  patternName       String?
-  section           String?
-  keywords          String?                      @db.Text
-  estimatedTokens   Int?
-  embeddingModel    String? // e.g. "voyage-3", "text-embedding-3-small"
-  embeddingProvider String? // e.g. "voyage", "openai-compatible", "ollama"
-  embeddedAt        DateTime? // when the embedding was generated
-  metadata          Json?
+  searchVector       Unsupported("tsvector")?
+  chunkType          String // "pattern_section", "pattern_overview", "glossary", etc.
+  patternNumber      Int?
+  patternName        String?
+  section            String?
+  keywords           String?                      @db.Text
+  estimatedTokens    Int?
+  embeddingModel     String? // e.g. "voyage-3", "text-embedding-3-small"
+  embeddingProvider  String? // e.g. "voyage", "openai-compatible", "ollama"
+  embeddingDimension Int? // explicit dim of the stored vector; doesn't infer from model (matryoshka-truncated models share IDs but differ in dim)
+  embeddedAt         DateTime? // when the embedding was generated
+  metadata           Json?
 
   // Relations
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -1007,7 +1036,8 @@ model AiProviderModel {
   updatedAt DateTime @updatedAt
 
   // Relations
-  creator User @relation("AiProviderModelCreator", fields: [createdBy], references: [id])
+  creator                    User                      @relation("AiProviderModelCreator", fields: [createdBy], references: [id])
+  activeForEmbeddingSettings AiOrchestrationSettings[] @relation("ActiveEmbeddingModel")
 
   @@unique([providerSlug, modelId])
   @@index([createdBy])
@@ -1052,6 +1082,7 @@ model AiOrchestrationSettings {
   id                           String    @id @default(cuid())
   slug                         String    @unique @default("global")
   defaultModels                Json // { routing: string, chat: string, reasoning: string, embeddings: string }
+  activeEmbeddingModelId       String? // FK → AiProviderModel; the model whose dimension the vector columns are currently sized for. Null = use resolver default.
   globalMonthlyBudgetUsd       Float?
   searchConfig                 Json? // { keywordBoostWeight: number, vectorWeight: number }
   lastSeededAt                 DateTime?
@@ -1072,6 +1103,8 @@ model AiOrchestrationSettings {
   documentInputGloballyEnabled Boolean   @default(true) // org-wide kill switch for PDF / document attachments on chat; when false, every agent's enableDocumentInput flag is treated as off regardless of its own value.
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
+
+  activeEmbeddingModel AiProviderModel? @relation("ActiveEmbeddingModel", fields: [activeEmbeddingModelId], references: [id], onDelete: SetNull)
 
   @@map("ai_orchestration_settings")
 }

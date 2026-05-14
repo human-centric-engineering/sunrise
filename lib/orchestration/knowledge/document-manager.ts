@@ -29,6 +29,13 @@ import {
 } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
+/**
+ * Seed-managed default knowledge base. Every document belongs to exactly
+ * one KB; until the admin UI picker lands (Phase 6), all uploads route
+ * here. See migration `flexible_embedding_models_and_kb_grouping`.
+ */
+export const DEFAULT_KNOWLEDGE_BASE_ID = 'kb_default';
+
 /** A single CSV row persisted on the document for lossless re-chunking. */
 const csvSectionSchema = z.object({
   title: z.string(),
@@ -212,6 +219,7 @@ export async function uploadDocument(
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     },
   });
 
@@ -362,6 +370,7 @@ async function uploadCsvFromParsed(
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     },
   });
 
@@ -592,6 +601,7 @@ export async function previewDocument(
       scope: 'app',
       status: 'pending_review',
       uploadedBy: userId,
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
       metadata: {
         extractedText: parsed.fullText,
         parsedTitle: parsed.title,

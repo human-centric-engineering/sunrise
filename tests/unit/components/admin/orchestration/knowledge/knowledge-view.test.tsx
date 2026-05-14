@@ -36,6 +36,7 @@ globalThis.fetch = mockFetch;
 const MOCK_DOCUMENTS = [
   {
     id: 'doc-1',
+    knowledgeBaseId: 'kb_default',
     name: 'Agentic Patterns',
     fileName: 'patterns.md',
     fileHash: 'abc',
@@ -52,6 +53,7 @@ const MOCK_DOCUMENTS = [
   },
   {
     id: 'doc-2',
+    knowledgeBaseId: 'kb_default',
     name: 'Pending Doc',
     fileName: 'pending.txt',
     fileHash: 'def',

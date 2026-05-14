@@ -14,6 +14,7 @@ import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
@@ -121,6 +122,7 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
       status: 'ready',
       uploadedBy: uploaderId,
       chunkCount: chunks.length,
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     },
   });
 
