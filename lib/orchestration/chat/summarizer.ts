@@ -14,7 +14,7 @@
 import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
 import {
@@ -42,22 +42,43 @@ Be factual and brief. Do not add commentary. Write in third person (e.g. "The us
 const FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]';
 
 /**
+ * Result of a successful summariser call. Surfaces the model, provider,
+ * token usage and computed cost so the chat handler can roll the call
+ * into the turn's `sideEffectModels` aggregate. On fallback (LLM error,
+ * empty history) `summary` is the placeholder text and the numeric
+ * fields are zeroed.
+ */
+export interface SummarizeResult {
+  summary: string;
+  /** True when the call returned the placeholder rather than an LLM summary. */
+  fellBack: boolean;
+  model?: string;
+  provider?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+/**
  * Summarize a list of conversation messages using a budget-tier LLM.
  *
  * On failure (provider unavailable, LLM error), returns a fallback
  * string rather than throwing — summarization should never block the
- * main chat flow.
+ * main chat flow. The caller is responsible for distinguishing the
+ * fallback path via `result.fellBack` if it wants different UX.
  */
 export async function summarizeMessages(
   messages: HistoryRow[],
   providerSlug: string,
   fallbackSlugs: string[]
-): Promise<string> {
-  if (messages.length === 0) return FALLBACK_MESSAGE;
+): Promise<SummarizeResult> {
+  if (messages.length === 0) {
+    return { summary: FALLBACK_MESSAGE, fellBack: true };
+  }
 
   try {
     const model = await getDefaultModelForTask('routing');
-    const { provider } = await getProviderWithFallbacks(providerSlug, fallbackSlugs);
+    const { provider, usedSlug } = await getProviderWithFallbacks(providerSlug, fallbackSlugs);
 
     const formatted = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n\n');
 
@@ -66,7 +87,7 @@ export async function summarizeMessages(
       {
         [GEN_AI_OPERATION_NAME]: 'summary',
         [GEN_AI_REQUEST_MODEL]: model,
-        [GEN_AI_SYSTEM]: providerSlug,
+        [GEN_AI_SYSTEM]: usedSlug,
         [GEN_AI_REQUEST_MAX_TOKENS]: 500,
       },
       async (span) => {
@@ -90,7 +111,7 @@ export async function summarizeMessages(
           agentId: 'system',
           conversationId: 'summary',
           model,
-          provider: providerSlug,
+          provider: usedSlug,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
           operation: CostOperation.CHAT,
@@ -98,7 +119,17 @@ export async function summarizeMessages(
           spanId: span.spanId(),
         });
 
-        return response.content.trim() || FALLBACK_MESSAGE;
+        const summary = response.content.trim() || FALLBACK_MESSAGE;
+        const cost = calculateCost(model, response.usage.inputTokens, response.usage.outputTokens);
+        return {
+          summary,
+          fellBack: summary === FALLBACK_MESSAGE,
+          model,
+          provider: usedSlug,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          costUsd: cost.totalCostUsd,
+        };
       }
     );
   } catch (err) {
@@ -106,6 +137,6 @@ export async function summarizeMessages(
       error: err instanceof Error ? err.message : String(err),
       messageCount: messages.length,
     });
-    return FALLBACK_MESSAGE;
+    return { summary: FALLBACK_MESSAGE, fellBack: true };
   }
 }

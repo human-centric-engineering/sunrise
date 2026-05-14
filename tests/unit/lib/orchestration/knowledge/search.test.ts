@@ -21,7 +21,13 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
-  embedText: vi.fn().mockResolvedValue(new Array(1536).fill(0)),
+  embedText: vi.fn().mockResolvedValue({
+    embedding: new Array(1536).fill(0),
+    model: 'text-embedding-3-small',
+    provider: 'openai',
+    inputTokens: 10,
+    costUsd: 0,
+  }),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -74,7 +80,13 @@ function makeRawRow(overrides: Record<string, unknown> = {}) {
 describe('searchKnowledge', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(embedText).mockResolvedValue(new Array(1536).fill(0));
+    vi.mocked(embedText).mockResolvedValue({
+      embedding: new Array(1536).fill(0),
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      inputTokens: 10,
+      costUsd: 0,
+    });
   });
 
   it('should return mapped results with correct similarity calculation', async () => {
@@ -295,7 +307,13 @@ describe('searchKnowledge', () => {
 describe('searchKnowledge — hybrid mode', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(embedText).mockResolvedValue(new Array(1536).fill(0));
+    vi.mocked(embedText).mockResolvedValue({
+      embedding: new Array(1536).fill(0),
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      inputTokens: 10,
+      costUsd: 0,
+    });
   });
 
   /**

@@ -5,7 +5,7 @@
  * - Loading state on mount
  * - Empty state: "No embed tokens yet"
  * - Token list: label, active/inactive badge, token value, allowed origins
- * - "Untitled" shown when token has no label
+ * - "Unlabelled embed token" placeholder shown when token has no label
  * - Create token: calls apiClient.post with label and parsed origins
  * - Create with empty label sends no label field (undefined)
  * - Create error: shows error message
@@ -156,11 +156,11 @@ describe('EmbedConfigPanel', () => {
     });
   });
 
-  it('shows "Untitled" when token label is null', async () => {
+  it('shows an "Unlabelled embed token" placeholder when token label is null', async () => {
     mockGet.mockResolvedValue([makeToken({ label: null })]);
     render(<EmbedConfigPanel agentId={AGENT_ID} appUrl={APP_URL} />);
     await waitFor(() => {
-      expect(screen.getByText('Untitled')).toBeInTheDocument();
+      expect(screen.getByText('Unlabelled embed token')).toBeInTheDocument();
     });
   });
 

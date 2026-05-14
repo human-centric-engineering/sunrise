@@ -286,15 +286,19 @@ export function GET(request: NextRequest): Response {
           min-height: 36px; max-height: 160px;
         }
         .input-area button {
+          /* min-height matches the textarea so the icon buttons sit flush
+             with the input edge instead of cropping short above it. */
           padding: 8px 16px; border: none; border-radius: 8px;
           background: var(--sw-primary); color: #fff; cursor: pointer;
           font-size: 14px; font-weight: 500; font-family: inherit;
+          min-height: 36px;
         }
         .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
         .mic-btn {
           padding: 8px 10px; border: 1px solid var(--sw-border); border-radius: 8px;
           background: var(--sw-input-bg); color: var(--sw-text); cursor: pointer;
-          font-size: 16px; line-height: 1; font-family: inherit; min-width: 36px;
+          font-size: 16px; line-height: 1; font-family: inherit;
+          min-width: 36px; min-height: 36px;
         }
         .mic-btn[data-state="recording"] { background: #ef4444; color: #fff; border-color: #ef4444; }
         .mic-btn[data-state="transcribing"] { opacity: 0.6; cursor: wait; }
@@ -302,7 +306,8 @@ export function GET(request: NextRequest): Response {
           position: relative;
           padding: 8px 10px; border: 1px solid var(--sw-border); border-radius: 8px;
           background: var(--sw-input-bg); color: var(--sw-text); cursor: pointer;
-          font-size: 16px; line-height: 1; font-family: inherit; min-width: 36px;
+          font-size: 16px; line-height: 1; font-family: inherit;
+          min-width: 36px; min-height: 36px;
         }
         .attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .attach-badge {
@@ -394,10 +399,10 @@ export function GET(request: NextRequest): Response {
         </div>
         <div class="attach-strip" style="display:none;"></div>
         <div class="input-area">
-          <button type="button" class="attach-btn" aria-label="Attach an image or PDF" style="display:none;">&#x1F4CE;<span class="attach-badge" style="display:none;">0</span></button>
-          <input type="file" class="attach-input" multiple hidden />
-          <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
           <textarea rows="1"></textarea>
+          <input type="file" class="attach-input" multiple hidden />
+          <button type="button" class="attach-btn" aria-label="Attach an image or PDF" style="display:none;">&#x1F4CE;<span class="attach-badge" style="display:none;">0</span></button>
+          <button type="button" class="mic-btn" aria-label="Start voice input" data-state="idle" style="display:none;">&#x1F3A4;</button>
           <button type="button" class="send-btn"></button>
         </div>
         <div class="voice-error" style="display:none;" role="status" aria-live="polite"></div>

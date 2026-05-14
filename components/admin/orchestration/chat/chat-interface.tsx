@@ -72,12 +72,17 @@ import type {
   Citation,
   InputBreakdown,
   PendingApproval,
+  SideEffectModelUsage,
   TokenUsage,
   ToolCallTrace,
 } from '@/types/orchestration';
 import { ApprovalCard } from '@/components/admin/orchestration/chat/approval-card';
 import { MicButton } from '@/components/admin/orchestration/chat/mic-button';
-import { AttachmentPickerButton } from '@/components/admin/orchestration/chat/attachment-picker-button';
+import {
+  AttachmentPickerButton,
+  AttachmentThumbnailStrip,
+} from '@/components/admin/orchestration/chat/attachment-picker-button';
+import type { AttachmentEntry } from '@/lib/hooks/use-attachments';
 import { IMAGE_ATTACHMENT_MIME, DOCUMENT_ATTACHMENT_MIME } from '@/lib/hooks/use-attachments';
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 
@@ -248,6 +253,13 @@ interface ChatMessage {
    * the "why N input tokens?" popover. Admin-only.
    */
   inputBreakdown?: InputBreakdown;
+  /**
+   * Additional models invoked during this turn beyond the main chat
+   * LLM — embeddings fired by `search_knowledge_base`, the rolling
+   * conversation summariser, etc. Rendered as extra rows under the
+   * main `Cost · Tokens · Model` line in the admin trace strip.
+   */
+  sideEffectModels?: SideEffectModelUsage[];
 }
 
 interface PersistedChatState {
@@ -303,7 +315,9 @@ function CostSummary({ message }: { message: ChatMessage }): React.ReactElement 
   return (
     <>
       {typeof message.costUsd === 'number' && (
-        <span title="Approximate cost for this turn">≈ {formatCostUsd(message.costUsd)}</span>
+        <span title="Approximate cost for this turn (main LLM only)">
+          ≈ {formatCostUsd(message.costUsd)}
+        </span>
       )}
       {message.tokenUsage && (
         <>
@@ -317,8 +331,20 @@ function CostSummary({ message }: { message: ChatMessage }): React.ReactElement 
       {message.modelUsed && (
         <>
           <span aria-hidden="true">·</span>
-          <span className="font-mono" title="Model used for this turn">
+          <span className="font-mono" title="Main chat LLM model for this turn">
             {message.modelUsed}
+          </span>
+        </>
+      )}
+      {message.sideEffectModels && message.sideEffectModels.length > 0 && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span
+            className="opacity-80"
+            title="Additional models invoked during this turn — expand to see"
+          >
+            +{message.sideEffectModels.length} model
+            {message.sideEffectModels.length === 1 ? '' : 's'}
           </span>
         </>
       )}
@@ -335,12 +361,19 @@ function AssistantMetaStrip({
   const hasCitations = !!message.citations && message.citations.length > 0;
   const hasToolCalls = showInlineTrace && !!message.toolCalls && message.toolCalls.length > 0;
   const hasInputBreakdown = showInlineTrace && !!message.inputBreakdown;
+  const hasSideEffectModels =
+    showInlineTrace && !!message.sideEffectModels && message.sideEffectModels.length > 0;
+  // The cost row is clickable when there's any "what made this turn cost
+  // what it did?" detail to expand — input-token breakdown OR side-effect
+  // model rows. We bundle both into the same expand target so the strip
+  // stays one row of toggles, not two.
+  const hasInputDetail = hasInputBreakdown || hasSideEffectModels;
   const hasCost = showInlineTrace && (typeof message.costUsd === 'number' || !!message.tokenUsage);
 
   // Citations always render their toggle (regardless of `showInlineTrace`)
   // because they exist on consumer turns too. Tools + inputs + cost are
   // admin-only.
-  if (!hasCitations && !hasToolCalls && !hasInputBreakdown && !hasCost) return null;
+  if (!hasCitations && !hasToolCalls && !hasInputDetail && !hasCost) return null;
 
   const toolSummary = hasToolCalls ? summarizeToolCalls(message.toolCalls!) : null;
 
@@ -394,14 +427,18 @@ function AssistantMetaStrip({
         </div>
 
         {hasCost &&
-          (hasInputBreakdown ? (
+          (hasInputDetail ? (
             <button
               type="button"
               onClick={() => onToggle('inputs')}
               className="text-muted-foreground hover:text-foreground flex flex-wrap items-baseline gap-x-1"
               aria-expanded={expanded === 'inputs'}
               aria-controls="input-breakdown-details"
-              title="Click to break down this turn's input tokens"
+              title={
+                hasInputBreakdown
+                  ? "Click to break down this turn's input tokens and other-model costs"
+                  : 'Click to see the costs of additional models invoked this turn'
+              }
             >
               {expanded === 'inputs' ? (
                 <ChevronDown className="h-3 w-3 self-center" aria-hidden="true" />
@@ -421,11 +458,12 @@ function AssistantMetaStrip({
       {expanded === 'tools' && hasToolCalls && (
         <ToolCallsList toolCalls={message.toolCalls!} id="message-trace-details" />
       )}
-      {expanded === 'inputs' && hasInputBreakdown && (
+      {expanded === 'inputs' && hasInputDetail && (
         <InputBreakdownList
-          breakdown={message.inputBreakdown!}
+          breakdown={message.inputBreakdown}
           reportedInputTokens={message.tokenUsage?.inputTokens}
           model={message.modelUsed}
+          sideEffectModels={message.sideEffectModels}
         />
       )}
     </>
@@ -550,8 +588,17 @@ export function ChatInterface({
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const attachmentsControlRef = useRef<{ clear: () => void } | null>(null);
+  const attachmentsControlRef = useRef<{
+    clear: () => void;
+    remove: (id: string) => void;
+  } | null>(null);
   const attachmentsEnabled = imageInputEnabled || documentInputEnabled;
+  // Lifted entries list so the thumbnail strip can render above the
+  // input row (where it doesn't fight the row's flex layout) while
+  // the paperclip button itself sits inline between the textarea and
+  // the mic. State stays inside `AttachmentPickerButton`; this list
+  // is read-only here, mutated by removing via the controlsRef.
+  const [attachmentEntries, setAttachmentEntries] = useState<AttachmentEntry[]>([]);
 
   // Auto-resize the message textarea to fit its content, capped at the
   // max-height set on the element. `useLayoutEffect` runs before paint so
@@ -910,11 +957,13 @@ export function ChatInterface({
                     const tokenUsage = typed.tokenUsage;
                     const modelUsed = typed.model;
                     const inputBreakdown = typed.inputBreakdown;
+                    const sideEffectModels = typed.sideEffectModels;
                     if (
                       typeof costUsd === 'number' ||
                       tokenUsage !== undefined ||
                       typeof modelUsed === 'string' ||
-                      inputBreakdown !== undefined
+                      inputBreakdown !== undefined ||
+                      (sideEffectModels && sideEffectModels.length > 0)
                     ) {
                       setMessages((prev) => {
                         const updated = [...prev];
@@ -926,6 +975,9 @@ export function ChatInterface({
                           ...(tokenUsage ? { tokenUsage } : {}),
                           ...(typeof modelUsed === 'string' ? { modelUsed } : {}),
                           ...(inputBreakdown ? { inputBreakdown } : {}),
+                          ...(sideEffectModels && sideEffectModels.length > 0
+                            ? { sideEffectModels }
+                            : {}),
                         };
                         return updated;
                       });
@@ -1358,6 +1410,12 @@ export function ChatInterface({
         component robust whether mounted standalone or nested.
       */}
       <div className="flex flex-col gap-2 border-t p-3">
+        {attachmentsEnabled && attachmentEntries.length > 0 && (
+          <AttachmentThumbnailStrip
+            attachments={attachmentEntries}
+            remove={(id) => attachmentsControlRef.current?.remove(id)}
+          />
+        )}
         <div className="flex items-end gap-2">
           <div className="relative flex-1">
             <Textarea
@@ -1427,6 +1485,22 @@ export function ChatInterface({
               <Lightbulb className="h-4 w-4" aria-hidden="true" />
             </Button>
           )}
+          {attachmentsEnabled && (
+            <AttachmentPickerButton
+              acceptMime={[
+                ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
+                ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
+              ]}
+              disabled={streaming}
+              controlsRef={attachmentsControlRef}
+              onAttachmentsChange={setAttachments}
+              onEntriesChange={setAttachmentEntries}
+              onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
+              inlineThumbnails={false}
+              pasteTarget={inputRef}
+              className="h-9 w-9"
+            />
+          )}
           {voiceInputEnabled && agentId && (
             <MicButton
               agentId={agentId}
@@ -1444,6 +1518,10 @@ export function ChatInterface({
                   message: msg,
                 })
               }
+              // Match the textarea's 36px min-height so the three icon
+              // buttons (paperclip / mic / send) line up flush with the
+              // input rather than sitting short above its bottom edge.
+              className="h-9 w-9"
             />
           )}
           <Button
@@ -1451,6 +1529,9 @@ export function ChatInterface({
             size="sm"
             onClick={(e) => handleSend(e)}
             disabled={streaming || (!input.trim() && attachments.length === 0)}
+            // See note on the MicButton above — h-9 keeps the row of
+            // icon buttons aligned to the textarea height.
+            className="h-9 w-9"
           >
             {streaming ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -1460,18 +1541,6 @@ export function ChatInterface({
             <span className="sr-only">Send</span>
           </Button>
         </div>
-        {attachmentsEnabled && (
-          <AttachmentPickerButton
-            acceptMime={[
-              ...(imageInputEnabled ? IMAGE_ATTACHMENT_MIME : []),
-              ...(documentInputEnabled ? DOCUMENT_ATTACHMENT_MIME : []),
-            ]}
-            disabled={streaming}
-            controlsRef={attachmentsControlRef}
-            onAttachmentsChange={setAttachments}
-            onError={(msg) => setError({ title: 'Could not attach file', message: msg })}
-          />
-        )}
       </div>
     </div>
   );

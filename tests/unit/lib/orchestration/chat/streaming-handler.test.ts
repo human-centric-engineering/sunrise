@@ -2590,7 +2590,15 @@ describe('rolling conversation summarization', () => {
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({ id: 'conv-summ', summary: null, summaryUpToMessageId: null })
     );
-    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue('summary-text');
+    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      summary: 'summary-text',
+      fellBack: false,
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0,
+    });
 
     const provider = mockProvider([
       [

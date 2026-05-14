@@ -27,6 +27,16 @@ const tokenUsageSchema = z.object({
   totalTokens: z.number(),
 });
 
+const sideEffectModelUsageSchema = z.object({
+  kind: z.enum(['embedding', 'summarizer']),
+  model: z.string(),
+  provider: z.string().optional(),
+  callCount: z.number().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  costUsd: z.number().optional(),
+});
+
 const inputBreakdownPartSchema = z.object({
   tokens: z.number(),
   chars: z.number(),
@@ -91,6 +101,7 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
     provider: z.string().optional(),
     model: z.string().optional(),
     inputBreakdown: inputBreakdownSchema.optional(),
+    sideEffectModels: z.array(sideEffectModelUsageSchema).optional(),
   }),
   z.object({ type: z.literal('error'), code: z.string(), message: z.string() }),
 ]);

@@ -29,6 +29,7 @@ import type {
   InputBreakdown,
   MessageMetadata,
   PendingApproval,
+  SideEffectModelUsage,
   ToolCallTrace,
 } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
@@ -158,6 +159,8 @@ function buildToolCallTrace(
     // Non-serialisable result (cyclic, BigInt) — skip preview rather than throw.
   }
 
+  const sideEffectModel = extractSideEffectModel(result);
+
   return {
     slug,
     arguments: args,
@@ -165,7 +168,37 @@ function buildToolCallTrace(
     success,
     ...(errorCode ? { errorCode } : {}),
     ...(resultPreview ? { resultPreview } : {}),
+    ...(sideEffectModel ? { sideEffectModel } : {}),
   };
+}
+
+/**
+ * Capabilities that invoke a secondary model (currently
+ * `search_knowledge_base`, which embeds the query) attach a
+ * `SideEffectModelUsage` shape to `CapabilityResult.metadata` so the
+ * chat handler can roll the spend into the turn summary without
+ * knowing the slug. Structurally validated here so a malformed entry
+ * is dropped instead of corrupting the assistant metadata column.
+ */
+function extractSideEffectModel(result: unknown): SideEffectModelUsage | undefined {
+  if (typeof result !== 'object' || result === null) return undefined;
+  const meta = (result as { metadata?: unknown }).metadata;
+  if (typeof meta !== 'object' || meta === null) return undefined;
+  const raw = (meta as { sideEffectModel?: unknown }).sideEffectModel;
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r['model'] !== 'string') return undefined;
+  if (r['kind'] !== 'embedding' && r['kind'] !== 'summarizer') return undefined;
+  const out: SideEffectModelUsage = {
+    kind: r['kind'],
+    model: r['model'],
+  };
+  if (typeof r['provider'] === 'string') out.provider = r['provider'];
+  if (typeof r['callCount'] === 'number') out.callCount = r['callCount'];
+  if (typeof r['inputTokens'] === 'number') out.inputTokens = r['inputTokens'];
+  if (typeof r['outputTokens'] === 'number') out.outputTokens = r['outputTokens'];
+  if (typeof r['costUsd'] === 'number') out.costUsd = r['costUsd'];
+  return out;
 }
 
 /** Narrow error class caught by the outer try and surfaced as an error event. */
@@ -545,6 +578,7 @@ export class StreamingChatHandler {
       // kicks in (also drives the same threshold inside message-builder
       // so the summary covers exactly the dropped messages).
       let conversationSummary: string | undefined;
+      let summarizerSideEffect: SideEffectModelUsage | undefined;
       const historyRows = history.map((m) => ({
         role: m.role,
         content: m.content,
@@ -565,11 +599,29 @@ export class StreamingChatHandler {
           conversationSummary = conversation.summary;
         } else {
           yield { type: 'status', message: 'Summarizing conversation history...' };
-          conversationSummary = await summarizeMessages(
+          const summarizeResult = await summarizeMessages(
             droppedMessages,
             resolvedBinding.providerSlug,
             resolvedFallbackProviders
           );
+          conversationSummary = summarizeResult.summary;
+          if (!summarizeResult.fellBack && summarizeResult.model) {
+            summarizerSideEffect = {
+              kind: 'summarizer',
+              model: summarizeResult.model,
+              ...(summarizeResult.provider ? { provider: summarizeResult.provider } : {}),
+              callCount: 1,
+              ...(typeof summarizeResult.inputTokens === 'number'
+                ? { inputTokens: summarizeResult.inputTokens }
+                : {}),
+              ...(typeof summarizeResult.outputTokens === 'number'
+                ? { outputTokens: summarizeResult.outputTokens }
+                : {}),
+              ...(typeof summarizeResult.costUsd === 'number'
+                ? { costUsd: summarizeResult.costUsd }
+                : {}),
+            };
+          }
           // Persist for future turns
           await prisma.aiConversation.update({
             where: { id: conversation.id },
@@ -993,6 +1045,19 @@ export class StreamingChatHandler {
           if (isTerminalTurn && request.includeTrace && turnToolCalls.length > 0) {
             assistantMetadata.toolCalls = turnToolCalls;
           }
+          // Surface every model that ran on this turn — not just the
+          // main LLM. Embeddings (per `search_knowledge_base` call) and
+          // the rolling summariser get aggregated here so the cost
+          // strip can render them alongside `modelUsed`.
+          if (isTerminalTurn) {
+            const sideEffects = aggregateSideEffectModels(
+              turnToolCalls.map((t) => t.sideEffectModel),
+              summarizerSideEffect
+            );
+            if (sideEffects.length > 0) {
+              assistantMetadata.sideEffectModels = sideEffects;
+            }
+          }
           const assistantMsg = await this.persistMessage({
             conversationId: conversation.id,
             role: 'assistant',
@@ -1065,7 +1130,11 @@ export class StreamingChatHandler {
             resolvedModel,
             u,
             resolvedProviderSlug,
-            request.includeTrace ? initialBreakdown : undefined
+            request.includeTrace ? initialBreakdown : undefined,
+            aggregateSideEffectModels(
+              turnToolCalls.map((t) => t.sideEffectModel),
+              summarizerSideEffect
+            )
           );
           return;
         }
@@ -1273,7 +1342,11 @@ export class StreamingChatHandler {
               resolvedModel,
               usage,
               resolvedProviderSlug,
-              request.includeTrace ? initialBreakdown : undefined
+              request.includeTrace ? initialBreakdown : undefined,
+              aggregateSideEffectModels(
+                turnToolCalls.map((t) => t.sideEffectModel),
+                summarizerSideEffect
+              )
             );
             return;
           }
@@ -1510,7 +1583,11 @@ export class StreamingChatHandler {
               resolvedModel,
               usage,
               resolvedProviderSlug,
-              request.includeTrace ? initialBreakdown : undefined
+              request.includeTrace ? initialBreakdown : undefined,
+              aggregateSideEffectModels(
+                turnToolCalls.map((t) => t.sideEffectModel),
+                summarizerSideEffect
+              )
             );
             return;
           }
@@ -1835,7 +1912,8 @@ function buildDoneEvent(
   model: string,
   usage: { inputTokens: number; outputTokens: number } | null,
   providerSlug?: string | null,
-  inputBreakdown?: InputBreakdown
+  inputBreakdown?: InputBreakdown,
+  sideEffectModels?: SideEffectModelUsage[]
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
@@ -1843,6 +1921,8 @@ function buildDoneEvent(
   const reconciled = inputBreakdown
     ? reconcileBreakdownToActual(inputBreakdown, inputTokens)
     : undefined;
+  const cleanSideEffects =
+    sideEffectModels && sideEffectModels.length > 0 ? sideEffectModels : undefined;
   return {
     type: 'done',
     tokenUsage: {
@@ -1854,7 +1934,47 @@ function buildDoneEvent(
     provider: providerSlug ?? undefined,
     model,
     ...(reconciled ? { inputBreakdown: reconciled } : {}),
+    ...(cleanSideEffects ? { sideEffectModels: cleanSideEffects } : {}),
   };
+}
+
+/**
+ * Roll an array of per-tool side-effect model entries plus the optional
+ * summariser invocation into a deduplicated list keyed on `kind+model`.
+ * Numeric fields are summed across calls; `callCount` reflects how many
+ * underlying calls were merged into each entry. Order is preserved
+ * from first-seen so the embedding row (from the earliest tool call)
+ * lands above the summariser in the UI strip when both appear.
+ */
+function aggregateSideEffectModels(
+  perTool: ReadonlyArray<SideEffectModelUsage | undefined>,
+  summarizer: SideEffectModelUsage | undefined
+): SideEffectModelUsage[] {
+  const byKey = new Map<string, SideEffectModelUsage>();
+  const order: string[] = [];
+  const merge = (entry: SideEffectModelUsage | undefined): void => {
+    if (!entry) return;
+    const key = `${entry.kind}::${entry.model}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...entry, callCount: entry.callCount ?? 1 });
+      order.push(key);
+      return;
+    }
+    existing.callCount = (existing.callCount ?? 1) + (entry.callCount ?? 1);
+    if (typeof entry.inputTokens === 'number') {
+      existing.inputTokens = (existing.inputTokens ?? 0) + entry.inputTokens;
+    }
+    if (typeof entry.outputTokens === 'number') {
+      existing.outputTokens = (existing.outputTokens ?? 0) + entry.outputTokens;
+    }
+    if (typeof entry.costUsd === 'number') {
+      existing.costUsd = (existing.costUsd ?? 0) + entry.costUsd;
+    }
+  };
+  for (const e of perTool) merge(e);
+  merge(summarizer);
+  return order.map((k) => byKey.get(k)!);
 }
 
 /**

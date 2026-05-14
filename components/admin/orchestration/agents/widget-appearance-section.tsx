@@ -19,6 +19,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FieldHelp } from '@/components/ui/field-help';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DEFAULT_WIDGET_CONFIG, type WidgetConfig } from '@/lib/validations/orchestration';
@@ -29,6 +36,55 @@ interface Props {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const FONT_RE = /^[\w\s,'"-]+$/;
+
+/**
+ * Canonical font-family presets the admin can pick without touching
+ * raw CSS. Each `value` is the actual CSS `font-family` string the
+ * widget will use; the labels are operator-facing names.
+ *
+ * The widget mounts inside the partner's document, so we can only
+ * count on fonts the partner page has loaded (Inter, Roboto on most
+ * modern sites) or system fonts that ship with the OS. Anything else
+ * needs the partner to load it — the `Custom font stack…` escape
+ * hatch keeps that path open with the same validation as the dropdown
+ * values.
+ */
+const FONT_PRESETS = [
+  {
+    value: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    label: 'System default (sans-serif)',
+    description: 'OS-native UI font — feels native on macOS, Windows, and Android.',
+  },
+  {
+    value: 'Arial, Helvetica, sans-serif',
+    label: 'Arial / Helvetica',
+    description: 'Universal sans-serif. Bundled with every modern OS.',
+  },
+  {
+    value: 'Georgia, "Times New Roman", serif',
+    label: 'Serif (Georgia)',
+    description: 'Readable serif. Bundled with every modern OS.',
+  },
+  {
+    value: 'ui-monospace, "Cascadia Code", Menlo, Consolas, monospace',
+    label: 'Monospace',
+    description: 'Equal-width font for technical sites.',
+  },
+  {
+    value: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    label: 'Inter',
+    description:
+      'Popular UI font. Will only render if the partner page already loads Inter; otherwise falls through to system.',
+  },
+  {
+    value: 'Roboto, -apple-system, "Segoe UI", sans-serif',
+    label: 'Roboto',
+    description:
+      'Google’s Material font. Will only render if the partner page already loads Roboto; otherwise falls through to system.',
+  },
+] as const;
+
+const CUSTOM_FONT_SENTINEL = '__custom__';
 
 // WCAG AA threshold for body text. Below this, we surface a soft
 // warning — admins can dismiss by ignoring it; we don't block save,
@@ -258,26 +314,7 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
             </div>
 
             {/* Font */}
-            <div className="space-y-1">
-              <Label htmlFor="widget-font" className="flex items-center gap-1 text-xs">
-                Font family
-                <FieldHelp title="Font family">
-                  A CSS font stack — e.g. <code>{`"Helvetica Neue", Arial, sans-serif`}</code>. Use
-                  system fonts for safety; only fonts loaded by the partner page will render here,
-                  since the widget mounts inside the partner&apos;s document. Disallowed characters:{' '}
-                  <code>{`{ } ; ( )`}</code>. Default: system stack.
-                </FieldHelp>
-              </Label>
-              <Input
-                id="widget-font"
-                value={form.fontFamily}
-                maxLength={200}
-                onChange={(e) => update('fontFamily', e.target.value)}
-              />
-              <p className="text-muted-foreground text-right text-[10px]">
-                {form.fontFamily.length}/200
-              </p>
-            </div>
+            <FontFamilyField value={form.fontFamily} onChange={(v) => update('fontFamily', v)} />
 
             {/* Header copy */}
             <div className="grid gap-3 sm:grid-cols-2">
@@ -393,28 +430,52 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
                 )}
               </div>
             </div>
+          </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-2">
-              <Button type="button" size="sm" onClick={() => void save()} disabled={saving}>
+          {/*
+            Preview column — preview itself sits on top, then a
+            right-aligned save area directly beneath it inside the
+            same 320px column. The buttons land in the operator's
+            field of view at the moment they're checking the preview
+            for the change they just made, instead of being buried
+            below the form column or lost off-screen on tall forms.
+            Preview body height was nudged shorter to make this
+            stack feel like a single panel rather than the buttons
+            floating in dead space.
+          */}
+          <div className="space-y-3">
+            <div className="rounded-md border p-4">
+              <p className="text-muted-foreground mb-3 text-xs tracking-wide uppercase">Preview</p>
+              <WidgetPreview cfg={form} />
+            </div>
+            <div className="bg-muted/30 flex flex-col gap-2 rounded-md border p-4">
+              <p className="text-muted-foreground mb-1 text-xs tracking-wide uppercase">Save</p>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void save()}
+                disabled={saving}
+                className="w-full"
+              >
                 <Save className="mr-1 h-3 w-3" />
                 {saving ? 'Saving…' : 'Save appearance'}
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={reset} disabled={saving}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={reset}
+                disabled={saving}
+                className="w-full"
+              >
                 <RotateCcw className="mr-1 h-3 w-3" /> Reset to defaults
               </Button>
               {savedAt !== null && (
-                <span className="text-muted-foreground text-xs" aria-live="polite">
-                  Saved
+                <span className="text-muted-foreground text-[11px]" aria-live="polite">
+                  Saved — every embed token for this agent will use the new look.
                 </span>
               )}
             </div>
-          </div>
-
-          {/* ── Preview column ─────────────────────────────────────────── */}
-          <div className="rounded-md border p-4">
-            <p className="text-muted-foreground mb-3 text-xs tracking-wide uppercase">Preview</p>
-            <WidgetPreview cfg={form} />
           </div>
         </div>
       </CardContent>
@@ -423,6 +484,125 @@ export function WidgetAppearanceSection({ agentId }: Props): React.ReactElement 
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
+
+/**
+ * Font-family picker. Renders a Select with curated presets plus a
+ * "Custom font stack…" escape hatch that reveals a free-text input
+ * for partners using brand fonts. The free-text path enforces the
+ * same regex the server's `widgetConfigSchema.fontFamily` does, so a
+ * value that types cleanly here always survives PATCH validation.
+ *
+ * State: only the parent owns `value` (the full CSS stack string).
+ * We derive whether to show the custom input from whether the value
+ * matches any preset. That means loading an admin's previously-saved
+ * custom stack picks "Custom" automatically without a separate flag.
+ */
+function FontFamilyField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}): React.ReactElement {
+  const matchedPreset = FONT_PRESETS.find((p) => p.value === value);
+  const isCustom = !matchedPreset;
+  const selectValue = matchedPreset ? matchedPreset.value : CUSTOM_FONT_SENTINEL;
+  // Suppress the inline error while the field is empty — the operator
+  // is mid-edit, not failing. `validate()` still blocks save on empty
+  // because FONT_RE requires at least one character.
+  const customLooksValid = !isCustom || value.length === 0 || FONT_RE.test(value);
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor="widget-font" className="flex items-center gap-1 text-xs">
+        Font family
+        <FieldHelp title="Font family">
+          <p>
+            Pick a preset — the widget will use the OS default, a common system font, or one of the
+            popular web fonts modern partner sites already load. If your partner site uses a brand
+            font, choose <strong>Custom font stack…</strong> and enter a CSS{' '}
+            <code>font-family</code> value (e.g.{' '}
+            <code>{`"Helvetica Neue", Arial, sans-serif`}</code>).
+          </p>
+          <p className="mt-2">
+            <strong>Important:</strong> the widget mounts inside the partner&apos;s document, so
+            only fonts the partner page has already loaded — or system fonts — will actually render.
+            Listing a font here doesn&apos;t load it; the partner has to.
+          </p>
+          <p className="mt-2">
+            Custom stacks accept letters, digits, spaces, commas, hyphens, and quote marks. Other
+            characters (<code>{`{ } ; ( ) \\`}</code>) are rejected to prevent CSS injection from a
+            saved value.
+          </p>
+        </FieldHelp>
+      </Label>
+      <Select value={selectValue} onValueChange={handlePresetChange}>
+        <SelectTrigger id="widget-font" className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {FONT_PRESETS.map((preset) => (
+            <SelectItem key={preset.value} value={preset.value}>
+              <div className="flex flex-col">
+                <span style={{ fontFamily: preset.value }}>{preset.label}</span>
+                <span className="text-muted-foreground text-[11px]">{preset.description}</span>
+              </div>
+            </SelectItem>
+          ))}
+          <SelectItem value={CUSTOM_FONT_SENTINEL}>
+            <div className="flex flex-col">
+              <span>Custom font stack…</span>
+              <span className="text-muted-foreground text-[11px]">
+                Enter a CSS font-family value loaded by the partner site.
+              </span>
+            </div>
+          </SelectItem>
+        </SelectContent>
+      </Select>
+      {isCustom && (
+        <div className="space-y-1 pt-1">
+          <Input
+            id="widget-font-custom"
+            value={value}
+            maxLength={200}
+            placeholder={`"Helvetica Neue", Arial, sans-serif`}
+            onChange={(e) => onChange(e.target.value)}
+            aria-invalid={!customLooksValid}
+            // Render in the font the operator is trying so they can
+            // see whether the browser actually picked it up. If the
+            // partner site loads the font this preview matches what
+            // the widget will look like.
+            style={{ fontFamily: value || undefined }}
+          />
+          <div className="flex items-baseline justify-between">
+            {!customLooksValid ? (
+              <p className="text-destructive text-[10px]">
+                Font stack contains a disallowed character. Stick to letters, digits, spaces,
+                commas, hyphens, and quote marks.
+              </p>
+            ) : (
+              <span />
+            )}
+            <p className="text-muted-foreground text-[10px]">{value.length}/200</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  function handlePresetChange(next: string): void {
+    if (next === CUSTOM_FONT_SENTINEL) {
+      // Switching INTO custom: keep whatever the user already had (so
+      // they can refine a partial brand stack), unless they're coming
+      // from a preset in which case start the custom field empty so
+      // it's obvious they need to type something rather than
+      // accidentally saving the preset they just chose to override.
+      if (matchedPreset) onChange('');
+      return;
+    }
+    onChange(next);
+  }
+}
 
 interface ColorFieldProps {
   id: string;
@@ -549,7 +729,7 @@ function WidgetPreview({ cfg }: PreviewProps): React.ReactElement {
           )}
         </div>
       </div>
-      <div style={{ padding: 12, minHeight: 120 }}>
+      <div style={{ padding: 12, minHeight: 80 }}>
         <div style={{ marginBottom: 8 }}>
           <span
             style={{

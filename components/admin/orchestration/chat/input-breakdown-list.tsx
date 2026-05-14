@@ -18,10 +18,19 @@ import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import type { InputBreakdown, InputBreakdownPart } from '@/types/orchestration';
+import type {
+  InputBreakdown,
+  InputBreakdownPart,
+  SideEffectModelUsage,
+} from '@/types/orchestration';
 
 interface Props {
-  breakdown: InputBreakdown;
+  /**
+   * Per-section input-token breakdown for the main LLM call. Optional
+   * — the panel can render with only side-effect models if the breakdown
+   * never came through (e.g. an error before usage was reported).
+   */
+  breakdown?: InputBreakdown;
   /** The model-reported input-token count, for the header comparison. */
   reportedInputTokens?: number;
   /**
@@ -32,7 +41,21 @@ interface Props {
    * needs to match what we actually did for this turn.
    */
   model?: string;
+  /**
+   * Additional models invoked during this turn beyond the main chat
+   * LLM (embeddings from `search_knowledge_base`, the rolling
+   * summariser). Rendered as a separate section beneath the main
+   * input-token breakdown so the operator can see the full per-turn
+   * cost picture without leaving the panel.
+   */
+  sideEffectModels?: SideEffectModelUsage[];
   className?: string;
+}
+
+function formatPanelCostUsd(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '$0.00';
+  if (Math.abs(value) < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toFixed(2)}`;
 }
 
 type ProviderFamily = 'openai' | 'anthropic' | 'gemini' | 'llama' | 'unknown';
@@ -86,20 +109,23 @@ export function InputBreakdownList({
   breakdown,
   reportedInputTokens,
   model,
+  sideEffectModels,
   className,
 }: Props): React.ReactElement {
-  const totalEstimated = breakdown.totalEstimated || 1;
+  const totalEstimated = breakdown?.totalEstimated || 1;
   const family = detectProviderFamily(model);
+  const hasSideEffects = !!sideEffectModels && sideEffectModels.length > 0;
 
-  const sections: SectionConfig[] = [
-    {
+  const sections: SectionConfig[] = [];
+  if (breakdown) {
+    sections.push({
       key: 'systemPrompt',
       label: 'System prompt',
       part: breakdown.systemPrompt,
       content: breakdown.systemPrompt.content,
-    },
-  ];
-  if (breakdown.toolDefinitions) {
+    });
+  }
+  if (breakdown?.toolDefinitions) {
     sections.push({
       key: 'toolDefinitions',
       label: `Tool schemas (${breakdown.toolDefinitions.count})`,
@@ -110,7 +136,7 @@ export function InputBreakdownList({
       content: breakdown.toolDefinitions.content,
     });
   }
-  if (breakdown.contextBlock) {
+  if (breakdown?.contextBlock) {
     sections.push({
       key: 'contextBlock',
       label: 'Entity context',
@@ -118,7 +144,7 @@ export function InputBreakdownList({
       content: breakdown.contextBlock.content,
     });
   }
-  if (breakdown.userMemories) {
+  if (breakdown?.userMemories) {
     sections.push({
       key: 'userMemories',
       label: `User memories (${breakdown.userMemories.count})`,
@@ -126,7 +152,7 @@ export function InputBreakdownList({
       content: breakdown.userMemories.content,
     });
   }
-  if (breakdown.conversationSummary) {
+  if (breakdown?.conversationSummary) {
     sections.push({
       key: 'conversationSummary',
       label: 'Conversation summary',
@@ -134,7 +160,7 @@ export function InputBreakdownList({
       content: breakdown.conversationSummary.content,
     });
   }
-  if (breakdown.conversationHistory) {
+  if (breakdown?.conversationHistory) {
     sections.push({
       key: 'conversationHistory',
       label: 'Conversation history',
@@ -150,20 +176,22 @@ export function InputBreakdownList({
       ),
     });
   }
-  if (breakdown.attachments) {
+  if (breakdown?.attachments) {
     sections.push({
       key: 'attachments',
       label: `Attachments (${breakdown.attachments.count})`,
       part: { tokens: breakdown.attachments.tokens, chars: 0 },
     });
   }
-  sections.push({
-    key: 'userMessage',
-    label: 'Your message',
-    part: breakdown.userMessage,
-    content: breakdown.userMessage.content,
-  });
-  if (breakdown.framingOverhead) {
+  if (breakdown) {
+    sections.push({
+      key: 'userMessage',
+      label: 'Your message',
+      part: breakdown.userMessage,
+      content: breakdown.userMessage.content,
+    });
+  }
+  if (breakdown?.framingOverhead) {
     sections.push({
       key: 'framingOverhead',
       label: 'Provider framing',
@@ -178,25 +206,101 @@ export function InputBreakdownList({
       className={cn('border-border/40 bg-muted/40 mt-2 overflow-hidden rounded border', className)}
       data-testid="input-breakdown"
     >
-      {typeof reportedInputTokens === 'number' && (
+      {breakdown && typeof reportedInputTokens === 'number' && (
         <div className="border-border/40 text-muted-foreground flex items-baseline justify-between border-b px-3 py-1.5 text-[11px] tabular-nums">
           <span>model reported {reportedInputTokens.toLocaleString()}</span>
           <span>est. {breakdown.totalEstimated.toLocaleString()}</span>
         </div>
       )}
+      {sections.length > 0 && (
+        <ul className="divide-border/40 divide-y">
+          {sections.map((section) => (
+            <Section key={section.key} section={section} totalEstimated={totalEstimated} />
+          ))}
+        </ul>
+      )}
+      {breakdown && (
+        <p className="text-muted-foreground border-border/40 border-t p-2 text-[10.5px] leading-snug">
+          Sections show the local-tokeniser count of each piece of content sent to the model. The
+          total is reconciled to the model&rsquo;s reported{' '}
+          <code className="font-mono">usage.input_tokens</code>, with any unattributed remainder
+          shown as &ldquo;Provider framing&rdquo;. Counts reflect the first LLM call of this turn;
+          tool round-trips add more on subsequent iterations.
+        </p>
+      )}
+      {hasSideEffects && sideEffectModels && <SideEffectModelsSection entries={sideEffectModels} />}
+    </aside>
+  );
+}
+
+/**
+ * Detail panel for "other models invoked this turn" — embeddings fired
+ * by `search_knowledge_base`, the rolling conversation summariser, etc.
+ *
+ * Kept inside the input-breakdown popover (rather than always-visible on
+ * the cost row) so admins see the full cost picture *on demand* without
+ * the strip itself getting noisier. The cost row's `+N models` chip
+ * advertises that there's more to see.
+ */
+function SideEffectModelsSection({
+  entries,
+}: {
+  entries: SideEffectModelUsage[];
+}): React.ReactElement {
+  const totalCost = entries.reduce((sum, e) => sum + (e.costUsd ?? 0), 0);
+  return (
+    <div className="border-border/40 border-t" data-testid="side-effect-models">
+      <div className="text-muted-foreground flex items-baseline justify-between px-3 py-1.5 text-[11px] tabular-nums">
+        <span>Other models this turn</span>
+        {totalCost > 0 && <span>≈ {formatPanelCostUsd(totalCost)}</span>}
+      </div>
       <ul className="divide-border/40 divide-y">
-        {sections.map((section) => (
-          <Section key={section.key} section={section} totalEstimated={totalEstimated} />
+        {entries.map((entry) => (
+          <SideEffectModelRow key={`${entry.kind}-${entry.model}`} entry={entry} />
         ))}
       </ul>
       <p className="text-muted-foreground border-border/40 border-t p-2 text-[10.5px] leading-snug">
-        Sections show the local-tokeniser count of each piece of content sent to the model. The
-        total is reconciled to the model&rsquo;s reported{' '}
-        <code className="font-mono">usage.input_tokens</code>, with any unattributed remainder shown
-        as &ldquo;Provider framing&rdquo;. Counts reflect the first LLM call of this turn; tool
-        round-trips add more on subsequent iterations.
+        These models run alongside the main chat LLM — <strong>embeddings</strong> each time the
+        agent calls <code className="font-mono">search_knowledge_base</code>, and the{' '}
+        <strong>summariser</strong> when the conversation history grows past the agent&rsquo;s{' '}
+        <code className="font-mono">maxHistoryMessages</code> cap. Their cost is logged separately
+        in <code className="font-mono">AiCostLog</code> and rolls up into the agent&rsquo;s monthly
+        spend; the main cost line above only reflects the chat LLM.
       </p>
-    </aside>
+    </div>
+  );
+}
+
+function SideEffectModelRow({ entry }: { entry: SideEffectModelUsage }): React.ReactElement {
+  const label = entry.kind === 'embedding' ? 'Embedding' : 'Summariser';
+  const calls = entry.callCount ?? 1;
+  return (
+    <li className="px-3 py-1.5 text-[11px] tabular-nums">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="flex min-w-0 flex-1 items-baseline gap-1 text-left">
+          <span className="font-medium">{label}</span>
+          {calls > 1 && <span className="text-muted-foreground">× {calls}</span>}
+          <span className="text-muted-foreground font-mono text-[10.5px]">{entry.model}</span>
+          {entry.provider && (
+            <span className="text-muted-foreground text-[10.5px]">via {entry.provider}</span>
+          )}
+        </span>
+        <span className="text-muted-foreground shrink-0">
+          {typeof entry.inputTokens === 'number' && (
+            <span>
+              {entry.inputTokens.toLocaleString()}
+              {typeof entry.outputTokens === 'number' && entry.outputTokens > 0
+                ? `→${entry.outputTokens.toLocaleString()}`
+                : ''}{' '}
+              toks
+            </span>
+          )}
+          {typeof entry.costUsd === 'number' && entry.costUsd > 0 && (
+            <span> · ≈ {formatPanelCostUsd(entry.costUsd)}</span>
+          )}
+        </span>
+      </div>
+    </li>
   );
 }
 

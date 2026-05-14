@@ -43,14 +43,40 @@ export interface AttachmentPickerButtonProps {
   acceptMime?: readonly string[];
   /** Called whenever the attached list changes (after add / remove / clear). */
   onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
+  /**
+   * Mirror of {@link onAttachmentsChange} but emitting the richer
+   * `AttachmentEntry[]` (carries `previewUrl`, `byteSize`, the per-entry
+   * `id`). Use this when the parent wants to render the thumbnail strip
+   * itself — e.g. above the chat input row rather than below the picker
+   * button — by combining it with `inlineThumbnails={false}` and the
+   * standalone {@link AttachmentThumbnailStrip} component. The plain
+   * payload callback is preserved for backwards compatibility.
+   */
+  onEntriesChange?: (entries: AttachmentEntry[]) => void;
   /** Called with a user-facing error string when validation rejects a file. */
   onError?: (message: string) => void;
   /** Disable the picker (e.g. while the chat is streaming a reply). */
   disabled?: boolean;
   /** Optional textarea ref to bind clipboard-paste image handling on. */
   pasteTarget?: React.RefObject<HTMLTextAreaElement | null>;
-  /** Imperative handle for the parent — exposes `clear()` for "send" reset. */
-  controlsRef?: React.MutableRefObject<{ clear: () => void } | null>;
+  /**
+   * Imperative handle for the parent — exposes `clear()` for "send" reset
+   * and `remove(id)` so the parent can drive removal from an externally
+   * rendered thumbnail strip (see {@link inlineThumbnails}).
+   */
+  controlsRef?: React.MutableRefObject<{
+    clear: () => void;
+    remove: (id: string) => void;
+  } | null>;
+  /**
+   * When `true` (the default), the thumbnail strip renders directly
+   * beneath the picker button — convenient for embedded uses. Set to
+   * `false` to suppress the inline strip; the parent should then
+   * render its own {@link AttachmentThumbnailStrip} using the entries
+   * surfaced via {@link onEntriesChange} so the strip can sit
+   * somewhere other than under the button (e.g. above the chat input).
+   */
+  inlineThumbnails?: boolean;
   /** Additional class names for the button element. */
   className?: string;
 }
@@ -61,17 +87,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function ThumbnailStrip({
+/**
+ * Standalone thumbnail strip — listed attachments with a per-entry
+ * remove control. Exported so parents that opt out of the inline strip
+ * via `inlineThumbnails={false}` can render it elsewhere (e.g. above
+ * the chat input row) without re-implementing the chip layout.
+ */
+export function AttachmentThumbnailStrip({
   attachments,
   remove,
+  className,
 }: {
   attachments: AttachmentEntry[];
   remove: (id: string) => void;
-}) {
+  className?: string;
+}): React.ReactElement | null {
   if (attachments.length === 0) return null;
   return (
     <ul
-      className="flex flex-wrap items-center gap-2 pt-2"
+      className={cn('flex flex-wrap items-center gap-2', className)}
       data-testid="attachment-thumbnail-strip"
       aria-label="Attached files"
     >
@@ -111,10 +145,12 @@ function ThumbnailStrip({
 export function AttachmentPickerButton({
   acceptMime = ATTACHMENT_ACCEPT_MIME,
   onAttachmentsChange,
+  onEntriesChange,
   onError,
   disabled = false,
   pasteTarget,
   controlsRef,
+  inlineThumbnails = true,
   className,
 }: AttachmentPickerButtonProps) {
   const { attachments, error, attach, remove, clear, payload } = useAttachments({
@@ -144,21 +180,28 @@ export function AttachmentPickerButton({
   }, [error, onError]);
 
   // Propagate the attachment list upward whenever it changes so the
-  // parent can include it in the next chat POST body.
+  // parent can include it in the next chat POST body — and, when the
+  // parent renders its own thumbnail strip, the richer entries list.
   useEffect(() => {
     onAttachmentsChange?.(payload());
-  }, [attachments, payload, onAttachmentsChange]);
+    onEntriesChange?.(attachments);
+  }, [attachments, payload, onAttachmentsChange, onEntriesChange]);
 
-  // Expose an imperative `clear()` to the parent so the chat surface
-  // can reset attachments after sending without owning the state.
+  // Expose imperative `clear()` and `remove(id)` to the parent so an
+  // externally rendered strip can drive removal without re-rendering
+  // through props churn, and the chat surface can reset attachments
+  // after sending without owning the state.
   useImperativeHandle(
     controlsRef ?? { current: null },
     () => ({
       clear: () => {
         clear();
       },
+      remove: (id: string) => {
+        remove(id);
+      },
     }),
-    [clear]
+    [clear, remove]
   );
 
   // Clipboard paste: when the user pastes into the linked textarea and
@@ -212,38 +255,51 @@ export function AttachmentPickerButton({
     [attach]
   );
 
+  // When the thumbnail strip is rendered inline, wrap in a column so
+  // the chips appear directly below the button. When the parent owns
+  // strip placement (e.g. ChatInterface puts it above the input row),
+  // we render only the button so it can drop straight into a flex
+  // input-bar without an extra wrapper distorting the layout.
+  const button = (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        aria-label={ariaLabel}
+        onClick={handleClick}
+        disabled={disabled}
+        className={cn('shrink-0', className)}
+        data-testid="attachment-picker-button"
+      >
+        {isBusyRef.current ? (
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <Paperclip className="h-4 w-4" aria-hidden="true" />
+        )}
+      </Button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={acceptMime.join(',')}
+        multiple
+        hidden
+        onChange={(e) => {
+          void handleFileChange(e);
+        }}
+        data-testid="attachment-picker-input"
+      />
+    </>
+  );
+
+  if (!inlineThumbnails) {
+    return button;
+  }
+
   return (
     <div className="flex w-full flex-col">
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          aria-label={ariaLabel}
-          onClick={handleClick}
-          disabled={disabled}
-          className={cn('shrink-0', className)}
-          data-testid="attachment-picker-button"
-        >
-          {isBusyRef.current ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Paperclip className="h-4 w-4" aria-hidden="true" />
-          )}
-        </Button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={acceptMime.join(',')}
-          multiple
-          hidden
-          onChange={(e) => {
-            void handleFileChange(e);
-          }}
-          data-testid="attachment-picker-input"
-        />
-      </div>
-      <ThumbnailStrip attachments={attachments} remove={remove} />
+      <div className="flex items-center gap-2">{button}</div>
+      <AttachmentThumbnailStrip attachments={attachments} remove={remove} className="pt-2" />
     </div>
   );
 }

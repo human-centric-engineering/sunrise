@@ -575,8 +575,36 @@ export type ChatEvent =
        * be close to but not identical to `tokenUsage.inputTokens`.
        */
       inputBreakdown?: InputBreakdown;
+      /**
+       * Additional models invoked during this turn beyond the main chat
+       * LLM — embeddings fired by `search_knowledge_base`, the rolling
+       * conversation summariser, etc. Aggregated server-side so the
+       * cost summary can mention them without per-call plumbing on the
+       * client. Empty / absent when no side-effect models ran.
+       */
+      sideEffectModels?: SideEffectModelUsage[];
     }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * A model invocation that happened during a chat turn but isn't the
+ * main LLM completion. Surfaces in the admin cost-summary strip so
+ * operators can see *all* the model spend for a turn — currently
+ * `embedding` (per `search_knowledge_base` query and per persisted
+ * message) and `summarizer` (when the rolling history-summary path
+ * fires) populate this list. `costUsd` may be `0` for local providers
+ * (Ollama, etc.) or when the model is missing from the registry.
+ */
+export interface SideEffectModelUsage {
+  kind: 'embedding' | 'summarizer';
+  model: string;
+  provider?: string;
+  /** Number of distinct calls aggregated into this entry (defaults to 1). */
+  callCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
 
 /**
  * One slice of input-token usage attributed to a specific source
@@ -663,6 +691,16 @@ export interface ToolCallTrace {
    * persisted JSON metadata stays well under Prisma's column budget.
    */
   resultPreview?: string;
+  /**
+   * If the capability invoked a secondary model (e.g. the embedding
+   * model for `search_knowledge_base`), describe that call here so the
+   * chat handler can roll it up into the turn's
+   * {@link SideEffectModelUsage} aggregate. Stored per-call here so
+   * the post-hoc trace viewer can attribute it to the originating tool;
+   * the aggregated total goes on the assistant message metadata
+   * separately.
+   */
+  sideEffectModel?: SideEffectModelUsage;
 }
 
 /**
@@ -746,6 +784,13 @@ export interface MessageMetadata {
    * (in the conversation trace viewer).
    */
   toolCalls?: ToolCallTrace[];
+  /**
+   * Additional model invocations during the turn beyond the main LLM
+   * (embeddings, the rolling summariser). Mirrors the `done` event's
+   * `sideEffectModels` field so the cost-summary strip can render the
+   * full picture even on reloads / when replayed from history.
+   */
+  sideEffectModels?: SideEffectModelUsage[];
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;

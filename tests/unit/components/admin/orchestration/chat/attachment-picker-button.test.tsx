@@ -176,8 +176,12 @@ describe('AttachmentPickerButton', () => {
 
   it('controlsRef.current.clear() empties the thumbnail strip', async () => {
     const user = userEvent.setup();
-    const controlsRef = createRef<{ clear: () => void }>() as React.MutableRefObject<{
+    const controlsRef = createRef<{
       clear: () => void;
+      remove: (id: string) => void;
+    }>() as React.MutableRefObject<{
+      clear: () => void;
+      remove: (id: string) => void;
     } | null>;
     render(<AttachmentPickerButton controlsRef={controlsRef} />);
     const input = screen.getByTestId('attachment-picker-input');

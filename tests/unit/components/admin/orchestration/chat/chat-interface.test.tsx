@@ -1727,7 +1727,9 @@ describe('ChatInterface', () => {
         expect(screen.getByText(/Toks:/)).toBeInTheDocument();
       });
       expect(screen.getByText(/4,991 input, 234 output/)).toBeInTheDocument();
-      expect(screen.getByTitle('Approximate cost for this turn')).toHaveTextContent('$0.0123');
+      expect(screen.getByTitle('Approximate cost for this turn (main LLM only)')).toHaveTextContent(
+        '$0.0123'
+      );
       expect(screen.getByText('gpt-4o-mini')).toBeInTheDocument();
     });
 
@@ -1746,7 +1748,9 @@ describe('ChatInterface', () => {
       await user.click(screen.getByRole('button', { name: /send/i }));
 
       await waitFor(() => {
-        expect(screen.getByTitle('Approximate cost for this turn')).toHaveTextContent('$1.46');
+        expect(
+          screen.getByTitle('Approximate cost for this turn (main LLM only)')
+        ).toHaveTextContent('$1.46');
       });
     });
 

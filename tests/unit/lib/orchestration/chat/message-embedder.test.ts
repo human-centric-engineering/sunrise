@@ -39,12 +39,19 @@ import {
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
 const FAKE_EMBEDDING = Array.from({ length: 1024 }, (_, i) => i * 0.001);
+const FAKE_EMBED_RESULT = {
+  embedding: FAKE_EMBEDDING,
+  model: 'text-embedding-3-small',
+  provider: 'openai',
+  inputTokens: 10,
+  costUsd: 0,
+};
 
 // ─── Tests ──────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(embedText).mockResolvedValue(FAKE_EMBEDDING);
+  vi.mocked(embedText).mockResolvedValue(FAKE_EMBED_RESULT);
   vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
 });
 
@@ -198,7 +205,7 @@ describe('backfillMissingEmbeddings', () => {
       { id: 'msg-21', content: 'Second message that will fail with string error' },
     ]);
     vi.mocked(embedText)
-      .mockResolvedValueOnce(FAKE_EMBEDDING) // first call succeeds
+      .mockResolvedValueOnce(FAKE_EMBED_RESULT) // first call succeeds
       .mockRejectedValueOnce('timeout'); // second call rejects with non-Error string
 
     // Act
