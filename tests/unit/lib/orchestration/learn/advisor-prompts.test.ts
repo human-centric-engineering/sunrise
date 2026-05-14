@@ -93,6 +93,15 @@ describe('pickAdvisorPrompt', () => {
     expect(ADVISOR_PROMPT_STRINGS).toContain(picked);
   });
 
+  it('falls back to the first prompt when the index lookup produces undefined', () => {
+    // The defensive `?? ADVISOR_PROMPT_STRINGS[0]` guard only fires
+    // when `pool[idx]` is undefined. We can't shrink the pool, so we
+    // feed a `random` source that produces NaN — `Math.floor(NaN * n)`
+    // is NaN and `pool[NaN]` is undefined, hitting the fallback.
+    const picked = pickAdvisorPrompt(() => Number.NaN);
+    expect(picked).toBe(ADVISOR_PROMPT_STRINGS[0]);
+  });
+
   it('honours an injected random source', () => {
     // rng → 0 always picks index 0; that nails down which prompt
     // the caller gets without making the test sensitive to

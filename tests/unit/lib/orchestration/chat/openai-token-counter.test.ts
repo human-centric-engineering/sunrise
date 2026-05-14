@@ -94,6 +94,83 @@ describe('formatToolsForOpenAi', () => {
   it('returns an empty string when no tools are supplied', () => {
     expect(formatToolsForOpenAi([])).toBe('');
   });
+
+  it('renders boolean and null primitives correctly', () => {
+    const tools: LlmToolDefinition[] = [
+      {
+        name: 'toggle',
+        description: 'Toggle something',
+        parameters: {
+          type: 'object',
+          properties: {
+            enabled: { type: 'boolean' },
+            nothing: { type: 'null' },
+          },
+          required: ['enabled'],
+        },
+      },
+    ];
+    const out = formatToolsForOpenAi(tools);
+    expect(out).toContain('enabled: boolean,');
+    expect(out).toContain('nothing?: null,');
+  });
+
+  it('renders anyOf and oneOf as a TS union', () => {
+    const tools: LlmToolDefinition[] = [
+      {
+        name: 'pick',
+        description: 'Pick a value',
+        parameters: {
+          type: 'object',
+          properties: {
+            value: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+            choice: { oneOf: [{ type: 'boolean' }, { type: 'null' }] },
+          },
+          required: ['value'],
+        },
+      },
+    ];
+    const out = formatToolsForOpenAi(tools);
+    expect(out).toContain('value: string | number,');
+    expect(out).toContain('choice?: boolean | null,');
+  });
+
+  it('emits the zero-arg form when the tool has a parameters object with no properties', () => {
+    const tools: LlmToolDefinition[] = [
+      { name: 'now', description: 'Current time', parameters: { type: 'object', properties: {} } },
+    ];
+    const out = formatToolsForOpenAi(tools);
+    expect(out).toContain('type now = () => any;');
+  });
+
+  it('omits the description comment when the tool has none', () => {
+    const tools: LlmToolDefinition[] = [{ name: 'noop', description: '', parameters: {} }];
+    const out = formatToolsForOpenAi(tools);
+    expect(out).not.toMatch(/^\s*\/\/\s*$/m);
+    expect(out).toContain('type noop = () => any;');
+  });
+
+  it('falls back to `any` for null/non-object schemas and unknown types', () => {
+    // Indirectly exercised through formatToolsForOpenAi — a property whose
+    // schema is a non-object (e.g. accidentally a string) renders as `any`.
+    const tools: LlmToolDefinition[] = [
+      {
+        name: 'odd',
+        description: '',
+        parameters: {
+          type: 'object',
+          properties: {
+            a: null as unknown as Record<string, unknown>,
+            b: { type: 'mystery-type' as unknown as 'string' },
+          },
+          required: [],
+        },
+      },
+    ];
+    const out = formatToolsForOpenAi(tools);
+    expect(out).toContain('a?: any,');
+    expect(out).toContain('b?: any,');
+  });
 });
 
 describe('countOpenAiToolDefinitionTokens', () => {
