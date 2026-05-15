@@ -21,7 +21,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { ApprovalsHistoryTable } from '@/components/admin/orchestration/approvals-history-table';
 import type { ApprovalHistoryEntry } from '@/types/orchestration';
-import type { ApiResponse } from '@/types/api';
+import type { APIResponse } from '@/types/api';
 
 const ENDPOINT = '/api/v1/admin/orchestration/approvals/history';
 
@@ -51,7 +51,7 @@ function successResponse(
   rows: ApprovalHistoryEntry[],
   meta = { page: 1, limit: 25, total: rows.length, totalPages: 1 }
 ): Response {
-  const body: ApiResponse<ApprovalHistoryEntry[]> = { success: true, data: rows, meta };
+  const body: APIResponse<ApprovalHistoryEntry[]> = { success: true, data: rows, meta };
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'content-type': 'application/json' },
@@ -278,5 +278,114 @@ describe('ApprovalsHistoryTable', () => {
       'Wait',
       'Notes / Reason',
     ]);
+  });
+
+  // ─── formatWait branch coverage ─────────────────────────────────────────
+
+  it('formats waits under one second as 0s', async () => {
+    fetchMock.mockResolvedValueOnce(successResponse([makeRow({ waitDurationMs: 500 })]));
+    render(<ApprovalsHistoryTable />);
+    expect(await screen.findByText('0s')).toBeInTheDocument();
+  });
+
+  it('formats sub-minute waits with seconds', async () => {
+    fetchMock.mockResolvedValueOnce(successResponse([makeRow({ waitDurationMs: 12_000 })]));
+    render(<ApprovalsHistoryTable />);
+    expect(await screen.findByText('12s')).toBeInTheDocument();
+  });
+
+  it('formats sub-hour waits as plain minutes when seconds round to a multiple of 60', async () => {
+    // 600s = 10 minutes — exercises the `if (totalMin < 60)` branch
+    // without spilling into the hours/days arms.
+    fetchMock.mockResolvedValueOnce(successResponse([makeRow({ waitDurationMs: 10 * 60_000 })]));
+    render(<ApprovalsHistoryTable />);
+    expect(await screen.findByText('10m')).toBeInTheDocument();
+  });
+
+  it('formats whole-hour waits without trailing minutes', async () => {
+    fetchMock.mockResolvedValueOnce(
+      successResponse([makeRow({ waitDurationMs: 3 * 60 * 60_000 })])
+    );
+    render(<ApprovalsHistoryTable />);
+    expect(await screen.findByText('3h')).toBeInTheDocument();
+  });
+
+  it('formats whole-day waits without trailing hours', async () => {
+    fetchMock.mockResolvedValueOnce(
+      successResponse([makeRow({ waitDurationMs: 5 * 24 * 60 * 60_000 })])
+    );
+    render(<ApprovalsHistoryTable />);
+    expect(await screen.findByText('5d')).toBeInTheDocument();
+  });
+
+  // ─── Filter coverage: each `buildQuery` branch ─────────────────────────
+
+  it('Prev button moves to the previous page', async () => {
+    const user = userEvent.setup();
+    // First load lands on page 2 of 3 (no Prev disabled).
+    fetchMock.mockResolvedValueOnce(
+      successResponse([makeRow()], { page: 2, limit: 25, total: 60, totalPages: 3 })
+    );
+
+    render(<ApprovalsHistoryTable />);
+    await screen.findByText(/page 2 of 3/i);
+
+    fetchMock.mockResolvedValueOnce(
+      successResponse([makeRow()], { page: 1, limit: 25, total: 60, totalPages: 3 })
+    );
+
+    await user.click(screen.getByRole('button', { name: /prev/i }));
+
+    await waitFor(() => {
+      const url = String(fetchMock.mock.calls.at(-1)?.[0]);
+      expect(url).toContain('page=1');
+    });
+  });
+
+  it('sends dateFrom and dateTo in the query when set', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValue(successResponse([]));
+
+    const { container } = render(<ApprovalsHistoryTable />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    // Date inputs render with type="date"; pick them by selector since
+    // there's no explicit Label association.
+    const dateInputs = container.querySelectorAll<HTMLInputElement>('input[type="date"]');
+    expect(dateInputs.length).toBe(2);
+
+    await user.type(dateInputs[0], '2026-01-01');
+    await user.type(dateInputs[1], '2026-02-01');
+
+    await waitFor(() => {
+      const url = String(fetchMock.mock.calls.at(-1)?.[0]);
+      expect(url).toContain('dateFrom=2026-01-01');
+      // dateTo is rolled to end-of-day, so the param carries a T23:59...
+      expect(url).toMatch(/dateTo=2026-02-01T23%3A59/);
+    });
+  });
+
+  // ─── CSV export failure paths ──────────────────────────────────────────
+
+  it('shows an error banner when the CSV export fetch fails', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValueOnce(
+      successResponse([makeRow()], { page: 1, limit: 25, total: 1, totalPages: 1 })
+    );
+    render(<ApprovalsHistoryTable />);
+    await screen.findByRole('link', { name: /provider audit/i });
+
+    // Stub createObjectURL even though we never reach it — keeps the
+    // failure path isolated to the fetch rejection.
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:url'),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+
+    fetchMock.mockResolvedValueOnce(errorResponse(503));
+    await user.click(screen.getByRole('button', { name: /export csv/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not export csv/i);
   });
 });

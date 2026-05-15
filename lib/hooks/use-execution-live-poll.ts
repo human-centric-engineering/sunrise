@@ -151,7 +151,9 @@ export function useExecutionLivePoll(
 
     const poll = async (): Promise<void> => {
       if (cancelled) return;
-      if (typeof document !== 'undefined' && document.hidden) {
+      // The 'use client' directive guarantees `document` is defined; the
+      // hidden check is the only branch that needs to read it.
+      if (document.hidden) {
         // Tab is hidden; do nothing. visibilitychange will re-schedule us.
         return;
       }
@@ -195,16 +197,12 @@ export function useExecutionLivePoll(
       }
     };
 
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
-    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       cancelled = true;
       clearScheduledPoll();
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
     // `payload.snapshot.status` drives the terminal-ness re-evaluation so the
     // effect re-runs when the status transitions. The other refs survive.

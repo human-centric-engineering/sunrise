@@ -391,4 +391,91 @@ describe('ExecutionTraceEntryRow', () => {
       expect(screen.queryByTestId('trace-entry-retries-step-1')).not.toBeInTheDocument();
     });
   });
+
+  // ─── Controlled expansion + JsonPane Copy ──────────────────────────────
+
+  describe('controlled expanded prop', () => {
+    it('renders the body when controlled-expanded=true without internal toggle', () => {
+      render(
+        <ExecutionTraceEntryRow {...BASE_PROPS} expanded={true} output={{ hello: 'world' }} />
+      );
+      // Expanded body shows the output JSON.
+      expect(screen.getByText(/hello/)).toBeInTheDocument();
+    });
+
+    it('fires onExpandedChange in controlled mode and does NOT toggle internal state', async () => {
+      const user = userEvent.setup();
+      const onExpandedChange = vi.fn();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          expanded={false}
+          onExpandedChange={onExpandedChange}
+          output={{ k: 1 }}
+        />
+      );
+
+      // The body is not expanded yet — clicking the row's expand toggle
+      // (first button) must call onExpandedChange(true) and leave the body
+      // closed because the parent owns the state.
+      const buttons = screen.getAllByRole('button');
+      await user.click(buttons[0]);
+
+      expect(onExpandedChange).toHaveBeenCalledWith(true);
+      // Body still not present — parent didn't yet update the prop.
+      expect(screen.queryByText(/"k"/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('JsonPane Copy button', () => {
+    it('writes the JSON to the clipboard and flips the button label to "Copied"', async () => {
+      const user = userEvent.setup();
+      const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+      // jsdom doesn't ship navigator.clipboard — stub it.
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+        writable: true,
+      });
+
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} output={{ message: 'hello' }} />);
+      // Expand the row to reveal the JsonPane.
+      const expand = screen.getAllByRole('button')[0];
+      await user.click(expand);
+
+      // Find the "Copy" button inside the Output pane.
+      const copyBtn = await screen.findByRole('button', { name: /copy output/i });
+      await user.click(copyBtn);
+
+      expect(writeText).toHaveBeenCalled();
+      const written = writeText.mock.calls[0][0];
+      // The pane stringifies non-string output with two-space indentation.
+      expect(written).toContain('"message"');
+      expect(written).toContain('"hello"');
+
+      // After click the button content briefly switches to "Copied".
+      expect(await screen.findByRole('button', { name: /copy output/i })).toHaveTextContent(
+        /copied/i
+      );
+    });
+
+    it('silently swallows clipboard failures (non-secure-context guard)', async () => {
+      const user = userEvent.setup();
+      const writeText = vi.fn(() => Promise.reject(new Error('not allowed')));
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+        writable: true,
+      });
+
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} output="raw text" />);
+      const expand = screen.getAllByRole('button')[0];
+      await user.click(expand);
+
+      const copyBtn = await screen.findByRole('button', { name: /copy output/i });
+      // No error escapes the click — the component catches in its IIFE.
+      await user.click(copyBtn);
+      expect(writeText).toHaveBeenCalled();
+    });
+  });
 });

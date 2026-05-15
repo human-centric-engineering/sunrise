@@ -160,4 +160,63 @@ describe('ExecutionTimelineStrip', () => {
     const bar = screen.getByTestId('timeline-bar-r1');
     expect(bar.getAttribute('aria-label')).toContain('Running');
   });
+
+  // ─── Remaining colour / branch coverage ────────────────────────────────
+
+  it('marks skipped entries with data-status="skipped" and the muted bar colour', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[entry({ stepId: 'a' }), entry({ stepId: 'b', status: 'skipped' })]}
+      />
+    );
+    const bar = screen.getByTestId('timeline-bar-b');
+    expect(bar).toHaveAttribute('data-status', 'skipped');
+    const inner = bar.querySelector('span[style]');
+    expect(inner?.className).toContain('bg-muted-foreground/40');
+  });
+
+  it('toggles duration unit from ms to s when the segmented control is clicked', async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionTimelineStrip
+        trace={[entry({ stepId: 'a', durationMs: 1234 }), entry({ stepId: 'b', durationMs: 250 })]}
+      />
+    );
+
+    // Default unit is ms.
+    expect(screen.getByText('1,234 ms')).toBeInTheDocument();
+
+    // Click the "s" button in the unit toggle.
+    await user.click(screen.getByTestId('timeline-unit-s'));
+
+    // Now both rows render in seconds with 2 decimals.
+    expect(screen.getByText('1.23 s')).toBeInTheDocument();
+    expect(screen.getByText('0.25 s')).toBeInTheDocument();
+  });
+
+  it('numbers multiple parallel forks distinctly', () => {
+    // Two `parallel` step entries → fork numbers 1 and 2 are assigned.
+    const branchOutput = (branches: string[]) => ({ parallel: true, branches });
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 'fork-a',
+            stepType: 'parallel',
+            output: branchOutput(['b1']),
+          }),
+          entry({ stepId: 'b1' }),
+          entry({
+            stepId: 'fork-b',
+            stepType: 'parallel',
+            output: branchOutput(['b2']),
+          }),
+          entry({ stepId: 'b2' }),
+        ]}
+      />
+    );
+
+    expect(screen.getByText('Fork #1')).toBeInTheDocument();
+    expect(screen.getByText('Fork #2')).toBeInTheDocument();
+  });
 });
