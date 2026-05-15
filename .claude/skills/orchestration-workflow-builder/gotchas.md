@@ -115,6 +115,17 @@ const LIST = AUDITABLE_FIELDS.map((f) => `\`${f}\``).join(', ');
 
 Also: backtick-wrap literal field names inside guard prompts. Without quoting, `bestRole` reads as the noun phrase "best role" and the model evaluates the _concept_, not the _identifier_.
 
+**Even with the list pasted in, the LLM still mis-reads it.** Observed second failure on the same guard: with all six valid `tierRole` values enumerated as comma-separated prose in the rules, the model still rejected `infrastructure` and listed only the other five values in its rejection text (2026-05-16). The LLM is dropping items from a list it can see. This is not a prompt-engineering problem any more — it is the limit of LLM-mode guards on closed-set checks.
+
+If you can't yet move to a deterministic capability, mitigate with:
+
+1. **JSON spec block, not comma prose.** Embed a `{"tierRole": ["a", "b", ...]}` JSON object in the prompt. LLMs parse JSON arrays more reliably than they re-read prose. Source the arrays from a typed constant so they cannot drift.
+2. **Explicit anti-omission instruction.** Add "RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry." right above the spec.
+3. **Require the model to quote back the array entry it failed to match.** _"For each rejection, quote the exact array entry the proposal failed to match"_ forces the model to do another lookup pass, catching omissions before they go out.
+4. **Add a worked example that calls out the most-recent failure case.** E.g. _"`tierRole`: `infrastructure` → PASS (it is at index 2 of the array)"_. Repeating the actually-dropped value in an example block lowers the recurrence rate, though it doesn't eliminate it.
+
+But the real fix is still option above: deterministic validation. After two hallucinations on the same guard, retire the LLM-mode validation and replace it with a `tool_call` to a structural-validation capability that runs the payload through the same Zod schemas the apply step uses.
+
 ## Capability `isIdempotent` Default Is `false`
 
 The dispatch cache is **on by default** for `tool_call`. Capabilities can opt out by setting `isIdempotent: true` when they handle re-run dedup naturally (e.g. an idempotent upstream API). Misconfiguring `isIdempotent: true` on a destructive capability is documented as the "you marked it idempotent" admin trade-off. When designing workflows with risky tool calls, leave the default alone unless you've explicitly verified the capability is rerun-safe.

@@ -47,12 +47,42 @@
 import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
-// Sourced from the capability's Zod enum so the guard prompt cannot drift
-// from the apply step's accepted field set. Quoted + backtick-wrapped so
-// the LLM treats them as literal field names, not natural-language nouns
-// (e.g. without quoting it interpreted `bestRole` as "best role" and
-// rejected it as not-a-recognised-field — observed 2026-05-15).
-const AUDITABLE_FIELDS_LIST = AUDITABLE_FIELDS.map((f) => `\`${f}\``).join(', ');
+// Enum specifications used by the validate_proposals guard. Embedded as a
+// JSON block in the prompt rather than comma-separated prose because LLMs
+// repeatedly mis-read prose lists in this guard — first dropping
+// `bestRole` from the accepted-field set (2026-05-15) and later dropping
+// `infrastructure` from `tierRole` (2026-05-16). JSON is harder to
+// silently misparse; the guard prompt explicitly tells the model to
+// re-read this block before judging each proposal.
+const ENUM_SPEC = {
+  field: AUDITABLE_FIELDS,
+  tierRole: [
+    'thinking',
+    'worker',
+    'infrastructure',
+    'control_plane',
+    'local_sovereign',
+    'embedding',
+  ],
+  reasoningDepth: ['very_high', 'high', 'medium', 'none'],
+  latency: ['very_fast', 'fast', 'medium'],
+  costEfficiency: ['very_high', 'high', 'medium', 'none'],
+  contextLength: ['very_high', 'high', 'medium', 'n_a'],
+  toolUse: ['strong', 'moderate', 'none'],
+  quality: ['high', 'medium', 'budget'],
+  confidence: ['high', 'medium', 'low'],
+  capabilities: [
+    'chat',
+    'reasoning',
+    'embedding',
+    'audio',
+    'image',
+    'moderation',
+    'vision',
+    'documents',
+  ],
+} as const;
+const ENUM_SPEC_JSON = JSON.stringify(ENUM_SPEC, null, 2);
 
 export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
@@ -239,7 +269,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         name: 'Validate proposed values against schemas',
         type: 'guard',
         config: {
-          rules: `Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Recognised \`field\` names (for changes only):**\nThe \`field\` value on each change MUST be one of: ${AUDITABLE_FIELDS_LIST}. Treat these as exact literal strings — do not interpret them semantically. Note that \`bestRole\` IS a recognised field (it is a free-text summary column on AiProviderModel, not an enum). Reject only changes whose \`field\` value is not present in the list above.\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array whose elements are drawn from this exact set: chat, reasoning, embedding, audio, image, moderation, vision, documents. Reject any element not in this set (e.g. "multimodal", "pdf", "text" are not valid)\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\n**Free-text fields:**\n- bestRole and description accept any non-empty string — do not validate their content, only that they are present and non-empty.\n\nReject any proposed change that uses a value not in the above lists. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if vars.__retryContext}}Previous validation attempt failed: {{vars.__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}`,
+          rules: `You are a schema validator for AI-model-audit proposals. Validate every change, new-model entry, and deactivation proposal against the spec below.\n\n## ENUM SPEC (authoritative list of valid values)\n\nThe arrays below ARE the entire universe of valid values for each field. RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry. If a proposed value appears character-for-character in the corresponding array, it is valid. If it does not, it is invalid. There are no implicit synonyms.\n\n\`\`\`json\n${ENUM_SPEC_JSON}\n\`\`\`\n\n## VALIDATION RULES\n\n1. For every \`change\` object: its \`field\` value MUST be exactly one of the strings in \`field\` above. Treat these as literal identifiers, not natural-language phrases — \`bestRole\` is a recognised field (it is a free-text summary column on AiProviderModel, NOT an enum). Reject the change only if \`field\` is not present in the array.\n\n2. For every change AND every new-model entry, when a value is provided for one of these enum fields, it MUST appear in the corresponding spec array: \`tierRole\`, \`reasoningDepth\`, \`latency\`, \`costEfficiency\`, \`contextLength\`, \`toolUse\`, \`quality\`, \`confidence\`. Before judging, COUNT THE ENTRIES in the spec array and confirm the proposed value matches one of them by exact string comparison. Common mistake to avoid: silently dropping \`infrastructure\` from \`tierRole\` — it is in the list at index 2.\n\n3. \`capabilities\` must be an array where every element appears in the \`capabilities\` spec array above. Reject elements like "multimodal", "pdf", or "text" — they are not in the spec.\n\n4. \`bestRole\` and \`description\` are free-text; validate only that they are present and non-empty.\n\n5. \`slug\` (on new model proposals) must match \`^[a-z0-9]+(-[a-z0-9]+)*$\`.\n\n6. New-model entries must include: \`name\`, \`slug\`, \`providerSlug\`, \`modelId\`, \`description\`, \`capabilities\`, \`tierRole\`, \`bestRole\`. Reject entries missing any of these.\n\n7. Deactivation proposals must have a non-empty \`modelId\` and a non-empty \`reason\`. Reject otherwise.\n\n## WORKED EXAMPLES\n\n- \`{ "field": "bestRole", "proposedValue": "Planner / orchestrator" }\` → PASS (\`bestRole\` is in the field array; the value is free-text and non-empty).\n- \`{ "field": "tierRole", "proposedValue": "infrastructure" }\` → PASS (\`infrastructure\` is at index 2 of the tierRole array).\n- \`{ "field": "tierRole", "proposedValue": "edge" }\` → FAIL (not in tierRole array).\n- \`{ "field": "freshness", "proposedValue": "stale" }\` → FAIL (\`freshness\` is not in the field array).\n\n{{#if vars.__retryContext}}\n## RETRY CONTEXT\n\nA previous attempt failed validation: {{vars.__retryContext.failureReason}}. The producer is re-running. Apply the same checks; quote the exact spec entry alongside any rejection so the producer can fix the next attempt.\n{{/if}}\n\nFor each rejection in your verdict, quote the exact array entry the proposal failed to match (e.g. \`tierRole: "edge" is not in ["thinking","worker","infrastructure","control_plane","local_sovereign","embedding"]\`). This anchoring prevents you from omitting valid values by mistake.`,
           mode: 'llm',
           failAction: 'block',
           maxRetries: 2,
