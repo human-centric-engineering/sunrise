@@ -175,6 +175,35 @@ describe('executeHttpRequest', () => {
     ).rejects.toMatchObject({ code: 'http_error', retriable: false, status: 400 });
   });
 
+  it('preserves structured error bodies up to 2 KB and marks longer ones as truncated', async () => {
+    // ~1.5 KB structured body — well within the cap, must NOT be cut.
+    const longBody = 'X'.repeat(1500);
+    mockResponse(422, longBody);
+    await expect(
+      executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' })
+    ).rejects.toMatchObject({
+      code: 'http_error',
+      message: expect.stringContaining('XXXXXX'),
+    });
+  });
+
+  it('marks oversize error bodies with a truncation suffix so operators know more existed', async () => {
+    // 3 KB body — past the 2 KB cap. The HttpError message should be cut
+    // at 2000 chars and carry an explicit "[truncated, N more chars]"
+    // suffix so the diagnostic isn't silently lost.
+    const oversizeBody = 'Y'.repeat(3000);
+    mockResponse(422, oversizeBody);
+
+    let captured: { message?: string } = {};
+    try {
+      await executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' });
+    } catch (err) {
+      captured = err as { message?: string };
+    }
+    expect(captured.message).toContain('… [truncated,');
+    expect(captured.message).toMatch(/1000 more chars/);
+  });
+
   it('still throws http_error when reading the error body itself fails', async () => {
     // Exercises the `.catch(() => '')` arm — non-2xx response whose text()
     // rejects (e.g. abort during body read). The HttpError still surfaces

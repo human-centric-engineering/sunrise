@@ -156,7 +156,14 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         name: 'Search web for current provider model info',
         type: 'external_call',
         config: {
-          url: 'https://api.search.brave.com/res/v1/web/search?q=AI+model+releases+updates+deprecations+{{load_models.output}}&count=5',
+          // Static query — Brave caps the `q` param at 400 characters, and
+          // interpolating `{{load_models.output}}` (a JSON dump of the parsed
+          // model registry) blew straight past that limit with `HTTP 422 —
+          // Search query must be at most 400 characters` (2026-05-16). The
+          // downstream LLM steps already receive the full registry as
+          // context; this call only needs to surface recent news, so a
+          // generic search term is fine.
+          url: 'https://api.search.brave.com/res/v1/web/search?q=AI+model+releases+updates+deprecations+2026&count=5',
           method: 'GET',
           authType: 'api-key',
           apiKeyHeaderName: 'X-Subscription-Token',
