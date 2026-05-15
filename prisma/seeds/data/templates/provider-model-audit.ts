@@ -44,7 +44,15 @@
  * coordination).
  */
 
+import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
+
+// Sourced from the capability's Zod enum so the guard prompt cannot drift
+// from the apply step's accepted field set. Quoted + backtick-wrapped so
+// the LLM treats them as literal field names, not natural-language nouns
+// (e.g. without quoting it interpreted `bestRole` as "best role" and
+// rejected it as not-a-recognised-field — observed 2026-05-15).
+const AUDITABLE_FIELDS_LIST = AUDITABLE_FIELDS.map((f) => `\`${f}\``).join(', ');
 
 export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
@@ -225,8 +233,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         name: 'Validate proposed values against schemas',
         type: 'guard',
         config: {
-          rules:
-            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array whose elements are drawn from this exact set: chat, reasoning, embedding, audio, image, moderation, vision, documents. Reject any element not in this set (e.g. "multimodal", "pdf", "text" are not valid)\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if vars.__retryContext}}Previous validation attempt failed: {{vars.__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}',
+          rules: `Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Recognised \`field\` names (for changes only):**\nThe \`field\` value on each change MUST be one of: ${AUDITABLE_FIELDS_LIST}. Treat these as exact literal strings — do not interpret them semantically. Note that \`bestRole\` IS a recognised field (it is a free-text summary column on AiProviderModel, not an enum). Reject only changes whose \`field\` value is not present in the list above.\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array whose elements are drawn from this exact set: chat, reasoning, embedding, audio, image, moderation, vision, documents. Reject any element not in this set (e.g. "multimodal", "pdf", "text" are not valid)\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\n**Free-text fields:**\n- bestRole and description accept any non-empty string — do not validate their content, only that they are present and non-empty.\n\nReject any proposed change that uses a value not in the above lists. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if vars.__retryContext}}Previous validation attempt failed: {{vars.__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}`,
           mode: 'llm',
           failAction: 'block',
           maxRetries: 2,

@@ -94,6 +94,27 @@ Multi-turn checkpointing covers `reflect` and `orchestrator` cleanly. `agent_cal
 
 `AiWorkflowExecution.dedupKey` is computed per-channel: `<channel>:<externalId>` for shared-secret channels (slack, postmark), `hmac:<workflowId>:<externalId>` for per-trigger HMAC. The Slack/Postmark scope is **channel-global** — replaying a Slack `event_id` to a different workflow URL collides on the same dedup key (Slack signs `v0:{ts}:{body}` without binding the URL, so cross-workflow replay would otherwise sail through). Generic-HMAC channels don't share secrets across workflows, so per-workflow scope is correct there.
 
+## `guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set
+
+An LLM-mode guard can only check what is **explicitly in its prompt**. A rule like _"reject changes where `field` is not a recognised X field"_ fails open or fails closed unpredictably — the model has no access to the real list, so it guesses. Observed failure: the `validate_proposals` guard in `tpl-provider-model-audit` rejected the legitimate field `bestRole` (a real free-text column on `AiProviderModel`) as "not a recognised field", because the rules described the constraint without enumerating which names counted as recognised. Subtler effect: enum-heavy lists bias the model — a lone free-text member like `bestRole` reads as anomalous and gets flagged.
+
+**Fix shape:** When a closed set defines validity, paste the set into the prompt and source it from the same constant the apply step uses, so it cannot drift:
+
+```ts
+import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+
+const LIST = AUDITABLE_FIELDS.map((f) => `\`${f}\``).join(', ');
+
+// In the guard rules:
+`The \`field\` value MUST be one of: ${LIST}. Treat these as literal strings.`;
+```
+
+**Stronger fix:** Use `mode: 'regex'` or a deterministic check for structural rules (field-name-in-set, enum-value-in-set, shape patterns). Reserve `mode: 'llm'` for fuzzy quality judgments (on-topic, appropriate tone, plausible content) where the LLM is actually doing the work that no regex could do.
+
+**Drift signal to watch for:** if a guard's prompt enumerates allowed values **and** the apply-side capability also enumerates them in its Zod schema, those two lists must come from one source. Two hand-maintained lists become inconsistent in two commits.
+
+Also: backtick-wrap literal field names inside guard prompts. Without quoting, `bestRole` reads as the noun phrase "best role" and the model evaluates the _concept_, not the _identifier_.
+
 ## Capability `isIdempotent` Default Is `false`
 
 The dispatch cache is **on by default** for `tool_call`. Capabilities can opt out by setting `isIdempotent: true` when they handle re-run dedup naturally (e.g. an idempotent upstream API). Misconfiguring `isIdempotent: true` on a destructive capability is documented as the "you marked it idempotent" admin trade-off. When designing workflows with risky tool calls, leave the default alone unless you've explicitly verified the capability is rerun-safe.

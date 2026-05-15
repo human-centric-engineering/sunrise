@@ -8,17 +8,24 @@
 
 import { useState } from 'react';
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock,
+  Copy,
+  GitBranch,
   Loader2,
   RotateCcw,
   XCircle,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
+import { isMarkdown } from '@/lib/utils/is-markdown';
+import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 const RETRY_PILL_CLASS =
@@ -71,6 +78,23 @@ export interface ExecutionTraceEntryRowProps {
   highlighted?: boolean;
   /** Fires when the user clicks "Retry" on a failed step. */
   onRetry?: (stepId: string) => void;
+  /**
+   * Parallel fan-out grouping. When this row is the fork step itself,
+   * `forkNumber` is set. When this row is an immediate branch of a fork,
+   * `parallelBranchOfNumber` carries the fork's number so the row can show
+   * a "branch of fork #N" chip and a purple left-rail. Both are derived
+   * via `buildParallelBranchMap` in the parent view.
+   */
+  forkNumber?: number;
+  parallelBranchOfNumber?: number;
+  /**
+   * Controlled expand state. When provided, the row is in controlled mode
+   * and the parent owns which entry is open — used to enforce
+   * single-open accordion behaviour across the trace list. When omitted,
+   * the row manages its own toggle locally (legacy behaviour).
+   */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 const STATUS_STYLES: Record<Status, { icon: React.ElementType; colour: string; text: string }> = {
@@ -102,8 +126,22 @@ export function ExecutionTraceEntryRow({
   retries,
   highlighted,
   onRetry,
+  forkNumber,
+  parallelBranchOfNumber,
+  expanded: expandedProp,
+  onExpandedChange,
 }: ExecutionTraceEntryRowProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedInternal, setExpandedInternal] = useState(false);
+  const isControlled = expandedProp !== undefined;
+  const expanded = isControlled ? expandedProp : expandedInternal;
+  const toggleExpanded = () => {
+    const next = !expanded;
+    if (isControlled) {
+      onExpandedChange?.(next);
+    } else {
+      setExpandedInternal(next);
+    }
+  };
   const style = STATUS_STYLES[status];
   const Icon = style.icon;
   const animate = status === 'running' ? 'animate-spin' : '';
@@ -118,21 +156,44 @@ export function ExecutionTraceEntryRow({
   return (
     <div
       data-testid={`trace-entry-${stepId}`}
+      data-parallel-fork={forkNumber !== undefined ? 'true' : undefined}
+      data-parallel-branch-of={parallelBranchOfNumber}
       className={cn(
         'border-border/60 rounded-md border p-3 text-sm transition-colors',
-        highlighted && 'bg-muted/40 ring-primary/40 ring-1'
+        highlighted && 'bg-muted/40 ring-primary/40 ring-1',
+        parallelBranchOfNumber !== undefined &&
+          'border-l-4 border-l-purple-400 dark:border-l-purple-600'
       )}
     >
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleExpanded}
         className="flex w-full items-start gap-2 text-left"
       >
         <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', style.colour, animate)} />
         <div className="flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{label}</span>
-            <span className="text-muted-foreground text-xs">{stepType}</span>
+            <StepTypeChip stepId={stepId} stepType={stepType} />
+            {forkNumber !== undefined && (
+              <span
+                data-testid={`trace-entry-fork-${stepId}`}
+                className="flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                title="This step fans out concurrent branches"
+              >
+                <GitBranch className="h-3 w-3" />
+                Parallel fork #{forkNumber}
+              </span>
+            )}
+            {parallelBranchOfNumber !== undefined && (
+              <span
+                data-testid={`trace-entry-branch-${stepId}`}
+                className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                title={`Concurrent branch of parallel fork #${parallelBranchOfNumber}`}
+              >
+                ∥ Branch of fork #{parallelBranchOfNumber}
+              </span>
+            )}
             {model && (
               <span
                 data-testid={`trace-entry-model-${stepId}`}
@@ -198,24 +259,10 @@ export function ExecutionTraceEntryRow({
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">
               {input !== undefined && input !== null && (
-                <div data-testid={`trace-entry-input-${stepId}`}>
-                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
-                    Input
-                  </p>
-                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
-                    {typeof input === 'string' ? input : JSON.stringify(input, null, 2)}
-                  </pre>
-                </div>
+                <JsonPane label="Input" data={input} testId={`trace-entry-input-${stepId}`} />
               )}
               {output !== undefined && output !== null && (
-                <div data-testid={`trace-entry-output-${stepId}`}>
-                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
-                    Output
-                  </p>
-                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
-                    {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
-                  </pre>
-                </div>
+                <JsonPane label="Output" data={output} testId={`trace-entry-output-${stepId}`} />
               )}
             </div>
           )}
@@ -266,6 +313,91 @@ export function ExecutionTraceEntryRow({
             </Button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function StepTypeChip({ stepId, stepType }: { stepId: string; stepType: string }) {
+  const meta = getStepMetadata(stepType);
+  // Always render the chip; only attach a tooltip when we have a real
+  // description from the registry. Unknown step types still render the
+  // raw type string so admins aren't left with a missing chip.
+  const chip = (
+    <span
+      data-testid={`trace-entry-step-type-${stepId}`}
+      className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wide uppercase"
+    >
+      {stepType}
+    </span>
+  );
+  if (!meta) return chip;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-left">
+          <p className="font-medium">{meta.label}</p>
+          <p className="text-primary-foreground/80 mt-1 text-[11px] leading-snug">
+            {meta.description}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function JsonPane({ label, data, testId }: { label: string; data: unknown; testId: string }) {
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  const showMarkdown = isMarkdown(data);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard may be unavailable in non-secure contexts; silently ignore.
+      }
+    })();
+  };
+
+  return (
+    <div data-testid={testId}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          {label}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-1.5 text-[11px]"
+          onClick={handleCopy}
+          aria-label={`Copy ${label}`}
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+      {showMarkdown ? (
+        <MarkdownOrRawView content={text} rawMaxHeightClass="max-h-60 overflow-y-auto" />
+      ) : (
+        <pre className="bg-muted/40 max-h-60 overflow-y-auto rounded p-2 font-mono text-xs break-all whitespace-pre-wrap">
+          {text}
+        </pre>
       )}
     </div>
   );

@@ -188,7 +188,7 @@ describe('ExecutionDetailView', () => {
         />
       );
 
-      const inputButton = screen.getByRole('button', { name: /input data/i });
+      const inputButton = screen.getByRole('button', { name: /^input data$/i });
       expect(inputButton).toBeInTheDocument();
 
       // Click to expand
@@ -199,7 +199,7 @@ describe('ExecutionDetailView', () => {
     it('does not render Input Data card when inputData is null', () => {
       render(<ExecutionDetailView execution={makeExecution({ inputData: null })} trace={[]} />);
 
-      expect(screen.queryByRole('button', { name: /input data/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^input data$/i })).not.toBeInTheDocument();
     });
   });
 
@@ -359,7 +359,7 @@ describe('ExecutionDetailView', () => {
         />
       );
 
-      const button = screen.getByRole('button', { name: /input data/i });
+      const button = screen.getByRole('button', { name: /^input data$/i });
       expect(button).toHaveAttribute('aria-expanded', 'false');
 
       await user.click(button);

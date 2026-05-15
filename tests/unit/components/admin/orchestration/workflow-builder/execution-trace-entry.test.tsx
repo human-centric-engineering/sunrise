@@ -87,10 +87,13 @@ describe('ExecutionTraceEntryRow', () => {
       const user = userEvent.setup();
       render(<ExecutionTraceEntryRow {...BASE_PROPS} output="Hello world" />);
 
-      await user.click(screen.getByRole('button'));
+      // The expand toggle is the first button in the row. When expanded,
+      // additional buttons (e.g. JsonPane Copy) appear, so target the
+      // expand toggle by index instead of `getByRole`.
+      await user.click(screen.getAllByRole('button')[0]);
       expect(screen.getByText('Hello world')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button'));
+      await user.click(screen.getAllByRole('button')[0]);
       expect(screen.queryByText('Hello world')).not.toBeInTheDocument();
     });
   });

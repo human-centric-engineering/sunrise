@@ -12,9 +12,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Copy,
   Loader2,
   RotateCcw,
   StopCircle,
@@ -50,11 +52,14 @@ import {
 } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
+import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
+import { isMarkdown } from '@/lib/utils/is-markdown';
 import {
   ExecutionTraceFilters,
   applyTraceFilter,
   type TraceFilter,
 } from '@/components/admin/orchestration/execution-trace-filters';
+import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 import { z } from 'zod';
 
@@ -108,31 +113,74 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destru
 
 function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   if (data === null || data === undefined) return null;
+
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  const showMarkdown = isMarkdown(data);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard may be unavailable in non-secure contexts; silently ignore.
+      }
+    })();
+  };
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-2 text-left"
-          aria-expanded={open}
-        >
-          {open ? (
-            <ChevronDown className="text-muted-foreground h-4 w-4" />
-          ) : (
-            <ChevronRight className="text-muted-foreground h-4 w-4" />
-          )}
-          <CardTitle className="text-sm">{title}</CardTitle>
-        </button>
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex flex-1 items-center gap-2 text-left"
+            aria-expanded={open}
+          >
+            {open ? (
+              <ChevronDown className="text-muted-foreground h-4 w-4" />
+            ) : (
+              <ChevronRight className="text-muted-foreground h-4 w-4" />
+            )}
+            <CardTitle className="text-sm">{title}</CardTitle>
+          </button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={handleCopy}
+            aria-label={`Copy ${title}`}
+          >
+            {copied ? (
+              <>
+                <Check className="h-3.5 w-3.5" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </>
+            )}
+          </Button>
+        </div>
       </CardHeader>
       {open && (
         <CardContent>
-          <pre className="bg-muted/40 overflow-x-auto rounded p-2 font-mono text-xs">
-            {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
-          </pre>
+          {showMarkdown ? (
+            <MarkdownOrRawView content={text} />
+          ) : (
+            <pre className="bg-muted/40 rounded p-2 font-mono text-xs break-all whitespace-pre-wrap">
+              {text}
+            </pre>
+          )}
         </CardContent>
       )}
     </Card>
@@ -166,6 +214,27 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
     }
     return map;
   }, [costEntries]);
+
+  // Parallel-step grouping. Builds two lookups: which entries are
+  // themselves a `parallel` fork (numbered #1, #2, …) and which entries
+  // are an immediate concurrent branch of one. Caveat: this only catches
+  // immediate branch children — downstream steps in a multi-step branch
+  // chain aren't tagged because we don't have the workflow graph here.
+  const { parallelForkNumberByStepId, parallelBranchOfByStepId } = useMemo(() => {
+    const branchMap = buildParallelBranchMap(trace);
+    const forkNumbers = new Map<string, number>();
+    for (const entry of trace) {
+      if (entry.stepType === 'parallel' && !forkNumbers.has(entry.stepId)) {
+        forkNumbers.set(entry.stepId, forkNumbers.size + 1);
+      }
+    }
+    const branchOf = new Map<string, number>();
+    for (const [branchId, parentId] of branchMap.entries()) {
+      const num = forkNumbers.get(parentId);
+      if (num !== undefined) branchOf.set(branchId, num);
+    }
+    return { parallelForkNumberByStepId: forkNumbers, parallelBranchOfByStepId: branchOf };
+  }, [trace]);
 
   // Filter chip state — local to this view; not persisted.
   const [filter, setFilter] = useState<TraceFilter>('all');
@@ -208,6 +277,9 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
   // Tracks which trace row was last clicked from the timeline strip so the
   // matching row below can be highlighted and scrolled into view.
   const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
+  // Single-open accordion across the trace list — only one entry's input/
+  // output panel is expanded at a time.
+  const [expandedStepKey, setExpandedStepKey] = useState<string | null>(null);
 
   const handleSelectStep = useCallback((stepId: string) => {
     // Only reset the filter when the target row is hidden by the current
@@ -546,29 +618,36 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
           </p>
         ) : (
           <div className="space-y-2">
-            {filteredTrace.map((entry, idx) => (
-              <ExecutionTraceEntryRow
-                key={`${entry.stepId}-${idx}`}
-                stepId={entry.stepId}
-                stepType={entry.stepType}
-                label={entry.label}
-                status={entry.status}
-                output={entry.output}
-                error={entry.error}
-                tokensUsed={entry.tokensUsed}
-                costUsd={entry.costUsd}
-                durationMs={entry.durationMs}
-                input={entry.input}
-                model={entry.model}
-                provider={entry.provider}
-                inputTokens={entry.inputTokens}
-                outputTokens={entry.outputTokens}
-                llmDurationMs={entry.llmDurationMs}
-                costEntries={costEntriesByStep.get(entry.stepId)}
-                retries={entry.retries}
-                highlighted={highlightedStepId === entry.stepId}
-              />
-            ))}
+            {filteredTrace.map((entry, idx) => {
+              const rowKey = `${entry.stepId}-${idx}`;
+              return (
+                <ExecutionTraceEntryRow
+                  key={rowKey}
+                  stepId={entry.stepId}
+                  stepType={entry.stepType}
+                  label={entry.label}
+                  status={entry.status}
+                  output={entry.output}
+                  error={entry.error}
+                  tokensUsed={entry.tokensUsed}
+                  costUsd={entry.costUsd}
+                  durationMs={entry.durationMs}
+                  input={entry.input}
+                  model={entry.model}
+                  provider={entry.provider}
+                  inputTokens={entry.inputTokens}
+                  outputTokens={entry.outputTokens}
+                  llmDurationMs={entry.llmDurationMs}
+                  costEntries={costEntriesByStep.get(entry.stepId)}
+                  retries={entry.retries}
+                  highlighted={highlightedStepId === entry.stepId}
+                  forkNumber={parallelForkNumberByStepId.get(entry.stepId)}
+                  parallelBranchOfNumber={parallelBranchOfByStepId.get(entry.stepId)}
+                  expanded={expandedStepKey === rowKey}
+                  onExpandedChange={(next) => setExpandedStepKey(next ? rowKey : null)}
+                />
+              );
+            })}
           </div>
         )}
       </section>

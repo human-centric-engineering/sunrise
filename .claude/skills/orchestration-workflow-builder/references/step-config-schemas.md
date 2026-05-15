@@ -82,6 +82,14 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 - `mode` — `"llm"` (LLM evaluates) or `"regex"` (regex pattern matching)
 - `failAction` — `"block"` (stop workflow) or `"flag"` (continue with warning)
 
+**`mode: 'llm'` authoring rules:**
+
+- If a rule references a closed set ("must be a recognised X", "field name must be valid"), **enumerate the set in the prompt** — the LLM cannot read your schema. Source the list from the same constant the downstream apply step uses (`import { … } from '@/lib/orchestration/capabilities/built-in/…'`) so the two cannot drift.
+- Backtick-wrap literal identifier values (`` `bestRole` ``) so the model parses them as strings, not natural-language nouns.
+- For purely structural checks (enum-in-set, regex shape, presence/absence), prefer `mode: 'regex'` or a deterministic capability over an LLM guard. LLM mode is for fuzzy judgments (tone, on-topic, plausibility), not closed-set membership.
+
+See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the failure mode this guards against.
+
 ### evaluate
 
 ```json
