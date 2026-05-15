@@ -42,7 +42,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useExecutionStatusPoller } from '@/lib/hooks/use-execution-status-poller';
+import {
+  useExecutionLivePoll,
+  type CurrentStepDetails,
+  type ExecutionLivePayload,
+} from '@/lib/hooks/use-execution-live-poll';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
@@ -52,6 +56,7 @@ import {
 } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
+import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import { isMarkdown } from '@/lib/utils/is-markdown';
 import {
@@ -96,6 +101,12 @@ export interface ExecutionDetailViewProps {
    * each expanded trace row.
    */
   costEntries?: TraceCostEntryRow[];
+  /**
+   * Running-step metadata for the live indicator. Server-fetched from
+   * the same endpoint as `trace` so the initial paint already shows the
+   * in-flight step. The live-poll hook owns this state thereafter.
+   */
+  currentStepDetails?: CurrentStepDetails | null;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -135,7 +146,7 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className={cn('px-6', open ? 'pt-6 pb-2' : 'py-3')}>
         <div className="flex items-center justify-between gap-2">
           <button
             type="button"
@@ -174,13 +185,7 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
       </CardHeader>
       {open && (
         <CardContent>
-          {showMarkdown ? (
-            <MarkdownOrRawView content={text} />
-          ) : (
-            <pre className="bg-muted/40 rounded p-2 font-mono text-xs break-all whitespace-pre-wrap">
-              {text}
-            </pre>
-          )}
+          {showMarkdown ? <MarkdownOrRawView content={text} /> : <JsonPretty data={data} />}
         </CardContent>
       )}
     </Card>
@@ -196,15 +201,85 @@ function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export function ExecutionDetailView({ execution, trace, costEntries }: ExecutionDetailViewProps) {
+export function ExecutionDetailView({
+  execution,
+  trace,
+  costEntries,
+  currentStepDetails,
+}: ExecutionDetailViewProps) {
   const router = useRouter();
+
+  // Live-poll seed. Once the hook has polled once it owns trace + cost +
+  // currentStepDetails; the initial values here just paint the first frame.
+  const initialPayload: ExecutionLivePayload = useMemo(
+    () => ({
+      snapshot: {
+        id: execution.id,
+        status: execution.status,
+        currentStep: execution.currentStep,
+        errorMessage: execution.errorMessage,
+        totalTokensUsed: execution.totalTokensUsed,
+        totalCostUsd: execution.totalCostUsd,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        createdAt: execution.createdAt,
+      },
+      trace,
+      costEntries: costEntries ?? [],
+      currentStepDetails: currentStepDetails ?? null,
+    }),
+    // Seed only — never re-run mid-mount; the hook owns the state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+  const live = useExecutionLivePoll(execution.id, initialPayload);
+  const liveSnap = live.snapshot;
+  const liveTrace = live.trace;
+  const liveCostEntries = live.costEntries;
+  const liveCurrentStep = live.currentStepDetails;
+
+  // Tick clock — advances every second while polling so the synthesised
+  // running entry's durationMs ticks up smoothly between server polls.
+  const [tickClock, setTickClock] = useState(0);
+  useEffect(() => {
+    if (!live.isPolling) return;
+    const id = setInterval(() => setTickClock((t) => t + 1), 1_000);
+    return () => clearInterval(id);
+  }, [live.isPolling]);
+
+  // Display trace = persisted entries + synthesised running entry (if any).
+  // The running entry is appended at the end so the timeline reads
+  // chronologically. Defensive filter drops any persisted entry with the
+  // same stepId in case a tick races the engine writing both at once.
+  // `tickClock` is included so durationMs recomputes every second between
+  // server polls.
+  const displayTrace: ExecutionTraceEntry[] = useMemo(() => {
+    if (!liveCurrentStep) return liveTrace;
+    const synth = {
+      stepId: liveCurrentStep.stepId,
+      stepType: liveCurrentStep.stepType,
+      label: liveCurrentStep.label,
+      // The `status` union on persisted entries doesn't include 'running' —
+      // the trace-row component locally widens it. Cast here intentionally
+      // so the view-only display type stays narrow at the prop boundary.
+      status: 'running',
+      output: undefined,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: liveCurrentStep.startedAt,
+      durationMs: Math.max(0, Date.now() - new Date(liveCurrentStep.startedAt).getTime()),
+    } as unknown as ExecutionTraceEntry;
+    const persisted = liveTrace.filter((e) => e.stepId !== liveCurrentStep.stepId);
+    return [...persisted, synth];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTrace, liveCurrentStep, tickClock]);
 
   // Group cost entries by stepId so each ExecutionTraceEntryRow can render
   // its own per-call breakdown. Memoised so the grouping doesn't re-run
   // on every render.
   const costEntriesByStep = useMemo(() => {
     const map = new Map<string, TraceCostEntry[]>();
-    for (const entry of costEntries ?? []) {
+    for (const entry of liveCostEntries) {
       const existing = map.get(entry.stepId);
       if (existing) {
         existing.push(entry);
@@ -213,7 +288,7 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
       }
     }
     return map;
-  }, [costEntries]);
+  }, [liveCostEntries]);
 
   // Parallel-step grouping. Builds two lookups: which entries are
   // themselves a `parallel` fork (numbered #1, #2, …) and which entries
@@ -221,9 +296,9 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
   // immediate branch children — downstream steps in a multi-step branch
   // chain aren't tagged because we don't have the workflow graph here.
   const { parallelForkNumberByStepId, parallelBranchOfByStepId } = useMemo(() => {
-    const branchMap = buildParallelBranchMap(trace);
+    const branchMap = buildParallelBranchMap(displayTrace);
     const forkNumbers = new Map<string, number>();
-    for (const entry of trace) {
+    for (const entry of displayTrace) {
       if (entry.stepType === 'parallel' && !forkNumbers.has(entry.stepId)) {
         forkNumbers.set(entry.stepId, forkNumbers.size + 1);
       }
@@ -234,11 +309,14 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
       if (num !== undefined) branchOf.set(branchId, num);
     }
     return { parallelForkNumberByStepId: forkNumbers, parallelBranchOfByStepId: branchOf };
-  }, [trace]);
+  }, [displayTrace]);
 
   // Filter chip state — local to this view; not persisted.
   const [filter, setFilter] = useState<TraceFilter>('all');
-  const filteredTrace = useMemo(() => applyTraceFilter(trace, filter), [trace, filter]);
+  const filteredTrace = useMemo(
+    () => applyTraceFilter(displayTrace, filter),
+    [displayTrace, filter]
+  );
   // Mirror filteredTrace into a ref so handleSelectStep can read the
   // current filtered set without re-creating the callback on every render.
   // Without this, the callback's dep array would have to include
@@ -248,25 +326,10 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
     filteredTraceRef.current = filteredTrace;
   }, [filteredTrace]);
 
-  // Live status — polls /executions/:id/status while the execution is in a
-  // non-terminal status, then triggers router.refresh() so the trace catches
-  // up. The poller returns the static initial snapshot once terminal.
-  const live = useExecutionStatusPoller(execution.id, {
-    id: execution.id,
-    status: execution.status,
-    currentStep: execution.currentStep,
-    errorMessage: execution.errorMessage,
-    totalTokensUsed: execution.totalTokensUsed,
-    totalCostUsd: execution.totalCostUsd,
-    startedAt: execution.startedAt,
-    completedAt: execution.completedAt,
-    createdAt: execution.createdAt,
-  });
-
-  const duration = formatDuration(live.startedAt, live.completedAt);
+  const duration = formatDuration(liveSnap.startedAt, liveSnap.completedAt);
   const budgetUsed =
     execution.budgetLimitUsd && execution.budgetLimitUsd > 0
-      ? (live.totalCostUsd / execution.budgetLimitUsd) * 100
+      ? (liveSnap.totalCostUsd / execution.budgetLimitUsd) * 100
       : null;
 
   const [actionLoading, setActionLoading] = useState(false);
@@ -388,13 +451,15 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
     [execution.id, router]
   );
 
-  const canCancel = live.status === 'running' || live.status === 'paused_for_approval';
-  const canApprove = live.status === 'paused_for_approval';
-  const canRetry = live.status === 'failed';
-  const failedStepId = canRetry ? trace.find((e) => e.status === 'failed')?.stepId : undefined;
+  const canCancel = liveSnap.status === 'running' || liveSnap.status === 'paused_for_approval';
+  const canApprove = liveSnap.status === 'paused_for_approval';
+  const canRetry = liveSnap.status === 'failed';
+  const failedStepId = canRetry
+    ? displayTrace.find((e) => e.status === 'failed')?.stepId
+    : undefined;
 
   // Extract approval prompt from awaiting trace entry
-  const approvalPrompt = canApprove ? getApprovalPrompt(trace) : null;
+  const approvalPrompt = canApprove ? getApprovalPrompt(displayTrace) : null;
 
   return (
     <div className="space-y-6">
@@ -488,9 +553,21 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Badge variant={STATUS_BADGE[live.status] ?? 'outline'}>
-              {formatStatus(live.status)}
-            </Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={STATUS_BADGE[liveSnap.status] ?? 'outline'}>
+                {formatStatus(liveSnap.status)}
+              </Badge>
+              {live.isPolling && (
+                <span
+                  data-testid="execution-live-pill"
+                  className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-800 dark:bg-green-950/60 dark:text-green-300"
+                  title="Polling for live updates"
+                >
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+                  Live
+                </span>
+              )}
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -504,7 +581,7 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-lg font-bold">{live.totalTokensUsed.toLocaleString()}</span>
+            <span className="text-lg font-bold">{liveSnap.totalTokensUsed.toLocaleString()}</span>
           </CardContent>
         </Card>
         <Card>
@@ -518,7 +595,7 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-lg font-bold">${live.totalCostUsd.toFixed(4)}</span>
+            <span className="text-lg font-bold">${liveSnap.totalCostUsd.toFixed(4)}</span>
           </CardContent>
         </Card>
         <Card>
@@ -578,14 +655,14 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
       </div>
 
       {/* Error banner */}
-      {live.errorMessage && (
+      {liveSnap.errorMessage && (
         <div
           role="alert"
           className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
         >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap">
-            {live.errorMessage}
+            {liveSnap.errorMessage}
           </pre>
         </div>
       )}
@@ -597,9 +674,9 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
       </div>
 
       {/* Aggregates + timeline strip — both hidden when trace.length < 2. */}
-      <ExecutionAggregates trace={trace} />
+      <ExecutionAggregates trace={displayTrace} />
       <ExecutionTimelineStrip
-        trace={trace}
+        trace={displayTrace}
         onSelectStep={handleSelectStep}
         highlightedStepId={highlightedStepId ?? undefined}
       />
@@ -608,9 +685,9 @@ export function ExecutionDetailView({ execution, trace, costEntries }: Execution
       <section aria-label="Execution trace" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Step Timeline</h2>
-          <ExecutionTraceFilters trace={trace} active={filter} onChange={setFilter} />
+          <ExecutionTraceFilters trace={displayTrace} active={filter} onChange={setFilter} />
         </div>
-        {trace.length === 0 ? (
+        {displayTrace.length === 0 ? (
           <p className="text-muted-foreground py-4 text-sm">No trace entries recorded.</p>
         ) : filteredTrace.length === 0 ? (
           <p className="text-muted-foreground py-4 text-sm" data-testid="trace-empty-filter">

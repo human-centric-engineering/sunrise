@@ -28,12 +28,18 @@ vi.mock('@/lib/api/client', () => ({
   APIClientError: class extends Error {},
 }));
 
-// Pass the initial snapshot straight through — these tests don't exercise
+// Pass the initial payload straight through — these tests don't exercise
 // the live-polling behaviour, which has its own test file.
-vi.mock('@/lib/hooks/use-execution-status-poller', () => ({
-  useExecutionStatusPoller: <T,>(_id: string, initial: T): T => initial,
+vi.mock('@/lib/hooks/use-execution-live-poll', () => ({
+  useExecutionLivePoll: <T extends { snapshot: { status: string } }>(_id: string, initial: T) => ({
+    ...initial,
+    isPolling: !(['completed', 'failed', 'cancelled'] as const).includes(
+      initial.snapshot.status as 'completed' | 'failed' | 'cancelled'
+    ),
+    lastError: null,
+  }),
   isTerminalStatus: (s: string) => s === 'completed' || s === 'failed' || s === 'cancelled',
-  EXECUTION_STATUS_POLL_INTERVAL_MS: 3000,
+  EXECUTION_LIVE_POLL_INTERVAL_MS: 1000,
 }));
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────

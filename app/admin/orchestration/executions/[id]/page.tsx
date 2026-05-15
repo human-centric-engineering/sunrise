@@ -6,6 +6,11 @@ import {
   ExecutionDetailView,
   type TraceCostEntryRow,
 } from '@/components/admin/orchestration/execution-detail-view';
+import type { CurrentStepDetails } from '@/lib/hooks/use-execution-live-poll';
+
+// Force a fresh server fetch on every navigation so router.refresh() from the
+// live-poll hook reliably re-paints with the final terminal state.
+export const dynamic = 'force-dynamic';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -38,6 +43,7 @@ interface ExecutionResponse {
   execution: ExecutionDetail;
   trace: ExecutionTraceEntry[];
   costEntries?: TraceCostEntryRow[];
+  currentStepDetails?: CurrentStepDetails | null;
 }
 
 async function getExecution(id: string): Promise<ExecutionResponse | null> {
@@ -108,6 +114,7 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
         execution={data.execution}
         trace={data.trace}
         costEntries={data.costEntries}
+        currentStepDetails={data.currentStepDetails ?? null}
       />
     </div>
   );
