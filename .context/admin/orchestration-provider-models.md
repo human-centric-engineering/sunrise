@@ -242,11 +242,19 @@ The matrix toolbar includes an **Audit Models** button that triggers the Provide
 ### What it does
 
 1. Admin selects models to audit via a checkbox dialog (filter by provider, select all/deselect all)
-2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`
-3. The browser redirects to the execution detail page where SSE streaming shows real-time progress
+2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`, captures the `executionId` from the SSE stream's `workflow_started` event, and swaps its body for an inline live-progress panel
+3. The dialog stays open and shows the run's status, current step, wall-clock, tokens and cost, plus a Gantt timeline strip — the admin stays on the providers page while the audit progresses
 4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
-5. A `human_approval` step pauses execution and presents proposed changes for admin review
+5. A `human_approval` step pauses execution; the inline panel renders the proposed-changes prompt as markdown with inline approve/reject controls
 6. On approval, the `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds newly discovered models, and `deactivate_provider_models` soft-deletes deprecated ones — all invalidate the model cache
+
+### Backgrounding a long run
+
+The audit can take a few minutes per model. From the inline progress panel, the operator can:
+
+- **Run in background** — closes the dialog and writes the execution id to `localStorage` under `sunrise.orchestration.in-flight-execution.v1`. The `InFlightExecutionBanner` mounted by `app/admin/orchestration/layout.tsx` picks the handoff up and renders a sticky peek pill across every page in `/admin/orchestration/*`. The banner polls execution status (3 s cadence), flashes briefly on terminal status, then auto-dismisses and clears the localStorage entry.
+- **View full details** — navigates to `/admin/orchestration/executions/:id`, leaving the localStorage entry intact so the banner survives the transition.
+- **Esc / overlay click** — treated as "Run in background" while the run is active, and as "Close" once terminal.
 
 ### Audit frequency
 
@@ -254,15 +262,20 @@ Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence
 
 ### Components
 
-| Component         | File                                                                    |
-| ----------------- | ----------------------------------------------------------------------- |
-| Trigger dialog    | `components/admin/orchestration/audit-models-dialog.tsx`                |
-| Button in matrix  | `components/admin/orchestration/provider-models-matrix.tsx`             |
-| Workflow template | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
-| Apply changes cap | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
-| Add models cap    | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
-| Deactivate cap    | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
-| Agent seed        | `prisma/seeds/010-model-auditor.ts`                                     |
+| Component                | File                                                                    |
+| ------------------------ | ----------------------------------------------------------------------- |
+| Trigger dialog           | `components/admin/orchestration/audit-models-dialog.tsx`                |
+| Inline progress panel    | `components/admin/orchestration/execution-progress-inline.tsx`          |
+| Cross-page peek banner   | `components/admin/orchestration/in-flight-execution-banner.tsx`         |
+| Banner host layout       | `app/admin/orchestration/layout.tsx`                                    |
+| Storage handoff contract | `lib/orchestration/in-flight-execution.ts`                              |
+| Approval-prompt helper   | `lib/orchestration/trace/approval-prompt.ts`                            |
+| Button in matrix         | `components/admin/orchestration/provider-models-matrix.tsx`             |
+| Workflow template        | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
+| Apply changes cap        | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
+| Add models cap           | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
+| Deactivate cap           | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
+| Agent seed               | `prisma/seeds/010-model-auditor.ts`                                     |
 
 ### Framework reference implementation
 

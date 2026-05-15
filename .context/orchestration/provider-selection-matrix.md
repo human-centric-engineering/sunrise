@@ -186,18 +186,26 @@ The Provider Model Audit is an AI-powered workflow that evaluates model entries 
 
 ### Trigger
 
-"Audit Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit, creates a workflow execution via `POST /workflows/:id/execute` and redirects to the execution detail page.
+"Audit Models" button on `/admin/orchestration/provider-models` opens a dialog with model selection checkboxes. On submit the dialog calls `POST /workflows/:id/execute`, captures the `executionId` from the SSE stream's `workflow_started` event, and **swaps its body for an inline live-progress panel** — the operator stays on the providers page while the audit runs. From there:
+
+- "Run in background" closes the dialog and writes the execution id to `localStorage` under `sunrise.orchestration.in-flight-execution.v1`. The peek banner mounted in `app/admin/orchestration/layout.tsx` picks the handoff up and surfaces the run on every page in the orchestration admin area.
+- "View full details" navigates to `/admin/orchestration/executions/:id` for the canonical detail view.
+- When the run pauses for human approval, the inline panel renders the prompt as markdown with notes/reason inputs and approve/reject buttons that hit the standard execution endpoints.
 
 ### Files
 
-| File                                                                    | Purpose                                       |
-| ----------------------------------------------------------------------- | --------------------------------------------- |
-| `prisma/seeds/data/templates/provider-model-audit.ts`                   | 13-step DAG template definition               |
-| `prisma/seeds/010-model-auditor.ts`                                     | Agent seed with capability bindings           |
-| `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        | Capability that applies approved changes      |
-| `lib/orchestration/capabilities/built-in/add-provider-models.ts`        | Capability that adds approved new models      |
-| `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` | Capability that deactivates deprecated models |
-| `components/admin/orchestration/audit-models-dialog.tsx`                | Model selection + trigger dialog              |
+| File                                                                    | Purpose                                                              |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `prisma/seeds/data/templates/provider-model-audit.ts`                   | 13-step DAG template definition                                      |
+| `prisma/seeds/010-model-auditor.ts`                                     | Agent seed with capability bindings                                  |
+| `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        | Capability that applies approved changes                             |
+| `lib/orchestration/capabilities/built-in/add-provider-models.ts`        | Capability that adds approved new models                             |
+| `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` | Capability that deactivates deprecated models                        |
+| `components/admin/orchestration/audit-models-dialog.tsx`                | Model selection + trigger dialog (hosts inline progress post-submit) |
+| `components/admin/orchestration/execution-progress-inline.tsx`          | Embeddable live-progress panel reused by the dialog                  |
+| `components/admin/orchestration/in-flight-execution-banner.tsx`         | Cross-page peek banner for backgrounded runs                         |
+| `lib/orchestration/in-flight-execution.ts`                              | Versioned localStorage key + handoff `InFlightExecutionRef` shape    |
+| `lib/orchestration/trace/approval-prompt.ts`                            | Pulls the awaiting `human_approval` step's prompt out of the trace   |
 
 ## Related
 
