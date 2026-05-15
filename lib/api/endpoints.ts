@@ -130,6 +130,7 @@ export const API = {
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionStatus: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/status`,
+      executionLive: (id: string): string => `/api/v1/admin/orchestration/executions/${id}/live`,
       executionApprove: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       executionReject: (id: string): string =>
