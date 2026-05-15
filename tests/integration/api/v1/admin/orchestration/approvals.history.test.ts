@@ -207,6 +207,37 @@ describe('GET /api/v1/admin/orchestration/approvals/history', () => {
     expect(row).toContain('Alice');
   });
 
+  it('neutralises formula-injection payloads in CSV cells', async () => {
+    // A hostile approver could set their User.name to a leading-`=`
+    // formula; the same risk applies to notes / reason free text. The
+    // export must prefix the value with a single quote so Excel /
+    // Sheets renders it as literal text rather than evaluating it.
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValueOnce([
+      makeExecution([
+        approvalEntry({
+          output: {
+            approved: true,
+            notes: '=HYPERLINK("https://evil.example","leak")',
+            actor: `admin:${APPROVER_ID}`,
+          },
+        }),
+      ]),
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+      { id: APPROVER_ID, name: "=cmd|'/c calc'!A1", email: 'a@x.com' },
+    ] as never);
+
+    const res = await GET(makeRequest('?format=csv'));
+    const text = await res.text();
+    // The neutralised approver name and notes both carry a leading
+    // single-quote inside their quoted cells. No raw leading `=`
+    // survives.
+    expect(text).toContain("'=cmd");
+    expect(text).toContain("'=HYPERLINK");
+    expect(text).not.toMatch(/,=cmd/);
+    expect(text).not.toMatch(/,=HYPERLINK/);
+  });
+
   // ─── Auth / rate-limit guards ─────────────────────────────────────────────
 
   it('returns 401 when unauthenticated', async () => {
