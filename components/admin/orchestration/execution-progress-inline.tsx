@@ -29,6 +29,7 @@ import { CheckCircle2, ChevronRight, Clock, ExternalLink, Loader2, XCircle } fro
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -237,7 +238,11 @@ function ApprovalInlineCard({
       {mode === 'approve' && (
         <div className="mt-3 space-y-2">
           <Label htmlFor="inline-approve-notes" className="text-xs">
-            Notes (optional)
+            Notes (optional){' '}
+            <FieldHelp title="Approval notes">
+              Optional context for why this execution was approved. Recorded in the audit trail for
+              compliance and team visibility. Useful for noting any conditions or follow-up actions.
+            </FieldHelp>
           </Label>
           <Textarea
             id="inline-approve-notes"
@@ -252,7 +257,12 @@ function ApprovalInlineCard({
       {mode === 'reject' && (
         <div className="mt-3 space-y-2">
           <Label htmlFor="inline-reject-reason" className="text-xs">
-            Reason (required)
+            Reason (required){' '}
+            <FieldHelp title="Rejection reason">
+              A clear explanation of why this execution is being rejected. This is stored in the
+              execution&apos;s error message (prefixed with &quot;Rejected:&quot;) and recorded in
+              the audit trail. The workflow will be permanently cancelled and cannot be resumed.
+            </FieldHelp>
           </Label>
           <Textarea
             id="inline-reject-reason"

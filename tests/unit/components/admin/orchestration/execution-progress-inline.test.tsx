@@ -212,7 +212,9 @@ describe('ExecutionProgressInline', () => {
       );
 
       await user.click(screen.getByRole('button', { name: /^Approve$/ }));
-      const notes = screen.getByLabelText(/Notes \(optional\)/);
+      // Target the textarea by id — getByLabelText would also match the
+      // FieldHelp trigger button that shares the Label.
+      const notes = document.getElementById('inline-approve-notes') as HTMLTextAreaElement;
       await user.type(notes, 'Looks good');
       await user.click(screen.getByRole('button', { name: /Confirm approval/ }));
 
@@ -257,7 +259,9 @@ describe('ExecutionProgressInline', () => {
       );
 
       await user.click(screen.getByRole('button', { name: /^Reject$/ }));
-      const reasonInput = screen.getByLabelText(/Reason \(required\)/);
+      // Target the textarea by id — getByLabelText would also match the
+      // FieldHelp trigger button that shares the Label.
+      const reasonInput = document.getElementById('inline-reject-reason') as HTMLTextAreaElement;
       await user.type(reasonInput, 'Bad proposal');
       await user.click(screen.getByRole('button', { name: /Confirm rejection/ }));
 
