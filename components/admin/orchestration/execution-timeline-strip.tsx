@@ -157,10 +157,13 @@ export function ExecutionTimelineStrip({
 }: ExecutionTimelineStripProps): React.ReactElement | null {
   // Hooks must run before the conditional return below.
   const [unit, setUnit] = React.useState<DurationUnit>('ms');
-  // When true, awaiting_approval bars collapse to a fixed-width hashed
-  // marker and all subsequent steps shift left to close the gap. Useful
-  // for runs where the human-review wait dominates the wall-clock axis.
-  const [compressWaits, setCompressWaits] = React.useState(false);
+  // Approval-wait compression. `manualCompressWaits` records the user's
+  // explicit click; `null` means follow the auto-default derived from the
+  // trace (compress whenever an awaiting_approval bar would otherwise
+  // dominate >50% of the wall-clock axis). The effective flag is computed
+  // below so the auto-default reacts to live-polled trace changes until
+  // the user makes a choice.
+  const [manualCompressWaits, setManualCompressWaits] = React.useState<boolean | null>(null);
 
   if (trace.length < 2) return null;
 
@@ -183,6 +186,8 @@ export function ExecutionTimelineStrip({
   // raw startedAt is strictly after the awaiting end — safe to subtract
   // savings from each later step's start without disturbing concurrency.
   const COMPRESSED_WAIT_MS = 1_000;
+  /** Auto-default kicks in when an awaiting wait would dominate ≥ this share of the axis. */
+  const AUTO_COMPRESS_THRESHOLD = 0.5;
 
   const rawStartByEntry = trace.map((e) => (e.startedAt ? new Date(e.startedAt).getTime() : NaN));
   const rawEndByEntry = trace.map((e, i) => {
@@ -195,15 +200,25 @@ export function ExecutionTimelineStrip({
     return s + Math.max(0, e.durationMs);
   });
 
-  // TEMPORARY PREVIEW: while `PREVIEW_COMPRESS_ALL` is true the compress
-  // toggle ignores the awaiting_approval filter and treats every step as
-  // a wait. This lets you see the hashed visual on an execution that
-  // doesn't include a human-approval step. Revert by setting back to
-  // `false` and re-enabling the `hasAwaitingSteps` gate on the toggle
-  // visibility below.
-  const PREVIEW_COMPRESS_ALL = true;
-  const isCompressTarget = (e: ExecutionTraceEntry): boolean =>
-    PREVIEW_COMPRESS_ALL ? true : e.status === 'awaiting_approval';
+  // Auto-default for compression — derived from the uncompressed axis.
+  // If any awaiting_approval bar would take more than half of the
+  // wall-clock span, default to compressed until the user toggles off.
+  const finiteRawStarts = rawStartByEntry.filter((n) => Number.isFinite(n));
+  const finiteRawEnds = rawEndByEntry.filter((n) => Number.isFinite(n));
+  const rawTotalSpan =
+    finiteRawStarts.length > 0 && finiteRawEnds.length > 0
+      ? Math.max(...finiteRawEnds) - Math.min(...finiteRawStarts)
+      : 0;
+  const longestAwaitMs = trace.reduce((max, e, i) => {
+    if (e.status !== 'awaiting_approval') return max;
+    const s = rawStartByEntry[i];
+    const en = rawEndByEntry[i];
+    if (!Number.isFinite(s) || !Number.isFinite(en)) return max;
+    return Math.max(max, en - s);
+  }, 0);
+  const shouldAutoCompress =
+    rawTotalSpan > 0 && longestAwaitMs / rawTotalSpan >= AUTO_COMPRESS_THRESHOLD;
+  const compressWaits = manualCompressWaits ?? shouldAutoCompress;
 
   const savingsByEntry = trace.map(() => 0);
   if (compressWaits) {
@@ -213,7 +228,7 @@ export function ExecutionTimelineStrip({
       let saved = 0;
       for (let j = 0; j < trace.length; j++) {
         if (j === i) continue;
-        if (!isCompressTarget(trace[j])) continue;
+        if (trace[j].status !== 'awaiting_approval') continue;
         const otherEnd = rawEndByEntry[j];
         const otherStart = rawStartByEntry[j];
         if (!Number.isFinite(otherEnd) || !Number.isFinite(otherStart) || otherEnd > myStart) {
@@ -243,7 +258,7 @@ export function ExecutionTimelineStrip({
       return { start: NaN, end: NaN, originalDurationMs: e.durationMs, compressed: false };
     }
     const originalDur = rawEnd - rawStart;
-    const compressed = compressWaits && isCompressTarget(e);
+    const compressed = compressWaits && e.status === 'awaiting_approval';
     const displayDur = compressed ? COMPRESSED_WAIT_MS : originalDur;
     const shiftedStart = rawStart - savingsByEntry[i];
     return {
@@ -261,13 +276,7 @@ export function ExecutionTimelineStrip({
   const totalSpan =
     Number.isFinite(execStart) && Number.isFinite(execEnd) ? execEnd - execStart : 0;
   const useGantt = totalSpan > 0;
-  // TEMPORARY PREVIEW: with `PREVIEW_COMPRESS_ALL` on, the toggle is
-  // always relevant (it applies to every step). Restore the original
-  // `trace.some((e) => e.status === 'awaiting_approval')` gate when
-  // reverting the preview.
-  const hasAwaitingSteps = PREVIEW_COMPRESS_ALL
-    ? true
-    : trace.some((e) => e.status === 'awaiting_approval');
+  const hasAwaitingSteps = trace.some((e) => e.status === 'awaiting_approval');
 
   // Stable lookup: parallel-fork step → short label index (#1, #2, …) so a
   // branch row can reference its parent without taking up much horizontal room.
@@ -343,17 +352,19 @@ export function ExecutionTimelineStrip({
             {hasAwaitingSteps && (
               <button
                 type="button"
-                onClick={() => setCompressWaits((v) => !v)}
+                onClick={() => setManualCompressWaits(!compressWaits)}
                 aria-pressed={compressWaits}
                 data-testid="timeline-compress-waits"
+                data-auto-compressed={
+                  manualCompressWaits === null && shouldAutoCompress ? 'true' : undefined
+                }
                 title={
-                  PREVIEW_COMPRESS_ALL
-                    ? compressWaits
-                      ? 'PREVIEW: every step compressed to a hashed marker — click to restore real durations'
-                      : 'PREVIEW: compress every step to a hashed marker (normally only awaiting_approval steps)'
-                    : compressWaits
-                      ? 'Showing compressed approval waits — click to restore real durations'
-                      : 'Approval waits dominate the timeline — click to collapse them to a fixed-width marker'
+                  compressWaits
+                    ? 'Showing compressed approval waits — click to restore real durations' +
+                      (manualCompressWaits === null && shouldAutoCompress
+                        ? ' (auto-enabled because an approval wait dominates the timeline)'
+                        : '')
+                    : 'Approval waits dominate the timeline — click to collapse them to a fixed-width marker'
                 }
                 className={cn(
                   'border-border inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors',
@@ -362,13 +373,10 @@ export function ExecutionTimelineStrip({
                     : 'text-muted-foreground hover:bg-muted/60'
                 )}
               >
-                {compressWaits
-                  ? PREVIEW_COMPRESS_ALL
-                    ? 'Compressed all (preview)'
-                    : 'Compressed waits'
-                  : PREVIEW_COMPRESS_ALL
-                    ? 'Compress all (preview)'
-                    : 'Compress waits'}
+                {compressWaits ? 'Compressed waits' : 'Compress waits'}
+                {manualCompressWaits === null && shouldAutoCompress && (
+                  <span className="text-amber-700/70 dark:text-amber-300/70">· auto</span>
+                )}
               </button>
             )}
             <div
@@ -451,10 +459,17 @@ export function ExecutionTimelineStrip({
                   : isRunning
                     ? '(running)'
                     : '—';
-                // Display always uses the authoritative `durationMs` from the
-                // trace entry. `timing.originalDurationMs` is the inferred
-                // duration from timestamps used for axis maths only.
-                const realDurationMs = entry.durationMs;
+                // Display the wall-clock elapsed (from timestamps) so the
+                // bar's visual length and the duration text agree. For
+                // awaiting_approval steps in particular `entry.durationMs`
+                // is the executor's own processing time (typically ~1ms
+                // for an approval click), which would otherwise mismatch
+                // the wide pause bar drawn on the axis. The timestamp
+                // delta is computed in `timing.originalDurationMs`; fall
+                // back to `entry.durationMs` when timestamps are absent.
+                const realDurationMs = Number.isFinite(timing.originalDurationMs)
+                  ? timing.originalDurationMs
+                  : entry.durationMs;
 
                 return (
                   <Tooltip key={`${entry.stepId}-${idx}`}>
@@ -566,6 +581,16 @@ export function ExecutionTimelineStrip({
                         <dd>{endedLabel}</dd>
                         <dt className="text-primary-foreground/70">Duration</dt>
                         <dd>{formatDuration(realDurationMs, unit)}</dd>
+                        {/* The trace row below the bar shows this same
+                            reason inline; the tooltip is useful when the
+                            operator is scanning bars in the Gantt and
+                            hasn't scrolled the matching row into view. */}
+                        {entry.status === 'skipped' && (
+                          <>
+                            <dt className="text-primary-foreground/70">Reason</dt>
+                            <dd className="break-words">{entry.error ?? 'no reason captured'}</dd>
+                          </>
+                        )}
                       </dl>
                     </TooltipContent>
                   </Tooltip>

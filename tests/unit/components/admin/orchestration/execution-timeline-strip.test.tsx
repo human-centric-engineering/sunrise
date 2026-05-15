@@ -11,7 +11,20 @@ import userEvent from '@testing-library/user-event';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
+/**
+ * Test fixture for ExecutionTraceEntry. The strip's displayed Duration
+ * value is the wall-clock delta between `startedAt` and `completedAt`
+ * (so the bar's visual length agrees with the number). For tests that
+ * want a specific displayed duration, override `durationMs` AND override
+ * `completedAt` to match — or omit both and rely on the 1s default.
+ */
 function entry(overrides: Partial<ExecutionTraceEntry> = {}): ExecutionTraceEntry {
+  const startedAt = overrides.startedAt ?? '2026-01-01T00:00:00.000Z';
+  const durationMs = overrides.durationMs ?? 1000;
+  const completedAt =
+    'completedAt' in overrides
+      ? overrides.completedAt
+      : new Date(new Date(startedAt).getTime() + durationMs).toISOString();
   return {
     stepId: 's1',
     stepType: 'llm_call',
@@ -20,9 +33,9 @@ function entry(overrides: Partial<ExecutionTraceEntry> = {}): ExecutionTraceEntr
     output: null,
     tokensUsed: 0,
     costUsd: 0,
-    startedAt: '2026-01-01T00:00:00.000Z',
-    completedAt: '2026-01-01T00:00:01.000Z',
-    durationMs: 100,
+    startedAt,
+    completedAt,
+    durationMs,
     ...overrides,
   };
 }
@@ -346,20 +359,72 @@ describe('ExecutionTimelineStrip', () => {
   });
 
   // ─── Compress-waits toggle ──────────────────────────────────────────────
-  // NOTE: while `PREVIEW_COMPRESS_ALL` in the strip component is `true`,
-  // the toggle behaves differently — always visible, applies to every
-  // step, and the label reads "Compress all (preview)". The two tests
-  // below assert the production behaviour and are skipped during the
-  // preview. Unskip them when reverting the preview flag.
 
-  it.skip('hides the compress-waits toggle when no awaiting_approval steps are present', () => {
+  it('hides the compress-waits toggle when no awaiting_approval steps are present', () => {
     render(<ExecutionTimelineStrip trace={[entry({ stepId: 'a' }), entry({ stepId: 'b' })]} />);
     expect(screen.queryByTestId('timeline-compress-waits')).not.toBeInTheDocument();
   });
 
-  it.skip('shows the toggle when awaiting_approval is in the trace and compresses on click', async () => {
+  it('shows the toggle when awaiting_approval is in the trace and compresses on click', async () => {
     const user = userEvent.setup();
-    // 10s total: s1 [0–1s], wait [1s–9s] = 8s, s2 [9s–10s] = 1s.
+    // 10s total: s1 [0–4s], wait [4s–6s] = 2s, s2 [6s–10s] = 4s.
+    // wait/total = 0.2 — below the 0.5 auto-compress threshold so the
+    // toggle starts OFF and we exercise the click → compress transition.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:04.000Z',
+            durationMs: 4_000,
+          }),
+          entry({
+            stepId: 'wait',
+            status: 'awaiting_approval',
+            startedAt: '2026-01-01T00:00:04.000Z',
+            completedAt: '2026-01-01T00:00:06.000Z',
+            durationMs: 2_000,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:06.000Z',
+            completedAt: '2026-01-01T00:00:10.000Z',
+            durationMs: 4_000,
+          }),
+        ]}
+      />
+    );
+
+    const toggle = screen.getByTestId('timeline-compress-waits');
+    expect(toggle).toHaveTextContent(/^compress waits$/i);
+
+    // Before compression: 10s axis. wait bar widthPct = 2 / 10 = 20%.
+    const waitFill = screen.getByTestId('timeline-bar-fill-wait');
+    expect(parseFloat(waitFill.style.width)).toBeCloseTo(20, 0);
+
+    await user.click(toggle);
+
+    expect(screen.getByTestId('timeline-compress-waits')).toHaveTextContent(/compressed waits/i);
+    // After compression: axis = 4 + 1 (collapsed wait) + 4 = 9s.
+    // wait bar shrinks to 1/9 ≈ 11%. s2 shifts left to (4+1)/9 ≈ 56%.
+    expect(parseFloat(screen.getByTestId('timeline-bar-fill-wait').style.width)).toBeCloseTo(
+      11.11,
+      1
+    );
+    expect(parseFloat(screen.getByTestId('timeline-bar-fill-s2').style.left)).toBeCloseTo(55.56, 1);
+    // The compressed wait bar carries a data-compressed flag for styling
+    // hooks and gets the hashed pattern class.
+    expect(screen.getByTestId('timeline-bar-wait')).toHaveAttribute('data-compressed', 'true');
+    expect(screen.getByTestId('timeline-bar-fill-wait').className).toContain(
+      'repeating-linear-gradient'
+    );
+  });
+
+  it('auto-defaults to compressed when an approval wait dominates the timeline', async () => {
+    const user = userEvent.setup();
+    // 10s total: wait/total = 8/10 = 0.8 → above the 0.5 auto-compress
+    // threshold. Strip should default to compressed.
     render(
       <ExecutionTimelineStrip
         trace={[
@@ -387,25 +452,49 @@ describe('ExecutionTimelineStrip', () => {
     );
 
     const toggle = screen.getByTestId('timeline-compress-waits');
-    expect(toggle).toHaveTextContent(/compress waits/i);
-
-    // Before compression: 10s axis. wait bar widthPct = 8 / 10 = 80%.
-    const waitFill = screen.getByTestId('timeline-bar-fill-wait');
-    expect(parseFloat(waitFill.style.width)).toBeCloseTo(80, 0);
-
-    await user.click(toggle);
-
-    expect(screen.getByTestId('timeline-compress-waits')).toHaveTextContent(/compressed waits/i);
-    // After compression: axis = 1s + 1s + 1s (collapsed wait) = 3s.
-    // wait bar shrinks to 1/3 ≈ 33%. s2 shifts left to ~66%.
-    expect(parseFloat(screen.getByTestId('timeline-bar-fill-wait').style.width)).toBeCloseTo(33, 0);
-    expect(parseFloat(screen.getByTestId('timeline-bar-fill-s2').style.left)).toBeCloseTo(66.67, 1);
-    // The compressed wait bar carries a data-compressed flag for styling
-    // hooks and gets the hashed pattern class.
+    expect(toggle).toHaveTextContent(/compressed waits/i);
+    expect(toggle).toHaveAttribute('data-auto-compressed', 'true');
     expect(screen.getByTestId('timeline-bar-wait')).toHaveAttribute('data-compressed', 'true');
-    expect(screen.getByTestId('timeline-bar-fill-wait').className).toContain(
-      'repeating-linear-gradient'
+
+    // Clicking the toggle once expresses an explicit user preference to
+    // turn compression OFF — the auto flag clears.
+    await user.click(toggle);
+    expect(screen.getByTestId('timeline-compress-waits')).toHaveTextContent(/^compress waits$/i);
+    expect(screen.getByTestId('timeline-compress-waits')).not.toHaveAttribute(
+      'data-auto-compressed'
     );
+    expect(screen.getByTestId('timeline-bar-wait')).not.toHaveAttribute('data-compressed');
+  });
+
+  it('displays wall-clock elapsed (not entry.durationMs) for awaiting_approval bars', () => {
+    // The engine records entry.durationMs as the executor's own processing
+    // time — ~1ms for a human-approval click. The wall-clock is the long
+    // pause. The bar uses wall-clock, so the duration text shown alongside
+    // must match — anything else is misleading.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:01.000Z',
+            durationMs: 1_000,
+          }),
+          entry({
+            stepId: 'wait',
+            status: 'awaiting_approval',
+            startedAt: '2026-01-01T00:00:01.000Z',
+            // 5s of wall-clock pause; engine recorded 1ms processing time.
+            completedAt: '2026-01-01T00:00:06.000Z',
+            durationMs: 1,
+          }),
+        ]}
+      />
+    );
+
+    // 5,000 ms (the wall-clock) appears, NOT 1 ms.
+    expect(screen.getByText(/5,000 ms/)).toBeInTheDocument();
+    expect(screen.queryByText(/^1 ms$/)).not.toBeInTheDocument();
   });
 
   // ─── Hover tooltip ──────────────────────────────────────────────────────
@@ -450,6 +539,30 @@ describe('ExecutionTimelineStrip', () => {
     // The "Started" / "Ended" labels live inside the tooltip's <dl>.
     expect(screen.getAllByText(/started/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/ended/i).length).toBeGreaterThan(0);
+  });
+
+  it('surfaces the skip reason in the tooltip for skipped bars', async () => {
+    // The trace row beneath the bar shows this same reason inline, but the
+    // tooltip is what the user hovers when scanning bars in the Gantt
+    // without scrolling — so the reason has to be available here too.
+    const user = userEvent.setup();
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 'a' }),
+          entry({
+            stepId: 'b',
+            status: 'skipped',
+            error: 'LLM timeout after 30s',
+          }),
+        ]}
+      />
+    );
+
+    await user.hover(screen.getByTestId('timeline-bar-b'));
+
+    const reasons = await screen.findAllByText(/llm timeout after 30s/i, {}, { timeout: 2000 });
+    expect(reasons.length).toBeGreaterThan(0);
   });
 
   it('renders a wall-clock total in the header when timestamps are present', () => {
