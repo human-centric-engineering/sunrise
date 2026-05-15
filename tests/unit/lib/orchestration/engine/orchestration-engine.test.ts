@@ -276,6 +276,30 @@ describe('OrchestrationEngine', () => {
     expect(failedFor).toContain('a');
   });
 
+  it('skip strategy persists the failure reason on the skipped trace entry', async () => {
+    // Without this, the trace viewer can show "skipped" but cannot explain
+    // why. The reason text is the sanitised message that the same code path
+    // hands to the `step_failed` SSE event, so logs and UI stay aligned.
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'skip' };
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError('a', 'bad', 'boom');
+      return { output: 'b-output', tokensUsed: 1, costUsd: 0.001 };
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{ stepId: string; status: string; error?: string }>;
+    expect(lastTrace).toBeDefined();
+    const skippedEntry = lastTrace.find((e) => e.stepId === 'a');
+    expect(skippedEntry?.status).toBe('skipped');
+    expect(skippedEntry?.error).toContain('boom');
+  });
+
   it('human_approval pauses execution with approval_required', async () => {
     const def: WorkflowDefinition = {
       steps: [

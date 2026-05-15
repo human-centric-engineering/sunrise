@@ -859,12 +859,17 @@ export class OrchestrationEngine {
       const partialCost = execErr.costUsd;
 
       if (strategy === 'skip') {
-        yield stepFailed(step.id, sanitizeError(execErr), false);
+        // Sanitised once so the SSE event and the trace entry's `error`
+        // field carry the same text. Without skipError on the result, the
+        // UI sees the step as silently skipped with no explanation.
+        const skipReason = sanitizeError(execErr);
+        yield stepFailed(step.id, skipReason, false);
         return {
           output: null,
           tokensUsed: partialTokens,
           costUsd: partialCost,
           skipped: true,
+          skipError: skipReason,
         };
       }
 
@@ -1154,6 +1159,10 @@ export class OrchestrationEngine {
       label: step.name,
       status: result.skipped ? 'skipped' : 'completed',
       output: result.output,
+      // Skipped steps carry their sanitised failure reason so the trace
+      // viewer can explain WHY the step was skipped. Spread-conditional
+      // so a normal `completed` row stays free of an empty `error` key.
+      ...(result.skipped && result.skipError ? { error: result.skipError } : {}),
       tokensUsed: result.tokensUsed,
       costUsd: result.costUsd,
       startedAt: new Date(started).toISOString(),
@@ -1428,6 +1437,9 @@ export class OrchestrationEngine {
         label: step.name,
         status: stepResult.skipped ? 'skipped' : 'completed',
         output: stepResult.output,
+        // Mirror the sequential path: persist the skip reason so the UI
+        // can show "Skipped: <error>" without scraping the SSE event log.
+        ...(stepResult.skipped && stepResult.skipError ? { error: stepResult.skipError } : {}),
         tokensUsed: stepResult.tokensUsed,
         costUsd: stepResult.costUsd,
         startedAt: new Date(started).toISOString(),
