@@ -135,18 +135,26 @@ describe('ExecutionTimelineStrip', () => {
     expect(inner?.className).toContain('bg-primary/70');
   });
 
-  it('falls back to a visible ~25% width when the running step is the only timed one', () => {
-    // maxDuration is 0 when all completed siblings have durationMs=0; the
-    // running bar still needs to be visible, so it clamps to 25%.
+  it('keeps very-short bars visible by flooring width to 0.5% in Gantt mode', () => {
+    // A zero-duration running step starting at execStart should still
+    // render a hairline bar at left=0 — falls under the min-width floor.
     const running = entry({
       stepId: 'r1',
       status: 'running' as unknown as ExecutionTraceEntry['status'],
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: undefined,
       durationMs: 0,
     });
-    render(<ExecutionTimelineStrip trace={[entry({ stepId: 's1', durationMs: 0 }), running]} />);
-    const bar = screen.getByTestId('timeline-bar-r1');
-    const inner = bar.querySelector<HTMLElement>('span[style]');
-    expect(inner?.style.width).toBe('25.00%');
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 's1', durationMs: 1000 }), // contributes a non-zero totalSpan
+          running,
+        ]}
+      />
+    );
+    const inner = screen.getByTestId('timeline-bar-fill-r1');
+    expect(parseFloat(inner.style.width)).toBeGreaterThan(0);
   });
 
   it('includes "Running" in the running bar\'s aria-label', () => {
@@ -192,6 +200,100 @@ describe('ExecutionTimelineStrip', () => {
     // Now both rows render in seconds with 2 decimals.
     expect(screen.getByText('1.23 s')).toBeInTheDocument();
     expect(screen.getByText('0.25 s')).toBeInTheDocument();
+  });
+
+  // ─── Gantt positioning (shared wall-clock axis) ─────────────────────────
+
+  it('positions bars on a shared wall-clock axis (left offset reflects startedAt)', () => {
+    // 10-second execution: s1 at 0–4s, s2 at 4–10s.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:04.000Z',
+            durationMs: 4_000,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:04.000Z',
+            completedAt: '2026-01-01T00:00:10.000Z',
+            durationMs: 6_000,
+          }),
+        ]}
+      />
+    );
+
+    const s1 = screen.getByTestId('timeline-bar-fill-s1');
+    const s2 = screen.getByTestId('timeline-bar-fill-s2');
+
+    expect(parseFloat(s1.style.left)).toBe(0);
+    expect(parseFloat(s1.style.width)).toBeCloseTo(40, 0); // 4/10 = 40%
+    expect(parseFloat(s2.style.left)).toBeCloseTo(40, 0);
+    expect(parseFloat(s2.style.width)).toBeCloseTo(60, 0); // 6/10 = 60%
+    // The two bars together span the whole axis without overlap.
+    expect(parseFloat(s2.style.left) + parseFloat(s2.style.width)).toBeCloseTo(100, 0);
+  });
+
+  it('overlaps parallel branches that share a startedAt', () => {
+    // Two branches kick off at the same instant — their bars must share
+    // a left edge so the concurrency is visually obvious.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 'fork',
+            stepType: 'parallel',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:00.100Z',
+            durationMs: 100,
+            output: { parallel: true, branches: ['a', 'b'] },
+          }),
+          entry({
+            stepId: 'a',
+            startedAt: '2026-01-01T00:00:00.100Z',
+            completedAt: '2026-01-01T00:00:05.100Z',
+            durationMs: 5_000,
+          }),
+          entry({
+            stepId: 'b',
+            startedAt: '2026-01-01T00:00:00.100Z',
+            completedAt: '2026-01-01T00:00:03.100Z',
+            durationMs: 3_000,
+          }),
+        ]}
+      />
+    );
+
+    const a = screen.getByTestId('timeline-bar-fill-a');
+    const b = screen.getByTestId('timeline-bar-fill-b');
+    // Same left offset.
+    expect(parseFloat(a.style.left)).toBeCloseTo(parseFloat(b.style.left), 1);
+    // But different widths — b finishes earlier, so its bar is shorter.
+    expect(parseFloat(a.style.width)).toBeGreaterThan(parseFloat(b.style.width));
+  });
+
+  it('renders a wall-clock total in the header when timestamps are present', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:02.000Z',
+            durationMs: 2_000,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:02.000Z',
+            completedAt: '2026-01-01T00:00:05.000Z',
+            durationMs: 3_000,
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('timeline-wall-clock')).toHaveTextContent(/wall-clock 5,000 ms/);
   });
 
   it('numbers multiple parallel forks distinctly', () => {

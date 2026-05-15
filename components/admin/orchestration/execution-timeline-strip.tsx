@@ -101,6 +101,31 @@ export function ExecutionTimelineStrip({
   const slowThreshold = slowOutlierThresholdMs(trace);
   const parallelBranchMap = buildParallelBranchMap(trace);
 
+  // ─── Gantt timeline ─────────────────────────────────────────────────────
+  // Bars are positioned on a shared wall-clock axis so parallel branches
+  // visibly overlap, not stack left-aligned. We derive the axis from the
+  // trace itself: execStart = earliest startedAt, execEnd = latest
+  // completedAt (or startedAt + durationMs for entries still in flight).
+  // If the trace has no usable timestamps OR everything happened in a
+  // single instant, we fall back to the legacy "width proportional to
+  // maxDuration, left-aligned" rendering so the strip stays useful for
+  // older traces and degenerate cases.
+  const startTimes: number[] = [];
+  const endTimes: number[] = [];
+  for (const e of trace) {
+    const s = e.startedAt ? new Date(e.startedAt).getTime() : NaN;
+    if (Number.isFinite(s)) {
+      startTimes.push(s);
+      const end = e.completedAt ? new Date(e.completedAt).getTime() : s + Math.max(0, e.durationMs);
+      if (Number.isFinite(end)) endTimes.push(end);
+    }
+  }
+  const execStart = startTimes.length > 0 ? Math.min(...startTimes) : NaN;
+  const execEnd = endTimes.length > 0 ? Math.max(...endTimes) : NaN;
+  const totalSpan =
+    Number.isFinite(execStart) && Number.isFinite(execEnd) ? execEnd - execStart : 0;
+  const useGantt = totalSpan > 0;
+
   // Stable lookup: parallel-fork step → short label index (#1, #2, …) so a
   // branch row can reference its parent without taking up much horizontal room.
   const parallelForkIndex = new Map<string, number>();
@@ -118,13 +143,15 @@ export function ExecutionTimelineStrip({
             Step timeline
             <FieldHelp title="Reading the timeline">
               <p>
-                Each bar is one workflow step, with width proportional to the slowest step in the
-                run (so the longest bar is always 100% wide).
+                A Gantt-style view of the run on a shared wall-clock axis. The left edge is the
+                first step&apos;s start; the right edge is the last step&apos;s end. Each bar&apos;s
+                horizontal position shows when its step ran; its width shows how long. Steps that
+                ran at the same time stack vertically and overlap horizontally.
               </p>
               <p className="text-foreground mt-2 font-medium">Order</p>
               <p>
-                Steps run top-to-bottom — the first step is at the top, the last step is at the
-                bottom.
+                Rows run top-to-bottom in the order the engine entered each step. Bars themselves
+                are placed by wall-clock time, so a fork&apos;s branches sit on top of each other.
               </p>
               <p className="text-foreground mt-2 font-medium">Status icons</p>
               <p>
@@ -143,11 +170,21 @@ export function ExecutionTimelineStrip({
                 A <span className="text-purple-600 dark:text-purple-400">Fork #N</span> chip marks a
                 parallel step that fans out concurrent branches. Each immediate branch is indented
                 with a purple bar on the left and tagged <span className="font-mono">∥N</span>,
-                indicating which fork it belongs to.
+                indicating which fork it belongs to. Branch bars typically share a left edge with
+                the fork — that&apos;s the visual signal of concurrency.
               </p>
               <p className="text-foreground mt-2 font-medium">Interaction</p>
               <p>Click any bar to jump to that step in the trace below.</p>
             </FieldHelp>
+            {useGantt && (
+              <span
+                data-testid="timeline-wall-clock"
+                className="text-muted-foreground ml-1 text-[11px] font-normal"
+                title="Total wall-clock duration of the execution"
+              >
+                · wall-clock {formatDuration(totalSpan, unit)}
+              </span>
+            )}
           </CardTitle>
           <div
             role="group"
@@ -186,12 +223,22 @@ export function ExecutionTimelineStrip({
           <div className="flex-1 space-y-1">
             {trace.map((entry, idx) => {
               const isRunning = (entry.status as string) === 'running';
-              // For the running bar, scale by elapsed time vs. the longest
-              // *completed* bar. If maxDuration is 0 (the running step is the
-              // only one — strip already hides at length < 2, but defensively)
-              // fall back to ~25% so the user sees movement.
-              const rawPct = maxDuration > 0 ? (entry.durationMs / maxDuration) * 100 : 25;
-              const widthPct = isRunning ? Math.min(100, Math.max(rawPct, 25)) : rawPct;
+              // Gantt geometry — position on the shared wall-clock axis.
+              const entryStart = entry.startedAt ? new Date(entry.startedAt).getTime() : NaN;
+              let leftPct = 0;
+              let widthPct: number;
+              if (useGantt && Number.isFinite(entryStart)) {
+                leftPct = Math.max(0, Math.min(100, ((entryStart - execStart) / totalSpan) * 100));
+                const rawWidth = (entry.durationMs / totalSpan) * 100;
+                // Floor short steps to 0.5% so they're still visible as a
+                // tick mark; cap so the bar can't extend past the axis.
+                widthPct = Math.max(0.5, Math.min(100 - leftPct, rawWidth));
+              } else {
+                // Legacy left-aligned fallback (no usable timestamps or
+                // single-instant trace).
+                const rawPct = maxDuration > 0 ? (entry.durationMs / maxDuration) * 100 : 25;
+                widthPct = isRunning ? Math.min(100, Math.max(rawPct, 25)) : rawPct;
+              }
               const { className: colourClass, striped, pulsing } = barColour(entry, slowThreshold);
               const isHighlighted = highlightedStepId === entry.stepId;
               const statusMeta = STATUS_ICON[entry.status as string] ?? STATUS_ICON.completed;
@@ -262,14 +309,18 @@ export function ExecutionTimelineStrip({
                   </span>
                   <span className="bg-muted/30 relative h-4 flex-1 overflow-hidden rounded">
                     <span
+                      data-testid={`timeline-bar-fill-${entry.stepId}`}
                       className={cn(
-                        'absolute inset-y-0 left-0 transition-[width]',
+                        'absolute inset-y-0 transition-[width,left]',
                         colourClass,
                         striped &&
                           'bg-[image:repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(0,0,0,0.15)_4px,rgba(0,0,0,0.15)_8px)]',
                         pulsing && 'animate-pulse'
                       )}
-                      style={{ width: `${widthPct.toFixed(2)}%` }}
+                      style={{
+                        left: `${leftPct.toFixed(2)}%`,
+                        width: `${widthPct.toFixed(2)}%`,
+                      }}
                     />
                   </span>
                   <span className="text-muted-foreground w-20 shrink-0 text-right tabular-nums">
