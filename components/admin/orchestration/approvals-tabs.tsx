@@ -36,7 +36,15 @@ export function ApprovalsTabs({ initialApprovals, initialMeta }: Props): ReactEl
         </TabsTrigger>
         <TabsTrigger value="history">History</TabsTrigger>
       </TabsList>
-      <TabsContent value="pending">
+      {/* forceMount keeps ApprovalsTable mounted when the user switches
+          to History — without this, Radix unmounts the inactive panel,
+          throwing away the local state that tracks just-approved /
+          just-rejected rows. Returning to Pending would then re-init
+          from `initialApprovals` (the stale server snapshot) and the
+          decided row would reappear. `hidden` is applied automatically
+          by Radix when state=inactive, so the panel is invisible but
+          its React state survives. */}
+      <TabsContent value="pending" forceMount>
         <ApprovalsTable initialApprovals={initialApprovals} initialMeta={initialMeta} />
       </TabsContent>
       <TabsContent value="history">
