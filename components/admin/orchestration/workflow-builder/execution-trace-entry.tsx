@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 import { isMarkdown } from '@/lib/utils/is-markdown';
+import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
@@ -395,9 +396,7 @@ function JsonPane({ label, data, testId }: { label: string; data: unknown; testI
       {showMarkdown ? (
         <MarkdownOrRawView content={text} rawMaxHeightClass="max-h-60 overflow-y-auto" />
       ) : (
-        <pre className="bg-muted/40 max-h-60 overflow-y-auto rounded p-2 font-mono text-xs break-all whitespace-pre-wrap">
-          {text}
-        </pre>
+        <JsonPretty data={data} className="max-h-60 overflow-y-auto" />
       )}
     </div>
   );
