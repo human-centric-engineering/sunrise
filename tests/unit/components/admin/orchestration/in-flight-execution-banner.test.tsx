@@ -160,6 +160,35 @@ describe('InFlightExecutionBanner', () => {
     expect(screen.queryByTestId('in-flight-execution-banner')).toBeNull();
   });
 
+  it('picks up a same-tab localStorage write made after the banner has mounted', async () => {
+    // The browser `storage` event only fires cross-tab. The dialog
+    // writes to localStorage on the same tab, so the banner's
+    // useLocalStorage instance has to learn about the write via the
+    // hook's CustomEvent broadcast. This test simulates exactly that
+    // sequence — banner mounts with no entry, then a write lands.
+    mockGet.mockResolvedValueOnce(snapshot());
+    render(<InFlightExecutionBanner />);
+    expect(screen.queryByTestId('in-flight-execution-banner')).toBeNull();
+
+    await act(async () => {
+      // Mirror what the dialog's setValue does: write to localStorage
+      // then dispatch the same-tab broadcast event the hook listens for.
+      const payload = JSON.stringify({
+        executionId: EXEC_ID,
+        label: 'Provider Model Audit',
+        startedAt: '2026-05-15T10:00:00.000Z',
+      });
+      window.localStorage.setItem(IN_FLIGHT_EXECUTION_STORAGE_KEY, payload);
+      window.dispatchEvent(
+        new CustomEvent('sunrise:local-storage-write', {
+          detail: { key: IN_FLIGHT_EXECUTION_STORAGE_KEY, newValue: payload },
+        })
+      );
+    });
+
+    expect(await screen.findByTestId('in-flight-execution-banner')).toBeInTheDocument();
+  });
+
   it('shows the failure message inline when the run terminates as failed', async () => {
     setEntry();
     mockGet.mockResolvedValueOnce(snapshot({ status: 'failed', errorMessage: 'Budget exceeded' }));

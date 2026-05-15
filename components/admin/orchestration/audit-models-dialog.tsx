@@ -71,23 +71,28 @@ function formatAuditAge(iso: string): string {
 }
 
 /**
- * POST to the execute endpoint and read the SSE stream just long
- * enough to pull the `workflow_started` event's `executionId` out,
- * then abort. The execution continues server-side once the engine
- * has emitted that first event (the row is already persisted) — the
- * dialog's live-poll picks up state from there. Returns `null` if
- * the stream closes before workflow_started arrives, which only
- * happens on an immediate engine error.
+ * POST to the execute endpoint and resolve as soon as the SSE stream
+ * yields a `workflow_started` event (the row is already persisted at
+ * that point, so the executionId is stable).
+ *
+ * CRITICAL: do NOT abort the fetch or cancel the reader. The server
+ * route wires `request.signal` into `engine.execute(...)`, so a client
+ * abort propagates all the way down and stops the engine mid-run —
+ * exactly what we don't want. Instead we let the stream keep flowing
+ * in a detached background drain (events are discarded) until the
+ * workflow naturally completes server-side and the stream closes.
+ *
+ * Resolves to null only if the stream closes before workflow_started
+ * arrives, which happens on an immediate engine validation error.
  */
 async function executeAndCaptureId(
   workflowId: string,
   inputData: Record<string, unknown>
 ): Promise<string | null> {
-  const controller = new AbortController();
   const res = await fetch(API.ADMIN.ORCHESTRATION.workflowExecute(workflowId), {
     method: 'POST',
     credentials: 'include',
-    signal: controller.signal,
+    // NB: no AbortController.signal — see the comment above.
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ inputData }),
   });
@@ -98,36 +103,45 @@ async function executeAndCaptureId(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buffer.indexOf('\n\n')) !== -1) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        const parsed = parseSseBlock(block);
-        if (parsed?.type === 'workflow_started') {
-          const id = typeof parsed.data.executionId === 'string' ? parsed.data.executionId : null;
-          // Abort the reader — execution row is already persisted, the
-          // engine will keep running, and the dialog's live-poll will
-          // surface progress without us holding the SSE connection open.
-          controller.abort();
-          return id;
-        }
+  let executionId: string | null = null;
+
+  // Read frame-by-frame until we see workflow_started; the engine
+  // emits this synchronously after persisting the row, so it arrives
+  // in the first SSE chunk under normal conditions.
+  while (executionId === null) {
+    const { value, done } = await reader.read();
+    if (done) {
+      return null;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed?.type === 'workflow_started' && typeof parsed.data.executionId === 'string') {
+        executionId = parsed.data.executionId;
+        break;
       }
     }
-  } finally {
-    // Belt-and-braces — release the reader even if we returned via the
-    // abort path above. cancel() is a no-op once aborted.
-    try {
-      await reader.cancel();
-    } catch {
-      // Reader already cancelled; nothing to do.
-    }
   }
-  return null;
+
+  // Detached drain — keep the SSE alive so the engine isn't aborted,
+  // but discard every subsequent frame. Logs only on unexpected error
+  // (the normal completion path is a graceful end-of-stream).
+  void (async () => {
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // Stream errored — engine likely finished and the connection
+      // tore down. Nothing for the dialog to do here.
+    }
+  })();
+
+  return executionId;
 }
 
 export function AuditModelsDialog({

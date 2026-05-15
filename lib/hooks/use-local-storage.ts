@@ -34,6 +34,22 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined';
 }
 
+/**
+ * Custom-event name used to broadcast same-tab localStorage writes.
+ * The browser's built-in `storage` event only fires across tabs, so
+ * two `useLocalStorage` instances in the SAME tab (e.g. a dialog
+ * writing while a layout-mounted banner reads) need a second channel
+ * to stay in sync. The payload carries the key and the JSON-stringified
+ * value, mirroring the native StorageEvent shape closely enough that
+ * a single handler can dispatch on either source.
+ */
+const SAME_TAB_EVENT = 'sunrise:local-storage-write';
+
+interface SameTabPayload {
+  key: string;
+  newValue: string | null;
+}
+
 function readFromStorage<T>(key: string, initial: T): T {
   /* v8 ignore start */
   if (!isBrowser()) return initial;
@@ -84,20 +100,23 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   }, [key]);
 
   // Cross-tab sync: when another tab writes to `key`, update our state.
+  // Same-tab sync: another `useLocalStorage` instance in the same tab
+  // dispatches a custom event (the browser's `storage` event only
+  // fires cross-tab). Both go through one handler so logic stays in
+  // lockstep.
   useEffect(() => {
     /* v8 ignore start */
     if (!isBrowser()) return;
     /* v8 ignore stop */
 
-    function onStorage(event: StorageEvent) {
-      if (event.key !== key || event.storageArea !== window.localStorage) return;
-      if (event.newValue === null) {
+    function applyChange(newValue: string | null): void {
+      if (newValue === null) {
         setInternalValue(initial);
         valueRef.current = initial;
         return;
       }
       try {
-        const parsed = JSON.parse(event.newValue) as T;
+        const parsed = JSON.parse(newValue) as T;
         setInternalValue(parsed);
         valueRef.current = parsed;
       } catch (err) {
@@ -108,8 +127,23 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       }
     }
 
+    function onStorage(event: StorageEvent) {
+      if (event.key !== key || event.storageArea !== window.localStorage) return;
+      applyChange(event.newValue);
+    }
+
+    function onSameTab(event: Event) {
+      const detail = (event as CustomEvent<SameTabPayload>).detail;
+      if (!detail || detail.key !== key) return;
+      applyChange(detail.newValue);
+    }
+
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(SAME_TAB_EVENT, onSameTab);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(SAME_TAB_EVENT, onSameTab);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
@@ -124,11 +158,21 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       /* v8 ignore start */
       if (!isBrowser()) return;
       /* v8 ignore stop */
+      const serialized = JSON.stringify(resolved);
       try {
-        window.localStorage.setItem(key, JSON.stringify(resolved));
+        window.localStorage.setItem(key, serialized);
       } catch (err) {
         logger.warn('useLocalStorage: failed to write value', { key, err: String(err) });
+        return;
       }
+      // Same-tab broadcast — other instances of this hook in the same
+      // tab don't get the native `storage` event, so we nudge them
+      // ourselves. Cross-tab still rides on the native event.
+      window.dispatchEvent(
+        new CustomEvent<SameTabPayload>(SAME_TAB_EVENT, {
+          detail: { key, newValue: serialized },
+        })
+      );
     },
     [key]
   );
@@ -143,7 +187,13 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
       window.localStorage.removeItem(key);
     } catch (err) {
       logger.warn('useLocalStorage: failed to remove value', { key, err: String(err) });
+      return;
     }
+    window.dispatchEvent(
+      new CustomEvent<SameTabPayload>(SAME_TAB_EVENT, {
+        detail: { key, newValue: null },
+      })
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
