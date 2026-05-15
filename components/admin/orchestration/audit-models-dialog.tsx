@@ -9,9 +9,12 @@
  * reference implementation that exercises 10 of 15 orchestration
  * step types end-to-end.
  *
- * On submit, creates a workflow execution via the standard API and
- * redirects to the execution detail page where the existing SSE
- * streaming panel, approval queue, and trace viewer handle the rest.
+ * On submit, creates a workflow execution and swaps the dialog body
+ * from the form to an inline live-progress panel — the dialog stays
+ * open until the operator dismisses it or clicks "Run in background"
+ * (which closes the dialog but hands the execution id to the
+ * orchestration peek-banner via localStorage). "View full details"
+ * navigates to the canonical execution detail page.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -38,6 +41,13 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
+import {
+  IN_FLIGHT_EXECUTION_STORAGE_KEY,
+  type InFlightExecutionRef,
+} from '@/lib/orchestration/in-flight-execution';
+import { ExecutionProgressInline } from '@/components/admin/orchestration/execution-progress-inline';
+import type { ExecutionLivePayload } from '@/lib/hooks/use-execution-live-poll';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
 
@@ -69,6 +79,23 @@ export function AuditModelsDialog({
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Post-submission state — when set, the dialog body swaps from the
+  // model-picker form to the live progress panel. Persists across the
+  // dialog lifecycle: once an execution is started we stay in
+  // "watching" mode until the operator dismisses the dialog or hits
+  // a terminal status.
+  const [submittedExecution, setSubmittedExecution] = useState<{
+    id: string;
+    workflowName: string;
+    startedAt: string;
+  } | null>(null);
+  const [terminalStatus, setTerminalStatus] = useState<string | null>(null);
+
+  const [, setInFlight, clearInFlight] = useLocalStorage<InFlightExecutionRef | null>(
+    IN_FLIGHT_EXECUTION_STORAGE_KEY,
+    null
+  );
 
   const providers = useMemo(() => [...new Set(models.map((m) => m.providerSlug))].sort(), [models]);
 
@@ -111,8 +138,10 @@ export function AuditModelsDialog({
     setError(null);
 
     try {
-      // Find the audit workflow by slug
-      const workflows = await apiClient.get<{ id: string; slug: string }[]>(
+      // Find the audit workflow by slug. `name` is optional in the
+      // response type because older fixtures don't include it; the
+      // banner label falls back to the slug if the row was minimal.
+      const workflows = await apiClient.get<{ id: string; slug: string; name?: string }[]>(
         API.ADMIN.ORCHESTRATION.WORKFLOWS,
         { params: { slug: AUDIT_WORKFLOW_SLUG, limit: 1 } }
       );
@@ -151,24 +180,89 @@ export function AuditModelsDialog({
         })),
       };
 
-      // Execute the workflow
+      // Execute the workflow. Don't navigate — swap the dialog body
+      // to live progress. The operator can choose to background it
+      // via the footer button, which keeps the localStorage handoff
+      // for the peek banner.
       const execution = await apiClient.post<{ id: string }>(
         API.ADMIN.ORCHESTRATION.workflowExecute(workflow.id),
         { body: { inputData } }
       );
 
-      onOpenChange(false);
-      router.push(`/admin/orchestration/executions/${execution.id}`);
+      const startedAt = new Date().toISOString();
+      const label = workflow.name ?? workflow.slug;
+      setSubmittedExecution({
+        id: execution.id,
+        workflowName: label,
+        startedAt,
+      });
+      setInFlight({
+        executionId: execution.id,
+        label,
+        startedAt,
+      });
+      setSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start audit');
       setSubmitting(false);
     }
-  }, [selected, models, onOpenChange, router]);
+  }, [selected, models, setInFlight]);
 
   const allFilteredSelected = filtered.every((m) => selected.has(m.id));
 
+  /**
+   * Dialog dismiss semantics — Esc / overlay click / "Run in background"
+   * route through this. Behaviour depends on dialog phase:
+   *   - No execution yet (idle form) → close normally, no localStorage
+   *     side-effect.
+   *   - Execution running → close and KEEP the localStorage handoff so
+   *     the orchestration peek-banner picks the run up.
+   *   - Execution terminal → close AND clear the handoff so a stale
+   *     banner doesn't linger.
+   * `keepInFlight` forces the running-state semantics from the "View
+   * full details" button so the banner survives the navigation.
+   */
+  const handleDismiss = useCallback(
+    (opts?: { keepInFlight?: boolean }) => {
+      const isRunning =
+        submittedExecution !== null && terminalStatus === null && !opts?.keepInFlight;
+      if (submittedExecution && (terminalStatus !== null || opts?.keepInFlight === false)) {
+        clearInFlight();
+      } else if (!isRunning && submittedExecution === null) {
+        // Idle form dismissal — no-op on localStorage.
+      }
+      onOpenChange(false);
+    },
+    [submittedExecution, terminalStatus, clearInFlight, onOpenChange]
+  );
+
+  const initialLivePayload: ExecutionLivePayload | null = submittedExecution
+    ? {
+        snapshot: {
+          id: submittedExecution.id,
+          status: 'pending',
+          currentStep: null,
+          errorMessage: null,
+          totalTokensUsed: 0,
+          totalCostUsd: 0,
+          startedAt: submittedExecution.startedAt,
+          completedAt: null,
+          createdAt: submittedExecution.startedAt,
+        },
+        trace: [],
+        costEntries: [],
+        currentStepDetails: null,
+      }
+    : null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) handleDismiss();
+        else onOpenChange(next);
+      }}
+    >
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -193,105 +287,165 @@ export function AuditModelsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Filter */}
-        <div className="flex items-center gap-3">
-          <Select value={providerFilter} onValueChange={setProviderFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by provider" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All providers</SelectItem>
-              {providers.map((p) => (
-                <SelectItem key={p} value={p} className="capitalize">
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {submittedExecution && initialLivePayload ? (
+          <ExecutionProgressInline
+            executionId={submittedExecution.id}
+            initialPayload={initialLivePayload}
+            onTerminal={(status) => setTerminalStatus(status)}
+          />
+        ) : (
+          <>
+            {/* Filter */}
+            <div className="flex items-center gap-3">
+              <Select value={providerFilter} onValueChange={setProviderFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Filter by provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All providers</SelectItem>
+                  {providers.map((p) => (
+                    <SelectItem key={p} value={p} className="capitalize">
+                      {p}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-          <Button variant="ghost" size="sm" onClick={toggleAll}>
-            {allFilteredSelected ? 'Deselect all' : 'Select all'}
-          </Button>
+              <Button variant="ghost" size="sm" onClick={toggleAll}>
+                {allFilteredSelected ? 'Deselect all' : 'Select all'}
+              </Button>
 
-          <span className="text-muted-foreground ml-auto text-sm">
-            {selected.size} of {models.length} selected
-          </span>
-        </div>
+              <span className="text-muted-foreground ml-auto text-sm">
+                {selected.size} of {models.length} selected
+              </span>
+            </div>
 
-        {/* Model list */}
-        <div className="max-h-[300px] overflow-y-auto rounded-md border">
-          {filtered.length === 0 && (
-            <p className="text-muted-foreground p-4 text-center text-sm">
-              No models match the selected provider filter.
-            </p>
-          )}
-          <div className="divide-y">
-            {filtered.map((model) => (
-              <div
-                key={model.id}
-                role="button"
-                tabIndex={0}
-                className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
-                onClick={() => toggleModel(model.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleModel(model.id);
-                  }
-                }}
-              >
-                <Checkbox
-                  checked={selected.has(model.id)}
-                  onCheckedChange={() => toggleModel(model.id)}
-                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                  aria-label={`Select ${model.name} for audit`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{model.name}</span>
-                    <Badge variant="secondary" className="shrink-0 text-[10px]">
-                      {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
-                    </Badge>
-                    {model.capabilities.includes('embedding') && (
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                      >
-                        Embedding
-                      </Badge>
-                    )}
+            {/* Model list */}
+            <div className="max-h-[300px] overflow-y-auto rounded-md border">
+              {filtered.length === 0 && (
+                <p className="text-muted-foreground p-4 text-center text-sm">
+                  No models match the selected provider filter.
+                </p>
+              )}
+              <div className="divide-y">
+                {filtered.map((model) => (
+                  <div
+                    key={model.id}
+                    role="button"
+                    tabIndex={0}
+                    className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
+                    onClick={() => toggleModel(model.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleModel(model.id);
+                      }
+                    }}
+                  >
+                    <Checkbox
+                      checked={selected.has(model.id)}
+                      onCheckedChange={() => toggleModel(model.id)}
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      aria-label={`Select ${model.name} for audit`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">{model.name}</span>
+                        <Badge variant="secondary" className="shrink-0 text-[10px]">
+                          {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
+                        </Badge>
+                        {model.capabilities.includes('embedding') && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                          >
+                            Embedding
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground text-xs">
+                          {model.providerSlug} / {model.modelId}
+                        </span>
+                        <span className="text-muted-foreground/50 text-[10px]">
+                          {model.metadata?.lastAudit?.timestamp
+                            ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
+                            : 'Never audited'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-xs">
-                      {model.providerSlug} / {model.modelId}
-                    </span>
-                    <span className="text-muted-foreground/50 text-[10px]">
-                      {model.metadata?.lastAudit?.timestamp
-                        ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
-                        : 'Never audited'}
-                    </span>
-                  </div>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {error && (
-          <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-            {error}
-          </p>
+            {error && (
+              <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                {error}
+              </p>
+            )}
+          </>
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button onClick={() => void handleSubmit()} disabled={submitting || selected.size === 0}>
-            {submitting
-              ? 'Starting audit...'
-              : `Audit ${selected.size} model${selected.size !== 1 ? 's' : ''}`}
-          </Button>
+          {submittedExecution ? (
+            terminalStatus === null ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleDismiss()}
+                  data-testid="audit-run-in-background"
+                >
+                  Run in background
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    handleDismiss({ keepInFlight: true });
+                    router.push(`/admin/orchestration/executions/${submittedExecution.id}`);
+                  }}
+                  data-testid="audit-view-full-details"
+                >
+                  View full details
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleDismiss()}
+                  data-testid="audit-close-after-terminal"
+                >
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    handleDismiss();
+                    router.push(`/admin/orchestration/executions/${submittedExecution.id}`);
+                  }}
+                >
+                  Open detail page
+                </Button>
+              </>
+            )
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => handleDismiss()} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleSubmit()}
+                disabled={submitting || selected.size === 0}
+              >
+                {submitting
+                  ? 'Starting audit...'
+                  : `Audit ${selected.size} model${selected.size !== 1 ? 's' : ''}`}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

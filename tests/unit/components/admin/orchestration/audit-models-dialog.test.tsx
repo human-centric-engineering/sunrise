@@ -511,10 +511,14 @@ describe('AuditModelsDialog', () => {
       });
     });
 
-    it('redirects to the execution detail page after successful submit', async () => {
+    it('swaps the dialog body to live progress and does NOT auto-navigate after submit', async () => {
+      // New behaviour: after a successful audit start, the dialog stays
+      // open and the form is replaced by ExecutionProgressInline. The
+      // operator decides whether to background the run or open the
+      // detail page — neither happens automatically.
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue([
-        { id: 'wf-123', slug: 'tpl-provider-model-audit' },
+        { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
       ]);
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-456' });
 
@@ -531,9 +535,79 @@ describe('AuditModelsDialog', () => {
       await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
 
       await waitFor(() => {
-        expect(onOpenChange).toHaveBeenCalledWith(false);
-        expect(mockPush).toHaveBeenCalledWith('/admin/orchestration/executions/exec-456');
+        // Live-progress panel mounted (its test-id is the load-bearing handle).
+        expect(screen.getByTestId('execution-progress-inline')).toBeInTheDocument();
       });
+      // Dialog NOT closed.
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+      // No auto-navigation.
+      expect(mockPush).not.toHaveBeenCalled();
+      // Footer has the new running-state buttons.
+      expect(screen.getByTestId('audit-run-in-background')).toBeInTheDocument();
+      expect(screen.getByTestId('audit-view-full-details')).toBeInTheDocument();
+    });
+
+    it('"Run in background" closes the dialog and writes the execution to localStorage', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue([
+        { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
+      ]);
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-bg' });
+
+      const onOpenChange = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <AuditModelsDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          models={[MODEL_OPENAI, MODEL_ANTHROPIC]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await waitFor(() => screen.getByTestId('audit-run-in-background'));
+      await user.click(screen.getByTestId('audit-run-in-background'));
+
+      // Dialog closed; navigation skipped; localStorage holds the handoff
+      // so the peek banner can pick it up.
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(mockPush).not.toHaveBeenCalled();
+      const stored = window.localStorage.getItem('sunrise.orchestration.in-flight-execution.v1');
+      expect(stored).not.toBeNull();
+      const parsed = JSON.parse(stored as string) as {
+        executionId: string;
+        label: string;
+      };
+      expect(parsed.executionId).toBe('exec-bg');
+      expect(parsed.label).toBe('Provider Model Audit');
+    });
+
+    it('"View full details" navigates AND preserves the in-flight localStorage entry', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue([
+        { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
+      ]);
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-vfd' });
+
+      const onOpenChange = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <AuditModelsDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          models={[MODEL_OPENAI, MODEL_ANTHROPIC]}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await waitFor(() => screen.getByTestId('audit-view-full-details'));
+      await user.click(screen.getByTestId('audit-view-full-details'));
+
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(mockPush).toHaveBeenCalledWith('/admin/orchestration/executions/exec-vfd');
+      // Banner should still pick the run up after the navigation.
+      const stored = window.localStorage.getItem('sunrise.orchestration.in-flight-execution.v1');
+      expect(stored).not.toBeNull();
     });
 
     it('POST body includes full model detail objects for selected models', async () => {
