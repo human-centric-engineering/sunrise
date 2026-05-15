@@ -211,7 +211,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         config: {
           agentSlug: 'provider-model-auditor',
           message:
-            '{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate and produce a corrected new-model proposal set. Pay particular attention to enum values — they must match the allowed lists exactly.\n\n{{/if}}You are an AI model landscape expert. Given the list of providers and their currently registered models, identify any recently released models that are NOT in the registry.\n\nCurrent model registry:\n{{load_models.output}}\n\nWeb search context (if available — may be null if search was skipped):\n{{search_provider_info.output}}\n\nFor each provider represented in the data, check if they have released new models that are missing from the registry. For each new model found, propose a complete entry with:\n- "name": Human-readable name (e.g. "Claude Opus 4")\n- "slug": Lowercase with hyphens only (e.g. "anthropic-claude-opus-4")\n- "providerSlug": Must match an existing provider slug from the registry\n- "modelId": The API model identifier (e.g. "claude-opus-4-20250514")\n- "description": Brief description of the model\'s purpose and strengths\n- "capabilities": ["chat"] or ["embedding"] or ["chat", "embedding"]\n- "tierRole": one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- "reasoningDepth": one of: very_high, high, medium, none\n- "latency": one of: very_fast, fast, medium\n- "costEfficiency": one of: very_high, high, medium, none\n- "contextLength": one of: very_high, high, medium, n_a\n- "toolUse": one of: strong, moderate, none\n- "bestRole": One-line summary of optimal use case\n- For embedding models also include: "dimensions" (integer), "quality" (high | medium | budget), "schemaCompatible" (boolean)\n\nRespond with a JSON object:\n{\n  "newModels": [...array of proposed models...],\n  "reasoning": "Summary of what was found and why these models should be added"\n}\n\nIf no new models are found, respond with { "newModels": [], "reasoning": "All known models are already registered" }.\n\nIMPORTANT: Only propose models you are confident exist. Do not fabricate model names or IDs.\nRespond with ONLY the JSON object, no markdown fencing.',
+            '{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate and produce a corrected new-model proposal set. Pay particular attention to enum values — they must match the allowed lists exactly.\n\n{{/if}}You are an AI model landscape expert. Given the list of providers and their currently registered models, identify any recently released models that are NOT in the registry.\n\nCurrent model registry:\n{{load_models.output}}\n\nWeb search context (if available — may be null if search was skipped):\n{{search_provider_info.output}}\n\nFor each provider represented in the data, check if they have released new models that are missing from the registry. For each new model found, propose a complete entry with:\n- "name": Human-readable name (e.g. "Claude Opus 4")\n- "slug": Lowercase with hyphens only (e.g. "anthropic-claude-opus-4")\n- "providerSlug": Must match an existing provider slug from the registry\n- "modelId": The API model identifier (e.g. "claude-opus-4-20250514")\n- "description": Brief description of the model\'s purpose and strengths\n- "capabilities": array of one or more of: chat, reasoning, embedding, audio, image, moderation, vision, documents. Use these exact tokens — do not substitute synonyms (e.g. use "image" for image generation, "vision" for image input to a chat model; do not invent values like "multimodal" or "pdf")\n- "tierRole": one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- "reasoningDepth": one of: very_high, high, medium, none\n- "latency": one of: very_fast, fast, medium\n- "costEfficiency": one of: very_high, high, medium, none\n- "contextLength": one of: very_high, high, medium, n_a\n- "toolUse": one of: strong, moderate, none\n- "bestRole": One-line summary of optimal use case\n- For embedding models also include: "dimensions" (integer), "quality" (high | medium | budget), "schemaCompatible" (boolean)\n\nRespond with a JSON object:\n{\n  "newModels": [...array of proposed models...],\n  "reasoning": "Summary of what was found and why these models should be added"\n}\n\nIf no new models are found, respond with { "newModels": [], "reasoning": "All known models are already registered" }.\n\nIMPORTANT: Only propose models you are confident exist. Do not fabricate model names or IDs.\nRespond with ONLY the JSON object, no markdown fencing.',
           maxToolIterations: 5,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
@@ -226,7 +226,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'guard',
         config: {
           rules:
-            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array containing: chat, embedding, or both\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if vars.__retryContext}}Previous validation attempt failed: {{vars.__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}',
+            'Validate that all proposed changes, new model entries, and deactivation proposals use valid values:\n\n**Enum fields (for changes and new models):**\n- tierRole must be one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding\n- reasoningDepth must be one of: very_high, high, medium, none\n- latency must be one of: very_fast, fast, medium\n- costEfficiency must be one of: very_high, high, medium, none\n- contextLength must be one of: very_high, high, medium, n_a\n- toolUse must be one of: strong, moderate, none\n- quality (embedding) must be one of: high, medium, budget\n- confidence must be one of: high, medium, low\n- capabilities must be an array whose elements are drawn from this exact set: chat, reasoning, embedding, audio, image, moderation, vision, documents. Reject any element not in this set (e.g. "multimodal", "pdf", "text" are not valid)\n- slug (for new models) must be lowercase alphanumeric with hyphens only\n\nReject any proposed change that uses a value not in the above lists. Also reject changes where the field name is not a recognised AiProviderModel field. For new model proposals, reject entries missing required fields (name, slug, providerSlug, modelId, description, capabilities, tierRole, bestRole).\n\n**Deactivation proposals:**\n- Each must have a non-empty modelId (string)\n- Each must have a non-empty reason (string) explaining why the model should be deactivated\n- Reject deactivation proposals without a clear reason\n\n{{#if vars.__retryContext}}Previous validation attempt failed: {{vars.__retryContext.failureReason}}. Fix the issues identified above and re-submit.{{/if}}',
           mode: 'llm',
           failAction: 'block',
           maxRetries: 2,
@@ -353,6 +353,11 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // interpolation with step references.
       // NOTE: `to` is a placeholder — admins should edit this workflow
       // after seeding to set the correct notification recipient.
+      // `errorStrategy: 'skip'` is deliberate — by this point the audit
+      // changes have already been applied to the DB, so a notification
+      // delivery failure (e.g. invalid email credentials) must not flip
+      // the workflow's terminal status from COMPLETED to FAILED. The
+      // failed attempt is still visible in the trace.
       {
         id: 'notify_complete',
         name: 'Notify audit completion',
@@ -363,6 +368,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           subject: 'Provider Model Audit Complete',
           bodyTemplate:
             'The provider model audit has completed.\n\n{{compile_report.output}}\n\n---\nView the full execution trace in the admin dashboard.',
+          errorStrategy: 'skip',
         },
         nextSteps: [],
       },
@@ -372,6 +378,10 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // budget. The engine looks for a sibling fail edge without
       // maxRetries (this one) and routes here instead of silently
       // halting. Terminal step — workflow ends after notification.
+      // Also `errorStrategy: 'skip'` so a broken email channel cannot
+      // mask the underlying validation-exhaustion signal: the trace
+      // already records the guard's three failed attempts plus the
+      // routing decision, and that's the authoritative diagnostic.
       {
         id: 'report_validation_failure',
         name: 'Notify admin: validation exhausted',
@@ -382,6 +392,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           subject: 'Provider Model Audit — validation failed after retries',
           bodyTemplate:
             'The Provider Model Audit halted at the schema-validation gate after exhausting the retry budget.\n\nFinal validator output: {{validate_proposals.output}}\n\nNo changes were applied. Open the execution trace in the admin dashboard for the full proposal payload and retry timeline, then re-run the workflow after refining the analysis prompts or reviewing the offending proposals.',
+          errorStrategy: 'skip',
         },
         nextSteps: [],
       },

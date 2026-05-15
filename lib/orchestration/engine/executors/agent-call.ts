@@ -23,6 +23,7 @@ import { CostOperation } from '@/types/orchestration';
 import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
@@ -100,6 +101,7 @@ async function runSingleTurn(
   toolDefinitions: LlmToolDefinition[],
   provider: LlmProvider,
   usedSlug: string,
+  model: string,
   maxIterations: number,
   options: RunSingleTurnOptions = {}
 ): Promise<StepResult> {
@@ -121,7 +123,7 @@ async function runSingleTurn(
       SPAN_AGENT_CALL_TURN,
       {
         [GEN_AI_OPERATION_NAME]: 'chat',
-        [GEN_AI_REQUEST_MODEL]: agent!.model,
+        [GEN_AI_REQUEST_MODEL]: model,
         [GEN_AI_SYSTEM]: usedSlug,
         [SUNRISE_AGENT_ID]: agent!.id,
         [SUNRISE_AGENT_SLUG]: agent!.slug,
@@ -137,7 +139,7 @@ async function runSingleTurn(
         let response;
         try {
           response = await provider.chat(currentMessages, {
-            model: agent!.model,
+            model: model,
             ...(agent!.temperature !== null ? { temperature: agent!.temperature } : {}),
             ...(agent!.maxTokens !== null ? { maxTokens: agent!.maxTokens } : {}),
             ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
@@ -161,7 +163,7 @@ async function runSingleTurn(
         const turnDurationMs = Date.now() - turnStarted;
 
         ctx.stepTelemetry?.push({
-          model: agent!.model,
+          model: model,
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
@@ -170,7 +172,7 @@ async function runSingleTurn(
 
         const turnTokens = response.usage.inputTokens + response.usage.outputTokens;
         const turnCost = calculateCost(
-          agent!.model,
+          model,
           response.usage.inputTokens,
           response.usage.outputTokens
         );
@@ -179,7 +181,7 @@ async function runSingleTurn(
         totalCostUsd += turnCost.totalCostUsd;
 
         setSpanAttributes(span, {
-          [GEN_AI_RESPONSE_MODEL]: agent!.model,
+          [GEN_AI_RESPONSE_MODEL]: model,
           [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
           [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
           [GEN_AI_USAGE_TOTAL_TOKENS]: turnTokens,
@@ -189,7 +191,7 @@ async function runSingleTurn(
         void logCost({
           agentId: agent!.id,
           workflowExecutionId: ctx.executionId,
-          model: agent!.model,
+          model: model,
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
@@ -359,18 +361,41 @@ export async function executeAgentCall(
     parameters: def.parameters,
   }));
 
+  // Resolve provider + model: system-seeded agents (e.g. provider-model-auditor,
+  // audit-report-writer) ship with empty provider/model strings that need to
+  // be filled in from `AiOrchestrationSettings` + the first reachable provider
+  // before we touch the provider manager. Chat/evaluation paths already do this
+  // via `resolveAgentProviderAndModel` — workflow `agent_call` steps must too,
+  // otherwise the empty slug propagates into `getProviderWithFallbacks` and
+  // throws `provider_unavailable` with a `""` slug.
+  let resolvedBinding;
+  try {
+    resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
+  } catch (err) {
+    throw new ExecutorError(
+      step.id,
+      'provider_unavailable',
+      `No provider configured for agent "${agentSlug}"`,
+      err
+    );
+  }
+  const resolvedModel = resolvedBinding.model;
+
   // Resolve provider with fallbacks
   let provider;
   let usedSlug: string;
   try {
-    const result = await getProviderWithFallbacks(agent.provider, agent.fallbackProviders ?? []);
+    const result = await getProviderWithFallbacks(
+      resolvedBinding.providerSlug,
+      resolvedBinding.fallbacks
+    );
     provider = result.provider;
     usedSlug = result.usedSlug;
   } catch (err) {
     throw new ExecutorError(
       step.id,
       'provider_unavailable',
-      `Provider "${agent.provider}" unavailable for agent "${agentSlug}"`,
+      `Provider "${resolvedBinding.providerSlug}" unavailable for agent "${agentSlug}"`,
       err
     );
   }
@@ -443,6 +468,7 @@ export async function executeAgentCall(
         toolDefinitions,
         provider,
         usedSlug,
+        resolvedModel,
         maxIterations,
         {
           startIteration: priorIterTurns.length,
@@ -466,6 +492,7 @@ export async function executeAgentCall(
       toolDefinitions,
       provider,
       usedSlug,
+      resolvedModel,
       maxIterations,
       ctx.recordTurn ? { recordTurn: ctx.recordTurn } : {}
     );
@@ -507,6 +534,7 @@ export async function executeAgentCall(
         toolDefinitions,
         provider,
         usedSlug,
+        resolvedModel,
         maxIterations
       );
     } catch (err) {

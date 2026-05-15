@@ -1,6 +1,7 @@
 import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
+import { MODEL_CAPABILITIES } from '@/types/orchestration';
 
 const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
 
@@ -178,14 +179,14 @@ const ADD_PROVIDER_MODELS_DEFINITION = {
               description: { type: 'string', description: 'Brief model description.' },
               capabilities: {
                 type: 'array',
-                // Mirrors MODEL_CAPABILITIES in types/orchestration.ts.
-                // Intentionally excludes 'unknown' — the matrix rejects
-                // that placeholder; an auditor proposing it would just
-                // fail validation downstream.
-                items: {
-                  type: 'string',
-                  enum: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
-                },
+                // Source of truth: `MODEL_CAPABILITIES` in `types/orchestration.ts`.
+                // Imported (not duplicated) so the enum here stays in lockstep when
+                // new capability types are added — a hard-coded literal here drifted
+                // in the past, causing the validate_proposals guard to reject any
+                // proposal that included 'vision' or 'documents' even though both
+                // are valid in the schema. `unknown` is excluded intentionally —
+                // it's a discovery-only placeholder the matrix rejects.
+                items: { type: 'string', enum: [...MODEL_CAPABILITIES] },
               },
               tierRole: {
                 type: 'string',

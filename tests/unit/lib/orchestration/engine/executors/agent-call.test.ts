@@ -43,6 +43,10 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProviderWithFallbacks: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/llm/agent-resolver', () => ({
+  resolveAgentProviderAndModel: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(),
   logCost: vi.fn(),
@@ -66,6 +70,7 @@ vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
 import { prisma } from '@/lib/db/client';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getCapabilityDefinitions } from '@/lib/orchestration/capabilities/registry';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
@@ -128,6 +133,11 @@ const mockProvider = { chat: mockChat };
 
 function setupDefaultMocks(): void {
   vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(MOCK_AGENT as never);
+  vi.mocked(resolveAgentProviderAndModel).mockImplementation(async (agent) => ({
+    providerSlug: agent.provider || 'anthropic',
+    model: agent.model || 'claude-sonnet-4-20250514',
+    fallbacks: agent.fallbackProviders ?? [],
+  }));
   vi.mocked(getProviderWithFallbacks).mockResolvedValue({
     provider: mockProvider as never,
     usedSlug: 'anthropic',
@@ -262,6 +272,30 @@ describe('executeAgentCall', () => {
       name: 'ExecutorError',
       code: 'provider_unavailable',
     });
+  });
+
+  it('resolves empty agent provider/model via resolveAgentProviderAndModel before calling provider manager', async () => {
+    // Regression: system-seeded agents (e.g. provider-model-auditor) ship with
+    // empty provider/model strings that must be resolved from settings before
+    // the executor touches the provider manager. Prior to the fix, the empty
+    // slug was passed straight to getProviderWithFallbacks and threw
+    // `Provider "" unavailable …`.
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+      ...MOCK_AGENT,
+      provider: '',
+      model: '',
+    } as never);
+    vi.mocked(resolveAgentProviderAndModel).mockResolvedValue({
+      providerSlug: 'openai',
+      model: 'gpt-4o-mini',
+      fallbacks: ['anthropic'],
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    expect(resolveAgentProviderAndModel).toHaveBeenCalled();
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', ['anthropic']);
+    expect(mockChat.mock.calls[0][1].model).toBe('gpt-4o-mini');
   });
 
   it('throws agent_call_failed when chat throws', async () => {

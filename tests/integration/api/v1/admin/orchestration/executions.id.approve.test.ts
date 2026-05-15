@@ -45,11 +45,26 @@ vi.mock('@/lib/security/rate-limit', () => ({
   ),
 }));
 
+vi.mock('@/lib/orchestration/scheduling', () => ({
+  resumeApprovedExecution: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { adminLimiter } from '@/lib/security/rate-limit';
+import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
+import { logger } from '@/lib/logging';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -194,6 +209,41 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
     expect(updateArg.where.status).toBe('paused_for_approval');
     expect(updateArg.data.status).toBe('pending');
     expect(updateArg.data.executionTrace[0].status).toBe('completed');
+
+    // Regression: the admin approval route must trigger resume so the run
+    // continues immediately instead of waiting for the maintenance tick.
+    // Channel routes already do this; the admin route used to skip it,
+    // which left runs sitting in PENDING after approval.
+    expect(resumeApprovedExecution).toHaveBeenCalledWith(EXECUTION_ID);
+  });
+
+  it('swallows resumeApprovedExecution rejections — 200 response + logged error, no unhandled promise', async () => {
+    // The resume call is fire-and-forget after `executeApproval` commits the
+    // PAUSED_FOR_APPROVAL → PENDING transition. If the resume helper throws
+    // (workflow definition corrupted, DB blip, etc.), the approval itself
+    // already succeeded — surfacing that as a 500 would mislead the admin
+    // into thinking their approval failed. The .catch must log and swallow.
+    const resumeError = new Error('drainEngine unavailable');
+    vi.mocked(resumeApprovedExecution).mockRejectedValueOnce(resumeError);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+
+    const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
+
+    // The approval itself succeeded — response must reflect that, not the
+    // background resume failure.
+    expect(response.status).toBe(200);
+
+    // Flush microtasks so the rejected promise's .catch handler runs before
+    // we assert on the logger spy. The route returns before the promise
+    // settles, so without this the assertion races the catch.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'admin approve: resumeApprovedExecution failed',
+      resumeError,
+      { executionId: EXECUTION_ID }
+    );
   });
 
   it('returns 400 when notes exceeds 5000 characters', async () => {
