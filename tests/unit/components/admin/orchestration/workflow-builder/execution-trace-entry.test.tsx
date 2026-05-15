@@ -478,4 +478,33 @@ describe('ExecutionTraceEntryRow', () => {
       expect(writeText).toHaveBeenCalled();
     });
   });
+
+  describe('step-type chip palette', () => {
+    // The chip should colour-match the workflow builder's category palette
+    // (and the Gantt timeline strip) so a step's identity reads the same
+    // across all three surfaces.
+    const cases: Array<{ stepType: string; category: string; bgFragment: string }> = [
+      { stepType: 'llm_call', category: 'agent', bgFragment: 'bg-blue-100' },
+      { stepType: 'route', category: 'decision', bgFragment: 'bg-amber-100' },
+      { stepType: 'send_notification', category: 'output', bgFragment: 'bg-emerald-100' },
+      { stepType: 'orchestrator', category: 'orchestration', bgFragment: 'bg-purple-100' },
+      { stepType: 'tool_call', category: 'input', bgFragment: 'bg-slate-200' },
+    ];
+
+    for (const { stepType, category, bgFragment } of cases) {
+      it(`renders ${stepType} chip with the ${category} category palette`, () => {
+        render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType={stepType} />);
+        const chip = screen.getByTestId('trace-entry-step-type-step-1');
+        expect(chip).toHaveAttribute('data-category', category);
+        expect(chip.className).toContain(bgFragment);
+      });
+    }
+
+    it('falls back to the muted palette for an unknown step type', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType="not_a_real_type" />);
+      const chip = screen.getByTestId('trace-entry-step-type-step-1');
+      expect(chip).not.toHaveAttribute('data-category');
+      expect(chip.className).toContain('bg-muted');
+    });
+  });
 });

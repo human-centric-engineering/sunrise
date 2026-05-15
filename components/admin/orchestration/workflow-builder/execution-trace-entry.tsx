@@ -22,7 +22,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getStepMetadata } from '@/lib/orchestration/engine/step-registry';
+import { getStepMetadata, type StepCategory } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 import { isMarkdown } from '@/lib/utils/is-markdown';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
@@ -319,15 +319,36 @@ export function ExecutionTraceEntryRow({
   );
 }
 
+// Tonal chip palette per step-type category. Pairs the workflow builder's
+// `STEP_CATEGORY_COLOURS` iconBg/text combo so the chip in the trace row,
+// the bar in the timeline strip, and the node in the workflow builder
+// canvas all read as the same colour family. Unknown types fall back to
+// the neutral muted palette so a renamed/removed step type doesn't go
+// blank.
+const STEP_TYPE_CHIP_CLASSES: Record<StepCategory, string> = {
+  orchestration: 'bg-purple-100 text-purple-900 dark:bg-purple-900/60 dark:text-purple-100',
+  agent: 'bg-blue-100 text-blue-900 dark:bg-blue-900/60 dark:text-blue-100',
+  decision: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100',
+  output: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100',
+  input: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-100',
+};
+
+const STEP_TYPE_CHIP_FALLBACK = 'bg-muted text-muted-foreground';
+
 function StepTypeChip({ stepId, stepType }: { stepId: string; stepType: string }) {
   const meta = getStepMetadata(stepType);
+  const chipColour = meta ? STEP_TYPE_CHIP_CLASSES[meta.category] : STEP_TYPE_CHIP_FALLBACK;
   // Always render the chip; only attach a tooltip when we have a real
   // description from the registry. Unknown step types still render the
   // raw type string so admins aren't left with a missing chip.
   const chip = (
     <span
       data-testid={`trace-entry-step-type-${stepId}`}
-      className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wide uppercase"
+      data-category={meta?.category ?? undefined}
+      className={cn(
+        'rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wide uppercase',
+        chipColour
+      )}
     >
       {stepType}
     </span>
