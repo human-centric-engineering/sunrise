@@ -1002,7 +1002,7 @@ export class OrchestrationEngine {
   > {
     const { executionId } = lease;
     yield stepStarted(step.id, step.type, step.name);
-    await this.markCurrentStep(lease, step.id, baseLogger);
+    await this.markCurrentStep(lease, step, baseLogger);
 
     const started = Date.now();
     const telemetryOut: LlmTelemetryEntry[] = [];
@@ -1255,9 +1255,12 @@ export class OrchestrationEngine {
     let batchPaused = false;
     let batchFailureReason: string | undefined;
 
-    // Mark all steps as current (best-effort).
+    // Mark all steps as current (best-effort). Last-write-wins on the
+    // current-step columns during parallel fan-out — the UI's running
+    // indicator will track whichever branch the engine most recently
+    // entered. Documented caveat.
     for (const step of steps) {
-      void this.markCurrentStep(lease, step.id, baseLogger);
+      void this.markCurrentStep(lease, step, baseLogger);
     }
 
     // Run all steps concurrently. Each step runs its full strategy
@@ -1796,7 +1799,11 @@ export class OrchestrationEngine {
     return step.nextSteps.map((e) => e.targetStepId);
   }
 
-  private async markCurrentStep(lease: LeaseHandle, stepId: string, logger: Logger): Promise<void> {
+  private async markCurrentStep(
+    lease: LeaseHandle,
+    step: { id: string; type: string; name: string },
+    logger: Logger
+  ): Promise<void> {
     const { executionId, token } = lease;
     try {
       // Lease-guarded: a stale-token holder's update silently no-ops via count=0.
@@ -1805,10 +1812,18 @@ export class OrchestrationEngine {
       // named in currentStep — clearing it on transition keeps the invariant. Resume already
       // copied the prior step's turns into `ctx.resumeTurns` before this UPDATE runs, so
       // clearing here doesn't lose data.
+      //
+      // currentStepLabel / currentStepType / currentStepStartedAt power the live-running
+      // indicator on the execution detail page — the UI polls them so it can render the
+      // in-flight step's friendly label and ticking elapsed time without parsing the
+      // workflow version snapshot. They're cleared in `finalize`.
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken: token },
         data: {
-          currentStep: stepId,
+          currentStep: step.id,
+          currentStepLabel: step.name,
+          currentStepType: step.type,
+          currentStepStartedAt: new Date(),
           currentStepTurns: Prisma.DbNull,
           leaseExpiresAt: leaseExpiry(),
           lastHeartbeatAt: new Date(),
@@ -1819,7 +1834,7 @@ export class OrchestrationEngine {
       // hide for minutes until the next checkpoint surfaces it.
       logger.warn('markCurrentStep: DB update failed (non-fatal)', {
         executionId,
-        stepId,
+        stepId: step.id,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -2034,6 +2049,13 @@ export class OrchestrationEngine {
           errorMessage,
           outputData:
             status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull,
+          // Clear the live-running metadata so the detail page doesn't render
+          // a stale "Running" indicator for the last-entered step. `currentStep`
+          // itself is left alone — pre-existing engine behaviour preserves it
+          // for diagnostics on terminal rows.
+          currentStepLabel: null,
+          currentStepType: null,
+          currentStepStartedAt: null,
           leaseToken: null,
           leaseExpiresAt: null,
         },

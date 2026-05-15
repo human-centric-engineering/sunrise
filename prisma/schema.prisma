@@ -450,6 +450,16 @@ model AiWorkflowExecution {
   inputData         Json
   outputData        Json?
   currentStep       String?
+  // Live-trace fields written alongside currentStep on every step_started
+  // transition and nulled on every step termination (completion / failure /
+  // pause / cancel). Powers the running-step indicator on the execution
+  // detail page so the UI can render the in-flight step's friendly label
+  // and ticking elapsed time without parsing the workflow version snapshot.
+  // Caveat: during a `parallel` fan-out, currentStep is a single column —
+  // these reflect whichever branch the engine most recently entered.
+  currentStepLabel     String?
+  currentStepType      String?
+  currentStepStartedAt DateTime?
   executionTrace    Json // array of step execution logs
   totalTokensUsed   Int       @default(0)
   totalCostUsd      Float     @default(0)
