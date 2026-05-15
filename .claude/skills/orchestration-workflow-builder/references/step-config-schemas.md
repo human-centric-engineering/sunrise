@@ -136,7 +136,7 @@ See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An
 }
 ```
 
-- `url` — endpoint URL (required). Supports `${env:VAR}` templates resolved at call time.
+- `url` — endpoint URL (required). Supports `${env:VAR}` templates resolved at call time and `{{stepId.output}}` interpolation. **Avoid interpolating large step outputs into query parameters** — vendors typically cap individual params (Brave Search caps `q` at 400 chars; most APIs are stricter than the 2,048-char HTTP URL practical limit). For payloads that might exceed ~200 chars, use a `POST` with `bodyTemplate` or pre-summarise the upstream output in an `llm_call`. See `gotchas.md` → _"`external_call` URL Query Strings Respect Vendor Length Limits"_.
 - `method` — `GET` / `POST` / `PUT` / `PATCH` / `DELETE`.
 - `headers` — optional headers object. Values support `${env:VAR}` templating.
 - `bodyTemplate` — optional string body (supports `{{stepId.output}}` templates). **Mutually exclusive with `multipart`.**

@@ -124,6 +124,31 @@ because Brave reads the API key from `X-Subscription-Token`, not from `Authoriza
 
 **When in doubt** consult the vendor's "authentication" docs page; almost every API ships one and it lists the canonical header name on the first paragraph.
 
+## `external_call` URL Query Strings Respect Vendor Length Limits — Don't Interpolate Big Outputs
+
+`{{stepId.output}}` interpolation works inside `url` as well as `bodyTemplate`, which is convenient but lets you accidentally pipe a JSON dump of a prior step's output into a URL query parameter. Vendors typically cap individual query parameters at a few hundred characters; interpolating a registry-sized payload sails past the cap.
+
+Observed failure (2026-05-16): the audit workflow's Brave Search call had `?q=AI+model+releases+{{load_models.output}}&count=5`. With `load_models.output` being the parsed model registry (well over 1 KB), the request returned
+
+```
+HTTP 422 — Search query must be at most 400 characters (you entered N)
+```
+
+**Rule of thumb:** treat `url` as a place for small literal values (search terms, IDs, a step's output IF you know it's a short string like a classifier label). For anything that might be > ~200 chars, either:
+
+- Use a `POST` with `bodyTemplate` and put the payload in the body, OR
+- Pre-summarise the upstream output in an `llm_call` that produces a short query string, then interpolate _that_ step's output.
+
+Known per-param ceilings: Brave Search `q` ≤ 400, most APIs ≤ 2,048 (HTTP URL practical limit), some CDNs / gateways enforce stricter limits.
+
+## HTTP Error Bodies On `external_call` Are Truncated At 2 KB With A Visible Marker
+
+When a non-2xx response comes back from `external_call`, the engine attaches the response body to the step's error message so operators can diagnose without re-running. The body is capped at 2,000 characters; when truncation actually fires the message gains a `… [truncated, N more chars]` suffix.
+
+If a step-timeline error message ends in that suffix, the diagnostic was cut and the actual reason might be further in. Re-run with verbose logging, or inspect the raw provider response if you can — don't trust that what's in the trace is the full body.
+
+History: the cap was 256 characters before 2026-05-16. Anyone reading older trace entries should know that pre-fix errors were silently truncated with no marker at all.
+
 ## `agent_call` Multi-Turn Mode Falls Back On Re-Drive
 
 Multi-turn checkpointing covers `reflect` and `orchestrator` cleanly. `agent_call` in multi-turn mode is **explicitly not supported** for full resume — it falls back to a fresh start on re-drive. The dispatch cache prevents inner-side-effect duplication (capabilities the agent called won't fire twice), so the cost of re-drive is LLM tokens only, not the side effect itself. Document the limitation if a long agent_call session is load-bearing.
