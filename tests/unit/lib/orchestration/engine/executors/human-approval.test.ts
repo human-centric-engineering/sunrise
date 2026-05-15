@@ -166,4 +166,58 @@ describe('executeHumanApproval', () => {
     const result = executeHumanApproval(makeStep(), makeCtx());
     await expect(result).rejects.toBeDefined();
   });
+
+  it('interpolates {{stepId.output}} references in the prompt before pausing', async () => {
+    // The approval prompt is composed in markdown by the workflow author
+    // and references upstream step outputs via `{{stepId.output}}`. The
+    // admin must see the resolved values, not the raw mustache template.
+    const ctx = makeCtx({
+      stepOutputs: {
+        refine_findings: 'Refined audit:\n- Change A\n- Change B',
+        score_audit: 8.5,
+      },
+    });
+    const step = makeStep({
+      prompt:
+        'Review changes:\n\n{{refine_findings.output}}\n\nQuality score: {{score_audit.output}}',
+    });
+
+    let thrown: unknown;
+    try {
+      await executeHumanApproval(step, ctx);
+    } catch (err) {
+      thrown = err;
+    }
+
+    const paused = thrown as PausedForApproval;
+    const prompt = (paused.payload as Record<string, unknown>).prompt as string;
+    expect(prompt).toContain('Refined audit:');
+    expect(prompt).toContain('- Change A');
+    expect(prompt).toContain('Quality score: 8.5');
+    // The raw mustache template must not survive into the payload.
+    expect(prompt).not.toContain('{{refine_findings.output}}');
+    expect(prompt).not.toContain('{{score_audit.output}}');
+  });
+
+  it('expands missing references to empty string (matches llm_call behaviour)', async () => {
+    // If the workflow author references a step that never ran or has no
+    // output, the reference resolves to empty — mirroring how the
+    // existing interpolator handles llm_call prompts. Loud failures
+    // here would block the workflow from pausing at all.
+    const ctx = makeCtx({ stepOutputs: { foo: 'present' } });
+    const step = makeStep({
+      prompt: 'Available: {{foo.output}}. Missing: [{{nonexistent.output}}].',
+    });
+
+    let thrown: unknown;
+    try {
+      await executeHumanApproval(step, ctx);
+    } catch (err) {
+      thrown = err;
+    }
+
+    const paused = thrown as PausedForApproval;
+    const prompt = (paused.payload as Record<string, unknown>).prompt as string;
+    expect(prompt).toBe('Available: present. Missing: [].');
+  });
 });
