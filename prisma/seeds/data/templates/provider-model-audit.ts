@@ -139,12 +139,18 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       },
 
       // ─── Step 2: external_call ─────────────────────────────────────
-      // Tests: External HTTP call with bearer auth, response
+      // Tests: External HTTP call with custom header auth, response
       // transformation (jmespath), per-step error strategy override.
       // Optional enrichment — gracefully skipped if BRAVE_SEARCH_API_KEY
       // is not set or api.search.brave.com is not in
       // ORCHESTRATION_ALLOWED_HOSTS. Downstream prompts treat the
       // output as optional context.
+      //
+      // Brave Search requires the API key in an `X-Subscription-Token`
+      // header — NOT `Authorization: Bearer <key>`. Sending bearer auth
+      // returns HTTP 422 with `{"loc":["header","x-subscription-token"],
+      // "msg":"Field required"}`. Use `authType: 'api-key'` with the
+      // `apiKeyHeaderName` override to match Brave's contract.
       {
         id: 'search_provider_info',
         name: 'Search web for current provider model info',
@@ -152,7 +158,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         config: {
           url: 'https://api.search.brave.com/res/v1/web/search?q=AI+model+releases+updates+deprecations+{{load_models.output}}&count=5',
           method: 'GET',
-          authType: 'bearer',
+          authType: 'api-key',
+          apiKeyHeaderName: 'X-Subscription-Token',
           authSecret: 'BRAVE_SEARCH_API_KEY',
           timeoutMs: 10000,
           maxResponseBytes: 524288,
