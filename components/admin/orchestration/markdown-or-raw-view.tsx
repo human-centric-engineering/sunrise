@@ -22,7 +22,14 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-const MARKDOWN_BLOCK_CLASSES = [
+/**
+ * Tailwind selector list for child-element styling inside a markdown
+ * block — exported so callers can compose their own background/colour
+ * theming without re-stating every selector. Used by both this file's
+ * `MarkdownContent` and any caller that renders markdown inline (e.g.
+ * the amber approval-prompt cards in the approvals queue).
+ */
+export const MARKDOWN_BLOCK_CLASSES = [
   '[&>:first-child]:mt-0 [&>:last-child]:mb-0',
   '[&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0',
   '[&_ul]:my-2 [&_ul]:pl-5 [&_ul]:list-disc',
@@ -96,14 +103,10 @@ export function MarkdownOrRawView({
         </div>
       </div>
       {mode === 'rendered' ? (
-        <div
-          className={cn(
-            'bg-muted/40 max-w-none overflow-x-auto rounded p-2 text-sm',
-            MARKDOWN_BLOCK_CLASSES
-          )}
-        >
-          <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
-        </div>
+        <MarkdownContent
+          content={content}
+          className="bg-muted/40 max-w-none overflow-x-auto rounded p-2 text-sm"
+        />
       ) : (
         <pre
           className={cn(
@@ -114,6 +117,27 @@ export function MarkdownOrRawView({
           {content}
         </pre>
       )}
+    </div>
+  );
+}
+
+/**
+ * Renderer-only markdown view — same safe parser config as
+ * `MarkdownOrRawView` (react-markdown + remark-gfm, no raw HTML), no
+ * toggle, no default background. Use it inside themed containers (e.g.
+ * the amber approval-prompt card in the approvals queue) where the
+ * caller owns the surrounding styling.
+ */
+export function MarkdownContent({
+  content,
+  className,
+}: {
+  content: string;
+  className?: string;
+}): React.ReactElement {
+  return (
+    <div className={cn(MARKDOWN_BLOCK_CLASSES, className)}>
+      <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
     </div>
   );
 }

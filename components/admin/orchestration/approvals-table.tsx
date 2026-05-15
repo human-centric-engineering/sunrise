@@ -47,6 +47,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
+import { MarkdownContent } from '@/components/admin/orchestration/markdown-or-raw-view';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
@@ -447,7 +448,11 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                           </div>
                         ) : detail ? (
                           <div className="space-y-4">
-                            {/* Approval prompt */}
+                            {/* Approval prompt — workflow authors write
+                                these in markdown, so render them as such
+                                (headings, lists, fenced code). MarkdownContent
+                                uses the same safe react-markdown config as
+                                the rest of the admin surface. */}
                             {getApprovalPrompt(detail.trace) && (
                               <div className="rounded-md border bg-amber-50 p-3 dark:bg-amber-950">
                                 <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
@@ -458,9 +463,10 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                                     needs your review before continuing.
                                   </FieldHelp>
                                 </p>
-                                <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">
-                                  {getApprovalPrompt(detail.trace)}
-                                </p>
+                                <MarkdownContent
+                                  content={getApprovalPrompt(detail.trace) as string}
+                                  className="mt-1 text-sm text-amber-900 dark:text-amber-100"
+                                />
                               </div>
                             )}
 

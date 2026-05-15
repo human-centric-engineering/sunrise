@@ -57,7 +57,10 @@ import {
 import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
-import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
+import {
+  MarkdownContent,
+  MarkdownOrRawView,
+} from '@/components/admin/orchestration/markdown-or-raw-view';
 import { isMarkdown } from '@/lib/utils/is-markdown';
 import {
   ExecutionTraceFilters,
@@ -528,11 +531,15 @@ export function ExecutionDetailView({
         </div>
       )}
 
-      {/* Approval prompt card */}
+      {/* Approval prompt card — rendered as markdown because workflow
+          authors compose these with headings, lists, fenced code etc. */}
       {approvalPrompt && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
           <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Approval prompt</p>
-          <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">{approvalPrompt}</p>
+          <MarkdownContent
+            content={approvalPrompt}
+            className="mt-1 text-sm text-amber-900 dark:text-amber-100"
+          />
         </div>
       )}
 
