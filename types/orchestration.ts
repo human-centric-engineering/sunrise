@@ -443,6 +443,40 @@ export interface ExecutionTraceEntry {
 }
 
 /**
+ * One decided human-approval step, flattened for the admin history view.
+ * Derived from the `human_approval` trace entries on a workflow execution
+ * after they've transitioned out of `awaiting_approval`. Multiple rows can
+ * come from a single execution if its workflow has more than one approval
+ * gate.
+ */
+export interface ApprovalHistoryEntry {
+  /** Synthetic id: `<executionId>:<stepId>`. Stable across pagination. */
+  id: string;
+  executionId: string;
+  workflowId: string;
+  workflowName: string;
+  stepId: string;
+  stepLabel: string;
+  decision: 'approved' | 'rejected';
+  /** Coarse-grained channel the decision came in through. */
+  medium: 'admin' | 'token-external' | 'token-chat' | 'token-embed' | 'unknown';
+  /** Resolved when `medium === 'admin'` and the user still exists. */
+  approverUserId: string | null;
+  approverName: string | null;
+  /** Raw `actor` value from the trace entry's output (debugging surface). */
+  actorLabel: string | null;
+  /** Optional admin notes (approve) or required reason (reject). */
+  notes: string | null;
+  reason: string | null;
+  /** When the engine paused execution and asked for a decision. */
+  askedAt: string;
+  /** When the decision was recorded. */
+  decidedAt: string;
+  /** `decidedAt - askedAt`, in milliseconds. */
+  waitDurationMs: number;
+}
+
+/**
  * One LLM turn's telemetry, accumulated on `ExecutionContext.stepTelemetry`
  * during step execution. The engine drains the array after the executor
  * returns and rolls it into the step's trace entry.

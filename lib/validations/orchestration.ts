@@ -1597,6 +1597,24 @@ export const listExecutionsQuerySchema = paginationQuerySchema.extend({
 });
 
 /**
+ * Query schema for the admin approval-history endpoint.
+ *
+ * `format=csv` switches the response to a CSV attachment and bypasses
+ * pagination — exports always include every matching row up to
+ * `MAX_HISTORY_ROWS` in the route. JSON requests are paginated.
+ */
+export const approvalHistoryQuerySchema = paginationQuerySchema.extend({
+  decision: z.enum(['approved', 'rejected']).optional(),
+  medium: z.enum(['admin', 'token']).optional(),
+  q: z.string().trim().max(200).optional(),
+  dateFrom: z.coerce.date().optional(),
+  dateTo: z.coerce.date().optional(),
+  format: z.enum(['json', 'csv']).optional(),
+});
+
+export type ApprovalHistoryQuery = z.infer<typeof approvalHistoryQuerySchema>;
+
+/**
  * Execute workflow request body (POST /workflows/[id]/execute).
  *
  * Distinct from `workflowExecutionSchema` which also carries `workflowId`;
