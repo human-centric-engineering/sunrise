@@ -205,12 +205,19 @@ export function ExecutionTimelineStrip({
     return s + Math.max(0, e.durationMs);
   });
 
-  // Auto-default for compression — derived from each awaiting bar's own
-  // wall-clock duration. If any awaiting_approval step has paused for
-  // more than AUTO_COMPRESS_WAIT_MS, default to compressed until the
-  // user toggles off.
+  // Test for "this row represents a human-review pause". Once approved
+  // the entry's status flips to `completed`, but `stepType` stays
+  // `human_approval` — so the historical wait still needs to be detected
+  // here. Filtering on stepType (not status) covers both currently-paused
+  // and already-decided approval steps.
+  const isApprovalWait = (e: ExecutionTraceEntry): boolean => e.stepType === 'human_approval';
+
+  // Auto-default for compression — derived from each approval bar's own
+  // wall-clock duration. If any human_approval step took longer than
+  // AUTO_COMPRESS_WAIT_MS, default to compressed until the user toggles
+  // off.
   const longestAwaitMs = trace.reduce((max, e, i) => {
-    if (e.status !== 'awaiting_approval') return max;
+    if (!isApprovalWait(e)) return max;
     const s = rawStartByEntry[i];
     const en = rawEndByEntry[i];
     if (!Number.isFinite(s) || !Number.isFinite(en)) return max;
@@ -227,7 +234,7 @@ export function ExecutionTimelineStrip({
       let saved = 0;
       for (let j = 0; j < trace.length; j++) {
         if (j === i) continue;
-        if (trace[j].status !== 'awaiting_approval') continue;
+        if (!isApprovalWait(trace[j])) continue;
         const otherEnd = rawEndByEntry[j];
         const otherStart = rawStartByEntry[j];
         if (!Number.isFinite(otherEnd) || !Number.isFinite(otherStart) || otherEnd > myStart) {
@@ -257,7 +264,7 @@ export function ExecutionTimelineStrip({
       return { start: NaN, end: NaN, originalDurationMs: e.durationMs, compressed: false };
     }
     const originalDur = rawEnd - rawStart;
-    const compressed = compressWaits && e.status === 'awaiting_approval';
+    const compressed = compressWaits && isApprovalWait(e);
     const displayDur = compressed ? COMPRESSED_WAIT_MS : originalDur;
     const shiftedStart = rawStart - savingsByEntry[i];
     return {
@@ -275,7 +282,7 @@ export function ExecutionTimelineStrip({
   const totalSpan =
     Number.isFinite(execStart) && Number.isFinite(execEnd) ? execEnd - execStart : 0;
   const useGantt = totalSpan > 0;
-  const hasAwaitingSteps = trace.some((e) => e.status === 'awaiting_approval');
+  const hasAwaitingSteps = trace.some(isApprovalWait);
 
   // Stable lookup: parallel-fork step → short label index (#1, #2, …) so a
   // branch row can reference its parent without taking up much horizontal room.

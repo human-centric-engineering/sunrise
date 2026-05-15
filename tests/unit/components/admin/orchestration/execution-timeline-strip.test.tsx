@@ -382,6 +382,7 @@ describe('ExecutionTimelineStrip', () => {
           entry({
             stepId: 'wait',
             status: 'awaiting_approval',
+            stepType: 'human_approval',
             startedAt: '2026-01-01T00:00:04.000Z',
             completedAt: '2026-01-01T00:00:06.000Z',
             durationMs: 2_000,
@@ -436,6 +437,7 @@ describe('ExecutionTimelineStrip', () => {
           entry({
             stepId: 'wait',
             status: 'awaiting_approval',
+            stepType: 'human_approval',
             startedAt: '2026-01-01T00:00:01.000Z',
             completedAt: '2026-01-01T00:00:21.000Z',
             durationMs: 20_000,
@@ -480,6 +482,7 @@ describe('ExecutionTimelineStrip', () => {
           entry({
             stepId: 'wait',
             status: 'awaiting_approval',
+            stepType: 'human_approval',
             startedAt: '2026-01-01T00:00:00.500Z',
             completedAt: '2026-01-01T00:00:14.500Z',
             durationMs: 14_000,
@@ -500,6 +503,48 @@ describe('ExecutionTimelineStrip', () => {
     expect(screen.getByTestId('timeline-bar-wait')).not.toHaveAttribute('data-compressed');
   });
 
+  it('auto-compresses already-decided human_approval steps (status=completed)', () => {
+    // Regression: when approval is granted, the engine flips the entry's
+    // status from 'awaiting_approval' to 'completed' but keeps
+    // stepType='human_approval'. Compression must still apply, otherwise
+    // historical runs render the full wall-clock pause and the toggle
+    // doesn't even appear.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:01.000Z',
+            durationMs: 1_000,
+          }),
+          entry({
+            stepId: 'wait',
+            stepType: 'human_approval',
+            // Already approved — status is 'completed', not 'awaiting'.
+            status: 'completed',
+            startedAt: '2026-01-01T00:00:01.000Z',
+            completedAt: '2026-01-01T00:00:24.008Z',
+            // Engine records ~1ms processing time on the click; wall-clock
+            // delta is ~23 s, which is over the 15 s auto-trigger.
+            durationMs: 1,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:24.008Z',
+            completedAt: '2026-01-01T00:00:25.008Z',
+            durationMs: 1_000,
+          }),
+        ]}
+      />
+    );
+
+    const toggle = screen.getByTestId('timeline-compress-waits');
+    expect(toggle).toHaveTextContent(/compressed waits/i);
+    expect(toggle).toHaveAttribute('data-auto-compressed', 'true');
+    expect(screen.getByTestId('timeline-bar-wait')).toHaveAttribute('data-compressed', 'true');
+  });
+
   it('displays wall-clock elapsed (not entry.durationMs) for awaiting_approval bars', () => {
     // The engine records entry.durationMs as the executor's own processing
     // time — ~1ms for a human-approval click. The wall-clock is the long
@@ -517,6 +562,7 @@ describe('ExecutionTimelineStrip', () => {
           entry({
             stepId: 'wait',
             status: 'awaiting_approval',
+            stepType: 'human_approval',
             startedAt: '2026-01-01T00:00:01.000Z',
             // 5s of wall-clock pause; engine recorded 1ms processing time.
             completedAt: '2026-01-01T00:00:06.000Z',
