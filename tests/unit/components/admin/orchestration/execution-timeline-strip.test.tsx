@@ -421,10 +421,9 @@ describe('ExecutionTimelineStrip', () => {
     );
   });
 
-  it('auto-defaults to compressed when an approval wait dominates the timeline', async () => {
+  it('auto-defaults to compressed when an approval wait exceeds 15 s wall-clock', async () => {
     const user = userEvent.setup();
-    // 10s total: wait/total = 8/10 = 0.8 → above the 0.5 auto-compress
-    // threshold. Strip should default to compressed.
+    // 20 s wait — over the 15 s auto-compress threshold.
     render(
       <ExecutionTimelineStrip
         trace={[
@@ -438,13 +437,13 @@ describe('ExecutionTimelineStrip', () => {
             stepId: 'wait',
             status: 'awaiting_approval',
             startedAt: '2026-01-01T00:00:01.000Z',
-            completedAt: '2026-01-01T00:00:09.000Z',
-            durationMs: 8_000,
+            completedAt: '2026-01-01T00:00:21.000Z',
+            durationMs: 20_000,
           }),
           entry({
             stepId: 's2',
-            startedAt: '2026-01-01T00:00:09.000Z',
-            completedAt: '2026-01-01T00:00:10.000Z',
+            startedAt: '2026-01-01T00:00:21.000Z',
+            completedAt: '2026-01-01T00:00:22.000Z',
             durationMs: 1_000,
           }),
         ]}
@@ -463,6 +462,41 @@ describe('ExecutionTimelineStrip', () => {
     expect(screen.getByTestId('timeline-compress-waits')).not.toHaveAttribute(
       'data-auto-compressed'
     );
+    expect(screen.getByTestId('timeline-bar-wait')).not.toHaveAttribute('data-compressed');
+  });
+
+  it('does NOT auto-compress when the longest approval wait is under 15 s wall-clock', () => {
+    // Wait is 14 s — just under the 15 s threshold. Even if the wait
+    // dominates the whole timeline by ratio, it shouldn't auto-trigger.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:00.500Z',
+            durationMs: 500,
+          }),
+          entry({
+            stepId: 'wait',
+            status: 'awaiting_approval',
+            startedAt: '2026-01-01T00:00:00.500Z',
+            completedAt: '2026-01-01T00:00:14.500Z',
+            durationMs: 14_000,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:14.500Z',
+            completedAt: '2026-01-01T00:00:15.000Z',
+            durationMs: 500,
+          }),
+        ]}
+      />
+    );
+
+    const toggle = screen.getByTestId('timeline-compress-waits');
+    expect(toggle).toHaveTextContent(/^compress waits$/i);
+    expect(toggle).not.toHaveAttribute('data-auto-compressed');
     expect(screen.getByTestId('timeline-bar-wait')).not.toHaveAttribute('data-compressed');
   });
 

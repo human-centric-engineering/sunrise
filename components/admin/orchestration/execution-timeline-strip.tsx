@@ -186,8 +186,13 @@ export function ExecutionTimelineStrip({
   // raw startedAt is strictly after the awaiting end — safe to subtract
   // savings from each later step's start without disturbing concurrency.
   const COMPRESSED_WAIT_MS = 1_000;
-  /** Auto-default kicks in when an awaiting wait would dominate ≥ this share of the axis. */
-  const AUTO_COMPRESS_THRESHOLD = 0.5;
+  /**
+   * Auto-default kicks in when an awaiting wait's wall-clock duration is
+   * at least this many milliseconds. 15s catches "human stepped away and
+   * came back" runs without misfiring on quick approvals where the wait
+   * is similar in scale to the processing steps around it.
+   */
+  const AUTO_COMPRESS_WAIT_MS = 15_000;
 
   const rawStartByEntry = trace.map((e) => (e.startedAt ? new Date(e.startedAt).getTime() : NaN));
   const rawEndByEntry = trace.map((e, i) => {
@@ -200,15 +205,10 @@ export function ExecutionTimelineStrip({
     return s + Math.max(0, e.durationMs);
   });
 
-  // Auto-default for compression — derived from the uncompressed axis.
-  // If any awaiting_approval bar would take more than half of the
-  // wall-clock span, default to compressed until the user toggles off.
-  const finiteRawStarts = rawStartByEntry.filter((n) => Number.isFinite(n));
-  const finiteRawEnds = rawEndByEntry.filter((n) => Number.isFinite(n));
-  const rawTotalSpan =
-    finiteRawStarts.length > 0 && finiteRawEnds.length > 0
-      ? Math.max(...finiteRawEnds) - Math.min(...finiteRawStarts)
-      : 0;
+  // Auto-default for compression — derived from each awaiting bar's own
+  // wall-clock duration. If any awaiting_approval step has paused for
+  // more than AUTO_COMPRESS_WAIT_MS, default to compressed until the
+  // user toggles off.
   const longestAwaitMs = trace.reduce((max, e, i) => {
     if (e.status !== 'awaiting_approval') return max;
     const s = rawStartByEntry[i];
@@ -216,8 +216,7 @@ export function ExecutionTimelineStrip({
     if (!Number.isFinite(s) || !Number.isFinite(en)) return max;
     return Math.max(max, en - s);
   }, 0);
-  const shouldAutoCompress =
-    rawTotalSpan > 0 && longestAwaitMs / rawTotalSpan >= AUTO_COMPRESS_THRESHOLD;
+  const shouldAutoCompress = longestAwaitMs >= AUTO_COMPRESS_WAIT_MS;
   const compressWaits = manualCompressWaits ?? shouldAutoCompress;
 
   const savingsByEntry = trace.map(() => 0);
