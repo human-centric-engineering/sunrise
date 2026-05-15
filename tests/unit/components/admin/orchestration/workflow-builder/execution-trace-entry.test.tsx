@@ -177,6 +177,88 @@ describe('ExecutionTraceEntryRow', () => {
     });
   });
 
+  describe('skipped reason line', () => {
+    it('renders the captured error inline beneath the meta row when status is skipped', () => {
+      render(
+        <ExecutionTraceEntryRow {...BASE_PROPS} status="skipped" error="LLM timeout after 30s" />
+      );
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      expect(reason).toHaveTextContent('Skipped: LLM timeout after 30s');
+    });
+
+    it('falls back to a neutral hint when status is skipped but no error was captured', () => {
+      // Pre-fix executions and future code paths that forget to wire
+      // skipError through both end up here — the row should still
+      // explain itself instead of leaving the operator guessing.
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="skipped" />);
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      expect(reason).toHaveTextContent('Skipped: no reason captured');
+    });
+
+    it('does not render the skip-reason line for non-skipped statuses', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="failed" error="LLM timeout" />);
+      expect(screen.queryByTestId('trace-entry-skip-reason-step-1')).toBeNull();
+    });
+
+    it('shows only the first line of a multi-line error in the collapsed summary', async () => {
+      // The dropdown is where the operator sees the full text — the
+      // summary line just has to give them enough to triage. Errors
+      // often arrive with a JSON tail (e.g. allowed-hosts violations
+      // include the full URL with query payload), which would dominate
+      // the row if we showed it inline.
+      const multiline = [
+        'Host not in ORCHESTRATION_ALLOWED_HOSTS allowlist: https://api.search.brave.com/search',
+        '{',
+        '  "modelIds": ["abc"]',
+        '}',
+      ].join('\n');
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="skipped" error={multiline} />);
+
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      expect(reason).toHaveTextContent(/Host not in ORCHESTRATION_ALLOWED_HOSTS allowlist/);
+      expect(reason.textContent).not.toContain('modelIds');
+      // The full message stays on the `title` attribute so it's still
+      // grabbable via hover even before the user expands the row.
+      expect(reason).toHaveAttribute('title', multiline);
+    });
+
+    it('truncates a single very long line with an ellipsis in the collapsed summary', () => {
+      const longLine = `Operation failed: ${'x'.repeat(300)}`;
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="skipped" error={longLine} />);
+
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      // Truncated representation, ellipsis present, original kept on title.
+      expect(reason.textContent ?? '').toMatch(/…$/);
+      expect(reason.textContent?.length).toBeLessThan(longLine.length);
+      expect(reason).toHaveAttribute('title', longLine);
+    });
+  });
+
+  describe('expanded: ErrorPane copy', () => {
+    it('exposes a Copy button that writes the full error to the clipboard', async () => {
+      const user = userEvent.setup();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      // jsdom doesn't ship navigator.clipboard — stub it for this test.
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+      });
+
+      const fullError = 'Host not in allowlist:\n  url: https://example.com\n  details: ...';
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="failed" error={fullError} />);
+
+      // Expand the row to surface the ErrorPane.
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+
+      const copyBtn = screen.getByRole('button', { name: /copy error message/i });
+      await user.click(copyBtn);
+
+      expect(writeText).toHaveBeenCalledWith(fullError);
+      // Affordance flips to "Copied" briefly so the operator gets feedback.
+      expect(await screen.findByText('Copied')).toBeInTheDocument();
+    });
+  });
+
   describe('retry button', () => {
     it('shows retry button for failed step when onRetry is provided', async () => {
       const user = userEvent.setup();

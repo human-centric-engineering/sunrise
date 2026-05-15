@@ -83,8 +83,9 @@ export interface ExecutionTraceEntryRowProps {
    * Parallel fan-out grouping. When this row is the fork step itself,
    * `forkNumber` is set. When this row is an immediate branch of a fork,
    * `parallelBranchOfNumber` carries the fork's number so the row can show
-   * a "branch of fork #N" chip and a purple left-rail. Both are derived
-   * via `buildParallelBranchMap` in the parent view.
+   * a "branch of fork #N" chip and an indigo left-rail. Both are derived
+   * via `buildParallelBranchMap` in the parent view. (Indigo is reserved
+   * for this structural accent; the orchestrator step type owns purple.)
    */
   forkNumber?: number;
   parallelBranchOfNumber?: number;
@@ -162,8 +163,10 @@ export function ExecutionTraceEntryRow({
       className={cn(
         'border-border/60 rounded-md border p-3 text-sm transition-colors',
         highlighted && 'bg-muted/40 ring-primary/40 ring-1',
+        // Indigo, not purple — the orchestrator step type owns purple, so
+        // structural fork/branch accents have to read distinctly.
         parallelBranchOfNumber !== undefined &&
-          'border-l-4 border-l-purple-400 dark:border-l-purple-600'
+          'border-l-4 border-l-indigo-400 dark:border-l-indigo-600'
       )}
     >
       <button
@@ -179,7 +182,7 @@ export function ExecutionTraceEntryRow({
             {forkNumber !== undefined && (
               <span
                 data-testid={`trace-entry-fork-${stepId}`}
-                className="flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                className="flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
                 title="This step fans out concurrent branches"
               >
                 <GitBranch className="h-3 w-3" />
@@ -189,7 +192,7 @@ export function ExecutionTraceEntryRow({
             {parallelBranchOfNumber !== undefined && (
               <span
                 data-testid={`trace-entry-branch-${stepId}`}
-                className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
                 title={`Concurrent branch of parallel fork #${parallelBranchOfNumber}`}
               >
                 ∥ Branch of fork #{parallelBranchOfNumber}
@@ -224,6 +227,21 @@ export function ExecutionTraceEntryRow({
             ) : null}
             {costUsd > 0 && <span>${costUsd.toFixed(4)}</span>}
           </div>
+          {/* Skipped steps surface their reason inline so the operator
+              doesn't have to expand the row to see why the step was
+              skipped. When the engine didn't capture an error (e.g.
+              pre-fix executions or a future code path that forgets to
+              wire skipError through), fall back to a neutral hint so
+              the row still explains itself. */}
+          {status === 'skipped' && (
+            <p
+              data-testid={`trace-entry-skip-reason-${stepId}`}
+              className="text-muted-foreground mt-0.5 line-clamp-2 text-xs italic"
+              title={error ?? undefined}
+            >
+              Skipped: {error ? summariseError(error) : 'no reason captured'}
+            </p>
+          )}
         </div>
         {expanded ? (
           <ChevronDown className="text-muted-foreground h-4 w-4" />
@@ -252,11 +270,7 @@ export function ExecutionTraceEntryRow({
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">
-          {error && (
-            <pre className="max-h-40 overflow-auto rounded bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-200">
-              {error}
-            </pre>
-          )}
+          {error && <ErrorPane error={error} stepId={stepId} />}
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">
               {input !== undefined && input !== null && (
@@ -419,6 +433,74 @@ function JsonPane({ label, data, testId }: { label: string; data: unknown; testI
       ) : (
         <JsonPretty data={data} className="max-h-60 overflow-y-auto" />
       )}
+    </div>
+  );
+}
+
+/**
+ * Short, single-line summary of an error message for the collapsed
+ * trace row. Step-step errors are often multi-line (sanitised stack
+ * traces, JSON payloads, structured details) — the dropdown shows the
+ * full thing, this just gives the operator enough to triage.
+ */
+const ERROR_SUMMARY_MAX = 120;
+function summariseError(message: string): string {
+  const firstLine = message.split(/\r?\n/, 1)[0]?.trim() ?? message;
+  if (firstLine.length <= ERROR_SUMMARY_MAX) return firstLine;
+  return `${firstLine.slice(0, ERROR_SUMMARY_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * Expanded-row error display. Wraps the existing red `<pre>` with a
+ * Copy button so operators can grab the full message for an issue
+ * tracker or chat without selecting the text manually.
+ */
+function ErrorPane({ error, stepId }: { error: string; stepId: string }): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(error);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard may be unavailable in non-secure contexts; silently ignore.
+      }
+    })();
+  };
+
+  return (
+    <div data-testid={`trace-entry-error-${stepId}`}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium tracking-wide text-red-700 uppercase dark:text-red-300">
+          Error
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-1.5 text-[11px]"
+          onClick={handleCopy}
+          aria-label="Copy error message"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+      <pre className="max-h-40 overflow-auto rounded bg-red-50 p-2 text-xs whitespace-pre-wrap text-red-800 dark:bg-red-950/40 dark:text-red-200">
+        {error}
+      </pre>
     </div>
   );
 }
