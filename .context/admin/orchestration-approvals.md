@@ -89,7 +89,7 @@ CSV export: clicking **Export CSV** re-fires the same query with `?format=csv`, 
 
 Clicking a row fetches `GET /executions/:id` on demand and displays:
 
-1. **Approval prompt** — extracted from the `awaiting_approval` trace entry's `output.prompt` field. Shown in an amber-highlighted box.
+1. **Approval prompt** — extracted from the `awaiting_approval` trace entry's `output.prompt` field. Shown in an amber-highlighted box. The engine runs the configured `human_approval` step `prompt` through `interpolatePrompt(prompt, ctx)` before pausing, so `{{stepId.output}}` references in the workflow author's prompt expand to accumulated outputs from earlier steps. The admin UI then renders the result as **markdown** (headings, lists, fenced code, GFM tables) — useful for structured review checklists. Raw HTML in the prompt renders as inert text (no `rehype-raw`); no XSS surface added by markdown rendering.
 2. **Cost summary** — tokens used, cost in USD, budget limit (if set).
 3. **Previous steps** — trace entries before the approval step, showing step type badge, label, and duration.
 4. **Input data** — collapsible JSON view of `execution.inputData`.

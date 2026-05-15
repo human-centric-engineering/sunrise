@@ -214,23 +214,23 @@ Each executor self-registers at module import. The barrel at `executors/index.ts
 
 Fifteen executors:
 
-| Type                | File                | Reuses                                                                    |
-| ------------------- | ------------------- | ------------------------------------------------------------------------- |
-| `llm_call`          | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                |
-| `tool_call`         | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                         |
-| `chain`             | `chain.ts`          | pass-through — real work is on child steps                                |
-| `route`             | `route.ts`          | classifier LLM + DAG branch selection                                     |
-| `parallel`          | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled |
-| `reflect`           | `reflect.ts`        | inner step + critic loop up to N iterations                               |
-| `plan`              | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                              |
-| `human_approval`    | `human-approval.ts` | throws `PausedForApproval`                                                |
-| `rag_retrieve`      | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                             |
-| `guard`             | `guard.ts`          | LLM or regex safety check, routes pass/fail                               |
-| `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                  |
-| `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers      |
-| `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`          |
-| `send_notification` | `notification.ts`   | email or webhook notification with templated content                      |
-| `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`           |
+| Type                | File                | Reuses                                                                                                                |
+| ------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `llm_call`          | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                                                            |
+| `tool_call`         | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                                                                     |
+| `chain`             | `chain.ts`          | pass-through — real work is on child steps                                                                            |
+| `route`             | `route.ts`          | classifier LLM + DAG branch selection                                                                                 |
+| `parallel`          | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled                                             |
+| `reflect`           | `reflect.ts`        | inner step + critic loop up to N iterations                                                                           |
+| `plan`              | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                                                                          |
+| `human_approval`    | `human-approval.ts` | runs `prompt` through `interpolatePrompt(prompt, ctx)` then throws `PausedForApproval` carrying the interpolated text |
+| `rag_retrieve`      | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                                                                         |
+| `guard`             | `guard.ts`          | LLM or regex safety check, routes pass/fail                                                                           |
+| `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                                                              |
+| `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers                                                  |
+| `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`                                                      |
+| `send_notification` | `notification.ts`   | email or webhook notification with templated content                                                                  |
+| `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`                                                       |
 
 ## Error strategies
 

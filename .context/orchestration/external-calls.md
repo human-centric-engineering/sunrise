@@ -152,6 +152,8 @@ Non-2xx responses are classified as **retriable** or **non-retriable**:
 
 Non-retriable errors skip the engine's `retry` error strategy entirely — there's no point retrying a 404. The `retriable` flag on `ExecutorError` controls this behavior.
 
+The non-2xx response body is attached to the thrown `HttpError`'s `message` so it surfaces in the step's `error` field for operator diagnosis. The body is truncated at **2,000 characters** to keep persisted traces compact; when truncation fires the message gains an explicit `… [truncated, N more chars]` suffix so operators know the diagnostic was clipped (vs. that being the full body). Before 2026-05-16 the cap was 256 characters with no suffix — pre-fix trace entries were silently cut and a structured 4xx body could land mid-sentence (e.g. Brave Search's Pydantic validation envelope). When debugging an old failure, treat trace entries written before this date as potentially incomplete.
+
 ### Response size limiting
 
 Responses are capped at `maxResponseBytes` (default 1 MB). Both `Content-Length` header and actual body size are checked. Oversized responses produce a non-retriable `response_too_large` error.
