@@ -20,7 +20,7 @@
  */
 
 import * as React from 'react';
-import { CheckCircle2, Clock, GitBranch, MinusCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, GitBranch, Loader2, MinusCircle, XCircle } from 'lucide-react';
 
 type DurationUnit = 'ms' | 's';
 
@@ -42,15 +42,17 @@ import {
 } from '@/lib/orchestration/trace/aggregate';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
-const STATUS_ICON: Record<
-  ExecutionTraceEntry['status'],
-  { Icon: React.ElementType; className: string; label: string }
-> = {
+// The 'running' status is view-only — synthesised by the live-poll path for
+// the in-flight step. Persisted entries never carry it. Keyed by string so
+// the index lookup tolerates both the persisted union and the synthesised
+// extension without needing a wider TS union on the trace entry itself.
+const STATUS_ICON: Record<string, { Icon: React.ElementType; className: string; label: string }> = {
   completed: { Icon: CheckCircle2, className: 'text-green-500', label: 'Completed' },
   failed: { Icon: XCircle, className: 'text-red-500', label: 'Failed' },
   rejected: { Icon: XCircle, className: 'text-red-500', label: 'Rejected' },
   skipped: { Icon: MinusCircle, className: 'text-muted-foreground', label: 'Skipped' },
   awaiting_approval: { Icon: Clock, className: 'text-amber-500', label: 'Awaiting approval' },
+  running: { Icon: Loader2, className: 'text-primary animate-spin', label: 'Running' },
 };
 
 export interface ExecutionTimelineStripProps {
@@ -64,20 +66,25 @@ export interface ExecutionTimelineStripProps {
 function barColour(
   entry: ExecutionTraceEntry,
   slowThresholdMs: number | null
-): { className: string; striped: boolean } {
+): { className: string; striped: boolean; pulsing: boolean } {
+  // The synthesised running entry (status: 'running') isn't part of the
+  // persisted union — string-compare so this branch hits regardless.
+  if ((entry.status as string) === 'running') {
+    return { className: 'bg-primary/70', striped: false, pulsing: true };
+  }
   if (entry.status === 'failed' || entry.status === 'rejected') {
-    return { className: 'bg-red-500 dark:bg-red-600', striped: false };
+    return { className: 'bg-red-500 dark:bg-red-600', striped: false, pulsing: false };
   }
   if (entry.status === 'awaiting_approval') {
-    return { className: 'bg-amber-400 dark:bg-amber-500', striped: true };
+    return { className: 'bg-amber-400 dark:bg-amber-500', striped: true, pulsing: false };
   }
   if (slowThresholdMs !== null && entry.durationMs >= slowThresholdMs) {
-    return { className: 'bg-amber-500 dark:bg-amber-600', striped: false };
+    return { className: 'bg-amber-500 dark:bg-amber-600', striped: false, pulsing: false };
   }
   if (entry.status === 'skipped') {
-    return { className: 'bg-muted-foreground/40', striped: false };
+    return { className: 'bg-muted-foreground/40', striped: false, pulsing: false };
   }
-  return { className: 'bg-primary', striped: false };
+  return { className: 'bg-primary', striped: false, pulsing: false };
 }
 
 export function ExecutionTimelineStrip({
@@ -121,8 +128,8 @@ export function ExecutionTimelineStrip({
               </p>
               <p className="text-foreground mt-2 font-medium">Status icons</p>
               <p>
-                ✓ completed · ✕ failed or rejected · ⏵ skipped · ⏲ awaiting approval. Hover any icon
-                for the label.
+                ✓ completed · ✕ failed or rejected · ⏵ skipped · ⏲ awaiting approval · ↻ running
+                (pulsing bar). Hover any icon for the label.
               </p>
               <p className="text-foreground mt-2 font-medium">Colours</p>
               <p>
@@ -178,10 +185,16 @@ export function ExecutionTimelineStrip({
         >
           <div className="flex-1 space-y-1">
             {trace.map((entry, idx) => {
-              const widthPct = maxDuration > 0 ? (entry.durationMs / maxDuration) * 100 : 0;
-              const { className: colourClass, striped } = barColour(entry, slowThreshold);
+              const isRunning = (entry.status as string) === 'running';
+              // For the running bar, scale by elapsed time vs. the longest
+              // *completed* bar. If maxDuration is 0 (the running step is the
+              // only one — strip already hides at length < 2, but defensively)
+              // fall back to ~25% so the user sees movement.
+              const rawPct = maxDuration > 0 ? (entry.durationMs / maxDuration) * 100 : 25;
+              const widthPct = isRunning ? Math.min(100, Math.max(rawPct, 25)) : rawPct;
+              const { className: colourClass, striped, pulsing } = barColour(entry, slowThreshold);
               const isHighlighted = highlightedStepId === entry.stepId;
-              const statusMeta = STATUS_ICON[entry.status];
+              const statusMeta = STATUS_ICON[entry.status as string] ?? STATUS_ICON.completed;
               const StatusIcon = statusMeta.Icon;
               const isFork = entry.stepType === 'parallel';
               const forkNumber = isFork ? parallelForkIndex.get(entry.stepId) : undefined;
@@ -253,7 +266,8 @@ export function ExecutionTimelineStrip({
                         'absolute inset-y-0 left-0 transition-[width]',
                         colourClass,
                         striped &&
-                          'bg-[image:repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(0,0,0,0.15)_4px,rgba(0,0,0,0.15)_8px)]'
+                          'bg-[image:repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(0,0,0,0.15)_4px,rgba(0,0,0,0.15)_8px)]',
+                        pulsing && 'animate-pulse'
                       )}
                       style={{ width: `${widthPct.toFixed(2)}%` }}
                     />
