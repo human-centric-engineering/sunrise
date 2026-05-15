@@ -195,6 +195,16 @@ export function ExecutionTimelineStrip({
     return s + Math.max(0, e.durationMs);
   });
 
+  // TEMPORARY PREVIEW: while `PREVIEW_COMPRESS_ALL` is true the compress
+  // toggle ignores the awaiting_approval filter and treats every step as
+  // a wait. This lets you see the hashed visual on an execution that
+  // doesn't include a human-approval step. Revert by setting back to
+  // `false` and re-enabling the `hasAwaitingSteps` gate on the toggle
+  // visibility below.
+  const PREVIEW_COMPRESS_ALL = true;
+  const isCompressTarget = (e: ExecutionTraceEntry): boolean =>
+    PREVIEW_COMPRESS_ALL ? true : e.status === 'awaiting_approval';
+
   const savingsByEntry = trace.map(() => 0);
   if (compressWaits) {
     for (let i = 0; i < trace.length; i++) {
@@ -203,7 +213,7 @@ export function ExecutionTimelineStrip({
       let saved = 0;
       for (let j = 0; j < trace.length; j++) {
         if (j === i) continue;
-        if (trace[j].status !== 'awaiting_approval') continue;
+        if (!isCompressTarget(trace[j])) continue;
         const otherEnd = rawEndByEntry[j];
         const otherStart = rawStartByEntry[j];
         if (!Number.isFinite(otherEnd) || !Number.isFinite(otherStart) || otherEnd > myStart) {
@@ -233,7 +243,7 @@ export function ExecutionTimelineStrip({
       return { start: NaN, end: NaN, originalDurationMs: e.durationMs, compressed: false };
     }
     const originalDur = rawEnd - rawStart;
-    const compressed = compressWaits && e.status === 'awaiting_approval';
+    const compressed = compressWaits && isCompressTarget(e);
     const displayDur = compressed ? COMPRESSED_WAIT_MS : originalDur;
     const shiftedStart = rawStart - savingsByEntry[i];
     return {
@@ -251,7 +261,13 @@ export function ExecutionTimelineStrip({
   const totalSpan =
     Number.isFinite(execStart) && Number.isFinite(execEnd) ? execEnd - execStart : 0;
   const useGantt = totalSpan > 0;
-  const hasAwaitingSteps = trace.some((e) => e.status === 'awaiting_approval');
+  // TEMPORARY PREVIEW: with `PREVIEW_COMPRESS_ALL` on, the toggle is
+  // always relevant (it applies to every step). Restore the original
+  // `trace.some((e) => e.status === 'awaiting_approval')` gate when
+  // reverting the preview.
+  const hasAwaitingSteps = PREVIEW_COMPRESS_ALL
+    ? true
+    : trace.some((e) => e.status === 'awaiting_approval');
 
   // Stable lookup: parallel-fork step → short label index (#1, #2, …) so a
   // branch row can reference its parent without taking up much horizontal room.
@@ -300,11 +316,12 @@ export function ExecutionTimelineStrip({
               </p>
               <p className="text-foreground mt-2 font-medium">Parallel steps</p>
               <p>
-                A <span className="text-purple-600 dark:text-purple-400">Fork #N</span> chip marks a
+                A <span className="text-indigo-600 dark:text-indigo-400">Fork #N</span> chip marks a
                 parallel step that fans out concurrent branches. Each immediate branch is indented
-                with a purple bar on the left and tagged <span className="font-mono">∥N</span>,
+                with an indigo bar on the left and tagged <span className="font-mono">∥N</span>,
                 indicating which fork it belongs to. Branch bars typically share a left edge with
-                the fork — that&apos;s the visual signal of concurrency.
+                the fork — that&apos;s the visual signal of concurrency. (Indigo is reserved for
+                this structural accent; purple bars are reserved for the orchestrator step type.)
               </p>
               <p className="text-foreground mt-2 font-medium">Interaction</p>
               <p>Click any bar to jump to that step in the trace below.</p>
@@ -330,9 +347,13 @@ export function ExecutionTimelineStrip({
                 aria-pressed={compressWaits}
                 data-testid="timeline-compress-waits"
                 title={
-                  compressWaits
-                    ? 'Showing compressed approval waits — click to restore real durations'
-                    : 'Approval waits dominate the timeline — click to collapse them to a fixed-width marker'
+                  PREVIEW_COMPRESS_ALL
+                    ? compressWaits
+                      ? 'PREVIEW: every step compressed to a hashed marker — click to restore real durations'
+                      : 'PREVIEW: compress every step to a hashed marker (normally only awaiting_approval steps)'
+                    : compressWaits
+                      ? 'Showing compressed approval waits — click to restore real durations'
+                      : 'Approval waits dominate the timeline — click to collapse them to a fixed-width marker'
                 }
                 className={cn(
                   'border-border inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors',
@@ -341,7 +362,13 @@ export function ExecutionTimelineStrip({
                     : 'text-muted-foreground hover:bg-muted/60'
                 )}
               >
-                {compressWaits ? 'Compressed waits' : 'Compress waits'}
+                {compressWaits
+                  ? PREVIEW_COMPRESS_ALL
+                    ? 'Compressed all (preview)'
+                    : 'Compressed waits'
+                  : PREVIEW_COMPRESS_ALL
+                    ? 'Compress all (preview)'
+                    : 'Compress waits'}
               </button>
             )}
             <div
@@ -464,13 +491,16 @@ export function ExecutionTimelineStrip({
                         <span
                           className={cn(
                             'flex w-96 shrink-0 flex-wrap items-center gap-1',
+                            // Indigo, not purple — purple is reserved for the
+                            // orchestrator step-type bar fill so the fork/branch
+                            // accent has to read distinctly.
                             parentForkNumber &&
-                              'border-l-2 border-purple-400 pl-1.5 dark:border-purple-600'
+                              'border-l-2 border-indigo-400 pl-1.5 dark:border-indigo-600'
                           )}
                         >
                           {isFork && (
                             <span
-                              className="flex items-center gap-0.5 bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950/60 dark:text-purple-300"
+                              className="flex items-center gap-0.5 bg-indigo-100 px-1 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
                               title={`Parallel fork #${forkNumber} — branches run concurrently`}
                             >
                               <GitBranch className="h-2.5 w-2.5" />
@@ -479,7 +509,7 @@ export function ExecutionTimelineStrip({
                           )}
                           {parentForkNumber !== undefined && (
                             <span
-                              className="text-[10px] text-purple-700 dark:text-purple-300"
+                              className="text-[10px] text-indigo-700 dark:text-indigo-300"
                               title={`Concurrent branch of parallel fork #${parentForkNumber}`}
                             >
                               ∥{parentForkNumber}
