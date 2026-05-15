@@ -41,6 +41,7 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseSseBlock } from '@/lib/api/sse-parser';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import {
   IN_FLIGHT_EXECUTION_STORAGE_KEY,
@@ -67,6 +68,66 @@ function formatAuditAge(iso: string): string {
   if (days < 30) return `${days}d ago`;
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
+}
+
+/**
+ * POST to the execute endpoint and read the SSE stream just long
+ * enough to pull the `workflow_started` event's `executionId` out,
+ * then abort. The execution continues server-side once the engine
+ * has emitted that first event (the row is already persisted) — the
+ * dialog's live-poll picks up state from there. Returns `null` if
+ * the stream closes before workflow_started arrives, which only
+ * happens on an immediate engine error.
+ */
+async function executeAndCaptureId(
+  workflowId: string,
+  inputData: Record<string, unknown>
+): Promise<string | null> {
+  const controller = new AbortController();
+  const res = await fetch(API.ADMIN.ORCHESTRATION.workflowExecute(workflowId), {
+    method: 'POST',
+    credentials: 'include',
+    signal: controller.signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputData }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Workflow execute failed with HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const parsed = parseSseBlock(block);
+        if (parsed?.type === 'workflow_started') {
+          const id = typeof parsed.data.executionId === 'string' ? parsed.data.executionId : null;
+          // Abort the reader — execution row is already persisted, the
+          // engine will keep running, and the dialog's live-poll will
+          // surface progress without us holding the SSE connection open.
+          controller.abort();
+          return id;
+        }
+      }
+    }
+  } finally {
+    // Belt-and-braces — release the reader even if we returned via the
+    // abort path above. cancel() is a no-op once aborted.
+    try {
+      await reader.cancel();
+    } catch {
+      // Reader already cancelled; nothing to do.
+    }
+  }
+  return null;
 }
 
 export function AuditModelsDialog({
@@ -180,24 +241,29 @@ export function AuditModelsDialog({
         })),
       };
 
-      // Execute the workflow. Don't navigate — swap the dialog body
-      // to live progress. The operator can choose to background it
-      // via the footer button, which keeps the localStorage handoff
-      // for the peek banner.
-      const execution = await apiClient.post<{ id: string }>(
-        API.ADMIN.ORCHESTRATION.workflowExecute(workflow.id),
-        { body: { inputData } }
-      );
+      // Execute the workflow. The endpoint returns SSE — not a JSON
+      // `{ id }` — because the engine emits step-level events on the
+      // same connection. We only need the executionId from the very
+      // first event (`workflow_started`), so we read just enough of
+      // the stream to capture it and then abort. The execution keeps
+      // running server-side regardless; the live-poll hook inside
+      // ExecutionProgressInline takes over from there.
+      const executionId = await executeAndCaptureId(workflow.id, inputData);
+      if (!executionId) {
+        setError('Audit started but the server did not return an execution id.');
+        setSubmitting(false);
+        return;
+      }
 
       const startedAt = new Date().toISOString();
       const label = workflow.name ?? workflow.slug;
       setSubmittedExecution({
-        id: execution.id,
+        id: executionId,
         workflowName: label,
         startedAt,
       });
       setInFlight({
-        executionId: execution.id,
+        executionId,
         label,
         startedAt,
       });

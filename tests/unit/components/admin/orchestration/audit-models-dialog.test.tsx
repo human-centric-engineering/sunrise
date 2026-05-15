@@ -105,15 +105,47 @@ const DEFAULT_PROPS = {
   models: [MODEL_OPENAI, MODEL_ANTHROPIC],
 };
 
+/**
+ * Build a Response whose body is a one-frame SSE stream carrying a
+ * single `workflow_started` event. The dialog reads frames until it
+ * sees this one, captures the executionId, and aborts.
+ */
+function sseExecuteResponse(executionId: string): Response {
+  const frame =
+    `event: workflow_started\n` +
+    `data: ${JSON.stringify({ type: 'workflow_started', executionId, workflowId: 'wf-fixture' })}\n\n`;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame));
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+}
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AuditModelsDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The dialog uses raw `fetch` for the workflow execute call (the
+    // endpoint is SSE, not JSON, so `apiClient.post` can't parse it).
+    // Default stub returns a one-frame SSE response with a fixed id;
+    // individual tests override with `fetchMock.mockResolvedValueOnce`
+    // when they need a different id or an error.
+    fetchMock = vi.fn().mockResolvedValue(sseExecuteResponse('exec-456'));
+    vi.stubGlobal('fetch', fetchMock);
+    window.localStorage.clear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -468,7 +500,6 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-456' });
 
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
@@ -485,12 +516,15 @@ describe('AuditModelsDialog', () => {
       });
     });
 
-    it('calls apiClient.post with the workflow execute endpoint after finding workflow', async () => {
+    it('POSTs to the workflow execute endpoint (SSE) once the workflow is resolved', async () => {
+      // The endpoint returns SSE — not JSON — so the dialog reads the
+      // stream just long enough to capture the workflow_started event's
+      // executionId, then aborts. We verify `fetch` was called with the
+      // right URL + body.
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-456' });
 
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
@@ -498,17 +532,17 @@ describe('AuditModelsDialog', () => {
       await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
 
       await waitFor(() => {
-        expect(apiClient.post).toHaveBeenCalledWith(
-          '/api/v1/admin/orchestration/workflows/wf-123/execute',
-          expect.objectContaining({
-            body: expect.objectContaining({
-              inputData: expect.objectContaining({
-                modelIds: expect.arrayContaining([MODEL_OPENAI.id, MODEL_ANTHROPIC.id]),
-              }),
-            }),
-          })
-        );
+        expect(fetchMock).toHaveBeenCalled();
       });
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('/api/v1/admin/orchestration/workflows/wf-123/execute');
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body as string) as {
+        inputData: { modelIds: string[] };
+      };
+      expect(body.inputData.modelIds).toEqual(
+        expect.arrayContaining([MODEL_OPENAI.id, MODEL_ANTHROPIC.id])
+      );
     });
 
     it('swaps the dialog body to live progress and does NOT auto-navigate after submit', async () => {
@@ -520,7 +554,6 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-456' });
 
       const onOpenChange = vi.fn();
       const user = userEvent.setup();
@@ -552,7 +585,7 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-bg' });
+      fetchMock.mockResolvedValueOnce(sseExecuteResponse('exec-bg'));
 
       const onOpenChange = vi.fn();
       const user = userEvent.setup();
@@ -587,7 +620,7 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit', name: 'Provider Model Audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-vfd' });
+      fetchMock.mockResolvedValueOnce(sseExecuteResponse('exec-vfd'));
 
       const onOpenChange = vi.fn();
       const user = userEvent.setup();
@@ -615,7 +648,6 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-xyz', slug: 'tpl-provider-model-audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-789' });
 
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
@@ -623,24 +655,24 @@ describe('AuditModelsDialog', () => {
       await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
 
       await waitFor(() => {
-        expect(apiClient.post).toHaveBeenCalledWith(
-          expect.any(String),
-          expect.objectContaining({
-            body: expect.objectContaining({
-              inputData: expect.objectContaining({
-                models: expect.arrayContaining([
-                  expect.objectContaining({
-                    id: MODEL_OPENAI.id,
-                    name: MODEL_OPENAI.name,
-                    modelId: MODEL_OPENAI.modelId,
-                    providerSlug: MODEL_OPENAI.providerSlug,
-                  }),
-                ]),
-              }),
-            }),
-          })
-        );
+        expect(fetchMock).toHaveBeenCalled();
       });
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string) as {
+        inputData: {
+          models: Array<{ id: string; name: string; modelId: string; providerSlug: string }>;
+        };
+      };
+      expect(body.inputData.models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: MODEL_OPENAI.id,
+            name: MODEL_OPENAI.name,
+            modelId: MODEL_OPENAI.modelId,
+            providerSlug: MODEL_OPENAI.providerSlug,
+          }),
+        ])
+      );
     });
 
     it('only submits the selected models (not all models)', async () => {
@@ -648,7 +680,6 @@ describe('AuditModelsDialog', () => {
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit' },
       ]);
-      vi.mocked(apiClient.post).mockResolvedValue({ id: 'exec-456' });
 
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
@@ -660,11 +691,14 @@ describe('AuditModelsDialog', () => {
       await user.click(screen.getByRole('button', { name: /audit 1 model$/i }));
 
       await waitFor(() => {
-        const postCall = vi.mocked(apiClient.post).mock.calls[0];
-        const body = (postCall[1] as { body: { inputData: { modelIds: string[] } } }).body;
-        expect(body.inputData.modelIds).toEqual([MODEL_OPENAI.id]);
-        expect(body.inputData.modelIds).not.toContain(MODEL_ANTHROPIC.id);
+        expect(fetchMock).toHaveBeenCalled();
       });
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string) as {
+        inputData: { modelIds: string[] };
+      };
+      expect(body.inputData.modelIds).toEqual([MODEL_OPENAI.id]);
+      expect(body.inputData.modelIds).not.toContain(MODEL_ANTHROPIC.id);
     });
   });
 
@@ -748,12 +782,12 @@ describe('AuditModelsDialog', () => {
       expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — guard: redirect must not fire on missing workflow
     });
 
-    it('does not redirect when API POST throws', async () => {
+    it('does not redirect when the execute SSE request fails', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-123', slug: 'tpl-provider-model-audit' },
       ]);
-      vi.mocked(apiClient.post).mockRejectedValue(new Error('Execute failed'));
+      fetchMock.mockRejectedValueOnce(new Error('Execute failed'));
 
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
@@ -764,7 +798,7 @@ describe('AuditModelsDialog', () => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
       });
 
-      expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — guard: redirect must not fire on POST failure
+      expect(mockPush).not.toHaveBeenCalled(); // test-review:accept no_arg_called — guard: redirect must not fire on execute failure
     });
   });
 
