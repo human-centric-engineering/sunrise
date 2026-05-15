@@ -68,8 +68,8 @@ import {
   type TraceFilter,
 } from '@/components/admin/orchestration/execution-trace-filters';
 import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
+import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
-import { z } from 'zod';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -193,13 +193,6 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
       )}
     </Card>
   );
-}
-
-function getApprovalPrompt(trace: ExecutionTraceEntry[]): string | null {
-  const entry = trace.find((e) => e.status === 'awaiting_approval');
-  if (!entry?.output) return null;
-  const parsed = z.object({ prompt: z.string() }).safeParse(entry.output);
-  return parsed.success ? parsed.data.prompt : null;
 }
 
 // ─── Main component ─────────────────────────────────────────────────────────

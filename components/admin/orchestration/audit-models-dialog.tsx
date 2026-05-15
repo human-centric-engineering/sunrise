@@ -9,9 +9,12 @@
  * reference implementation that exercises 10 of 15 orchestration
  * step types end-to-end.
  *
- * On submit, creates a workflow execution via the standard API and
- * redirects to the execution detail page where the existing SSE
- * streaming panel, approval queue, and trace viewer handle the rest.
+ * On submit, creates a workflow execution and swaps the dialog body
+ * from the form to an inline live-progress panel — the dialog stays
+ * open until the operator dismisses it or clicks "Run in background"
+ * (which closes the dialog but hands the execution id to the
+ * orchestration peek-banner via localStorage). "View full details"
+ * navigates to the canonical execution detail page.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -38,6 +41,14 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { parseSseBlock } from '@/lib/api/sse-parser';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
+import {
+  IN_FLIGHT_EXECUTION_STORAGE_KEY,
+  type InFlightExecutionRef,
+} from '@/lib/orchestration/in-flight-execution';
+import { ExecutionProgressInline } from '@/components/admin/orchestration/execution-progress-inline';
+import type { ExecutionLivePayload } from '@/lib/hooks/use-execution-live-poll';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
 
@@ -59,6 +70,80 @@ function formatAuditAge(iso: string): string {
   return `${months}mo ago`;
 }
 
+/**
+ * POST to the execute endpoint and resolve as soon as the SSE stream
+ * yields a `workflow_started` event (the row is already persisted at
+ * that point, so the executionId is stable).
+ *
+ * CRITICAL: do NOT abort the fetch or cancel the reader. The server
+ * route wires `request.signal` into `engine.execute(...)`, so a client
+ * abort propagates all the way down and stops the engine mid-run —
+ * exactly what we don't want. Instead we let the stream keep flowing
+ * in a detached background drain (events are discarded) until the
+ * workflow naturally completes server-side and the stream closes.
+ *
+ * Resolves to null only if the stream closes before workflow_started
+ * arrives, which happens on an immediate engine validation error.
+ */
+async function executeAndCaptureId(
+  workflowId: string,
+  inputData: Record<string, unknown>
+): Promise<string | null> {
+  const res = await fetch(API.ADMIN.ORCHESTRATION.workflowExecute(workflowId), {
+    method: 'POST',
+    credentials: 'include',
+    // NB: no AbortController.signal — see the comment above.
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputData }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Workflow execute failed with HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let executionId: string | null = null;
+
+  // Read frame-by-frame until we see workflow_started; the engine
+  // emits this synchronously after persisting the row, so it arrives
+  // in the first SSE chunk under normal conditions.
+  while (executionId === null) {
+    const { value, done } = await reader.read();
+    if (done) {
+      return null;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed?.type === 'workflow_started' && typeof parsed.data.executionId === 'string') {
+        executionId = parsed.data.executionId;
+        break;
+      }
+    }
+  }
+
+  // Detached drain — keep the SSE alive so the engine isn't aborted,
+  // but discard every subsequent frame. Logs only on unexpected error
+  // (the normal completion path is a graceful end-of-stream).
+  void (async () => {
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // Stream errored — engine likely finished and the connection
+      // tore down. Nothing for the dialog to do here.
+    }
+  })();
+
+  return executionId;
+}
+
 export function AuditModelsDialog({
   open,
   onOpenChange,
@@ -69,6 +154,23 @@ export function AuditModelsDialog({
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Post-submission state — when set, the dialog body swaps from the
+  // model-picker form to the live progress panel. Persists across the
+  // dialog lifecycle: once an execution is started we stay in
+  // "watching" mode until the operator dismisses the dialog or hits
+  // a terminal status.
+  const [submittedExecution, setSubmittedExecution] = useState<{
+    id: string;
+    workflowName: string;
+    startedAt: string;
+  } | null>(null);
+  const [terminalStatus, setTerminalStatus] = useState<string | null>(null);
+
+  const [, setInFlight, clearInFlight] = useLocalStorage<InFlightExecutionRef | null>(
+    IN_FLIGHT_EXECUTION_STORAGE_KEY,
+    null
+  );
 
   const providers = useMemo(() => [...new Set(models.map((m) => m.providerSlug))].sort(), [models]);
 
@@ -111,8 +213,10 @@ export function AuditModelsDialog({
     setError(null);
 
     try {
-      // Find the audit workflow by slug
-      const workflows = await apiClient.get<{ id: string; slug: string }[]>(
+      // Find the audit workflow by slug. `name` is optional in the
+      // response type because older fixtures don't include it; the
+      // banner label falls back to the slug if the row was minimal.
+      const workflows = await apiClient.get<{ id: string; slug: string; name?: string }[]>(
         API.ADMIN.ORCHESTRATION.WORKFLOWS,
         { params: { slug: AUDIT_WORKFLOW_SLUG, limit: 1 } }
       );
@@ -151,25 +255,95 @@ export function AuditModelsDialog({
         })),
       };
 
-      // Execute the workflow
-      const execution = await apiClient.post<{ id: string }>(
-        API.ADMIN.ORCHESTRATION.workflowExecute(workflow.id),
-        { body: { inputData } }
-      );
+      // Execute the workflow. The endpoint returns SSE — not a JSON
+      // `{ id }` — because the engine emits step-level events on the
+      // same connection. We only need the executionId from the very
+      // first event (`workflow_started`), so we read just enough of
+      // the stream to capture it and then abort. The execution keeps
+      // running server-side regardless; the live-poll hook inside
+      // ExecutionProgressInline takes over from there.
+      const executionId = await executeAndCaptureId(workflow.id, inputData);
+      if (!executionId) {
+        setError('Audit started but the server did not return an execution id.');
+        setSubmitting(false);
+        return;
+      }
 
-      onOpenChange(false);
-      router.push(`/admin/orchestration/executions/${execution.id}`);
+      const startedAt = new Date().toISOString();
+      const label = workflow.name ?? workflow.slug;
+      setSubmittedExecution({
+        id: executionId,
+        workflowName: label,
+        startedAt,
+      });
+      setInFlight({
+        executionId,
+        label,
+        startedAt,
+      });
+      setSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start audit');
       setSubmitting(false);
     }
-  }, [selected, models, onOpenChange, router]);
+  }, [selected, models, setInFlight]);
 
   const allFilteredSelected = filtered.every((m) => selected.has(m.id));
 
+  /**
+   * Dialog dismiss semantics — Esc / overlay click / "Run in background"
+   * route through this. Behaviour depends on dialog phase:
+   *   - No execution yet (idle form) → close normally, no localStorage
+   *     side-effect.
+   *   - Execution running → close and KEEP the localStorage handoff so
+   *     the orchestration peek-banner picks the run up.
+   *   - Execution terminal → close AND clear the handoff so a stale
+   *     banner doesn't linger.
+   * `keepInFlight` forces the running-state semantics from the "View
+   * full details" button so the banner survives the navigation.
+   */
+  const handleDismiss = useCallback(
+    (opts?: { keepInFlight?: boolean }) => {
+      const isRunning =
+        submittedExecution !== null && terminalStatus === null && !opts?.keepInFlight;
+      if (submittedExecution && (terminalStatus !== null || opts?.keepInFlight === false)) {
+        clearInFlight();
+      } else if (!isRunning && submittedExecution === null) {
+        // Idle form dismissal — no-op on localStorage.
+      }
+      onOpenChange(false);
+    },
+    [submittedExecution, terminalStatus, clearInFlight, onOpenChange]
+  );
+
+  const initialLivePayload: ExecutionLivePayload | null = submittedExecution
+    ? {
+        snapshot: {
+          id: submittedExecution.id,
+          status: 'pending',
+          currentStep: null,
+          errorMessage: null,
+          totalTokensUsed: 0,
+          totalCostUsd: 0,
+          startedAt: submittedExecution.startedAt,
+          completedAt: null,
+          createdAt: submittedExecution.startedAt,
+        },
+        trace: [],
+        costEntries: [],
+        currentStepDetails: null,
+      }
+    : null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) handleDismiss();
+        else onOpenChange(next);
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] flex-col gap-4 sm:max-w-[920px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="h-5 w-5" />
@@ -193,105 +367,167 @@ export function AuditModelsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Filter */}
-        <div className="flex items-center gap-3">
-          <Select value={providerFilter} onValueChange={setProviderFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by provider" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All providers</SelectItem>
-              {providers.map((p) => (
-                <SelectItem key={p} value={p} className="capitalize">
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-2">
+          {submittedExecution && initialLivePayload ? (
+            <ExecutionProgressInline
+              executionId={submittedExecution.id}
+              initialPayload={initialLivePayload}
+              onTerminal={(status) => setTerminalStatus(status)}
+            />
+          ) : (
+            <>
+              {/* Filter */}
+              <div className="flex items-center gap-3">
+                <Select value={providerFilter} onValueChange={setProviderFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All providers</SelectItem>
+                    {providers.map((p) => (
+                      <SelectItem key={p} value={p} className="capitalize">
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-          <Button variant="ghost" size="sm" onClick={toggleAll}>
-            {allFilteredSelected ? 'Deselect all' : 'Select all'}
-          </Button>
+                <Button variant="ghost" size="sm" onClick={toggleAll}>
+                  {allFilteredSelected ? 'Deselect all' : 'Select all'}
+                </Button>
 
-          <span className="text-muted-foreground ml-auto text-sm">
-            {selected.size} of {models.length} selected
-          </span>
-        </div>
+                <span className="text-muted-foreground ml-auto text-sm">
+                  {selected.size} of {models.length} selected
+                </span>
+              </div>
 
-        {/* Model list */}
-        <div className="max-h-[300px] overflow-y-auto rounded-md border">
-          {filtered.length === 0 && (
-            <p className="text-muted-foreground p-4 text-center text-sm">
-              No models match the selected provider filter.
-            </p>
-          )}
-          <div className="divide-y">
-            {filtered.map((model) => (
-              <div
-                key={model.id}
-                role="button"
-                tabIndex={0}
-                className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
-                onClick={() => toggleModel(model.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleModel(model.id);
-                  }
-                }}
-              >
-                <Checkbox
-                  checked={selected.has(model.id)}
-                  onCheckedChange={() => toggleModel(model.id)}
-                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                  aria-label={`Select ${model.name} for audit`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{model.name}</span>
-                    <Badge variant="secondary" className="shrink-0 text-[10px]">
-                      {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
-                    </Badge>
-                    {model.capabilities.includes('embedding') && (
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                      >
-                        Embedding
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-xs">
-                      {model.providerSlug} / {model.modelId}
-                    </span>
-                    <span className="text-muted-foreground/50 text-[10px]">
-                      {model.metadata?.lastAudit?.timestamp
-                        ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
-                        : 'Never audited'}
-                    </span>
-                  </div>
+              {/* Model list */}
+              <div className="max-h-[300px] overflow-y-auto rounded-md border">
+                {filtered.length === 0 && (
+                  <p className="text-muted-foreground p-4 text-center text-sm">
+                    No models match the selected provider filter.
+                  </p>
+                )}
+                <div className="divide-y">
+                  {filtered.map((model) => (
+                    <div
+                      key={model.id}
+                      role="button"
+                      tabIndex={0}
+                      className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
+                      onClick={() => toggleModel(model.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleModel(model.id);
+                        }
+                      }}
+                    >
+                      <Checkbox
+                        checked={selected.has(model.id)}
+                        onCheckedChange={() => toggleModel(model.id)}
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                        aria-label={`Select ${model.name} for audit`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium">{model.name}</span>
+                          <Badge variant="secondary" className="shrink-0 text-[10px]">
+                            {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
+                          </Badge>
+                          {model.capabilities.includes('embedding') && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                            >
+                              Embedding
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground text-xs">
+                            {model.providerSlug} / {model.modelId}
+                          </span>
+                          <span className="text-muted-foreground/50 text-[10px]">
+                            {model.metadata?.lastAudit?.timestamp
+                              ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
+                              : 'Never audited'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
+
+              {error && (
+                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                  {error}
+                </p>
+              )}
+            </>
+          )}
         </div>
 
-        {error && (
-          <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-            {error}
-          </p>
-        )}
-
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button onClick={() => void handleSubmit()} disabled={submitting || selected.size === 0}>
-            {submitting
-              ? 'Starting audit...'
-              : `Audit ${selected.size} model${selected.size !== 1 ? 's' : ''}`}
-          </Button>
+          {submittedExecution ? (
+            terminalStatus === null ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleDismiss()}
+                  data-testid="audit-run-in-background"
+                >
+                  Run in background
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    handleDismiss({ keepInFlight: true });
+                    router.push(`/admin/orchestration/executions/${submittedExecution.id}`);
+                  }}
+                  data-testid="audit-view-full-details"
+                >
+                  View full details
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleDismiss()}
+                  data-testid="audit-close-after-terminal"
+                >
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    handleDismiss();
+                    router.push(`/admin/orchestration/executions/${submittedExecution.id}`);
+                  }}
+                >
+                  Open detail page
+                </Button>
+              </>
+            )
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => handleDismiss()} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleSubmit()}
+                disabled={submitting || selected.size === 0}
+              >
+                {submitting
+                  ? 'Starting audit...'
+                  : `Audit ${selected.size} model${selected.size !== 1 ? 's' : ''}`}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

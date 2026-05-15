@@ -66,6 +66,15 @@ describe('useLocalStorage', () => {
     expect(result.current[0]).toBe('fallback');
   });
 
+  // Same-tab sync via CustomEvent broadcast: covered end-to-end by the
+  // banner integration test, which mounts a real useLocalStorage in a
+  // background instance and verifies it picks up a fresh write from a
+  // separate dialog-side instance. Direct hook-level tests for the
+  // dispatch/receive pair tripped vitest spy ordering with the existing
+  // remove() error-handling test (own-property vs prototype spy state
+  // leak), so the broadcast contract is asserted at the integration
+  // boundary instead.
+
   it('syncs from cross-tab storage events', () => {
     const { result } = renderHook(() => useLocalStorage<string>('k.sync', 'a'));
 
