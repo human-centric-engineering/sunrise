@@ -58,6 +58,20 @@ The validator catches cycles (`CYCLE_DETECTED`) but does **not** identify which 
 
 When a `human_approval` step is reached, the execution status changes to `paused_for_approval`. The **entire workflow** pauses — no other steps execute until the approval is resolved. Plan accordingly for time-sensitive workflows.
 
+## `human_approval` `prompt` Interpolates Templates And Renders As Markdown
+
+Earlier engine versions passed `step.config.prompt` to the approval payload verbatim, so `{{stepId.output}}` references appeared as raw mustache syntax to the admin. Fixed 2026-05-16 — the prompt is now run through `interpolatePrompt(prompt, ctx)` just like `llm_call`, so it can reference accumulated outputs from earlier steps. Missing references expand to empty string (same as the template engine elsewhere), so a typo won't block the pause.
+
+The prompt is also **rendered as markdown** in the approvals queue and the execution detail view's amber card — headings, bulleted instructions, fenced code, GFM tables all work. Raw HTML in the prompt source renders as inert text (no `rehype-raw`); no XSS surface added by markdown rendering.
+
+Practical implication: write `human_approval` prompts as if they're admin-facing documentation. Markdown structure + interpolated upstream outputs gives reviewers a much more useful card than a plain paragraph.
+
+## `expectedSkip: true` Tones Down Routine Optional Skips
+
+When a step uses `errorStrategy: 'skip'` and you _expect_ the skip to fire under normal operation (missing env var, vendor offline, optional enrichment), set `expectedSkip: true` in the step config. The trace entry then renders as `Optional step skipped: <reason>` in muted text rather than the standard skip styling, and the expanded view uses a slate "Skip reason" pane instead of the red "Error" pane. The reason is preserved either way; the flag only suppresses alarmist styling. Default `false`.
+
+Use it for optional-by-design steps (e.g. the Brave Search enrichment in the audit workflow that's skipped when `BRAVE_SEARCH_API_KEY` is absent). Don't use it to silence skips that actually represent broken integrations — a "permission denied" skip from a misconfigured API key is the kind of thing you want to look red.
+
 ## orchestrator Step Agent References
 
 The `orchestrator` step's `availableAgentSlugs` must reference **existing, active agents**. The semantic validator checks this, but only on save — if an agent is deactivated after the workflow is saved, the orchestrator step will fail at runtime.
@@ -85,6 +99,30 @@ Workflows are immutable-versioned. `PATCH /workflows/:id` writes to `draftDefini
 ## `external_call` Body Modes Are Mutually Exclusive
 
 `bodyTemplate` (string) and `multipart` (structured file/field shape) cannot both be set on the same `external_call` step — Zod refine rejects it. HMAC auth paired with `multipart` is rejected at execute time as `multipart_hmac_unsupported` (the boundary varies, so signatures aren't deterministic). Pick HMAC + `bodyTemplate`, or non-HMAC + `multipart`.
+
+## `external_call` `authType` Must Match The Vendor's Actual Header Contract
+
+`authType: 'bearer'` sends `Authorization: Bearer <key>`. Most vendors accept that, but several use a custom header instead, and they reject bearer with a 401/403/422. Observed failure (2026-05-16): the Brave Search call in `tpl-provider-model-audit` was configured with `authType: 'bearer'` and returned
+
+```
+HTTP 422 — Field required at ["header","x-subscription-token"]
+```
+
+because Brave reads the API key from `X-Subscription-Token`, not from `Authorization`.
+
+**Fix shape:** Use `authType: 'api-key'` with `apiKeyHeaderName` set to the vendor's header name. Some known patterns:
+
+| Vendor             | `authType`               | `apiKeyHeaderName`              |
+| ------------------ | ------------------------ | ------------------------------- |
+| Brave Search       | `api-key`                | `X-Subscription-Token`          |
+| Postmark           | `api-key`                | `X-Postmark-Server-Token`       |
+| Anthropic / OpenAI | `bearer`                 | _(unused — uses Authorization)_ |
+| SendGrid           | `bearer`                 | _(unused)_                      |
+| AWS SigV4 services | `hmac` or pre-signed URL | _(custom)_                      |
+
+**Diagnostic.** A 401/403/422 with a body that names a specific missing header (`Field required: x-subscription-token`, `Missing X-Postmark-Server-Token`) is the unambiguous signal — the gateway tells you exactly which header it expected. Read the body before blaming the env var or scope.
+
+**When in doubt** consult the vendor's "authentication" docs page; almost every API ships one and it lists the canonical header name on the first paragraph.
 
 ## `agent_call` Multi-Turn Mode Falls Back On Re-Drive
 
