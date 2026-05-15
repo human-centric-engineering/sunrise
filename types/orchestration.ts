@@ -392,6 +392,13 @@ export interface ExecutionTraceEntry {
   status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval' | 'rejected';
   output: unknown;
   error?: string;
+  /**
+   * Set by the engine when a skipped step's config carries
+   * `expectedSkip: true`. Lets the trace viewer style routine optional
+   * skips (missing API key, missing allowlist host) differently from
+   * unexpected failures that happened to land on a `skip` strategy.
+   */
+  expectedSkip?: boolean;
   tokensUsed: number;
   costUsd: number;
   startedAt: string;
@@ -440,6 +447,40 @@ export interface ExecutionTraceEntry {
    * preserved in the trace for the admin viewer.
    */
   turns?: TurnEntry[];
+}
+
+/**
+ * One decided human-approval step, flattened for the admin history view.
+ * Derived from the `human_approval` trace entries on a workflow execution
+ * after they've transitioned out of `awaiting_approval`. Multiple rows can
+ * come from a single execution if its workflow has more than one approval
+ * gate.
+ */
+export interface ApprovalHistoryEntry {
+  /** Synthetic id: `<executionId>:<stepId>`. Stable across pagination. */
+  id: string;
+  executionId: string;
+  workflowId: string;
+  workflowName: string;
+  stepId: string;
+  stepLabel: string;
+  decision: 'approved' | 'rejected';
+  /** Coarse-grained channel the decision came in through. */
+  medium: 'admin' | 'token-external' | 'token-chat' | 'token-embed' | 'unknown';
+  /** Resolved when `medium === 'admin'` and the user still exists. */
+  approverUserId: string | null;
+  approverName: string | null;
+  /** Raw `actor` value from the trace entry's output (debugging surface). */
+  actorLabel: string | null;
+  /** Optional admin notes (approve) or required reason (reject). */
+  notes: string | null;
+  reason: string | null;
+  /** When the engine paused execution and asked for a decision. */
+  askedAt: string;
+  /** When the decision was recorded. */
+  decidedAt: string;
+  /** `decidedAt - askedAt`, in milliseconds. */
+  waitDurationMs: number;
 }
 
 /**
@@ -496,6 +537,13 @@ export interface StepResult {
    * parallel batch handler can emit a `step_failed` SSE event.
    */
   skipError?: string;
+  /**
+   * Mirrors `step.config.expectedSkip`. When true, the workflow author
+   * explicitly marked this skip as routine (e.g. an optional enrichment
+   * step whose dependency is missing); the engine carries it onto the
+   * trace entry so the viewer can tone the row down.
+   */
+  expectedSkip?: boolean;
 }
 
 /** Minimal summary of a workflow execution row, for list views. */

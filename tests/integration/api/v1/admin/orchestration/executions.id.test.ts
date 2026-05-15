@@ -75,6 +75,9 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
       },
     ],
     currentStep: 'step2',
+    currentStepLabel: 'Analyse',
+    currentStepType: 'llm_call',
+    currentStepStartedAt: new Date('2025-01-01T00:00:02Z'),
     errorMessage: null,
     totalTokensUsed: 10,
     totalCostUsd: 0.01,
@@ -175,6 +178,53 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.trace[0].stepId).toBe('step1');
     // No cost logs configured for this case → empty costEntries.
     expect(data.data.costEntries).toEqual([]);
+  });
+
+  it('returns currentStepDetails for a running execution with live columns set', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{ data: { currentStepDetails: Record<string, unknown> | null } }>(
+      response
+    );
+
+    expect(data.data.currentStepDetails).toEqual({
+      stepId: 'step2',
+      label: 'Analyse',
+      stepType: 'llm_call',
+      startedAt: '2025-01-01T00:00:02.000Z',
+    });
+  });
+
+  it('returns null currentStepDetails when status is terminal', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        status: 'completed',
+        currentStepLabel: null,
+        currentStepType: null,
+        currentStepStartedAt: null,
+      }) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
+    expect(data.data.currentStepDetails).toBeNull();
+  });
+
+  it('returns null currentStepDetails when live columns are partially populated', async () => {
+    // Defensive: if the engine ever writes some columns but not others
+    // (e.g. crash mid-update), the route shouldn't render a half-broken
+    // running indicator — it must return null.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ currentStepType: null }) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
+    expect(data.data.currentStepDetails).toBeNull();
   });
 
   it('returns costEntries from AiCostLog, keyed by metadata.stepId', async () => {

@@ -68,7 +68,7 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 { "prompt": "", "timeoutMinutes": 60, "notificationChannel": "in-app" }
 ```
 
-- `prompt` — required; displayed to the reviewer
+- `prompt` — required; displayed to the reviewer. **Supports `{{stepId.output}}` template interpolation** (same as `llm_call`) so the prompt can show accumulated outputs from earlier steps. **Rendered as markdown** in both the approvals queue and the execution detail view — headings, bulleted instructions, fenced code blocks all render as expected. Raw HTML is NOT rendered (no XSS surface).
 - `timeoutMinutes` — how long before the approval times out
 - `notificationChannel` — `"in-app"` or `"email"`
 
@@ -81,6 +81,14 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 - `rules` — safety rules to check against (required)
 - `mode` — `"llm"` (LLM evaluates) or `"regex"` (regex pattern matching)
 - `failAction` — `"block"` (stop workflow) or `"flag"` (continue with warning)
+
+**`mode: 'llm'` authoring rules:**
+
+- If a rule references a closed set ("must be a recognised X", "field name must be valid"), **enumerate the set in the prompt** — the LLM cannot read your schema. Source the list from the same constant the downstream apply step uses (`import { … } from '@/lib/orchestration/capabilities/built-in/…'`) so the two cannot drift.
+- Backtick-wrap literal identifier values (`` `bestRole` ``) so the model parses them as strings, not natural-language nouns.
+- For purely structural checks (enum-in-set, regex shape, presence/absence), prefer `mode: 'regex'` or a deterministic capability over an LLM guard. LLM mode is for fuzzy judgments (tone, on-topic, plausibility), not closed-set membership.
+
+See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the failure mode this guards against.
 
 ### evaluate
 
@@ -128,7 +136,7 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 }
 ```
 
-- `url` — endpoint URL (required). Supports `${env:VAR}` templates resolved at call time.
+- `url` — endpoint URL (required). Supports `${env:VAR}` templates resolved at call time and `{{stepId.output}}` interpolation. **Avoid interpolating large step outputs into query parameters** — vendors typically cap individual params (Brave Search caps `q` at 400 chars; most APIs are stricter than the 2,048-char HTTP URL practical limit). For payloads that might exceed ~200 chars, use a `POST` with `bodyTemplate` or pre-summarise the upstream output in an `llm_call`. See `gotchas.md` → _"`external_call` URL Query Strings Respect Vendor Length Limits"_.
 - `method` — `GET` / `POST` / `PUT` / `PATCH` / `DELETE`.
 - `headers` — optional headers object. Values support `${env:VAR}` templating.
 - `bodyTemplate` — optional string body (supports `{{stepId.output}}` templates). **Mutually exclusive with `multipart`.**
@@ -136,12 +144,19 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 - `timeoutMs` — request timeout.
 - `authType` — `none` / `bearer` / `api-key` / `query-param` / `basic` / `hmac`. (Note: hyphenated, not `api_key`.)
 - `authSecret` — env var name containing the secret. The literal `${env:VAR}` stays in config; resolved on every call. Missing env var → `missing_env_var` at execute time.
-- `apiKeyHeaderName` — header name when `authType: 'api-key'` (default `X-API-Key`; set for vendors like Postmark's `X-Postmark-Server-Token`).
+- `apiKeyHeaderName` — header name when `authType: 'api-key'` (default `X-API-Key`). Set this for vendors whose contract requires a non-standard header. **Always read the vendor's docs** — getting it wrong yields a 401/403/422 with a body like `Field required: x-subscription-token`. Known examples:
+  - Brave Search → `X-Subscription-Token`
+  - Postmark → `X-Postmark-Server-Token`
+  - SendGrid → uses `Authorization: Bearer <key>` (`authType: 'bearer'`, not `api-key`)
+  - Anthropic / OpenAI → `Authorization: Bearer <key>` (`authType: 'bearer'`)
+  - AWS SigV4 services → not directly supported; use `authType: 'hmac'` or a pre-signed URL.
 - `authQueryParam` — query-param name when `authType: 'query-param'` (default `api_key`).
 - `hmacHeaderName`, `hmacAlgorithm` (`sha256` / `sha512`), `hmacBodyTemplate` — HMAC config when `authType: 'hmac'`. Template tokens: `{method}`, `{path}`, `{body}`.
 - `idempotencyKey` — `"auto"` generates a UUID per call; any other string is used verbatim. The crash-recovery dispatch cache derives a key automatically if you don't set one.
 - `idempotencyKeyHeader` — header name for the idempotency key (default `Idempotency-Key`).
 - `responseTransform` — optional JMESPath or Handlebars expression to extract data from the response.
+- `errorStrategy` — per-step error behaviour. For optional enrichment calls (e.g. third-party search APIs that may be missing an env var) use `'skip'` so the workflow continues with `null` output instead of failing.
+- `expectedSkip` — set `true` on optional steps that you actively expect to skip in normal operation (missing API key, vendor offline, etc.). When the `'skip'` strategy fires on such a step, the trace entry renders as `Optional step skipped: <reason>` in muted text rather than the standard skip styling, and the expanded view uses a slate "Skip reason" pane instead of the red "Error" pane. Default `false` — the flag only tones down styling, it never suppresses the diagnostic. Available on any step type that accepts an `errorStrategy`.
 
 ## Output Steps
 

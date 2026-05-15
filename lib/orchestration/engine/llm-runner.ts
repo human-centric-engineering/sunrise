@@ -213,11 +213,28 @@ export async function runLlmCall(
  * template-engine behaviour and keeps executors from needing to
  * understand template failures.
  */
+export interface InterpolateOptions {
+  /**
+   * How object/array values are stringified when an interpolation
+   * expands to a non-string.
+   *   - `'plain'` (default): `JSON.stringify(value)` — compact single
+   *     line, suitable for LLM prompts where token efficiency matters.
+   *   - `'markdown'`: pretty-printed JSON wrapped in a fenced
+   *     ```json``` block. Suitable for prompts that get rendered as
+   *     markdown to humans (e.g. the human_approval step's prompt
+   *     shown to admins in the approval queue).
+   */
+  format?: 'plain' | 'markdown';
+}
+
 export function interpolatePrompt(
   template: string,
   ctx: Readonly<ExecutionContext>,
-  previousStepId?: string
+  previousStepId?: string,
+  options?: InterpolateOptions
 ): string {
+  const stringify = options?.format === 'markdown' ? stringifyMarkdownValue : stringifyValue;
+
   // First pass: resolve flat `{{#if EXPR}}BODY{{/if}}` conditionals.
   // Body match is non-greedy so multiple flat conditionals on the same
   // line each terminate at their own `{{/if}}`.
@@ -237,30 +254,31 @@ export function interpolatePrompt(
     const expr = rawExpr.trim();
 
     if (expr === 'input') {
-      return typeof ctx.inputData === 'string'
-        ? (ctx.inputData as string)
-        : JSON.stringify(ctx.inputData);
+      // `input` is special: when ctx.inputData is a primitive string we
+      // emit it raw (no JSON quoting); otherwise stringify through the
+      // configured stringifier so markdown callers get a fenced block.
+      return typeof ctx.inputData === 'string' ? ctx.inputData : stringify(ctx.inputData);
     }
 
     if (expr.startsWith('input.')) {
       const key = expr.slice('input.'.length);
       const value = ctx.inputData[key];
-      return stringifyValue(value);
+      return stringify(value);
     }
 
     if (expr === 'previous.output') {
       if (!previousStepId) return '';
-      return stringifyValue(ctx.stepOutputs[previousStepId]);
+      return stringify(ctx.stepOutputs[previousStepId]);
     }
 
     if (expr.startsWith('vars.')) {
-      return stringifyValue(resolveDottedPath(ctx.variables, expr.slice('vars.'.length)));
+      return stringify(resolveDottedPath(ctx.variables, expr.slice('vars.'.length)));
     }
 
     const dotIdx = expr.lastIndexOf('.');
     if (dotIdx > 0 && expr.slice(dotIdx + 1) === 'output') {
       const stepId = expr.slice(0, dotIdx);
-      return stringifyValue(ctx.stepOutputs[stepId]);
+      return stringify(ctx.stepOutputs[stepId]);
     }
 
     return '';
@@ -293,6 +311,50 @@ function stringifyValue(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   try {
     return JSON.stringify(value) ?? '';
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+/**
+ * Markdown-aware variant. Pretty-prints object/array values and wraps
+ * them in a fenced ```json``` block so they render as a readable code
+ * block when the interpolated prompt is shown through a markdown
+ * renderer. Strings that happen to parse as JSON are unwrapped first
+ * — this is a common pattern for upstream LLM steps that emit
+ * stringified JSON (e.g. the `reflect` step's `finalDraft` field). All
+ * other primitive values stringify as-is.
+ */
+function stringifyMarkdownValue(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+
+  if (typeof value === 'string') {
+    // Detect a string that's actually JSON-encoded structured data
+    // (object or array) and unwrap so we render the structure rather
+    // than the escaped one-line form. Plain strings pass through.
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (parsed !== null && typeof parsed === 'object') {
+          return fencedJson(parsed);
+        }
+      } catch {
+        // not JSON — fall through to the raw string path
+      }
+    }
+    return value;
+  }
+
+  return fencedJson(value);
+}
+
+function fencedJson(value: unknown): string {
+  try {
+    const body = JSON.stringify(value, null, 2);
+    if (body === undefined) return '';
+    return `\n\n\`\`\`json\n${body}\n\`\`\`\n\n`;
   } catch {
     return '[unserializable]';
   }

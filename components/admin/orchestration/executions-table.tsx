@@ -181,7 +181,7 @@ export function ExecutionsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Execution</TableHead>
+              <TableHead>Execution ID</TableHead>
               <TableHead>Workflow</TableHead>
               <TableHead>
                 <Tip label="Current execution status">

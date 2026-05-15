@@ -165,3 +165,32 @@ export function slowOutlierThresholdMs(trace: ExecutionTraceEntry[]): number | n
   const sorted = trace.map((e) => e.durationMs).sort((a, b) => a - b);
   return percentile(sorted, 90);
 }
+
+/**
+ * Membership map for parallel fan-out branches.
+ *
+ * For each `parallel` step in the trace, the executor records its
+ * immediate branch children in `output.branches`. We harvest those into a
+ * map of `branchStepId → parentParallelStepId` so the timeline strip and
+ * detail rows can visually group siblings that ran concurrently.
+ *
+ * Caveat: this only captures immediate branch children. If a branch is a
+ * multi-step chain, the downstream steps in that chain are not tagged —
+ * the workflow graph would be needed for that.
+ */
+export function buildParallelBranchMap(trace: ExecutionTraceEntry[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const entry of trace) {
+    if (entry.stepType !== 'parallel') continue;
+    const out = entry.output;
+    if (out === null || typeof out !== 'object') continue;
+    const branches = (out as { branches?: unknown }).branches;
+    if (!Array.isArray(branches)) continue;
+    for (const branchId of branches) {
+      if (typeof branchId === 'string') {
+        map.set(branchId, entry.stepId);
+      }
+    }
+  }
+  return map;
+}

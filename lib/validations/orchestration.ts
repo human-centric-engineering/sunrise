@@ -1597,6 +1597,24 @@ export const listExecutionsQuerySchema = paginationQuerySchema.extend({
 });
 
 /**
+ * Query schema for the admin approval-history endpoint.
+ *
+ * `format=csv` switches the response to a CSV attachment and bypasses
+ * pagination — exports always include every matching row up to
+ * `MAX_HISTORY_ROWS` in the route. JSON requests are paginated.
+ */
+export const approvalHistoryQuerySchema = paginationQuerySchema.extend({
+  decision: z.enum(['approved', 'rejected']).optional(),
+  medium: z.enum(['admin', 'token']).optional(),
+  q: z.string().trim().max(200).optional(),
+  dateFrom: z.coerce.date().optional(),
+  dateTo: z.coerce.date().optional(),
+  format: z.enum(['json', 'csv']).optional(),
+});
+
+export type ApprovalHistoryQuery = z.infer<typeof approvalHistoryQuerySchema>;
+
+/**
  * Execute workflow request body (POST /workflows/[id]/execute).
  *
  * Distinct from `workflowExecutionSchema` which also carries `workflowId`;
@@ -2291,6 +2309,9 @@ export const executionTraceEntrySchema = z
     status: z.enum(['completed', 'failed', 'skipped', 'awaiting_approval', 'rejected']),
     output: z.unknown(),
     error: z.string().optional(),
+    // Set by the engine when a skipped step opted into `expectedSkip` —
+    // i.e. the workflow author marked the skip as part of the happy path.
+    expectedSkip: z.boolean().optional(),
     tokensUsed: z.number(),
     costUsd: z.number(),
     startedAt: z.string(),
@@ -2358,6 +2379,14 @@ export const stepErrorConfigSchema = z.object({
   /** Per-step execution timeout in milliseconds. When exceeded, the step
    *  fails with code 'step_timeout'. The error strategy still applies. */
   timeoutMs: z.number().int().positive().optional(),
+  /**
+   * Opt-in marker that a `skip` outcome is part of the workflow's normal
+   * happy path — e.g. an optional enrichment step whose dependency
+   * (allowed-hosts entry, API key) is missing. The engine still records
+   * the skip and its reason; the trace UI tones the row down so genuine
+   * failures stand out. Only meaningful when `errorStrategy: 'skip'`.
+   */
+  expectedSkip: z.boolean().optional(),
 });
 
 /** Structured output format for LLM calls. */

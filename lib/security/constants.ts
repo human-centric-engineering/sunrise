@@ -3,7 +3,19 @@
  *
  * Centralized configuration for security features.
  * These values follow OWASP recommendations and industry best practices.
+ *
+ * A few rate limits can be tuned via env vars (use in `.env.local` to
+ * loosen them on dev without touching prod):
+ *   - `RATE_LIMIT_API`   — overrides default 100/min for general API
+ *   - `RATE_LIMIT_ADMIN` — overrides default 30/min for admin endpoints
  */
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 export const SECURITY_CONSTANTS = {
   /**
@@ -19,10 +31,10 @@ export const SECURITY_CONSTANTS = {
     LIMITS: {
       /** Auth endpoints: 5 attempts per minute */
       AUTH: 5,
-      /** General API: 100 requests per minute */
-      API: 100,
-      /** Admin endpoints: 30 requests per minute */
-      ADMIN: 30,
+      /** General API: 100 requests per minute (override with `RATE_LIMIT_API`) */
+      API: envInt('RATE_LIMIT_API', 100),
+      /** Admin endpoints: 30 requests per minute (override with `RATE_LIMIT_ADMIN`) */
+      ADMIN: envInt('RATE_LIMIT_ADMIN', 30),
       /** Password reset: 3 attempts per 15 minutes */
       PASSWORD_RESET: 3,
       /** Password reset window: 15 minutes */

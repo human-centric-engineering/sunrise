@@ -214,23 +214,23 @@ Each executor self-registers at module import. The barrel at `executors/index.ts
 
 Fifteen executors:
 
-| Type                | File                | Reuses                                                                    |
-| ------------------- | ------------------- | ------------------------------------------------------------------------- |
-| `llm_call`          | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                |
-| `tool_call`         | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                         |
-| `chain`             | `chain.ts`          | pass-through — real work is on child steps                                |
-| `route`             | `route.ts`          | classifier LLM + DAG branch selection                                     |
-| `parallel`          | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled |
-| `reflect`           | `reflect.ts`        | inner step + critic loop up to N iterations                               |
-| `plan`              | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                              |
-| `human_approval`    | `human-approval.ts` | throws `PausedForApproval`                                                |
-| `rag_retrieve`      | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                             |
-| `guard`             | `guard.ts`          | LLM or regex safety check, routes pass/fail                               |
-| `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                  |
-| `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers      |
-| `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`          |
-| `send_notification` | `notification.ts`   | email or webhook notification with templated content                      |
-| `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`           |
+| Type                | File                | Reuses                                                                                                                |
+| ------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `llm_call`          | `llm-call.ts`       | `getProvider().chatStream()` + `logCost()`                                                                            |
+| `tool_call`         | `tool-call.ts`      | `capabilityDispatcher.dispatch()`                                                                                     |
+| `chain`             | `chain.ts`          | pass-through — real work is on child steps                                                                            |
+| `route`             | `route.ts`          | classifier LLM + DAG branch selection                                                                                 |
+| `parallel`          | `parallel.ts`       | fan-out marker — walker runs branches concurrently via Promise.allSettled                                             |
+| `reflect`           | `reflect.ts`        | inner step + critic loop up to N iterations                                                                           |
+| `plan`              | `plan.ts`           | LLM planner → stores plan on `ctx.variables`                                                                          |
+| `human_approval`    | `human-approval.ts` | runs `prompt` through `interpolatePrompt(prompt, ctx)` then throws `PausedForApproval` carrying the interpolated text |
+| `rag_retrieve`      | `rag-retrieve.ts`   | `searchKnowledge()` from the knowledge module                                                                         |
+| `guard`             | `guard.ts`          | LLM or regex safety check, routes pass/fail                                                                           |
+| `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                                                              |
+| `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers                                                  |
+| `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`                                                      |
+| `send_notification` | `notification.ts`   | email or webhook notification with templated content                                                                  |
+| `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`                                                       |
 
 ## Error strategies
 
@@ -391,6 +391,8 @@ If the `[]` clear-write itself fails AND the host then crashes before attempt N+
 - `pauseForApproval()` returns early on `count: 0` — no approval notification dispatch, no `workflow.paused_for_approval` hook, no `approval_required` webhook. Otherwise the user would receive an approval card for a row another host now owns; clicking it would surface a confusing "approval no longer pending" error.
 - `checkpoint()` logs the warn but lets execution drain — its writes are no-ops anyway and the run will tip into the suppressed-terminal path on the next finalize.
 - `markCurrentStep()` is non-fatal-by-design: it now logs a `warn` on DB throw (was silently swallowed), so connection-pool exhaustion or driver errors surface immediately rather than hiding for minutes until the next checkpoint.
+
+**Live-running step columns.** `markCurrentStep()` writes three companion columns on `AiWorkflowExecution` alongside `currentStep`: `currentStepLabel`, `currentStepType`, and `currentStepStartedAt`. They feed the execution detail page's live-running indicator — the UI polls them so it can render the in-flight step's friendly label and ticking elapsed time without parsing the workflow version snapshot per request. `finalize()` clears all three on terminal transitions so completed rows don't show a stale Running pill. Migration: `20260515000000_execution_current_step_meta`. During a `parallel` fan-out the last-write-wins on these columns (same caveat as `currentStep` itself) — the UI's running indicator tracks whichever branch the engine most recently entered.
 
 This closes the duplicate-terminal-event race that orphan handoff would otherwise produce. **AT MOST ONE host emits a terminal event for a given execution.**
 

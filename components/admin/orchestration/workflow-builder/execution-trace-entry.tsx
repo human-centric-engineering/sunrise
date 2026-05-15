@@ -8,17 +8,25 @@
 
 import { useState } from 'react';
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock,
+  Copy,
+  GitBranch,
   Loader2,
   RotateCcw,
   XCircle,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getStepMetadata, type StepCategory } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
+import { isMarkdown } from '@/lib/utils/is-markdown';
+import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
+import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 const RETRY_PILL_CLASS =
@@ -49,6 +57,12 @@ export interface ExecutionTraceEntryRowProps {
   status: Status;
   output?: unknown;
   error?: string;
+  /**
+   * Set by the engine when a skipped step's config opted into
+   * `expectedSkip`. Tells the row to render the skip in muted slate
+   * styling instead of treating it as an unexpected failure.
+   */
+  expectedSkip?: boolean;
   tokensUsed?: number;
   costUsd?: number;
   durationMs?: number;
@@ -71,6 +85,24 @@ export interface ExecutionTraceEntryRowProps {
   highlighted?: boolean;
   /** Fires when the user clicks "Retry" on a failed step. */
   onRetry?: (stepId: string) => void;
+  /**
+   * Parallel fan-out grouping. When this row is the fork step itself,
+   * `forkNumber` is set. When this row is an immediate branch of a fork,
+   * `parallelBranchOfNumber` carries the fork's number so the row can show
+   * a "branch of fork #N" chip and an indigo left-rail. Both are derived
+   * via `buildParallelBranchMap` in the parent view. (Indigo is reserved
+   * for this structural accent; the orchestrator step type owns purple.)
+   */
+  forkNumber?: number;
+  parallelBranchOfNumber?: number;
+  /**
+   * Controlled expand state. When provided, the row is in controlled mode
+   * and the parent owns which entry is open — used to enforce
+   * single-open accordion behaviour across the trace list. When omitted,
+   * the row manages its own toggle locally (legacy behaviour).
+   */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 const STATUS_STYLES: Record<Status, { icon: React.ElementType; colour: string; text: string }> = {
@@ -89,6 +121,7 @@ export function ExecutionTraceEntryRow({
   status,
   output,
   error,
+  expectedSkip,
   tokensUsed = 0,
   costUsd = 0,
   durationMs,
@@ -102,8 +135,22 @@ export function ExecutionTraceEntryRow({
   retries,
   highlighted,
   onRetry,
+  forkNumber,
+  parallelBranchOfNumber,
+  expanded: expandedProp,
+  onExpandedChange,
 }: ExecutionTraceEntryRowProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedInternal, setExpandedInternal] = useState(false);
+  const isControlled = expandedProp !== undefined;
+  const expanded = isControlled ? expandedProp : expandedInternal;
+  const toggleExpanded = () => {
+    const next = !expanded;
+    if (isControlled) {
+      onExpandedChange?.(next);
+    } else {
+      setExpandedInternal(next);
+    }
+  };
   const style = STATUS_STYLES[status];
   const Icon = style.icon;
   const animate = status === 'running' ? 'animate-spin' : '';
@@ -118,21 +165,46 @@ export function ExecutionTraceEntryRow({
   return (
     <div
       data-testid={`trace-entry-${stepId}`}
+      data-parallel-fork={forkNumber !== undefined ? 'true' : undefined}
+      data-parallel-branch-of={parallelBranchOfNumber}
       className={cn(
         'border-border/60 rounded-md border p-3 text-sm transition-colors',
-        highlighted && 'bg-muted/40 ring-primary/40 ring-1'
+        highlighted && 'bg-muted/40 ring-primary/40 ring-1',
+        // Indigo, not purple — the orchestrator step type owns purple, so
+        // structural fork/branch accents have to read distinctly.
+        parallelBranchOfNumber !== undefined &&
+          'border-l-4 border-l-indigo-400 dark:border-l-indigo-600'
       )}
     >
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleExpanded}
         className="flex w-full items-start gap-2 text-left"
       >
         <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', style.colour, animate)} />
         <div className="flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{label}</span>
-            <span className="text-muted-foreground text-xs">{stepType}</span>
+            <StepTypeChip stepId={stepId} stepType={stepType} />
+            {forkNumber !== undefined && (
+              <span
+                data-testid={`trace-entry-fork-${stepId}`}
+                className="flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
+                title="This step fans out concurrent branches"
+              >
+                <GitBranch className="h-3 w-3" />
+                Parallel fork #{forkNumber}
+              </span>
+            )}
+            {parallelBranchOfNumber !== undefined && (
+              <span
+                data-testid={`trace-entry-branch-${stepId}`}
+                className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
+                title={`Concurrent branch of parallel fork #${parallelBranchOfNumber}`}
+              >
+                ∥ Branch of fork #{parallelBranchOfNumber}
+              </span>
+            )}
             {model && (
               <span
                 data-testid={`trace-entry-model-${stepId}`}
@@ -162,6 +234,29 @@ export function ExecutionTraceEntryRow({
             ) : null}
             {costUsd > 0 && <span>${costUsd.toFixed(4)}</span>}
           </div>
+          {/* Skipped steps surface their reason inline so the operator
+              doesn't have to expand the row to see why the step was
+              skipped. When the engine didn't capture an error (e.g.
+              pre-fix executions or a future code path that forgets to
+              wire skipError through), fall back to a neutral hint so
+              the row still explains itself. */}
+          {status === 'skipped' && (
+            <p
+              data-testid={`trace-entry-skip-reason-${stepId}`}
+              data-expected-skip={expectedSkip ? 'true' : undefined}
+              className={cn(
+                'mt-0.5 line-clamp-2 text-xs italic',
+                // Expected skips are part of the workflow's happy path —
+                // render them quieter than a "something went wrong" skip
+                // so the eye lands on real problems.
+                expectedSkip ? 'text-muted-foreground/70' : 'text-muted-foreground'
+              )}
+              title={error ?? undefined}
+            >
+              {expectedSkip ? 'Optional step skipped' : 'Skipped'}:{' '}
+              {error ? summariseError(error) : 'no reason captured'}
+            </p>
+          )}
         </div>
         {expanded ? (
           <ChevronDown className="text-muted-foreground h-4 w-4" />
@@ -190,32 +285,14 @@ export function ExecutionTraceEntryRow({
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">
-          {error && (
-            <pre className="max-h-40 overflow-auto rounded bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-200">
-              {error}
-            </pre>
-          )}
+          {error && <ErrorPane error={error} stepId={stepId} expected={expectedSkip} />}
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">
               {input !== undefined && input !== null && (
-                <div data-testid={`trace-entry-input-${stepId}`}>
-                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
-                    Input
-                  </p>
-                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
-                    {typeof input === 'string' ? input : JSON.stringify(input, null, 2)}
-                  </pre>
-                </div>
+                <JsonPane label="Input" data={input} testId={`trace-entry-input-${stepId}`} />
               )}
               {output !== undefined && output !== null && (
-                <div data-testid={`trace-entry-output-${stepId}`}>
-                  <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
-                    Output
-                  </p>
-                  <pre className="bg-muted/40 max-h-60 overflow-auto rounded p-2 font-mono text-xs">
-                    {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
-                  </pre>
-                </div>
+                <JsonPane label="Output" data={output} testId={`trace-entry-output-${stepId}`} />
               )}
             </div>
           )}
@@ -267,6 +344,200 @@ export function ExecutionTraceEntryRow({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Tonal chip palette per step-type category. Pairs the workflow builder's
+// `STEP_CATEGORY_COLOURS` iconBg/text combo so the chip in the trace row,
+// the bar in the timeline strip, and the node in the workflow builder
+// canvas all read as the same colour family. Unknown types fall back to
+// the neutral muted palette so a renamed/removed step type doesn't go
+// blank.
+const STEP_TYPE_CHIP_CLASSES: Record<StepCategory, string> = {
+  orchestration: 'bg-purple-100 text-purple-900 dark:bg-purple-900/60 dark:text-purple-100',
+  agent: 'bg-blue-100 text-blue-900 dark:bg-blue-900/60 dark:text-blue-100',
+  decision: 'bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100',
+  output: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/60 dark:text-emerald-100',
+  input: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-100',
+};
+
+const STEP_TYPE_CHIP_FALLBACK = 'bg-muted text-muted-foreground';
+
+function StepTypeChip({ stepId, stepType }: { stepId: string; stepType: string }) {
+  const meta = getStepMetadata(stepType);
+  const chipColour = meta ? STEP_TYPE_CHIP_CLASSES[meta.category] : STEP_TYPE_CHIP_FALLBACK;
+  // Always render the chip; only attach a tooltip when we have a real
+  // description from the registry. Unknown step types still render the
+  // raw type string so admins aren't left with a missing chip.
+  const chip = (
+    <span
+      data-testid={`trace-entry-step-type-${stepId}`}
+      data-category={meta?.category ?? undefined}
+      className={cn(
+        'rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wide uppercase',
+        chipColour
+      )}
+    >
+      {stepType}
+    </span>
+  );
+  if (!meta) return chip;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-left">
+          <p className="font-medium">{meta.label}</p>
+          <p className="text-primary-foreground/80 mt-1 text-[11px] leading-snug">
+            {meta.description}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function JsonPane({ label, data, testId }: { label: string; data: unknown; testId: string }) {
+  const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  const showMarkdown = isMarkdown(data);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard may be unavailable in non-secure contexts; silently ignore.
+      }
+    })();
+  };
+
+  return (
+    <div data-testid={testId}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          {label}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-1.5 text-[11px]"
+          onClick={handleCopy}
+          aria-label={`Copy ${label}`}
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+      {showMarkdown ? (
+        <MarkdownOrRawView content={text} rawMaxHeightClass="max-h-60 overflow-y-auto" />
+      ) : (
+        <JsonPretty data={data} className="max-h-60 overflow-y-auto" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Short, single-line summary of an error message for the collapsed
+ * trace row. Step-step errors are often multi-line (sanitised stack
+ * traces, JSON payloads, structured details) — the dropdown shows the
+ * full thing, this just gives the operator enough to triage.
+ */
+const ERROR_SUMMARY_MAX = 120;
+function summariseError(message: string): string {
+  const firstLine = message.split(/\r?\n/, 1)[0]?.trim() ?? message;
+  if (firstLine.length <= ERROR_SUMMARY_MAX) return firstLine;
+  return `${firstLine.slice(0, ERROR_SUMMARY_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * Expanded-row error display. Wraps the existing red `<pre>` with a
+ * Copy button so operators can grab the full message for an issue
+ * tracker or chat without selecting the text manually.
+ */
+function ErrorPane({
+  error,
+  stepId,
+  expected,
+}: {
+  error: string;
+  stepId: string;
+  expected?: boolean;
+}): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(error);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard may be unavailable in non-secure contexts; silently ignore.
+      }
+    })();
+  };
+
+  // Two visual modes. "Error" (red) is the default; "Skip reason" (slate)
+  // applies when the workflow author opted into expectedSkip — the text
+  // still carries the diagnostic, but the colour is no longer alarmist.
+  const heading = expected ? 'Skip reason' : 'Error';
+  const headingClass = expected ? 'text-muted-foreground' : 'text-red-700 dark:text-red-300';
+  const preClass = expected
+    ? 'bg-muted/50 text-foreground/80'
+    : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200';
+
+  return (
+    <div
+      data-testid={`trace-entry-error-${stepId}`}
+      data-expected-skip={expected ? 'true' : undefined}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className={cn('text-[11px] font-medium tracking-wide uppercase', headingClass)}>
+          {heading}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-1.5 text-[11px]"
+          onClick={handleCopy}
+          aria-label={expected ? 'Copy skip reason' : 'Copy error message'}
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </Button>
+      </div>
+      <pre
+        className={cn('max-h-40 overflow-auto rounded p-2 text-xs whitespace-pre-wrap', preClass)}
+      >
+        {error}
+      </pre>
     </div>
   );
 }

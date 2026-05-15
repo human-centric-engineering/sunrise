@@ -215,9 +215,20 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       ...(opts.logContext ?? {}),
     });
 
+    // Trim the response body for storage. 256 was too tight: structured
+    // 4xx errors (e.g. Brave Search's Pydantic validation envelope) easily
+    // exceed it, leaving operators staring at a truncated message mid-
+    // sentence with no signal that more existed. 2 KB covers ~all real
+    // JSON error bodies. When truncation actually fires we append an
+    // explicit marker so the diagnostic isn't silently cut.
+    const ERROR_BODY_MAX = 2000;
+    const truncated =
+      text.length > ERROR_BODY_MAX
+        ? `${text.slice(0, ERROR_BODY_MAX)}… [truncated, ${text.length - ERROR_BODY_MAX} more chars]`
+        : text;
     throw new HttpError(
       retriable ? 'http_error_retriable' : 'http_error',
-      `HTTP ${response.status}: ${text.slice(0, 256)}`,
+      `HTTP ${response.status}: ${truncated}`,
       retriable,
       undefined,
       response.status

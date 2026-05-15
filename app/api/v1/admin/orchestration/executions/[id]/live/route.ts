@@ -1,22 +1,26 @@
 /**
- * Admin Orchestration — Get execution detail
+ * Admin Orchestration — Get execution live snapshot
  *
- * GET /api/v1/admin/orchestration/executions/:id
+ * GET /api/v1/admin/orchestration/executions/:id/live
  *
- * Returns the `AiWorkflowExecution` row plus a parsed `trace` array, a
- * small projection suitable for the execution panel UI, and `costEntries`
- * — an unrolled view of the `AiCostLog` rows attributed to this run, used
- * by the trace viewer to break down per-step LLM cost.
+ * Designed for high-frequency (~1s) polling from the execution detail page.
+ * Returns everything the live view needs in one round-trip:
  *
- * The `costEntries` array carries one row per LLM call. For multi-turn
- * executors (`tool_call`, `agent_call`, `orchestrator`) several entries
- * share a `stepId`; the UI groups them client-side. Entries with no
- * `metadata.stepId` are dropped — only step-attributed cost surfaces here
- * (chat/conversation cost has its own surfaces).
+ *   - `snapshot`           — the same narrow fields as `/status` (status,
+ *                            currentStep, errorMessage, tokens, cost, dates).
+ *   - `trace`              — persisted step trace (steps that have terminated).
+ *   - `costEntries`        — per-LLM-call cost rows attributed to this run.
+ *   - `currentStepDetails` — { stepId, label, type, startedAt } when the
+ *                            execution is in a running/paused status AND the
+ *                            engine has written the live-running columns.
+ *                            Null otherwise.
+ *
+ * `currentStepDetails` is sourced from the `currentStep*` columns on
+ * `AiWorkflowExecution` (populated by `markCurrentStep` in the engine) so
+ * we don't have to parse the workflow version snapshot per poll.
  *
  * Ownership: rows are scoped to `session.user.id`. Cross-user access
- * returns 404 (not 403) — we never confirm existence of another user's
- * row.
+ * returns 404 (not 403) — we never confirm existence of another user's row.
  *
  * Authentication: Admin role required.
  */
@@ -30,10 +34,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 
-// `executionTraceSchema` is `z.array(...).catch([])` — parsing always succeeds,
-// returning `[]` for malformed rows. Don't add a "trace corrupted" error path
-// here: it would be unreachable and gives the wrong impression that this
-// route guards against bad data with a 400.
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 interface CostEntry {
   stepId: string;
@@ -60,7 +61,22 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   const execution = await prisma.aiWorkflowExecution.findUnique({
     where: { id },
-    include: { workflow: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      currentStep: true,
+      currentStepLabel: true,
+      currentStepType: true,
+      currentStepStartedAt: true,
+      errorMessage: true,
+      totalTokensUsed: true,
+      totalCostUsd: true,
+      startedAt: true,
+      completedAt: true,
+      createdAt: true,
+      executionTrace: true,
+    },
   });
   if (!execution || execution.userId !== session.user.id) {
     throw new NotFoundError(`Execution ${id} not found`);
@@ -68,10 +84,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   const trace = executionTraceSchema.parse(execution.executionTrace);
 
-  // Pull every cost log attributed to this execution. Older rows in
-  // production may have null metadata or no stepId — those are filtered
-  // out below so we only surface step-attributed cost. Sorted ASC by
-  // createdAt so multi-turn entries appear in the order the LLM saw them.
   const costLogs = await prisma.aiCostLog.findMany({
     where: { workflowExecutionId: id },
     orderBy: { createdAt: 'asc' },
@@ -103,12 +115,13 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     });
   }
 
-  // `currentStepDetails` mirrors the shape returned by /executions/:id/live so
-  // the page's initial paint can seed the live-poll hook directly. Only
-  // populated when status is non-terminal AND all three live columns are set.
-  const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+  // Only surface running-step details for non-terminal executions whose
+  // live columns are all populated. Terminal rows (and rows whose engine
+  // hasn't yet entered a step) get null so the UI can drop the running
+  // indicator cleanly.
+  const isTerminal = TERMINAL_STATUSES.has(execution.status);
   const currentStepDetails =
-    !TERMINAL_STATUSES.has(execution.status) &&
+    !isTerminal &&
     execution.currentStep &&
     execution.currentStepLabel &&
     execution.currentStepType &&
@@ -122,21 +135,16 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
       : null;
 
   return successResponse({
-    execution: {
+    snapshot: {
       id: execution.id,
-      workflowId: execution.workflowId,
       status: execution.status,
+      currentStep: execution.currentStep,
+      errorMessage: execution.errorMessage,
       totalTokensUsed: execution.totalTokensUsed,
       totalCostUsd: execution.totalCostUsd,
-      budgetLimitUsd: execution.budgetLimitUsd,
-      currentStep: execution.currentStep,
-      inputData: execution.inputData,
-      outputData: execution.outputData,
-      errorMessage: execution.errorMessage,
       startedAt: execution.startedAt,
       completedAt: execution.completedAt,
       createdAt: execution.createdAt,
-      workflow: { id: execution.workflow.id, name: execution.workflow.name },
     },
     trace,
     costEntries,

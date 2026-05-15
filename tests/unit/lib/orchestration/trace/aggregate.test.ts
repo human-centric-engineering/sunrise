@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildParallelBranchMap,
   computeTraceAggregates,
   rollupTelemetry,
   slowOutlierThresholdMs,
@@ -162,5 +163,90 @@ describe('slowOutlierThresholdMs', () => {
       entry({ stepId: `s${i}`, durationMs: (i + 1) * 100 })
     );
     expect(slowOutlierThresholdMs(trace)).toBe(900);
+  });
+});
+
+describe('buildParallelBranchMap', () => {
+  it('returns an empty map for a trace with no parallel steps', () => {
+    const trace = [entry({ stepId: 's1' }), entry({ stepId: 's2' })];
+    expect(buildParallelBranchMap(trace).size).toBe(0);
+  });
+
+  it('maps each immediate branch stepId to its parent parallel step', () => {
+    const trace = [
+      entry({
+        stepId: 'fork-a',
+        stepType: 'parallel',
+        output: { parallel: true, branches: ['b1', 'b2'] },
+      }),
+      entry({ stepId: 'b1' }),
+      entry({ stepId: 'b2' }),
+    ];
+
+    const map = buildParallelBranchMap(trace);
+    expect(map.get('b1')).toBe('fork-a');
+    expect(map.get('b2')).toBe('fork-a');
+    expect(map.size).toBe(2);
+  });
+
+  it('handles multiple parallel forks with disjoint branches', () => {
+    const trace = [
+      entry({
+        stepId: 'fork-a',
+        stepType: 'parallel',
+        output: { branches: ['a1'] },
+      }),
+      entry({
+        stepId: 'fork-b',
+        stepType: 'parallel',
+        output: { branches: ['b1'] },
+      }),
+    ];
+    const map = buildParallelBranchMap(trace);
+    expect(map.get('a1')).toBe('fork-a');
+    expect(map.get('b1')).toBe('fork-b');
+  });
+
+  it('ignores parallel entries whose output is null or not an object', () => {
+    const trace = [
+      entry({ stepId: 'fork-a', stepType: 'parallel', output: null }),
+      entry({ stepId: 'fork-b', stepType: 'parallel', output: 'not an object' }),
+      entry({ stepId: 'fork-c', stepType: 'parallel', output: 42 }),
+    ];
+    expect(buildParallelBranchMap(trace).size).toBe(0);
+  });
+
+  it('ignores parallel entries whose output.branches is missing or not an array', () => {
+    const trace = [
+      entry({ stepId: 'f1', stepType: 'parallel', output: { other: true } }),
+      entry({ stepId: 'f2', stepType: 'parallel', output: { branches: 'oops' } }),
+      entry({ stepId: 'f3', stepType: 'parallel', output: { branches: 42 } }),
+    ];
+    expect(buildParallelBranchMap(trace).size).toBe(0);
+  });
+
+  it('drops non-string branch IDs from the array', () => {
+    const trace = [
+      entry({
+        stepId: 'fork',
+        stepType: 'parallel',
+        // Mixed array — only the string survives.
+        output: { branches: ['good', 42, null, { x: 1 }] },
+      }),
+    ];
+    const map = buildParallelBranchMap(trace);
+    expect(map.size).toBe(1);
+    expect(map.get('good')).toBe('fork');
+  });
+
+  it('ignores non-parallel step types even if they have an output.branches array', () => {
+    const trace = [
+      entry({
+        stepId: 'pretender',
+        stepType: 'llm_call',
+        output: { branches: ['b1', 'b2'] },
+      }),
+    ];
+    expect(buildParallelBranchMap(trace).size).toBe(0);
   });
 });

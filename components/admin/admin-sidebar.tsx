@@ -157,16 +157,16 @@ const navSections: NavSection[] = [
             description: 'Docs and patterns',
           },
           {
-            href: '/admin/orchestration/approvals',
-            label: 'Approval Queue',
-            icon: ShieldCheck,
-            description: 'Pending approvals',
-          },
-          {
             href: '/admin/orchestration/executions',
             label: 'Executions',
             icon: PlayCircle,
             description: 'Runtime history',
+          },
+          {
+            href: '/admin/orchestration/approvals',
+            label: 'Approval Queue',
+            icon: ShieldCheck,
+            description: 'Pending approvals',
           },
           {
             href: '/admin/orchestration/evaluations',
@@ -376,37 +376,75 @@ interface AdminSidebarProps {
   className?: string;
 }
 
-function useApprovalCount(pathname: string): number | undefined {
+const EXECUTION_BADGE_POLL_MS = 15_000;
+
+function useExecutionStatusCount(statuses: string[], pathname: string): number | undefined {
   const [count, setCount] = useState<number | undefined>();
+  const key = statuses.join(',');
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?status=paused_for_approval&limit=1`, {
-      credentials: 'same-origin',
-      signal: controller.signal,
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body: { meta?: { total?: number } } | null) => {
-        if (body?.meta?.total != null) setCount(body.meta.total);
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [pathname]);
+    let cancelled = false;
+    let controller: AbortController | null = null;
+
+    const fetchCount = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      controller?.abort();
+      controller = new AbortController();
+      const signal = controller.signal;
+      try {
+        const totals = await Promise.all(
+          statuses.map((status) =>
+            fetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?status=${status}&limit=1`, {
+              credentials: 'same-origin',
+              signal,
+            })
+              .then((res) => (res.ok ? res.json() : null))
+              .then((body: { meta?: { total?: number } } | null) => body?.meta?.total ?? 0)
+              .catch(() => 0)
+          )
+        );
+        if (!cancelled && !signal.aborted) {
+          setCount(totals.reduce((sum, n) => sum + n, 0));
+        }
+      } catch {
+        // ignored
+      }
+    };
+
+    void fetchCount();
+    const intervalId = setInterval(() => void fetchCount(), EXECUTION_BADGE_POLL_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void fetchCount();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, pathname]);
 
   return count;
 }
 
-function injectApprovalBadge(sections: NavSection[], badgeCount: number | undefined): NavSection[] {
-  if (badgeCount == null) return sections;
+function injectBadges(
+  sections: NavSection[],
+  badges: Record<string, number | undefined>
+): NavSection[] {
   return sections.map((section) => {
     if (!section.subgroups) return section;
     return {
       ...section,
       subgroups: section.subgroups.map((group) => ({
         ...group,
-        items: group.items.map((item) =>
-          item.href === '/admin/orchestration/approvals' ? { ...item, badge: badgeCount } : item
-        ),
+        items: group.items.map((item) => {
+          const badge = badges[item.href];
+          return badge != null ? { ...item, badge } : item;
+        }),
       })),
     };
   });
@@ -415,8 +453,16 @@ function injectApprovalBadge(sections: NavSection[], badgeCount: number | undefi
 export function AdminSidebar({ className }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const approvalCount = useApprovalCount(pathname);
-  const sections = useMemo(() => injectApprovalBadge(navSections, approvalCount), [approvalCount]);
+  const approvalCount = useExecutionStatusCount(['paused_for_approval'], pathname);
+  const inProgressCount = useExecutionStatusCount(['pending', 'running'], pathname);
+  const sections = useMemo(
+    () =>
+      injectBadges(navSections, {
+        '/admin/orchestration/approvals': approvalCount,
+        '/admin/orchestration/executions': inProgressCount,
+      }),
+    [approvalCount, inProgressCount]
+  );
 
   return (
     <aside

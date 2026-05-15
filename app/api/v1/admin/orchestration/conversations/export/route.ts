@@ -16,6 +16,7 @@
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
+import { csvEscape } from '@/lib/api/csv';
 import { getRouteLogger } from '@/lib/api/context';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -144,11 +145,3 @@ export const GET = withAdminAuth(async (request, session) => {
     },
   });
 });
-
-/** Escape a value for CSV — wraps in double quotes and escapes internal quotes. */
-function csvEscape(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}

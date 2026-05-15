@@ -21,14 +21,15 @@ import { humanApprovalConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError, PausedForApproval } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
+import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 
 export function executeHumanApproval(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
   const config = humanApprovalConfigSchema.parse(step.config);
-  const prompt = config.prompt;
-  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
+  const rawPrompt = config.prompt;
+  if (typeof rawPrompt !== 'string' || rawPrompt.trim().length === 0) {
     return Promise.reject(
       new ExecutorError(step.id, 'missing_prompt', 'human_approval step is missing a prompt')
     );
@@ -38,6 +39,17 @@ export function executeHumanApproval(
   const stepIds = Object.keys(ctx.stepOutputs);
   const lastStepId = stepIds.length > 0 ? stepIds[stepIds.length - 1] : undefined;
   const previous = lastStepId ? ctx.stepOutputs[lastStepId] : null;
+
+  // Resolve `{{stepId.output}}`, `{{input.foo}}`, `{{vars.x}}`,
+  // `{{#if vars.y}}...{{/if}}` etc. against the current context, the
+  // same way llm_call does. Without this, the admin sees the raw
+  // mustache template instead of the workflow's accumulated outputs.
+  //
+  // `format: 'markdown'` wraps object/array values in fenced ```json
+  // blocks so the prompt — which is rendered as markdown in the admin
+  // approval queue — keeps structured upstream outputs readable
+  // instead of collapsing them to inline one-line JSON.
+  const prompt = interpolatePrompt(rawPrompt, ctx, lastStepId, { format: 'markdown' });
 
   return Promise.reject(
     new PausedForApproval(step.id, {

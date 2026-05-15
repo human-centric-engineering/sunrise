@@ -130,6 +130,7 @@ export const API = {
       executionById: (id: string): string => `/api/v1/admin/orchestration/executions/${id}`,
       executionStatus: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/status`,
+      executionLive: (id: string): string => `/api/v1/admin/orchestration/executions/${id}/live`,
       executionApprove: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/approve`,
       executionReject: (id: string): string =>
@@ -138,6 +139,7 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/cancel`,
       executionRetryStep: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/retry-step`,
+      APPROVALS_HISTORY: '/api/v1/admin/orchestration/approvals/history',
       workflowVersions: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/versions`,
       workflowVersionById: (id: string, version: number): string =>

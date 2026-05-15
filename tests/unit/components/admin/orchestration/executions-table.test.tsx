@@ -77,7 +77,7 @@ describe('ExecutionsTable', () => {
     it('renders table headers', () => {
       render(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
 
-      expect(screen.getByText('Execution')).toBeInTheDocument();
+      expect(screen.getByText('Execution ID')).toBeInTheDocument();
       expect(screen.getByText('Workflow')).toBeInTheDocument();
       expect(screen.getByText('Status')).toBeInTheDocument();
       expect(screen.getByText('Tokens')).toBeInTheDocument();
