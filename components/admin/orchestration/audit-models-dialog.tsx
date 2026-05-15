@@ -343,7 +343,7 @@ export function AuditModelsDialog({
         else onOpenChange(next);
       }}
     >
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-4 sm:max-w-[920px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ClipboardCheck className="h-5 w-5" />
@@ -367,105 +367,107 @@ export function AuditModelsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {submittedExecution && initialLivePayload ? (
-          <ExecutionProgressInline
-            executionId={submittedExecution.id}
-            initialPayload={initialLivePayload}
-            onTerminal={(status) => setTerminalStatus(status)}
-          />
-        ) : (
-          <>
-            {/* Filter */}
-            <div className="flex items-center gap-3">
-              <Select value={providerFilter} onValueChange={setProviderFilter}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Filter by provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All providers</SelectItem>
-                  {providers.map((p) => (
-                    <SelectItem key={p} value={p} className="capitalize">
-                      {p}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-2">
+          {submittedExecution && initialLivePayload ? (
+            <ExecutionProgressInline
+              executionId={submittedExecution.id}
+              initialPayload={initialLivePayload}
+              onTerminal={(status) => setTerminalStatus(status)}
+            />
+          ) : (
+            <>
+              {/* Filter */}
+              <div className="flex items-center gap-3">
+                <Select value={providerFilter} onValueChange={setProviderFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All providers</SelectItem>
+                    {providers.map((p) => (
+                      <SelectItem key={p} value={p} className="capitalize">
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-              <Button variant="ghost" size="sm" onClick={toggleAll}>
-                {allFilteredSelected ? 'Deselect all' : 'Select all'}
-              </Button>
+                <Button variant="ghost" size="sm" onClick={toggleAll}>
+                  {allFilteredSelected ? 'Deselect all' : 'Select all'}
+                </Button>
 
-              <span className="text-muted-foreground ml-auto text-sm">
-                {selected.size} of {models.length} selected
-              </span>
-            </div>
+                <span className="text-muted-foreground ml-auto text-sm">
+                  {selected.size} of {models.length} selected
+                </span>
+              </div>
 
-            {/* Model list */}
-            <div className="max-h-[300px] overflow-y-auto rounded-md border">
-              {filtered.length === 0 && (
-                <p className="text-muted-foreground p-4 text-center text-sm">
-                  No models match the selected provider filter.
-                </p>
-              )}
-              <div className="divide-y">
-                {filtered.map((model) => (
-                  <div
-                    key={model.id}
-                    role="button"
-                    tabIndex={0}
-                    className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
-                    onClick={() => toggleModel(model.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleModel(model.id);
-                      }
-                    }}
-                  >
-                    <Checkbox
-                      checked={selected.has(model.id)}
-                      onCheckedChange={() => toggleModel(model.id)}
-                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                      aria-label={`Select ${model.name} for audit`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium">{model.name}</span>
-                        <Badge variant="secondary" className="shrink-0 text-[10px]">
-                          {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
-                        </Badge>
-                        {model.capabilities.includes('embedding') && (
-                          <Badge
-                            variant="outline"
-                            className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                          >
-                            Embedding
+              {/* Model list */}
+              <div className="max-h-[300px] overflow-y-auto rounded-md border">
+                {filtered.length === 0 && (
+                  <p className="text-muted-foreground p-4 text-center text-sm">
+                    No models match the selected provider filter.
+                  </p>
+                )}
+                <div className="divide-y">
+                  {filtered.map((model) => (
+                    <div
+                      key={model.id}
+                      role="button"
+                      tabIndex={0}
+                      className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 px-3 py-2"
+                      onClick={() => toggleModel(model.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleModel(model.id);
+                        }
+                      }}
+                    >
+                      <Checkbox
+                        checked={selected.has(model.id)}
+                        onCheckedChange={() => toggleModel(model.id)}
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                        aria-label={`Select ${model.name} for audit`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium">{model.name}</span>
+                          <Badge variant="secondary" className="shrink-0 text-[10px]">
+                            {TIER_ROLE_META[model.tierRole as TierRole]?.label ?? model.tierRole}
                           </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground text-xs">
-                          {model.providerSlug} / {model.modelId}
-                        </span>
-                        <span className="text-muted-foreground/50 text-[10px]">
-                          {model.metadata?.lastAudit?.timestamp
-                            ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
-                            : 'Never audited'}
-                        </span>
+                          {model.capabilities.includes('embedding') && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 bg-amber-100 text-[10px] text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                            >
+                              Embedding
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground text-xs">
+                            {model.providerSlug} / {model.modelId}
+                          </span>
+                          <span className="text-muted-foreground/50 text-[10px]">
+                            {model.metadata?.lastAudit?.timestamp
+                              ? `Audited ${formatAuditAge(model.metadata.lastAudit.timestamp)}`
+                              : 'Never audited'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {error && (
-              <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-                {error}
-              </p>
-            )}
-          </>
-        )}
+              {error && (
+                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                  {error}
+                </p>
+              )}
+            </>
+          )}
+        </div>
 
         <DialogFooter>
           {submittedExecution ? (

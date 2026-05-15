@@ -222,10 +222,12 @@ function ApprovalInlineCard({
     >
       <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Approval required</p>
       {prompt ? (
-        <MarkdownContent
-          content={prompt}
-          className="mt-1 text-sm text-amber-900 dark:text-amber-100"
-        />
+        <div className="mt-1 max-h-48 overflow-y-auto rounded border border-amber-200/60 bg-white/60 p-2 dark:border-amber-900/60 dark:bg-amber-950/30">
+          <MarkdownContent
+            content={prompt}
+            className="text-sm text-amber-900 dark:text-amber-100"
+          />
+        </div>
       ) : (
         <p className="text-muted-foreground mt-1 text-sm italic">
           (No prompt captured — review the trace or open full details.)
