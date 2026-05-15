@@ -199,6 +199,63 @@ describe('executeHumanApproval', () => {
     expect(prompt).not.toContain('{{score_audit.output}}');
   });
 
+  it('wraps object step outputs in fenced JSON blocks so markdown renders them readably', async () => {
+    // Approval prompts are rendered as markdown in the admin queue. An
+    // upstream step that emits a structured object (the audit
+    // workflow's `discover_new_models`, `refine_findings`, etc.) used
+    // to collapse to a single-line JSON blob inline with prose. Now
+    // the markdown-aware interpolator wraps it in ```json``` so the
+    // operator can actually read it.
+    const ctx = makeCtx({
+      stepOutputs: {
+        discover_new_models: { newModels: [], reasoning: 'all known models registered' },
+      },
+    });
+    const step = makeStep({
+      prompt: '## Proposed New Models\n\n{{discover_new_models.output}}\n',
+    });
+
+    let thrown: unknown;
+    try {
+      await executeHumanApproval(step, ctx);
+    } catch (err) {
+      thrown = err;
+    }
+    const paused = thrown as PausedForApproval;
+    const prompt = (paused.payload as Record<string, unknown>).prompt as string;
+    expect(prompt).toContain('```json');
+    expect(prompt).toContain('"newModels": []');
+    expect(prompt).toContain('"reasoning": "all known models registered"');
+    // Ensure the value is pretty-printed (newline between keys), not
+    // collapsed to one line.
+    expect(prompt).toMatch(/"newModels": \[\],\n\s+"reasoning"/);
+  });
+
+  it('unwraps top-level JSON-encoded string outputs before pretty-printing', async () => {
+    // Some upstream steps store their final output as a JSON-encoded
+    // string at the top level — render that as a proper code block
+    // rather than as an escaped one-liner.
+    const stepOutput = JSON.stringify({ passed: false, reason: 'fail' });
+    const ctx = makeCtx({
+      stepOutputs: { validate_proposals: stepOutput },
+    });
+    const step = makeStep({ prompt: '{{validate_proposals.output}}' });
+
+    let thrown: unknown;
+    try {
+      await executeHumanApproval(step, ctx);
+    } catch (err) {
+      thrown = err;
+    }
+    const paused = thrown as PausedForApproval;
+    const prompt = (paused.payload as Record<string, unknown>).prompt as string;
+    // Pretty-printed, fenced, and the inner structure is readable
+    // because the top-level string was JSON-parsed before stringifying.
+    expect(prompt).toContain('```json');
+    expect(prompt).toMatch(/"passed":\s*false/);
+    expect(prompt).toMatch(/"reason":\s*"fail"/);
+  });
+
   it('expands missing references to empty string (matches llm_call behaviour)', async () => {
     // If the workflow author references a step that never ran or has no
     // output, the reference resolves to empty — mirroring how the

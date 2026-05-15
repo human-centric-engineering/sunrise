@@ -44,7 +44,12 @@ export function executeHumanApproval(
   // `{{#if vars.y}}...{{/if}}` etc. against the current context, the
   // same way llm_call does. Without this, the admin sees the raw
   // mustache template instead of the workflow's accumulated outputs.
-  const prompt = interpolatePrompt(rawPrompt, ctx, lastStepId);
+  //
+  // `format: 'markdown'` wraps object/array values in fenced ```json
+  // blocks so the prompt — which is rendered as markdown in the admin
+  // approval queue — keeps structured upstream outputs readable
+  // instead of collapsing them to inline one-line JSON.
+  const prompt = interpolatePrompt(rawPrompt, ctx, lastStepId, { format: 'markdown' });
 
   return Promise.reject(
     new PausedForApproval(step.id, {
