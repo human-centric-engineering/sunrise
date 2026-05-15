@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { ApprovalsTable } from '@/components/admin/orchestration/approvals-table';
+import { ApprovalsTabs } from '@/components/admin/orchestration/approvals-tabs';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -96,7 +96,7 @@ export default async function ApprovalQueuePage() {
         </p>
       </header>
 
-      <ApprovalsTable initialApprovals={approvals} initialMeta={meta} />
+      <ApprovalsTabs initialApprovals={approvals} initialMeta={meta} />
     </div>
   );
 }
