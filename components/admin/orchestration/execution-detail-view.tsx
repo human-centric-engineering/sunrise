@@ -706,6 +706,7 @@ export function ExecutionDetailView({
                   status={entry.status}
                   output={entry.output}
                   error={entry.error}
+                  expectedSkip={entry.expectedSkip}
                   tokensUsed={entry.tokensUsed}
                   costUsd={entry.costUsd}
                   durationMs={entry.durationMs}

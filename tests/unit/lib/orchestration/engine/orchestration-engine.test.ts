@@ -300,6 +300,55 @@ describe('OrchestrationEngine', () => {
     expect(skippedEntry?.error).toContain('boom');
   });
 
+  it('propagates expectedSkip from step config to the trace entry', async () => {
+    // Workflow authors mark optional enrichment steps with expectedSkip
+    // so the trace viewer tones the row down. Without this propagation,
+    // the UI can't distinguish a routine "Brave allowlist missing" skip
+    // from an unexpected failure that happened to land on `skip`.
+    const def = linearDefinition();
+    def.steps[0].config = {
+      ...def.steps[0].config,
+      errorStrategy: 'skip',
+      expectedSkip: true,
+    };
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError('a', 'bad', 'allowlist miss');
+      return { output: 'b-output', tokensUsed: 1, costUsd: 0.001 };
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{ stepId: string; status: string; expectedSkip?: boolean }>;
+    const skippedEntry = lastTrace.find((e) => e.stepId === 'a');
+    expect(skippedEntry?.status).toBe('skipped');
+    expect(skippedEntry?.expectedSkip).toBe(true);
+  });
+
+  it('omits expectedSkip on routine skips when the config did not opt in', async () => {
+    // Negative case: without the opt-in, the engine must NOT stamp
+    // expectedSkip — otherwise every skip would render as muted and the
+    // distinction is gone. Default behaviour is unchanged.
+    const def = linearDefinition();
+    def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'skip' };
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') throw new ExecutorError('a', 'bad', 'oops');
+      return { output: 'b', tokensUsed: 0, costUsd: 0 };
+    });
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{ stepId: string; expectedSkip?: boolean }>;
+    expect(lastTrace.find((e) => e.stepId === 'a')?.expectedSkip).toBeUndefined();
+  });
+
   it('human_approval pauses execution with approval_required', async () => {
     const def: WorkflowDefinition = {
       steps: [

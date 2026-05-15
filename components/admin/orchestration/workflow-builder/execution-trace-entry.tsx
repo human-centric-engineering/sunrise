@@ -57,6 +57,12 @@ export interface ExecutionTraceEntryRowProps {
   status: Status;
   output?: unknown;
   error?: string;
+  /**
+   * Set by the engine when a skipped step's config opted into
+   * `expectedSkip`. Tells the row to render the skip in muted slate
+   * styling instead of treating it as an unexpected failure.
+   */
+  expectedSkip?: boolean;
   tokensUsed?: number;
   costUsd?: number;
   durationMs?: number;
@@ -115,6 +121,7 @@ export function ExecutionTraceEntryRow({
   status,
   output,
   error,
+  expectedSkip,
   tokensUsed = 0,
   costUsd = 0,
   durationMs,
@@ -236,10 +243,18 @@ export function ExecutionTraceEntryRow({
           {status === 'skipped' && (
             <p
               data-testid={`trace-entry-skip-reason-${stepId}`}
-              className="text-muted-foreground mt-0.5 line-clamp-2 text-xs italic"
+              data-expected-skip={expectedSkip ? 'true' : undefined}
+              className={cn(
+                'mt-0.5 line-clamp-2 text-xs italic',
+                // Expected skips are part of the workflow's happy path —
+                // render them quieter than a "something went wrong" skip
+                // so the eye lands on real problems.
+                expectedSkip ? 'text-muted-foreground/70' : 'text-muted-foreground'
+              )}
               title={error ?? undefined}
             >
-              Skipped: {error ? summariseError(error) : 'no reason captured'}
+              {expectedSkip ? 'Optional step skipped' : 'Skipped'}:{' '}
+              {error ? summariseError(error) : 'no reason captured'}
             </p>
           )}
         </div>
@@ -270,7 +285,7 @@ export function ExecutionTraceEntryRow({
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">
-          {error && <ErrorPane error={error} stepId={stepId} />}
+          {error && <ErrorPane error={error} stepId={stepId} expected={expectedSkip} />}
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">
               {input !== undefined && input !== null && (
@@ -455,7 +470,15 @@ function summariseError(message: string): string {
  * Copy button so operators can grab the full message for an issue
  * tracker or chat without selecting the text manually.
  */
-function ErrorPane({ error, stepId }: { error: string; stepId: string }): React.ReactElement {
+function ErrorPane({
+  error,
+  stepId,
+  expected,
+}: {
+  error: string;
+  stepId: string;
+  expected?: boolean;
+}): React.ReactElement {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = (e: React.MouseEvent): void => {
@@ -471,11 +494,23 @@ function ErrorPane({ error, stepId }: { error: string; stepId: string }): React.
     })();
   };
 
+  // Two visual modes. "Error" (red) is the default; "Skip reason" (slate)
+  // applies when the workflow author opted into expectedSkip — the text
+  // still carries the diagnostic, but the colour is no longer alarmist.
+  const heading = expected ? 'Skip reason' : 'Error';
+  const headingClass = expected ? 'text-muted-foreground' : 'text-red-700 dark:text-red-300';
+  const preClass = expected
+    ? 'bg-muted/50 text-foreground/80'
+    : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200';
+
   return (
-    <div data-testid={`trace-entry-error-${stepId}`}>
+    <div
+      data-testid={`trace-entry-error-${stepId}`}
+      data-expected-skip={expected ? 'true' : undefined}
+    >
       <div className="mb-1 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-medium tracking-wide text-red-700 uppercase dark:text-red-300">
-          Error
+        <p className={cn('text-[11px] font-medium tracking-wide uppercase', headingClass)}>
+          {heading}
         </p>
         <Button
           type="button"
@@ -483,7 +518,7 @@ function ErrorPane({ error, stepId }: { error: string; stepId: string }): React.
           variant="ghost"
           className="h-6 gap-1 px-1.5 text-[11px]"
           onClick={handleCopy}
-          aria-label="Copy error message"
+          aria-label={expected ? 'Copy skip reason' : 'Copy error message'}
         >
           {copied ? (
             <>
@@ -498,7 +533,9 @@ function ErrorPane({ error, stepId }: { error: string; stepId: string }): React.
           )}
         </Button>
       </div>
-      <pre className="max-h-40 overflow-auto rounded bg-red-50 p-2 text-xs whitespace-pre-wrap text-red-800 dark:bg-red-950/40 dark:text-red-200">
+      <pre
+        className={cn('max-h-40 overflow-auto rounded p-2 text-xs whitespace-pre-wrap', preClass)}
+      >
         {error}
       </pre>
     </div>

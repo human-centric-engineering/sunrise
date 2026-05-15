@@ -131,6 +131,12 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
             expression: 'web.results[0:5].{title: title, url: url, description: description}',
           },
           errorStrategy: 'skip',
+          // Downstream prompts treat `{{search_provider_info.output}}` as
+          // optional context — a missing BRAVE_SEARCH_API_KEY or absent
+          // allowlist entry is part of the happy path, not a failure. This
+          // flag tells the trace viewer to render the skip in muted slate
+          // styling so genuine failures stand out.
+          expectedSkip: true,
         },
         nextSteps: [{ targetStepId: 'classify_models' }],
       },

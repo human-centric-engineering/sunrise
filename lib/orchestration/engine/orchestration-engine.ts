@@ -870,6 +870,7 @@ export class OrchestrationEngine {
           costUsd: partialCost,
           skipped: true,
           skipError: skipReason,
+          ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
         };
       }
 
@@ -1163,6 +1164,9 @@ export class OrchestrationEngine {
       // viewer can explain WHY the step was skipped. Spread-conditional
       // so a normal `completed` row stays free of an empty `error` key.
       ...(result.skipped && result.skipError ? { error: result.skipError } : {}),
+      // Propagate the author's `expectedSkip` opt-in so the UI can tone
+      // routine optional skips down vs unexpected ones.
+      ...(result.skipped && result.expectedSkip ? { expectedSkip: true } : {}),
       tokensUsed: result.tokensUsed,
       costUsd: result.costUsd,
       startedAt: new Date(started).toISOString(),
@@ -1440,6 +1444,8 @@ export class OrchestrationEngine {
         // Mirror the sequential path: persist the skip reason so the UI
         // can show "Skipped: <error>" without scraping the SSE event log.
         ...(stepResult.skipped && stepResult.skipError ? { error: stepResult.skipError } : {}),
+        // And the expectedSkip flag, same reasoning.
+        ...(stepResult.skipped && stepResult.expectedSkip ? { expectedSkip: true } : {}),
         tokensUsed: stepResult.tokensUsed,
         costUsd: stepResult.costUsd,
         startedAt: new Date(started).toISOString(),
@@ -1633,6 +1639,7 @@ export class OrchestrationEngine {
           costUsd: partialCost,
           skipped: true,
           skipError: sanitizeError(execErr),
+          ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
         };
       }
 

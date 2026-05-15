@@ -232,6 +232,31 @@ describe('ExecutionTraceEntryRow', () => {
       expect(reason.textContent?.length).toBeLessThan(longLine.length);
       expect(reason).toHaveAttribute('title', longLine);
     });
+
+    it('renders expectedSkip as "Optional step skipped" with quieter styling', () => {
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          status="skipped"
+          error="Host not in allowlist"
+          expectedSkip
+        />
+      );
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      expect(reason).toHaveTextContent('Optional step skipped: Host not in allowlist');
+      // data-expected-skip is exposed for downstream styling / analytics
+      // hooks and is the load-bearing test handle.
+      expect(reason).toHaveAttribute('data-expected-skip', 'true');
+      // Quieter foreground class — distinguishes from unexpected skips.
+      expect(reason.className).toContain('text-muted-foreground/70');
+    });
+
+    it('still uses "Skipped:" wording for non-expected skips', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} status="skipped" error="Network down" />);
+      const reason = screen.getByTestId('trace-entry-skip-reason-step-1');
+      expect(reason).toHaveTextContent('Skipped: Network down');
+      expect(reason).not.toHaveAttribute('data-expected-skip');
+    });
   });
 
   describe('expanded: ErrorPane copy', () => {
@@ -256,6 +281,34 @@ describe('ExecutionTraceEntryRow', () => {
       expect(writeText).toHaveBeenCalledWith(fullError);
       // Affordance flips to "Copied" briefly so the operator gets feedback.
       expect(await screen.findByText('Copied')).toBeInTheDocument();
+    });
+
+    it('renders the expected-skip variant of ErrorPane with a slate heading', async () => {
+      // When the trace entry was marked expectedSkip, the expanded pane
+      // reads "Skip reason" instead of "Error" and the copy button is
+      // relabelled to match — same Copy affordance, different framing.
+      const user = userEvent.setup();
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      });
+
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          status="skipped"
+          error="Host not in allowlist"
+          expectedSkip
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+
+      const pane = screen.getByTestId('trace-entry-error-step-1');
+      expect(pane).toHaveAttribute('data-expected-skip', 'true');
+      expect(pane).toHaveTextContent('Skip reason');
+      // Copy button accessible name reflects the variant.
+      expect(screen.getByRole('button', { name: /copy skip reason/i })).toBeInTheDocument();
     });
   });
 

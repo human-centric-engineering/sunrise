@@ -392,6 +392,13 @@ export interface ExecutionTraceEntry {
   status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval' | 'rejected';
   output: unknown;
   error?: string;
+  /**
+   * Set by the engine when a skipped step's config carries
+   * `expectedSkip: true`. Lets the trace viewer style routine optional
+   * skips (missing API key, missing allowlist host) differently from
+   * unexpected failures that happened to land on a `skip` strategy.
+   */
+  expectedSkip?: boolean;
   tokensUsed: number;
   costUsd: number;
   startedAt: string;
@@ -530,6 +537,13 @@ export interface StepResult {
    * parallel batch handler can emit a `step_failed` SSE event.
    */
   skipError?: string;
+  /**
+   * Mirrors `step.config.expectedSkip`. When true, the workflow author
+   * explicitly marked this skip as routine (e.g. an optional enrichment
+   * step whose dependency is missing); the engine carries it onto the
+   * trace entry so the viewer can tone the row down.
+   */
+  expectedSkip?: boolean;
 }
 
 /** Minimal summary of a workflow execution row, for list views. */
