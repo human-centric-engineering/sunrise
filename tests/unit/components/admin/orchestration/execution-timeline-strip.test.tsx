@@ -171,7 +171,7 @@ describe('ExecutionTimelineStrip', () => {
 
   // ─── Remaining colour / branch coverage ────────────────────────────────
 
-  it('marks skipped entries with data-status="skipped" and the muted bar colour', () => {
+  it('marks skipped entries with data-status="skipped" and a muted/faded bar', () => {
     render(
       <ExecutionTimelineStrip
         trace={[entry({ stepId: 'a' }), entry({ stepId: 'b', status: 'skipped' })]}
@@ -180,7 +180,8 @@ describe('ExecutionTimelineStrip', () => {
     const bar = screen.getByTestId('timeline-bar-b');
     expect(bar).toHaveAttribute('data-status', 'skipped');
     const inner = bar.querySelector('span[style]');
-    expect(inner?.className).toContain('bg-muted-foreground/40');
+    expect(inner?.className).toContain('bg-muted-foreground/30');
+    expect(inner?.className).toContain('opacity-60');
   });
 
   it('toggles duration unit from ms to s when the segmented control is clicked', async () => {
@@ -272,6 +273,178 @@ describe('ExecutionTimelineStrip', () => {
     expect(parseFloat(a.style.left)).toBeCloseTo(parseFloat(b.style.left), 1);
     // But different widths — b finishes earlier, so its bar is shorter.
     expect(parseFloat(a.style.width)).toBeGreaterThan(parseFloat(b.style.width));
+  });
+
+  // ─── Step-type colours (workflow-builder palette) ──────────────────────
+
+  it('renders the agent category colour for llm_call steps', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 'a', stepType: 'llm_call' }),
+          entry({ stepId: 'b', stepType: 'llm_call' }),
+        ]}
+      />
+    );
+    const bar = screen.getByTestId('timeline-bar-a');
+    expect(bar).toHaveAttribute('data-category', 'agent');
+    const inner = screen.getByTestId('timeline-bar-fill-a');
+    expect(inner.className).toContain('bg-blue-500');
+  });
+
+  it('renders the decision category colour for route steps', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 'r', stepType: 'route' }),
+          entry({ stepId: 'a', stepType: 'llm_call' }),
+        ]}
+      />
+    );
+    const bar = screen.getByTestId('timeline-bar-r');
+    expect(bar).toHaveAttribute('data-category', 'decision');
+    expect(screen.getByTestId('timeline-bar-fill-r').className).toContain('bg-amber-500');
+  });
+
+  it('renders the output category colour for send_notification steps', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 'n', stepType: 'send_notification' }),
+          entry({ stepId: 'a', stepType: 'llm_call' }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('timeline-bar-n')).toHaveAttribute('data-category', 'output');
+    expect(screen.getByTestId('timeline-bar-fill-n').className).toContain('bg-emerald-500');
+  });
+
+  it('lets red failed-status override the category colour', () => {
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({ stepId: 'a', stepType: 'llm_call' }),
+          entry({ stepId: 'b', stepType: 'llm_call', status: 'failed' }),
+        ]}
+      />
+    );
+    const inner = screen.getByTestId('timeline-bar-fill-b');
+    // Failure dominates — bar is red, not the agent-category blue.
+    expect(inner.className).toContain('bg-red-500');
+    expect(inner.className).not.toContain('bg-blue-500');
+  });
+
+  // ─── No curves on bars ──────────────────────────────────────────────────
+
+  it('does not apply rounded corners to bar lanes or fills', () => {
+    render(<ExecutionTimelineStrip trace={[entry({ stepId: 'a' }), entry({ stepId: 'b' })]} />);
+    const bar = screen.getByTestId('timeline-bar-a');
+    const lane = bar.querySelector('.relative.h-4');
+    const fill = screen.getByTestId('timeline-bar-fill-a');
+    expect(lane?.className ?? '').not.toMatch(/\brounded(-|\b)/);
+    expect(fill.className).not.toMatch(/\brounded(-|\b)/);
+  });
+
+  // ─── Compress-waits toggle ──────────────────────────────────────────────
+
+  it('hides the compress-waits toggle when no awaiting_approval steps are present', () => {
+    render(<ExecutionTimelineStrip trace={[entry({ stepId: 'a' }), entry({ stepId: 'b' })]} />);
+    expect(screen.queryByTestId('timeline-compress-waits')).not.toBeInTheDocument();
+  });
+
+  it('shows the toggle when awaiting_approval is in the trace and compresses on click', async () => {
+    const user = userEvent.setup();
+    // 10s total: s1 [0–1s], wait [1s–9s] = 8s, s2 [9s–10s] = 1s.
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 's1',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            completedAt: '2026-01-01T00:00:01.000Z',
+            durationMs: 1_000,
+          }),
+          entry({
+            stepId: 'wait',
+            status: 'awaiting_approval',
+            startedAt: '2026-01-01T00:00:01.000Z',
+            completedAt: '2026-01-01T00:00:09.000Z',
+            durationMs: 8_000,
+          }),
+          entry({
+            stepId: 's2',
+            startedAt: '2026-01-01T00:00:09.000Z',
+            completedAt: '2026-01-01T00:00:10.000Z',
+            durationMs: 1_000,
+          }),
+        ]}
+      />
+    );
+
+    const toggle = screen.getByTestId('timeline-compress-waits');
+    expect(toggle).toHaveTextContent(/compress waits/i);
+
+    // Before compression: 10s axis. wait bar widthPct = 8 / 10 = 80%.
+    const waitFill = screen.getByTestId('timeline-bar-fill-wait');
+    expect(parseFloat(waitFill.style.width)).toBeCloseTo(80, 0);
+
+    await user.click(toggle);
+
+    expect(screen.getByTestId('timeline-compress-waits')).toHaveTextContent(/compressed waits/i);
+    // After compression: axis = 1s + 1s + 1s (collapsed wait) = 3s.
+    // wait bar shrinks to 1/3 ≈ 33%. s2 shifts left to ~66%.
+    expect(parseFloat(screen.getByTestId('timeline-bar-fill-wait').style.width)).toBeCloseTo(33, 0);
+    expect(parseFloat(screen.getByTestId('timeline-bar-fill-s2').style.left)).toBeCloseTo(66.67, 1);
+    // The compressed wait bar carries a data-compressed flag for styling
+    // hooks and gets the hashed pattern class.
+    expect(screen.getByTestId('timeline-bar-wait')).toHaveAttribute('data-compressed', 'true');
+    expect(screen.getByTestId('timeline-bar-fill-wait').className).toContain(
+      'repeating-linear-gradient'
+    );
+  });
+
+  // ─── Hover tooltip ──────────────────────────────────────────────────────
+
+  it('renders a Radix tooltip with start/end/duration and step-type description on hover', async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionTimelineStrip
+        trace={[
+          entry({
+            stepId: 'a',
+            stepType: 'llm_call',
+            label: 'Generate plan',
+            startedAt: '2026-01-01T08:00:00.000Z',
+            completedAt: '2026-01-01T08:00:02.500Z',
+            durationMs: 2_500,
+          }),
+          entry({
+            stepId: 'b',
+            stepType: 'llm_call',
+            startedAt: '2026-01-01T08:00:02.500Z',
+            completedAt: '2026-01-01T08:00:03.500Z',
+            durationMs: 1_000,
+          }),
+        ]}
+      />
+    );
+
+    await user.hover(screen.getByTestId('timeline-bar-a'));
+
+    // Radix portals the TooltipContent (and may also render an aria-hidden
+    // duplicate for screen readers), so use findAllBy and assert at least
+    // one match. The description text only appears inside the tooltip.
+    const description = await screen.findAllByText(
+      /single model call — the basic unit of a workflow/i,
+      {},
+      { timeout: 2000 }
+    );
+    expect(description.length).toBeGreaterThan(0);
+    // Friendly type label from getStepMetadata('llm_call').label = 'LLM Call'.
+    expect(screen.getAllByText(/llm call/i).length).toBeGreaterThan(0);
+    // The "Started" / "Ended" labels live inside the tooltip's <dl>.
+    expect(screen.getAllByText(/started/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/ended/i).length).toBeGreaterThan(0);
   });
 
   it('renders a wall-clock total in the header when timestamps are present', () => {
