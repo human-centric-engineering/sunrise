@@ -724,4 +724,119 @@ describe('ExecutionDetailView', () => {
       expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     });
   });
+
+  // ─── Live execution paths ───────────────────────────────────────────────
+  // Exercise the synthesised "running" trace entry that the view appends
+  // when the live-poll hook returns currentStepDetails. The hook mock at
+  // the top of this file passes the seed payload through unchanged, so we
+  // shape the props to mirror what the page server-fetches.
+
+  describe('Live execution indicator', () => {
+    it('renders the Live pill while the execution is non-terminal', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[]}
+          currentStepDetails={{
+            stepId: 'step-2',
+            label: 'Analyse data',
+            stepType: 'llm_call',
+            startedAt: '2025-01-01T10:00:05.000Z',
+          }}
+        />
+      );
+
+      expect(screen.getByTestId('execution-live-pill')).toBeInTheDocument();
+      expect(screen.getByTestId('execution-live-pill')).toHaveTextContent(/live/i);
+    });
+
+    it('does not render the Live pill once the status is terminal', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'completed' })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+
+      expect(screen.queryByTestId('execution-live-pill')).not.toBeInTheDocument();
+    });
+
+    it('synthesises a running trace row from currentStepDetails', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[TRACE_ENTRY]}
+          currentStepDetails={{
+            stepId: 'step-2',
+            label: 'Analyse data',
+            stepType: 'llm_call',
+            startedAt: '2025-01-01T10:00:05.000Z',
+          }}
+        />
+      );
+
+      // The synthesised row gets the standard `trace-entry-${stepId}` test id.
+      const synthRow = screen.getByTestId('trace-entry-step-2');
+      expect(synthRow).toBeInTheDocument();
+      // The visible step label lives inside the synthesised row.
+      expect(synthRow).toHaveTextContent('Analyse data');
+      // And the original persisted row is still rendered.
+      expect(screen.getByTestId('trace-entry-step-1')).toBeInTheDocument();
+    });
+
+    it('drops a persisted entry that collides with the running stepId (race guard)', () => {
+      // If a step transitions running → completed between server polls, the
+      // persisted entry could appear in `trace` at the same time as
+      // `currentStepDetails`. The view filters out the persisted dup so
+      // there's only ONE row for that stepId — the synthesised running one.
+      const persisted = { ...TRACE_ENTRY, stepId: 'step-2', label: 'Persisted (stale)' };
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[persisted]}
+          currentStepDetails={{
+            stepId: 'step-2',
+            label: 'Analyse data',
+            stepType: 'llm_call',
+            startedAt: '2025-01-01T10:00:05.000Z',
+          }}
+        />
+      );
+
+      const rows = screen.getAllByTestId('trace-entry-step-2');
+      expect(rows).toHaveLength(1);
+      // The visible row is the synthesised running one, not the persisted dup.
+      expect(screen.queryByText('Persisted (stale)')).not.toBeInTheDocument();
+      expect(rows[0]).toHaveTextContent('Analyse data');
+    });
+
+    it('does not synthesise a running row when currentStepDetails is null', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'running', completedAt: null })}
+          trace={[TRACE_ENTRY]}
+          currentStepDetails={null}
+        />
+      );
+
+      expect(screen.getByTestId('trace-entry-step-1')).toBeInTheDocument();
+      // No synthesised entry for any other stepId. Look for any row-level
+      // testid (rows are `trace-entry-<stepId>`; children testids carry
+      // an extra segment like `trace-entry-step-type-…`). The "step-2"
+      // running-row testid must not appear.
+      expect(screen.queryByTestId('trace-entry-step-2')).not.toBeInTheDocument();
+    });
+  });
 });

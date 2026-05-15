@@ -113,4 +113,51 @@ describe('ExecutionTimelineStrip', () => {
     expect(screen.getByText('250 ms')).toBeInTheDocument();
     expect(screen.getByText('750 ms')).toBeInTheDocument();
   });
+
+  // ─── Running-status indicator (live-execution path) ─────────────────────
+  // The synthesised running entry has `status: 'running'`, which isn't part
+  // of the persisted ExecutionTraceEntry status union. Cast it through
+  // `as unknown as` so the test fixture matches what the view actually
+  // hands to the strip at runtime.
+
+  it('renders a pulsing primary bar for the running entry', () => {
+    const running = entry({
+      stepId: 'r1',
+      status: 'running' as unknown as ExecutionTraceEntry['status'],
+      durationMs: 500,
+    });
+    render(<ExecutionTimelineStrip trace={[entry({ stepId: 's1', durationMs: 1000 }), running]} />);
+    const bar = screen.getByTestId('timeline-bar-r1');
+    expect(bar).toHaveAttribute('data-status', 'running');
+    // The inner coloured span carries animate-pulse + bg-primary/70.
+    const inner = bar.querySelector('span[style]');
+    expect(inner?.className).toContain('animate-pulse');
+    expect(inner?.className).toContain('bg-primary/70');
+  });
+
+  it('falls back to a visible ~25% width when the running step is the only timed one', () => {
+    // maxDuration is 0 when all completed siblings have durationMs=0; the
+    // running bar still needs to be visible, so it clamps to 25%.
+    const running = entry({
+      stepId: 'r1',
+      status: 'running' as unknown as ExecutionTraceEntry['status'],
+      durationMs: 0,
+    });
+    render(<ExecutionTimelineStrip trace={[entry({ stepId: 's1', durationMs: 0 }), running]} />);
+    const bar = screen.getByTestId('timeline-bar-r1');
+    const inner = bar.querySelector<HTMLElement>('span[style]');
+    expect(inner?.style.width).toBe('25.00%');
+  });
+
+  it('includes "Running" in the running bar\'s aria-label', () => {
+    const running = entry({
+      stepId: 'r1',
+      status: 'running' as unknown as ExecutionTraceEntry['status'],
+      label: 'Live step',
+      durationMs: 100,
+    });
+    render(<ExecutionTimelineStrip trace={[entry({ stepId: 's1' }), running]} />);
+    const bar = screen.getByTestId('timeline-bar-r1');
+    expect(bar.getAttribute('aria-label')).toContain('Running');
+  });
 });
