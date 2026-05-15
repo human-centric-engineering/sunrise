@@ -45,11 +45,32 @@ Admin UI for reviewing, approving, and rejecting paused workflow executions that
 
 Route: `/admin/orchestration/approvals`.
 
-Server component page fetches `GET /executions?status=paused_for_approval&limit=25` via `serverFetch`. Failures degrade to an empty list with a logged error, not a thrown 500.
+The page wraps two views in a tabbed shell (`ApprovalsTabs`):
 
-Client-side state lives in `ApprovalsTable`.
+- **Pending** — the live `paused_for_approval` queue. Server component pre-fetches `GET /executions?status=paused_for_approval&limit=25` via `serverFetch` and seeds `ApprovalsTable`. Pending count appears as a badge on the tab header when `> 0`.
+- **History** — a self-fetching `ApprovalsHistoryTable` that calls `GET /approvals/history` on mount and on every filter change. It owns its own pagination, filter state, debounced search, Reset button, and CSV export (see below).
 
-### Columns
+`Tabs` use the shadcn `Tabs` primitive; switching tabs after the first paint does not refetch the Pending list. Failures in the initial Pending fetch degrade to an empty list with a logged error, not a thrown 500.
+
+Client-side state for Pending lives in `ApprovalsTable`. State for History lives in `ApprovalsHistoryTable` (`components/admin/orchestration/approvals-history-table.tsx`).
+
+### History tab
+
+| Column          | Source                               | Notes                                                                           |
+| --------------- | ------------------------------------ | ------------------------------------------------------------------------------- |
+| Workflow        | `row.workflowName` + `row.stepLabel` | Workflow name links to the execution detail page                                |
+| Decision        | `row.decision`                       | `approved` (secondary) / `rejected` (destructive) badge                         |
+| Medium          | `row.medium`                         | `Admin UI` / `Token · External` / `Token · Chat` / `Token · Embed`              |
+| Approver        | `row.approverName`                   | Falls back to italic _deleted user_ for missing admin; em-dash for token medium |
+| Asked / Decided | `row.askedAt`, `row.decidedAt`       | Local-formatted; hover shows ISO via Tip                                        |
+| Wait            | `row.waitDurationMs`                 | Human duration (`5m`, `1h 30m`, `2d 3h`)                                        |
+| Notes / Reason  | `row.notes ?? row.reason`            | Truncated; widest column                                                        |
+
+Filters: search box (workflow / step / approver), decision (`all` / `approved` / `rejected`), medium (`all` / `admin` / `token`), and ISO date range. The component debounces all filter changes by 200 ms before refetching, and exposes a Reset button when any filter is active.
+
+CSV export: clicking **Export CSV** re-fires the same query with `?format=csv`, streams the response into a `Blob`, and triggers an anchor download named `approvals-history-<YYYY-MM-DD>.csv`. Disabled while exporting and when `total === 0`.
+
+### Pending columns
 
 | Column    | Source                    | Notes                                            |
 | --------- | ------------------------- | ------------------------------------------------ |

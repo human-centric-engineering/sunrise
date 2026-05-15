@@ -61,12 +61,14 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/publish`                  | POST               | Promote `draftDefinition` to a new published version                                                 | 5.1     |
 | `/workflows/:id/discard-draft`            | POST               | Clear `draftDefinition`; published version unchanged                                                 | 5.1     |
 | `/workflows/:id/rollback`                 | POST               | Create a NEW version copied from a target version                                                    | 5.1     |
-| `/executions/:id`                         | GET                | Read execution + parsed trace                                                                        | 3.2     |
+| `/executions/:id`                         | GET                | Read execution + parsed trace + `currentStepDetails` for live indicator                              | 3.2     |
 | `/executions/:id/status`                  | GET                | Lightweight status read (no trace, polling-friendly)                                                 | —       |
+| `/executions/:id/live`                    | GET                | Snapshot + trace + cost entries + `currentStepDetails` (1 s-poll friendly)                           | —       |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                                                             | 3.2     |
 | `/executions/:id/reject`                  | POST               | Reject paused execution with reason                                                                  | —       |
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                                                                    | 5.1     |
 | `/executions/:id/retry-step`              | POST               | Retry from a failed step                                                                             | 7.0     |
+| `/approvals/history`                      | GET                | Past approval decisions (filters, paging, CSV export)                                                | —       |
 | `/chat/stream`                            | POST               | Streaming chat turn (SSE)                                                                            | 3.3     |
 | `/chat/transcribe`                        | POST               | Speech-to-text — multipart audio in, transcript out                                                  | —       |
 | `/knowledge/search`                       | POST               | Hybrid vector + keyword search                                                                       | 3.3     |
@@ -397,7 +399,30 @@ Body: `{ versionIndex: number }`. Returns the updated workflow.
 
 ### `GET /executions/:id`
 
-Returns the execution row with a parsed `ExecutionTraceEntry[]`. Scoped to `session.user.id` — cross-user returns 404.
+Returns the execution row with a parsed `ExecutionTraceEntry[]`, step-attributed `costEntries`, and `currentStepDetails`. Scoped to `session.user.id` — cross-user returns 404.
+
+`currentStepDetails: { stepId, label, stepType, startedAt } | null` — populated from the live `currentStep*` columns on `AiWorkflowExecution` when the execution is in a non-terminal status AND the engine has written all three. `null` otherwise (terminal status, partially-populated columns, or a step that hasn't started). Lets the page render the in-flight step's friendly label and elapsed time without parsing the workflow version snapshot.
+
+### `GET /executions/:id/live`
+
+Same auth/ownership/rate-limit posture as `/status`, but returns everything the execution detail page needs for fast polling in one round-trip. Designed for ~1 s cadence — the page's live-poll hook hits this endpoint while non-terminal, pauses on `document.hidden`, and exponential-backs off on `APIClientError` failures.
+
+```jsonc
+{
+  "snapshot": {
+    /* id, status, currentStep, errorMessage, tokens, cost, dates — same shape as /status */
+  },
+  "trace": [
+    /* persisted ExecutionTraceEntry[] */
+  ],
+  "costEntries": [
+    /* per-LLM-call cost rows keyed by stepId */
+  ],
+  "currentStepDetails": { "stepId": "...", "label": "...", "stepType": "...", "startedAt": "..." } | null
+}
+```
+
+`currentStepDetails` follows the same null-when-incomplete rule as `/executions/:id`.
 
 ### `POST /executions/:id/approve`
 
@@ -452,6 +477,14 @@ Prepares a failed execution for retry from a specific step. Truncates the trace 
 After this call, the client reconnects via `POST /workflows/:workflowId/execute?resumeFromExecutionId=<executionId>` to resume streaming from the failed step.
 
 Guards: execution must be `failed`, `stepId` must reference a failed step in the trace, ownership is scoped to `session.user.id`.
+
+### `GET /approvals/history`
+
+Past approval decisions, flattened from `human_approval` trace entries to one row per decision. Each row carries the execution, workflow, step, decision (`approved` / `rejected`), the medium (`admin` / `token-external` / `token-chat` / `token-embed` / `unknown`), resolved approver name (when medium is `admin` and the user still exists), notes / reason, ask/decide timestamps, and the wait duration.
+
+Query parameters: `page`, `limit`, `decision`, `medium`, `q` (text search over workflow / step / approver), `dateFrom`, `dateTo`, and `format=csv` for CSV export (otherwise JSON).
+
+CSV mode streams `text/csv` with a date-stamped filename header — the admin UI's history table consumes it via `URL.createObjectURL` for download. Scoped to `session.user.id` — cross-user rows are filtered out.
 
 ---
 
