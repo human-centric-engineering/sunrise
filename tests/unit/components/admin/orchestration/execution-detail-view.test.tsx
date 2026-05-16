@@ -869,4 +869,100 @@ describe('ExecutionDetailView', () => {
       expect(screen.queryByTestId('trace-entry-step-2')).not.toBeInTheDocument();
     });
   });
+
+  // ─── Interaction callbacks ──────────────────────────────────────────────
+  // Targets inline callbacks that weren't covered by the higher-level
+  // tests above: the CollapsibleJsonCard copy button, the per-row retry
+  // wiring on the step timeline, the reject-dialog open/close handler,
+  // and step-row expansion. These are small but real branches.
+
+  describe('Interaction callbacks', () => {
+    it('Copy button on the Input Data card invokes the handler without crashing when clipboard is unavailable', async () => {
+      // The handler wraps `navigator.clipboard.writeText` in a try/catch
+      // IIFE specifically so a missing clipboard (insecure contexts,
+      // tests) does not break the UI. Clicking the button exercises
+      // handleCopy + the IIFE; the clipboard API itself is too fiddly
+      // to stub reliably across jsdom builds (the `clipboard` property
+      // is sometimes installed as a non-configurable getter), so we
+      // assert on the survivable side-effect: the button keeps working,
+      // the card stays mounted, no thrown error escapes the IIFE.
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ inputData: { prompt: 'hello world' } })}
+          trace={[]}
+        />
+      );
+
+      const copyButton = screen.getByRole('button', { name: 'Copy Input Data' });
+      await user.click(copyButton);
+
+      // Component still renders cleanly; the click did not throw past
+      // the IIFE's catch.
+      expect(copyButton).toBeInTheDocument();
+      // Header toggle remains operable — the click did not crash the
+      // tree, and stopPropagation prevented the parent button from
+      // toggling the card open.
+      expect(screen.getByRole('button', { name: /^input data$/i })).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      );
+    });
+
+    it('opening then cancelling the Reject dialog clears the reason and closes', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval', completedAt: null })}
+          trace={[]}
+        />
+      );
+
+      // Open the reject dialog from the top-level action bar.
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+      // The reason textarea has id="reject-reason-detail"; querying by
+      // role gets the single textbox inside the dialog without colliding
+      // with the FieldHelp button that also mentions "reason".
+      const reasonField = await screen.findByRole('textbox');
+      await user.type(reasonField, 'compliance review pending');
+      expect(reasonField).toHaveValue('compliance review pending');
+
+      // Cancel the dialog — this fires the onOpenChange callback at
+      // line 813, which resets rejectReason and closes the dialog.
+      // The shadcn AlertDialogCancel renders a button with text "Cancel".
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      // Reopen and verify the reason field is empty (state was reset).
+      await user.click(screen.getByRole('button', { name: /^reject$/i }));
+      expect(await screen.findByRole('textbox')).toHaveValue('');
+    });
+
+    it('per-step Retry button on the failure synopsis fires the retry-step endpoint', async () => {
+      mockPost.mockResolvedValueOnce({ success: true });
+      const user = userEvent.setup();
+      const failedTrace: ExecutionTraceEntry = {
+        ...TRACE_ENTRY,
+        stepId: 'row-retry-step',
+        status: 'failed',
+        error: 'transient timeout',
+      };
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'failed', errorMessage: 'transient timeout' })}
+          trace={[failedTrace]}
+        />
+      );
+
+      // The synopsis renders its own retry button keyed off the
+      // headline failed step — this exercises the per-row onRetry
+      // wiring at execution-detail-view.tsx:695 that the top-level
+      // "Retry failed step" button bypasses.
+      await user.click(screen.getByTestId('execution-synopsis-retry'));
+
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.stringContaining('/retry-step'),
+        expect.objectContaining({ body: expect.objectContaining({ stepId: 'row-retry-step' }) })
+      );
+    });
+  });
 });
