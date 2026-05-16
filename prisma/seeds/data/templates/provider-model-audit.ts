@@ -330,6 +330,13 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       // ─── Step 9: human_approval (Pattern 13 — HITL) ───────────────
       // Tests: Execution pause via PausedForApproval exception, approval
       // queue, resume flow, approvalPayload forwarding.
+      //
+      // The `reviewSchema` drives the structured admin UI: three
+      // sections projected from the upstream parallel branch outputs,
+      // with per-change Accept / Reject (Phase 3 adds Modify). The
+      // markdown `prompt` is kept as a fallback for any approval
+      // surface that doesn't honour the schema (e.g. email notification
+      // bodies that interpolate the trace entry's `prompt`).
       {
         id: 'review_changes',
         name: 'Admin reviews proposed changes and new models',
@@ -338,6 +345,75 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           prompt:
             'Review the proposed provider model changes, new model additions, and deactivation proposals below.\n\n## Proposed Changes to Existing Models\n\nThe audit has analysed your model entries and suggests the following updates. For each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\n{{refine_findings.output}}\n\n## Proposed New Models\n\nThe audit has identified the following new models from your providers that are not yet in the registry. For each new model you can:\n- **Accept** — the model will be added to the registry\n- **Reject** — the model will not be added\n- **Modify** — adjust the proposed values before accepting\n\n{{discover_new_models.output}}\n\n## Proposed Deactivations\n\nThe audit has identified models that appear to be deprecated or discontinued by their providers. Deactivation sets isActive=false (soft delete) — the model can be reactivated later if needed. For each deactivation you can:\n- **Accept** — the model will be deactivated\n- **Reject** — the model will remain active\n\nDeactivation proposals from chat model analysis:\n{{analyse_chat.output}}\n\nDeactivation proposals from embedding model analysis:\n{{analyse_embedding.output}}\n\nAudit quality score: {{score_audit.output}}\n\n## Approval Payload Format\n\nWhen you approve, your payload should contain all three top-level keys (use an empty array for any category with no entries):\n- **models** — array of { model_id, changes: [{ field, currentValue, proposedValue, reason, confidence }] } for updates to existing models\n- **newModels** — array of new model entries to add (from the discovery section above)\n- **deactivateModels** — array of { modelId, reason } for models to deactivate',
           timeoutMinutes: 1440,
+          reviewSchema: {
+            sections: [
+              {
+                id: 'models',
+                title: 'Proposed changes to existing models',
+                description:
+                  'Per-field updates the audit suggests. Each row has the field, the registry value, and the proposed value.',
+                source:
+                  '__merge__:{{analyse_chat.output.models}},{{analyse_embedding.output.models}}',
+                itemKey: 'model_id',
+                itemTitle: '{{item.modelName}} ({{item.providerSlug}})',
+                itemBadges: [{ key: 'overallConfidence', label: 'confidence' }],
+                subItems: {
+                  source: 'item.changes',
+                  itemKey: 'field',
+                  fields: [
+                    { key: 'field', label: 'Field', display: 'text', readonly: true },
+                    {
+                      key: 'currentValue',
+                      label: 'Current',
+                      display: 'text',
+                      readonly: true,
+                    },
+                    {
+                      key: 'proposedValue',
+                      label: 'Proposed',
+                      display: 'text',
+                      // Phase 3 enables editable: true here so the admin
+                      // can adjust the value before accepting.
+                    },
+                    { key: 'confidence', label: 'Confidence', display: 'badge' },
+                    { key: 'reason', label: 'Reason', display: 'text', readonly: true },
+                  ],
+                },
+              },
+              {
+                id: 'newModels',
+                title: 'Proposed new models',
+                description:
+                  'Models discovered from your providers that are not yet in the registry.',
+                source: '{{discover_new_models.output.newModels}}',
+                itemKey: 'slug',
+                itemTitle: '{{item.name}} ({{item.providerSlug}})',
+                fields: [
+                  { key: 'modelId', label: 'Model ID', display: 'text', readonly: true },
+                  { key: 'description', label: 'Description', display: 'textarea' },
+                  { key: 'capabilities', label: 'Capabilities', display: 'pre' },
+                  { key: 'tierRole', label: 'Tier role', display: 'badge' },
+                  { key: 'reasoningDepth', label: 'Reasoning depth', display: 'badge' },
+                  { key: 'latency', label: 'Latency', display: 'badge' },
+                  { key: 'costEfficiency', label: 'Cost efficiency', display: 'badge' },
+                  { key: 'contextLength', label: 'Context length', display: 'badge' },
+                  { key: 'toolUse', label: 'Tool use', display: 'badge' },
+                  { key: 'bestRole', label: 'Best role', display: 'text' },
+                ],
+              },
+              {
+                id: 'deactivateModels',
+                title: 'Proposed deactivations',
+                description:
+                  'Models the audit flagged as deprecated or discontinued. Soft-delete only — they can be reactivated later.',
+                source:
+                  '__merge__:{{analyse_chat.output.deactivateModels}},{{analyse_embedding.output.deactivateModels}}',
+                itemKey: 'modelId',
+                itemTitle: '{{item.modelId}}',
+                fields: [{ key: 'reason', label: 'Reason', display: 'text', readonly: true }],
+              },
+            ],
+          },
         },
         nextSteps: [{ targetStepId: 'apply_changes' }],
       },

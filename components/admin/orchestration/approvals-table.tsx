@@ -48,12 +48,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tip } from '@/components/ui/tooltip';
 import { FieldHelp } from '@/components/ui/field-help';
 import { MarkdownContent } from '@/components/admin/orchestration/markdown-or-raw-view';
+import { StructuredApprovalView } from '@/components/admin/orchestration/approvals/structured-approval-view';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
+import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
+import type { ReviewSchema } from '@/lib/orchestration/review-schema/types';
 import { z } from 'zod';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem, ExecutionTraceEntry } from '@/types/orchestration';
+
+const STRUCTURED_APPROVAL_WORKFLOW_SLUGS = new Set(['tpl-provider-model-audit']);
 
 const apiErrorBodySchema = z
   .object({ error: z.object({ message: z.string().optional() }).optional() })
@@ -76,7 +81,7 @@ interface ExecutionDetail {
     startedAt: string | null;
     completedAt: string | null;
     createdAt: string;
-    workflow: { id: string; name: string };
+    workflow: { id: string; name: string; slug: string };
   };
   trace: ExecutionTraceEntry[];
 }
@@ -128,6 +133,9 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
   const [approveNotes, setApproveNotes] = useState('');
   const [approveLoading, setApproveLoading] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
+  // Structured-view-supplied payload; preserved into the confirm dialog so
+  // the admin's per-item selection isn't lost when they click Approve.
+  const [approvePayload, setApprovePayload] = useState<Record<string, unknown[]> | null>(null);
 
   // Reject state
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
@@ -215,11 +223,15 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     setApproveError(null);
 
     try {
+      const body: Record<string, unknown> = {};
+      if (approveNotes) body.notes = approveNotes;
+      if (approvePayload) body.approvalPayload = approvePayload;
+
       const res = await fetch(API.ADMIN.ORCHESTRATION.executionApprove(approveTarget), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: approveNotes || undefined }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const errBody = apiErrorBodySchema.safeParse(await res.json().catch(() => null));
@@ -230,6 +242,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
       setMeta((prev) => ({ ...prev, total: Math.max(0, prev.total - 1) }));
       setApproveTarget(null);
       setApproveNotes('');
+      setApprovePayload(null);
       setExpandedId(null);
       showSuccess('Execution approved. The workflow will resume.');
     } catch (err) {
@@ -237,7 +250,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     } finally {
       setApproveLoading(false);
     }
-  }, [approveTarget, approveNotes]);
+  }, [approveTarget, approveNotes, approvePayload]);
 
   // ─── Reject ─────────────────────────────────────────────────────────────
 
@@ -284,6 +297,15 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     if (!entry?.output || typeof entry.output !== 'object') return null;
     const output = entry.output as Record<string, unknown>;
     return typeof output.prompt === 'string' ? output.prompt : null;
+  }
+
+  function getReviewSchema(trace: ExecutionTraceEntry[]): ReviewSchema | null {
+    const entry = trace.find((e) => e.status === 'awaiting_approval');
+    if (!entry?.output || typeof entry.output !== 'object') return null;
+    const raw = (entry.output as Record<string, unknown>).reviewSchema;
+    if (!raw) return null;
+    const parsed = reviewSchemaSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
   }
 
   function getPreviousSteps(trace: ExecutionTraceEntry[]): ExecutionTraceEntry[] {
@@ -447,111 +469,145 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
                             {detailError}
                           </div>
                         ) : detail ? (
-                          <div className="space-y-4">
-                            {/* Approval prompt — workflow authors write
-                                these in markdown, so render them as such
-                                (headings, lists, fenced code). MarkdownContent
-                                uses the same safe react-markdown config as
-                                the rest of the admin surface. */}
-                            {getApprovalPrompt(detail.trace) && (
-                              <div className="rounded-md border bg-amber-50 p-3 dark:bg-amber-950">
-                                <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
-                                  Approval prompt{' '}
-                                  <FieldHelp title="What is this?">
-                                    The message configured in the workflow&apos;s human_approval
-                                    step. It explains what the workflow has done so far and why it
-                                    needs your review before continuing.
-                                  </FieldHelp>
-                                </p>
-                                <MarkdownContent
-                                  content={getApprovalPrompt(detail.trace) as string}
-                                  className="mt-1 text-sm text-amber-900 dark:text-amber-100"
+                          (() => {
+                            const reviewSchema = getReviewSchema(detail.trace);
+                            const isStructured =
+                              reviewSchema !== null &&
+                              STRUCTURED_APPROVAL_WORKFLOW_SLUGS.has(
+                                detail.execution.workflow.slug
+                              );
+
+                            if (isStructured) {
+                              return (
+                                <StructuredApprovalView
+                                  trace={detail.trace}
+                                  schema={reviewSchema}
+                                  fallbackPrompt={getApprovalPrompt(detail.trace)}
+                                  onRequestApprove={(payload) => {
+                                    setApprovePayload(payload);
+                                    setApproveTarget(item.id);
+                                    setApproveNotes('');
+                                    setApproveError(null);
+                                  }}
+                                  onRequestReject={() => {
+                                    setRejectTarget(item.id);
+                                    setRejectReason('');
+                                    setRejectError(null);
+                                  }}
+                                  submitting={approveLoading || rejectLoading}
                                 />
-                              </div>
-                            )}
+                              );
+                            }
 
-                            {/* Cost summary */}
-                            <div className="flex items-center gap-4 text-xs">
-                              <Tip label="Total LLM tokens consumed by this execution so far">
-                                <span className="text-muted-foreground">
-                                  Tokens:{' '}
-                                  <span className="text-foreground font-medium">
-                                    {detail.execution.totalTokensUsed.toLocaleString()}
-                                  </span>
-                                </span>
-                              </Tip>
-                              <Tip label="Cumulative LLM cost in USD for all steps so far">
-                                <span className="text-muted-foreground">
-                                  Cost:{' '}
-                                  <span className="text-foreground font-medium">
-                                    ${detail.execution.totalCostUsd.toFixed(4)}
-                                  </span>
-                                </span>
-                              </Tip>
-                              {detail.execution.budgetLimitUsd && (
-                                <Tip label="Maximum spend allowed for this execution before it is automatically halted">
-                                  <span className="text-muted-foreground">
-                                    Budget:{' '}
-                                    <span className="text-foreground font-medium">
-                                      ${detail.execution.budgetLimitUsd.toFixed(2)}
+                            return (
+                              <div className="space-y-4">
+                                {/* Approval prompt — workflow authors write
+                                    these in markdown, so render them as such
+                                    (headings, lists, fenced code). MarkdownContent
+                                    uses the same safe react-markdown config as
+                                    the rest of the admin surface. */}
+                                {getApprovalPrompt(detail.trace) && (
+                                  <div className="rounded-md border bg-amber-50 p-3 dark:bg-amber-950">
+                                    <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                                      Approval prompt{' '}
+                                      <FieldHelp title="What is this?">
+                                        The message configured in the workflow&apos;s human_approval
+                                        step. It explains what the workflow has done so far and why
+                                        it needs your review before continuing.
+                                      </FieldHelp>
+                                    </p>
+                                    <MarkdownContent
+                                      content={getApprovalPrompt(detail.trace) as string}
+                                      className="mt-1 text-sm text-amber-900 dark:text-amber-100"
+                                    />
+                                  </div>
+                                )}
+
+                                {/* Cost summary */}
+                                <div className="flex items-center gap-4 text-xs">
+                                  <Tip label="Total LLM tokens consumed by this execution so far">
+                                    <span className="text-muted-foreground">
+                                      Tokens:{' '}
+                                      <span className="text-foreground font-medium">
+                                        {detail.execution.totalTokensUsed.toLocaleString()}
+                                      </span>
                                     </span>
-                                  </span>
-                                </Tip>
-                              )}
-                            </div>
-
-                            {/* Previous steps */}
-                            {getPreviousSteps(detail.trace).length > 0 && (
-                              <div>
-                                <p className="text-muted-foreground mb-2 text-xs font-medium">
-                                  Completed steps before approval{' '}
-                                  <FieldHelp title="Previous steps">
-                                    The workflow steps that ran successfully before reaching the
-                                    human_approval gate. Review these to understand what the
-                                    workflow has already done and whether its outputs look correct.
-                                  </FieldHelp>
-                                </p>
-                                <div className="space-y-1">
-                                  {getPreviousSteps(detail.trace).map((step) => (
-                                    <div
-                                      key={step.stepId}
-                                      className="bg-background flex items-center justify-between rounded border px-3 py-1.5 text-xs"
-                                    >
-                                      <span>
-                                        <Badge variant="secondary" className="mr-2 text-[10px]">
-                                          {step.stepType}
-                                        </Badge>
-                                        {step.label}
+                                  </Tip>
+                                  <Tip label="Cumulative LLM cost in USD for all steps so far">
+                                    <span className="text-muted-foreground">
+                                      Cost:{' '}
+                                      <span className="text-foreground font-medium">
+                                        ${detail.execution.totalCostUsd.toFixed(4)}
                                       </span>
+                                    </span>
+                                  </Tip>
+                                  {detail.execution.budgetLimitUsd && (
+                                    <Tip label="Maximum spend allowed for this execution before it is automatically halted">
                                       <span className="text-muted-foreground">
-                                        {step.durationMs}ms
+                                        Budget:{' '}
+                                        <span className="text-foreground font-medium">
+                                          ${detail.execution.budgetLimitUsd.toFixed(2)}
+                                        </span>
                                       </span>
-                                    </div>
-                                  ))}
+                                    </Tip>
+                                  )}
                                 </div>
-                              </div>
-                            )}
 
-                            {/* Input data */}
-                            {detail.execution.inputData != null &&
-                            typeof detail.execution.inputData === 'object' &&
-                            Object.keys(detail.execution.inputData as Record<string, unknown>)
-                              .length > 0 ? (
-                              <div>
-                                <p className="text-muted-foreground mb-1 text-xs font-medium">
-                                  Input data{' '}
-                                  <FieldHelp title="Execution input">
-                                    The data passed to this workflow when it was triggered. This
-                                    could include user queries, parameters from a scheduled run, or
-                                    webhook payload data.
-                                  </FieldHelp>
-                                </p>
-                                <pre className="bg-muted/40 max-h-40 overflow-auto rounded p-2 font-mono text-xs">
-                                  {JSON.stringify(detail.execution.inputData, null, 2)}
-                                </pre>
+                                {/* Previous steps */}
+                                {getPreviousSteps(detail.trace).length > 0 && (
+                                  <div>
+                                    <p className="text-muted-foreground mb-2 text-xs font-medium">
+                                      Completed steps before approval{' '}
+                                      <FieldHelp title="Previous steps">
+                                        The workflow steps that ran successfully before reaching the
+                                        human_approval gate. Review these to understand what the
+                                        workflow has already done and whether its outputs look
+                                        correct.
+                                      </FieldHelp>
+                                    </p>
+                                    <div className="space-y-1">
+                                      {getPreviousSteps(detail.trace).map((step) => (
+                                        <div
+                                          key={step.stepId}
+                                          className="bg-background flex items-center justify-between rounded border px-3 py-1.5 text-xs"
+                                        >
+                                          <span>
+                                            <Badge variant="secondary" className="mr-2 text-[10px]">
+                                              {step.stepType}
+                                            </Badge>
+                                            {step.label}
+                                          </span>
+                                          <span className="text-muted-foreground">
+                                            {step.durationMs}ms
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Input data */}
+                                {detail.execution.inputData != null &&
+                                typeof detail.execution.inputData === 'object' &&
+                                Object.keys(detail.execution.inputData as Record<string, unknown>)
+                                  .length > 0 ? (
+                                  <div>
+                                    <p className="text-muted-foreground mb-1 text-xs font-medium">
+                                      Input data{' '}
+                                      <FieldHelp title="Execution input">
+                                        The data passed to this workflow when it was triggered. This
+                                        could include user queries, parameters from a scheduled run,
+                                        or webhook payload data.
+                                      </FieldHelp>
+                                    </p>
+                                    <pre className="bg-muted/40 max-h-40 overflow-auto rounded p-2 font-mono text-xs">
+                                      {JSON.stringify(detail.execution.inputData, null, 2)}
+                                    </pre>
+                                  </div>
+                                ) : null}
                               </div>
-                            ) : null}
-                          </div>
+                            );
+                          })()
                         ) : null}
                       </TableCell>
                     </TableRow>
@@ -604,6 +660,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
           if (!open) {
             setApproveTarget(null);
             setApproveNotes('');
+            setApprovePayload(null);
             setApproveError(null);
           }
         }}

@@ -17,6 +17,7 @@ import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
+import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 
 // ============================================================================
 // Shared Schemas
@@ -2451,6 +2452,14 @@ export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
   notificationChannel: notificationChannelSchema.optional(),
   /** User IDs who are allowed to approve/reject (in addition to the execution owner). */
   approverUserIds: z.array(z.string().cuid2()).optional(),
+  /**
+   * Optional declarative schema that drives the structured admin
+   * approval UI. When present, the admin sees per-section,
+   * per-item accept/reject/modify controls instead of a markdown
+   * prompt wall; selections are projected into the request's
+   * `approvalPayload`. See `lib/orchestration/review-schema/types.ts`.
+   */
+  reviewSchema: reviewSchemaSchema.optional(),
 });
 
 export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
