@@ -178,10 +178,10 @@ export async function getAgentModels(): Promise<ModelOption[] | null> {
   try {
     const [chatRes, reasoningRes] = await Promise.all([
       serverFetch(
-        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=200`
+        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=100`
       ),
       serverFetch(
-        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=reasoning&isActive=true&limit=200`
+        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=reasoning&isActive=true&limit=100`
       ),
     ]);
     if (!chatRes.ok && !reasoningRes.ok) return null;
