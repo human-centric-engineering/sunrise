@@ -191,6 +191,37 @@ After approval, the workflow continues:
 2. Find the model you tampered with
 3. Confirm the field was corrected back to its proper value
 
+## How attribution works
+
+Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) is required to attribute every claim it makes. The output JSON carries a `sources` array per change, per new model, and per deactivation:
+
+```json
+{
+  "field": "tierRole",
+  "currentValue": "embedding",
+  "proposedValue": "thinking",
+  "reason": "Qwen2.5-72B is a general-purpose LLM, not an embedding model",
+  "confidence": "high",
+  "sources": [
+    {
+      "source": "web_search",
+      "confidence": "high",
+      "reference": "https://qwenlm.github.io/blog/qwen2.5/",
+      "snippet": "Qwen2.5 series flagship: 72B-parameter general-purpose language model with strong reasoning and coding…",
+      "note": "Official Qwen release notes describe it as a chat/reasoning model, not embedding"
+    }
+  ]
+}
+```
+
+The web search step (`search_provider_info`) renders Brave results as a numbered block in each producer's prompt: `[1] title — url\nsnippet`. The LLM is told to cite by `[N]` when a claim is search-backed and to fall back to `training_knowledge` (capped at `medium`/`low` confidence) when it isn't.
+
+The `validate_proposals` guard rejects any proposal whose `sources` array is missing or malformed, using the existing 2-retry budget. The retry context surfaces the offending object so the producer can re-attempt with attribution.
+
+The approval UI renders each source as a colour-coded pill: `web · qwenlm.github.io ●●●` (blue, high confidence), `training · ●○○` (amber, low confidence), `kb · doc.pdf ●●●` (emerald). Hover or focus pops a tooltip with the reference, snippet, and note. Admins reviewing a row of proposed changes can scan the pills and spot a stream of `training · low` claims that warrant rejection vs `web · high` claims that warrant acceptance.
+
+The same pills appear in the trace viewer (post-execution) under the Output panel of each step that emitted sources. See [`.context/orchestration/provenance.md`](../orchestration/provenance.md) for the full contract.
+
 ## What to explore next
 
 Now that you have seen the full workflow in action, explore these areas:
