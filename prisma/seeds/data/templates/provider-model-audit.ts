@@ -45,6 +45,17 @@
  */
 
 import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import {
+  CAPABILITIES,
+  CONFIDENCE,
+  CONTEXT_LENGTH,
+  COST_EFFICIENCY,
+  LATENCY,
+  QUALITY,
+  REASONING_DEPTH,
+  TIER_ROLES,
+  TOOL_USE,
+} from '@/lib/orchestration/model-audit/enums';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
 // Enum specifications used by the validate_proposals guard. Embedded as a
@@ -54,33 +65,21 @@ import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 // `infrastructure` from `tierRole` (2026-05-16). JSON is harder to
 // silently misparse; the guard prompt explicitly tells the model to
 // re-read this block before judging each proposal.
+//
+// Sourced from `lib/orchestration/model-audit/enums.ts` so the guard,
+// the structured approval UI's Select widgets, and the server-side
+// per-field validation all stay in sync.
 const ENUM_SPEC = {
   field: AUDITABLE_FIELDS,
-  tierRole: [
-    'thinking',
-    'worker',
-    'infrastructure',
-    'control_plane',
-    'local_sovereign',
-    'embedding',
-  ],
-  reasoningDepth: ['very_high', 'high', 'medium', 'none'],
-  latency: ['very_fast', 'fast', 'medium'],
-  costEfficiency: ['very_high', 'high', 'medium', 'none'],
-  contextLength: ['very_high', 'high', 'medium', 'n_a'],
-  toolUse: ['strong', 'moderate', 'none'],
-  quality: ['high', 'medium', 'budget'],
-  confidence: ['high', 'medium', 'low'],
-  capabilities: [
-    'chat',
-    'reasoning',
-    'embedding',
-    'audio',
-    'image',
-    'moderation',
-    'vision',
-    'documents',
-  ],
+  tierRole: TIER_ROLES,
+  reasoningDepth: REASONING_DEPTH,
+  latency: LATENCY,
+  costEfficiency: COST_EFFICIENCY,
+  contextLength: CONTEXT_LENGTH,
+  toolUse: TOOL_USE,
+  quality: QUALITY,
+  confidence: CONFIDENCE,
+  capabilities: CAPABILITIES,
 } as const;
 const ENUM_SPEC_JSON = JSON.stringify(ENUM_SPEC, null, 2);
 
@@ -372,8 +371,13 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
                       key: 'proposedValue',
                       label: 'Proposed',
                       display: 'text',
-                      // Phase 3 enables editable: true here so the admin
-                      // can adjust the value before accepting.
+                      editable: true,
+                      // Per-field enum lookup: the Select shows the
+                      // values valid for the row's `field` cell
+                      // (tierRole → TIER_ROLES, latency → LATENCY,
+                      // etc.). Free-text fields like `bestRole` fall
+                      // through to a text input.
+                      enumValuesByFieldKey: 'field',
                     },
                     { key: 'confidence', label: 'Confidence', display: 'badge' },
                     { key: 'reason', label: 'Reason', display: 'text', readonly: true },
@@ -390,15 +394,54 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
                 itemTitle: '{{item.name}} ({{item.providerSlug}})',
                 fields: [
                   { key: 'modelId', label: 'Model ID', display: 'text', readonly: true },
-                  { key: 'description', label: 'Description', display: 'textarea' },
-                  { key: 'capabilities', label: 'Capabilities', display: 'pre' },
-                  { key: 'tierRole', label: 'Tier role', display: 'badge' },
-                  { key: 'reasoningDepth', label: 'Reasoning depth', display: 'badge' },
-                  { key: 'latency', label: 'Latency', display: 'badge' },
-                  { key: 'costEfficiency', label: 'Cost efficiency', display: 'badge' },
-                  { key: 'contextLength', label: 'Context length', display: 'badge' },
-                  { key: 'toolUse', label: 'Tool use', display: 'badge' },
-                  { key: 'bestRole', label: 'Best role', display: 'text' },
+                  { key: 'description', label: 'Description', display: 'textarea', editable: true },
+                  // Capabilities is a string array; multi-select editing
+                  // is out of scope for Phase 3 — admin can reject the
+                  // whole model if capabilities are wrong.
+                  { key: 'capabilities', label: 'Capabilities', display: 'pre', readonly: true },
+                  {
+                    key: 'tierRole',
+                    label: 'Tier role',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'TIER_ROLES',
+                  },
+                  {
+                    key: 'reasoningDepth',
+                    label: 'Reasoning depth',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'REASONING_DEPTH',
+                  },
+                  {
+                    key: 'latency',
+                    label: 'Latency',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'LATENCY',
+                  },
+                  {
+                    key: 'costEfficiency',
+                    label: 'Cost efficiency',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'COST_EFFICIENCY',
+                  },
+                  {
+                    key: 'contextLength',
+                    label: 'Context length',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'CONTEXT_LENGTH',
+                  },
+                  {
+                    key: 'toolUse',
+                    label: 'Tool use',
+                    display: 'badge',
+                    editable: true,
+                    enumValuesFrom: 'TOOL_USE',
+                  },
+                  { key: 'bestRole', label: 'Best role', display: 'text', editable: true },
                 ],
               },
               {

@@ -3,15 +3,22 @@
 /**
  * One item in a review section.
  *
- * Header shows the templated title and any item-level badges; the
- * Accept / Reject toggle controls inclusion. The body expands the
- * item's fields (flat) or a sub-item table (nested). The body is open
- * by default — admins need to see the proposed change to decide, and
- * collapsing-by-default hides exactly the information they're judging.
+ * State machine per item:
+ *   - 'accept' (default) — included in payload as-is.
+ *   - 'reject' — excluded from payload.
+ *   - 'modify' — included with edited values from `overrides`.
+ *
+ * Modify mode unlocks editable inputs on fields that declare
+ * `editable: true`. The "Modified" badge appears when overrides exist.
+ *
+ * For sections with sub-items (e.g. an audit-changes table), each
+ * sub-row has its own state — the parent item's accept/reject controls
+ * inclusion of the whole group but each individual change is toggled
+ * separately.
  */
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, RotateCcw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,9 +46,17 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
   const [expanded, setExpanded] = useState(true);
 
   const title = renderTitleTemplate(section.itemTitle, item) || item.__key;
-  const isRejected = state?.decision === 'reject';
+  const decision = state?.decision ?? 'accept';
+  const isRejected = decision === 'reject';
+  const isModified =
+    state && 'overrides' in state && state.overrides && Object.keys(state.overrides).length > 0;
 
-  const toggleAccept = () => {
+  // Flat items support per-field Modify; nested items defer it to the
+  // sub-row level.
+  const hasEditableFlatFields =
+    section.subItems === undefined && (section.fields ?? []).some((f) => f.editable && !f.readonly);
+
+  const toggleReject = () => {
     if (section.subItems) {
       const current = state as NestedItemState | undefined;
       onChange({
@@ -49,8 +64,30 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
         subItems: current?.subItems ?? {},
       });
     } else {
-      onChange({ decision: isRejected ? 'accept' : 'reject' });
+      onChange({
+        decision: isRejected ? 'accept' : 'reject',
+        // Preserve any overrides on toggle to reject — restoring later
+        // brings them back rather than dropping the admin's edits.
+        overrides: state && 'overrides' in state ? state.overrides : undefined,
+      });
     }
+  };
+
+  const enterModifyMode = () => {
+    // Modify is a UI affordance only — overrides are applied as the
+    // user types. Click-to-enter pre-creates an empty overrides record
+    // so unrelated edits in other rows don't get lost in render churn.
+    if (section.subItems) return; // nested rows manage their own state
+    const current = state as FlatItemState | undefined;
+    onChange({
+      decision: 'accept',
+      overrides: current?.overrides ?? {},
+    });
+  };
+
+  const revertOverrides = () => {
+    if (section.subItems) return;
+    onChange({ decision: 'accept' });
   };
 
   return (
@@ -68,6 +105,11 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
         <div className="min-w-0 flex-1">
           <p className={`text-sm font-medium ${isRejected ? 'line-through' : ''}`}>{title}</p>
         </div>
+        {isModified && !isRejected && (
+          <Badge variant="default" className="text-[10px]">
+            Modified
+          </Badge>
+        )}
         {section.itemBadges?.map((badge) => {
           const value = item[badge.key];
           if (value === undefined || value === null || value === '') return null;
@@ -84,6 +126,25 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
             </Badge>
           );
         })}
+        {hasEditableFlatFields && !isRejected && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 text-xs"
+            onClick={isModified ? revertOverrides : enterModifyMode}
+            title={isModified ? 'Revert modifications' : 'Modify proposed values'}
+          >
+            {isModified ? (
+              <>
+                <RotateCcw className="h-3 w-3" /> Revert
+              </>
+            ) : (
+              <>
+                <Pencil className="h-3 w-3" /> Modify
+              </>
+            )}
+          </Button>
+        )}
         <Button
           size="sm"
           variant={isRejected ? 'outline' : 'ghost'}
@@ -92,19 +153,20 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
               ? 'text-muted-foreground h-7 text-xs'
               : 'h-7 text-xs text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300'
           }
-          onClick={toggleAccept}
+          onClick={toggleReject}
         >
           {isRejected ? 'Restore' : 'Reject'}
         </Button>
       </div>
 
       {expanded && (
-        <div className="px-4 pb-3 pl-12">
+        <div className="px-4 pr-4 pb-3 pl-12">
           {section.subItems ? (
             <NestedItemBody
               spec={section}
               item={item}
               state={state as NestedItemState | undefined}
+              parentRejected={isRejected}
               onSubItemChange={(subKey, next) => {
                 const current = (state as NestedItemState | undefined)?.subItems ?? {};
                 onChange({
@@ -114,7 +176,19 @@ export function ReviewItem({ section, item, state, onChange }: ReviewItemProps) 
               }}
             />
           ) : (
-            <FlatItemBody fields={section.fields ?? []} item={item} />
+            <FlatItemBody
+              fields={section.fields ?? []}
+              item={item}
+              overrides={state && 'overrides' in state && !isRejected ? state.overrides : undefined}
+              onOverrideChange={(fieldKey, next) => {
+                if (isRejected) return;
+                const current = state && 'overrides' in state ? (state.overrides ?? {}) : {};
+                onChange({
+                  decision: 'accept',
+                  overrides: { ...current, [fieldKey]: next },
+                });
+              }}
+            />
           )}
         </div>
       )}
@@ -130,18 +204,39 @@ function badgeText(value: unknown): string {
   return '';
 }
 
-function FlatItemBody({ fields, item }: { fields: FieldSpec[]; item: ResolvedItem }) {
+function FlatItemBody({
+  fields,
+  item,
+  overrides,
+  onOverrideChange,
+}: {
+  fields: FieldSpec[];
+  item: ResolvedItem;
+  overrides: Record<string, unknown> | undefined;
+  onOverrideChange: (fieldKey: string, next: unknown) => void;
+}) {
   if (fields.length === 0) return null;
+  const editing = overrides !== undefined;
   return (
     <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-xs">
-      {fields.map((field) => (
-        <div key={field.key} className="contents">
-          <dt className="text-muted-foreground py-0.5">{field.label}</dt>
-          <dd className="py-0.5">
-            <ReviewField field={field} value={item[field.key]} />
-          </dd>
-        </div>
-      ))}
+      {fields.map((field) => {
+        const value = overrides && field.key in overrides ? overrides[field.key] : item[field.key];
+        const isEditable = editing && field.editable === true && field.readonly !== true;
+        return (
+          <div key={field.key} className="contents">
+            <dt className="text-muted-foreground py-0.5">{field.label}</dt>
+            <dd className="py-0.5">
+              <ReviewField
+                field={field}
+                value={value}
+                rowContext={item}
+                editable={isEditable}
+                onChange={isEditable ? (next) => onOverrideChange(field.key, next) : undefined}
+              />
+            </dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
@@ -150,11 +245,13 @@ function NestedItemBody({
   spec,
   item,
   state,
+  parentRejected,
   onSubItemChange,
 }: {
   spec: ReviewSectionSpec;
   item: ResolvedItem;
   state: NestedItemState | undefined;
+  parentRejected: boolean;
   onSubItemChange: (subKey: string, next: FlatItemState) => void;
 }) {
   const sub = spec.subItems!;
@@ -188,31 +285,95 @@ function NestedItemBody({
                 ? String(rawKey)
                 : `sub-${idx}`;
             const rowState = state?.subItems?.[key];
-            const rejected = rowState?.decision === 'reject';
+            const rejected = rowState?.decision === 'reject' || parentRejected;
+            const overrides =
+              rowState && 'overrides' in rowState && !rejected ? rowState.overrides : undefined;
+            const editing = overrides !== undefined;
+            const isModified = overrides && Object.keys(overrides).length > 0;
+            const hasEditable = sub.fields.some((f) => f.editable && !f.readonly);
+
             return (
               <tr key={key} className={`border-t ${rejected ? 'opacity-50' : ''}`}>
-                {sub.fields.map((field) => (
-                  <td key={field.key} className="px-2 py-1.5 align-top">
-                    <ReviewField field={field} value={row[field.key]} rowContext={row} />
-                  </td>
-                ))}
+                {sub.fields.map((field) => {
+                  const cellValue =
+                    overrides && field.key in overrides ? overrides[field.key] : row[field.key];
+                  const isEditable = editing && field.editable === true && field.readonly !== true;
+                  return (
+                    <td key={field.key} className="px-2 py-1.5 align-top">
+                      <ReviewField
+                        field={field}
+                        value={cellValue}
+                        rowContext={row}
+                        editable={isEditable}
+                        onChange={
+                          isEditable
+                            ? (next) => {
+                                const current =
+                                  rowState && 'overrides' in rowState
+                                    ? (rowState.overrides ?? {})
+                                    : {};
+                                onSubItemChange(key, {
+                                  decision: 'accept',
+                                  overrides: { ...current, [field.key]: next },
+                                });
+                              }
+                            : undefined
+                        }
+                      />
+                    </td>
+                  );
+                })}
                 <td className="px-2 py-1.5 text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className={
-                      rejected
-                        ? 'text-muted-foreground h-6 text-[11px]'
-                        : 'h-6 text-[11px] text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300'
-                    }
-                    onClick={() =>
-                      onSubItemChange(key, {
-                        decision: rejected ? 'accept' : 'reject',
-                      })
-                    }
-                  >
-                    {rejected ? 'Restore' : 'Reject'}
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    {isModified && !rejected && (
+                      <Badge variant="default" className="text-[9px]">
+                        Modified
+                      </Badge>
+                    )}
+                    {hasEditable && !rejected && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-1.5 text-[10px]"
+                        title={editing ? 'Revert modifications' : 'Modify proposed values'}
+                        onClick={() => {
+                          if (editing) {
+                            onSubItemChange(key, { decision: 'accept' });
+                          } else {
+                            onSubItemChange(key, {
+                              decision: 'accept',
+                              overrides:
+                                rowState && 'overrides' in rowState
+                                  ? (rowState.overrides ?? {})
+                                  : {},
+                            });
+                          }
+                        }}
+                      >
+                        {editing ? (
+                          <RotateCcw className="h-3 w-3" />
+                        ) : (
+                          <Pencil className="h-3 w-3" />
+                        )}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={
+                        rejected
+                          ? 'text-muted-foreground h-6 text-[11px]'
+                          : 'h-6 text-[11px] text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300'
+                      }
+                      onClick={() =>
+                        onSubItemChange(key, {
+                          decision: rejected ? 'accept' : 'reject',
+                        })
+                      }
+                    >
+                      {rejected ? 'Restore' : 'Reject'}
+                    </Button>
+                  </div>
                 </td>
               </tr>
             );

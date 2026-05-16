@@ -346,6 +346,110 @@ describe('buildApprovalPayload', () => {
     expect(payload.models).toEqual([]);
   });
 
+  it('applies overrides to flat-section items in modify mode', () => {
+    const schema: ReviewSchema = {
+      sections: [
+        {
+          id: 'newModels',
+          title: 'new',
+          source: '{{discover.output.newModels}}',
+          itemKey: 'slug',
+          itemTitle: '{{item.name}}',
+          fields: [
+            { key: 'name', label: 'Name', display: 'text', editable: true },
+            { key: 'tierRole', label: 'Tier', display: 'badge', editable: true },
+            // Read-only field — overrides on this key should be ignored.
+            { key: 'slug', label: 'Slug', display: 'text', readonly: true },
+          ],
+        },
+      ],
+    };
+    const sectionsData: SectionData[] = [
+      {
+        section: schema.sections[0],
+        items: [{ __key: 'a', slug: 'a', name: 'Original', tierRole: 'worker' }],
+      },
+    ];
+    const selection: ReviewSelectionState = {
+      newModels: {
+        items: {
+          a: {
+            decision: 'accept',
+            overrides: {
+              name: 'Edited',
+              tierRole: 'thinking',
+              // This override targets a readonly field; the builder
+              // must drop it rather than letting an admin slip a
+              // forbidden change through.
+              slug: 'hacked-slug',
+            },
+          } satisfies FlatItemState,
+        },
+      },
+    };
+    const payload = buildApprovalPayload(schema, sectionsData, selection);
+    expect(payload.newModels).toEqual([{ slug: 'a', name: 'Edited', tierRole: 'thinking' }]);
+  });
+
+  it('applies overrides to nested sub-item rows', () => {
+    const schema: ReviewSchema = {
+      sections: [
+        {
+          id: 'models',
+          title: 'models',
+          source: '{{refine.output.models}}',
+          itemKey: 'model_id',
+          itemTitle: '{{item.model_id}}',
+          subItems: {
+            source: 'item.changes',
+            itemKey: 'field',
+            fields: [
+              { key: 'field', label: 'Field', display: 'text', readonly: true },
+              {
+                key: 'proposedValue',
+                label: 'Proposed',
+                display: 'text',
+                editable: true,
+                enumValuesByFieldKey: 'field',
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const sectionsData: SectionData[] = [
+      {
+        section: schema.sections[0],
+        items: [
+          {
+            __key: 'm1',
+            model_id: 'm1',
+            changes: [{ field: 'tierRole', proposedValue: 'worker' }],
+          },
+        ],
+      },
+    ];
+    const selection: ReviewSelectionState = {
+      models: {
+        items: {
+          m1: {
+            decision: 'accept',
+            subItems: {
+              tierRole: {
+                decision: 'accept',
+                overrides: { proposedValue: 'thinking' },
+              },
+            },
+          },
+        },
+      },
+    };
+    const payload = buildApprovalPayload(schema, sectionsData, selection);
+    expect(payload.models).toEqual([
+      { model_id: 'm1', changes: [{ field: 'tierRole', proposedValue: 'thinking' }] },
+    ]);
+  });
+
   it('treats untouched items as accepted (default)', () => {
     const schema: ReviewSchema = {
       sections: [

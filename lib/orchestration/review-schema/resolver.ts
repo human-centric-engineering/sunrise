@@ -280,8 +280,10 @@ function projectFlat(
     const decision: ItemDecision = state && 'decision' in state ? state.decision : 'accept';
     if (decision === 'reject') continue;
 
-    const overrides =
-      state && 'overrides' in state && decision === 'modify' ? state.overrides : undefined;
+    // Overrides apply whenever they're set on an accepted item. There's
+    // no separate 'modify' decision in the wire shape — overrides
+    // present == admin edited the row.
+    const overrides = state && 'overrides' in state ? state.overrides : undefined;
     const projected: Record<string, unknown> = stripInternal(item);
     if (overrides) {
       for (const [k, v] of Object.entries(overrides)) {
@@ -328,7 +330,7 @@ function projectNested(
       if (decision === 'reject') continue;
 
       const subProjected: Record<string, unknown> = { ...record };
-      if (decision === 'modify' && subState?.overrides) {
+      if (subState?.overrides) {
         for (const [k, v] of Object.entries(subState.overrides)) {
           if (isFieldEditable(subSpec.fields, k)) {
             subProjected[k] = v;

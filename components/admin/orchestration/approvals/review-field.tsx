@@ -3,27 +3,57 @@
 /**
  * Renders one field value according to its `FieldSpec.display`.
  *
- * Phase 1: all variants are read-only. Phase 3 adds editable widgets
- * (`<Select>` for enum, `<Input>` for text/number, `<Switch>` for
- * boolean, `<Textarea>` for textarea) that fire `onChange` when the
- * admin edits the value via Modify mode.
+ * When `editable` is true and `onChange` is provided, the field renders
+ * an input widget instead of read-only text. Widget selection:
  *
- * `rowContext` is the full sub-item row; used in Phase 3 to look up an
- * enum-by-field-key (e.g. an audit change row's `proposedValue` enum
- * depends on the row's `field` cell).
+ *   - `enumValues` (inline) or `enumValuesFrom` (named registry) or
+ *     `enumValuesByFieldKey` (sibling-cell scoped, e.g. an audit change
+ *     row's `proposedValue` enum depends on its `field` column) →
+ *     `<Select>`.
+ *   - `display: 'textarea'` → `<Textarea>`.
+ *   - `display: 'number'` → numeric `<Input>`.
+ *   - `display: 'boolean'` → `<Switch>`.
+ *   - Otherwise → text `<Input>`.
+ *
+ * Read-only mode falls back to typed display variants (badge, pre,
+ * inline text). Empty / null values render as a dash.
  */
 
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import { ENUM_BY_AUDIT_FIELD, NAMED_ENUMS } from '@/lib/orchestration/model-audit/enums';
 import type { FieldSpec } from '@/lib/orchestration/review-schema/types';
 
 export interface ReviewFieldProps {
   field: FieldSpec;
+  /** Effective value: the override if modified, else the original. */
   value: unknown;
   /** Full record the field belongs to. Used for cross-cell enum lookup. */
   rowContext?: Record<string, unknown>;
+  /**
+   * When set, renders the field as an editable input. The caller owns
+   * the override state and updates it on change.
+   */
+  editable?: boolean;
+  onChange?: (next: unknown) => void;
 }
 
-export function ReviewField({ field, value }: ReviewFieldProps) {
+export function ReviewField({ field, value, rowContext, editable, onChange }: ReviewFieldProps) {
+  if (editable && onChange && !field.readonly) {
+    return (
+      <EditableField field={field} value={value} rowContext={rowContext} onChange={onChange} />
+    );
+  }
+
   if (value === null || value === undefined || value === '') {
     return <span className="text-muted-foreground italic">—</span>;
   }
@@ -65,6 +95,110 @@ export function ReviewField({ field, value }: ReviewFieldProps) {
     default:
       return <span className="text-xs">{safeText(value)}</span>;
   }
+}
+
+function EditableField({
+  field,
+  value,
+  rowContext,
+  onChange,
+}: Required<Pick<ReviewFieldProps, 'onChange'>> & {
+  field: FieldSpec;
+  value: unknown;
+  rowContext?: Record<string, unknown>;
+}) {
+  const enumValues = resolveEnumValues(field, rowContext);
+
+  if (enumValues) {
+    return (
+      <Select
+        value={typeof value === 'string' ? value : ''}
+        onValueChange={(next) => onChange(next)}
+      >
+        <SelectTrigger className="h-7 min-w-[10ch] text-xs">
+          <SelectValue placeholder="Select…" />
+        </SelectTrigger>
+        <SelectContent>
+          {enumValues.map((option) => (
+            <SelectItem key={option} value={option} className="text-xs">
+              {option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+
+  if (field.display === 'textarea') {
+    return (
+      <Textarea
+        className="min-h-[3rem] text-xs"
+        value={typeof value === 'string' ? value : ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+
+  if (field.display === 'number') {
+    return (
+      <Input
+        type="number"
+        className="h-7 w-32 text-xs"
+        value={typeof value === 'number' || typeof value === 'string' ? String(value) : ''}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (raw === '') {
+            onChange(null);
+            return;
+          }
+          const num = Number(raw);
+          onChange(Number.isFinite(num) ? num : raw);
+        }}
+      />
+    );
+  }
+
+  if (field.display === 'boolean') {
+    return <Switch checked={Boolean(value)} onCheckedChange={(checked) => onChange(checked)} />;
+  }
+
+  // Free-text fallback
+  return (
+    <Input
+      type="text"
+      className="h-7 text-xs"
+      value={typeof value === 'string' ? value : safeText(value)}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+/**
+ * Resolve an enum value list from any of three FieldSpec hints,
+ * checked in order: `enumValues` (inline) > `enumValuesFrom` (named
+ * registry) > `enumValuesByFieldKey` (per-row lookup based on a
+ * sibling cell). Returns null when no enum applies — the caller falls
+ * back to a text input.
+ */
+function resolveEnumValues(
+  field: FieldSpec,
+  rowContext?: Record<string, unknown>
+): readonly string[] | null {
+  if (field.enumValues && field.enumValues.length > 0) {
+    return field.enumValues;
+  }
+  if (field.enumValuesFrom) {
+    const list = NAMED_ENUMS[field.enumValuesFrom];
+    if (list) return list;
+  }
+  if (field.enumValuesByFieldKey && rowContext) {
+    const fieldKey = rowContext[field.enumValuesByFieldKey];
+    if (typeof fieldKey === 'string') {
+      const list = ENUM_BY_AUDIT_FIELD[fieldKey];
+      if (list) return list;
+    }
+  }
+  return null;
 }
 
 /**
