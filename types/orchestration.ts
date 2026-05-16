@@ -23,6 +23,7 @@ import type {
   AiProviderConfig,
   AiProviderModel,
 } from '@/types/prisma';
+import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
 
 // ============================================================================
 // Enums
@@ -447,6 +448,14 @@ export interface ExecutionTraceEntry {
    * preserved in the trace for the admin viewer.
    */
   turns?: TurnEntry[];
+  /**
+   * Source attribution lifted from `output.sources` by the engine. See
+   * `lib/orchestration/provenance/types.ts` for the contract. Absent when
+   * the step's output didn't carry a valid `sources` array. The trace
+   * viewer and structured approval UI render this as pills with hover
+   * detail; it is the workflow-step analogue of chat citations.
+   */
+  provenance?: ProvenanceItem[];
 }
 
 /**

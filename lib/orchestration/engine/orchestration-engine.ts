@@ -61,6 +61,7 @@ import {
   type WorkflowStep,
 } from '@/types/orchestration';
 import { rollupTelemetry } from '@/lib/orchestration/trace/aggregate';
+import { extractProvenance } from '@/lib/orchestration/provenance/types';
 import {
   createContext,
   mergeStepResult,
@@ -1154,6 +1155,11 @@ export class OrchestrationEngine {
 
     const result = stepResult as StepResult;
     mergeStepResult(ctx, step.id, result);
+    // Lift `output.sources` (if present and shape-valid) onto a typed
+    // trace field. Opt-in: invalid or absent shapes return undefined and
+    // the spread-conditional below omits the key entirely. See
+    // `lib/orchestration/provenance/types.ts` for the contract.
+    const completedProvenance = result.skipped ? undefined : extractProvenance(result.output);
     trace.push({
       stepId: step.id,
       stepType: step.type,
@@ -1175,6 +1181,7 @@ export class OrchestrationEngine {
       input: step.config,
       ...rollupTelemetry(telemetryOut),
       ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
+      ...(completedProvenance ? { provenance: completedProvenance } : {}),
     });
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
@@ -1435,6 +1442,12 @@ export class OrchestrationEngine {
       // Success — merge result into context.
       const stepResult = result as StepResult;
       mergeStepResult(ctx, step.id, stepResult);
+      // Mirror the sequential path's provenance lift. Each branch in a
+      // parallel batch gets its own trace row with its own optional
+      // `provenance` field — there is no merging across siblings.
+      const parallelProvenance = stepResult.skipped
+        ? undefined
+        : extractProvenance(stepResult.output);
       trace.push({
         stepId: step.id,
         stepType: step.type,
@@ -1453,6 +1466,7 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
+        ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
       await this.checkpoint(lease, ctx, trace);
 

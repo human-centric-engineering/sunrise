@@ -18,6 +18,7 @@ import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
+import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 
 // ============================================================================
 // Shared Schemas
@@ -2354,6 +2355,12 @@ export const executionTraceEntrySchema = z
       .array(turnEntrySchema)
       .optional()
       .catch(() => undefined),
+    // Source attribution lifted by the engine from `output.sources`. Like
+    // `turns`, this is best-effort observability — a malformed array on
+    // a legacy entry must not fail the parse and drop the row from
+    // resume / visited-set seeding. `.catch(() => undefined)` mirrors
+    // the `turns` defence above.
+    provenance: provenanceItemArraySchema.optional().catch(() => undefined),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by
