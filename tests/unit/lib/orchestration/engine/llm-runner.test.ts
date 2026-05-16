@@ -267,6 +267,82 @@ describe('runLlmCall', () => {
       expect(logCost).toHaveBeenCalled();
     });
   });
+
+  it('forwards `responseFormat` to provider.chat when set on params', async () => {
+    // Exercises the truthy branch of the `params.responseFormat ? { ... } : {}` spread.
+    // The selector heuristic / structured-output workflows rely on this passthrough.
+    const mockChat = vi.fn().mockResolvedValue({
+      content: '{"ok": true}',
+      usage: { inputTokens: 5, outputTokens: 3 },
+    });
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({ chat: mockChat } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0, isLocal: false } as any);
+    vi.mocked(logCost).mockResolvedValue(null as any);
+
+    const ctx = makeCtx();
+    await runLlmCall(ctx, {
+      stepId: 's4',
+      prompt: 'return json',
+      modelOverride: 'gpt-4',
+      responseFormat: { type: 'json_object' },
+    });
+
+    expect(mockChat).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ responseFormat: { type: 'json_object' } })
+    );
+  });
+
+  it('wraps non-Error thrown values from provider.chat with a fallback message', async () => {
+    // Exercises the false branch of `err instanceof Error ? err.message : 'LLM call failed'`.
+    // Some providers / network layers reject with strings or plain objects.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockRejectedValue('plain string failure' as any),
+    } as any);
+
+    const ctx = makeCtx();
+    await expect(
+      runLlmCall(ctx, { stepId: 's5', prompt: 'test', modelOverride: 'gpt-4' })
+    ).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'llm_call_failed',
+      // The fallback string is used because the rejected value is not an Error.
+      message: 'LLM call failed',
+    });
+  });
+
+  it('swallows non-Error rejections from logCost (fire-and-forget, fallback path)', async () => {
+    // Exercises the false branch of `err instanceof Error ? err.message : String(err)`
+    // inside the logCost.catch() handler — same hardening as the provider.chat path,
+    // but for the cost-logging side effect.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockResolvedValue({
+        content: 'answer',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0.001, isLocal: false } as any);
+    // logCost rejects with a non-Error — String(err) branch handles it.
+
+    vi.mocked(logCost).mockRejectedValue('db unreachable' as any);
+
+    const ctx = makeCtx();
+    const result = await runLlmCall(ctx, {
+      stepId: 's6',
+      prompt: 'hi',
+      modelOverride: 'gpt-4',
+    });
+
+    expect(result.content).toBe('answer');
+    // Flush microtasks so the .catch() runs and the warn log fires.
+    await vi.waitFor(() => {
+      // test-review:accept no_arg_called — fire-and-forget verification
+      expect(logCost).toHaveBeenCalled();
+    });
+  });
 });
 
 // ─── interpolatePrompt ───────────────────────────────────────────────────────
