@@ -594,6 +594,32 @@ This section covers how an agent actually executes — the structure of a workfl
 
 **Where it lives:** `lib/orchestration/workflows/` (validator, semantic checker, template scanner), `app/api/v1/admin/orchestration/workflows/templates/` (list endpoint), `app/api/v1/admin/orchestration/workflows/[id]/dry-run/` (dry-run endpoint), `.context/orchestration/workflows.md`.
 
+### 3.10 Workflow-step provenance via `output.sources` lift
+
+**What is it?** Workflow LLM/agent steps that produce claims (a model misclassification proposal, an extracted quote, a regulatory advisory) need to surface _which source supports each claim_ — training knowledge, an injected web search result, a knowledge-base chunk, a prior step output. Without this, an admin reviewing a paused workflow's approval queue cannot tell a confabulated claim from one grounded in real evidence. The platform already shipped chat citations (5.6) for the conversational surface; workflow-step output needed the same primitive at the engine layer.
+
+**What we chose:** A small `ProvenanceItem` contract that LLM/agent steps emit as `output.sources` in their JSON. The engine lifts that array onto a typed `ExecutionTraceEntry.provenance` field at trace push (both the sequential and parallel completed paths). Capture is permissive — invalid shapes silently drop, opt-in workflows enable enforcement by inlining a `provenanceRequiredRule()` fragment into a `guard` step's rules. The structured approval UI and the trace viewer render the array as colour-coded pills with hover detail. The first adopter is the provider-model-audit workflow, where un-attributed claims (Qwen2.5-72B labelled as an embedding engine) had been slipping through with the same `confidence: 'high'` label as Brave-grounded facts.
+
+**Alternatives**
+
+| Option                                                                   | Why not                                                                                                                             |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Just write better prompts                                                | Prompts alone don't give the UI a typed surface; admin reviewing the approval queue still sees free-text `reason` with no scanning  |
+| Engine forces every LLM step to carry sources                            | Heavy-handed for workflows that have no external evidence to attribute against; would block adoption                                |
+| Reuse the chat citation envelope (`[N]` markers + `citations` SSE event) | Citations are a chat-turn primitive bound to the streaming handler; workflow step output is structured JSON, not a rendered message |
+| Per-step type flag (`requireProvenance: true` on the executor)           | Conflates a workflow-author concern (does this claim need attribution?) with an engine concern (is this step type capable of it?)   |
+| Cross-step provenance graph (track which step's output fed which claim)  | Useful longer-term, but the engine's lift already records per-step attribution; aggregation is a future layer                       |
+
+**Why this approach**
+
+- **Engine surface stays tiny.** One Zod schema, one helper (`extractProvenance`), two spread-conditional lines at the trace push sites. Schema additions are back-compat via `.passthrough()` and `.catch(() => undefined)`, so historical traces parse cleanly.
+- **Opt-in everywhere it matters.** Workflows that don't emit `sources` get `provenance: undefined`; nothing changes. The audit workflow opts in via prompts + guard; future workflows opt in the same way.
+- **One rendering for two surfaces.** The same `SourcesField` pill component renders inside the structured approval form and the post-execution trace viewer. Admins learn one inspection pattern.
+- **Composes with chat citations (5.6), not duplicates them.** A deployment using both chat and workflows gets per-message citations on chat turns AND per-claim provenance on workflow step outputs. Neither replaces the other.
+- **Distinct from per-message conversation provenance (improvement-priorities item 47).** That item pins agent/workflow versions + chunk refs onto `AiMessage` rows for audit defensibility of conversations. This is per-claim attribution inside a workflow step's structured output. They share vocabulary; they target different surfaces.
+
+**Where it lives:** `lib/orchestration/provenance/types.ts` (contract + `extractProvenance` helper), `lib/orchestration/provenance/guard-rules.ts` (opt-in rule fragment), `lib/orchestration/engine/orchestration-engine.ts` (sequential + parallel trace push lift), `prisma/seeds/data/templates/provider-model-audit.ts` (first adopter), `lib/orchestration/review-schema/types.ts` (`display: 'sources'`), `components/admin/orchestration/approvals/sources-field.tsx` (pill renderer), `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx` (trace viewer panel), `.context/orchestration/provenance.md` (canonical doc).
+
 ---
 
 ## 4. Resilience and Cost Control
