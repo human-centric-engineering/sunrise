@@ -127,7 +127,19 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destru
 
 // ─── Collapsible JSON card ──────────────────────────────────────────────────
 
-function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) {
+function CollapsibleJsonCard({
+  title,
+  data,
+  help,
+  helpTitle,
+}: {
+  title: string;
+  data: unknown;
+  /** Optional FieldHelp body — when provided, an ⓘ icon is shown next to the title. */
+  help?: React.ReactNode;
+  /** Heading shown inside the help popover. Defaults to `title`. */
+  helpTitle?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -166,6 +178,7 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
             )}
             <CardTitle className="text-sm">{title}</CardTitle>
           </button>
+          {help && <FieldHelp title={helpTitle ?? title}>{help}</FieldHelp>}
           <Button
             type="button"
             size="sm"
@@ -684,8 +697,46 @@ export function ExecutionDetailView({
 
       {/* Input / Output cards */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <CollapsibleJsonCard title="Input Data" data={execution.inputData} />
-        <CollapsibleJsonCard title="Output Data" data={execution.outputData} />
+        <CollapsibleJsonCard
+          title="Input Data"
+          data={execution.inputData}
+          help={
+            <>
+              <p>
+                The payload supplied when this execution was started — the same object the engine
+                received from the caller.
+              </p>
+              <p className="mt-2">
+                Source depends on how the run was triggered: a chat message, webhook body, scheduled
+                trigger payload, MCP/API call, or the values entered on the admin{' '}
+                <strong>Run workflow</strong> form.
+              </p>
+              <p className="mt-2">
+                Steps reference it via <code>{'{{trigger.input.<field>}}'}</code>; top-level keys
+                also seed <code>vars</code>, so <code>{'{{vars.<field>}}'}</code> resolves the same
+                value at the start of the run.
+              </p>
+            </>
+          }
+        />
+        <CollapsibleJsonCard
+          title="Output Data"
+          data={execution.outputData}
+          help={
+            <>
+              <p>
+                The map of every completed step&apos;s output, keyed by step id. The engine writes
+                this only when the workflow reaches <strong>Completed</strong>; failed, cancelled,
+                and paused runs leave it empty (use the Step Timeline below for those).
+              </p>
+              <p className="mt-2">
+                It is the same object returned to whatever invoked the workflow — for example the
+                response body of a webhook trigger or the value resolved by an{' '}
+                <code>orchestrator</code> step in a parent workflow.
+              </p>
+            </>
+          }
+        />
       </div>
 
       {/* Aggregates + timeline strip — both hidden when trace.length < 2. */}
