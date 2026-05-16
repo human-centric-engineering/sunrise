@@ -707,7 +707,14 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 <SelectTrigger id="model">
                   <SelectValue placeholder="Pick a model" />
                 </SelectTrigger>
-                <SelectContent>
+                {/* Cap the popover at 60% of viewport height so a provider
+                    with 20–30+ models still scrolls instead of running off
+                    the screen on shorter monitors. The primitive's default
+                    `max-h-[--radix-select-content-available-height]` only
+                    covers the space below the trigger; on mid-page short
+                    screens that's not enough. Combines with the existing
+                    overflow-y-auto in the SelectContent base styles. */}
+                <SelectContent className="max-h-[60vh]">
                   {filteredModels.map((m) => (
                     <SelectItem key={`${m.provider}:${m.id}`} value={m.id}>
                       {m.id}

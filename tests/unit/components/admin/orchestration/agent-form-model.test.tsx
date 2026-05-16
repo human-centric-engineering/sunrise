@@ -137,6 +137,30 @@ describe('AgentForm — Model tab', () => {
       });
     });
 
+    it('caps the model popover at 60vh so long lists scroll on short screens', async () => {
+      // Without an explicit max-h on the SelectContent the popover relies on
+      // Radix's `--radix-select-content-available-height`, which only covers
+      // the space below the trigger. On mid-page short screens with 20+ models
+      // the popover ran off the viewport with no scroll. The fix is a tighter
+      // viewport-relative cap. Asserting the class is the regression guard —
+      // a future cleanup that strips the className would re-introduce the bug.
+      const user = await renderAndOpenModelTab();
+
+      // Open the model combobox so Radix renders the SelectContent.
+      const modelSelect = screen.getByRole('combobox', { name: /model/i });
+      await user.click(modelSelect);
+
+      // The model combobox's `aria-controls` points at the SelectContent's
+      // outer wrapper — that's the element carrying max-h-[60vh].
+      await waitFor(() => {
+        const contentId = modelSelect.getAttribute('aria-controls');
+        expect(contentId).toBeTruthy();
+        const content = document.getElementById(contentId!);
+        expect(content).not.toBeNull();
+        expect(content!.className).toMatch(/max-h-\[60vh\]/);
+      });
+    });
+
     it('auto-resets model when provider changes to one that does not own current model', async () => {
       // Hits the useEffect at agent-form.tsx:172-179. Default provider is
       // anthropic with model claude-opus-4-6; switching to openai makes the
