@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-12 (Tier 6 added — proposed channel-reach, conversational-surface, and operational-trust features)
+**Last updated:** 2026-05-16 (Tier 7 added — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20)
 
 ---
 
@@ -380,6 +380,9 @@ Closing these gaps is what differentiates an agent platform that "kind of works 
 | 21  | External-signal feedback — `run_check` capability + `reflect` integration | High      | Moderate     | ⚪ Not started |
 | 22  | Feedback-loop health observability                                        | Moderate  | Low–Moderate | ⚪ Not started |
 | 23  | `branch_and_select` step — explore-and-pick primitive                     | Moderate  | Moderate     | ⚪ Not started |
+| 23a | Production-conversation replay against new agent versions                 | High      | Moderate     | ⚪ Not started |
+
+> Item 23a was added 2026-05-16 as the empirical complement to item 20's synthetic-spec approach. The two answer different questions: item 20 asks "does the agent obey the spec on the scenarios authors wrote?"; item 23a asks "did the agent give a worse answer to the questions users actually asked after the model upgrade?" The full proposal sits at the end of this tier, after item 23.
 
 ### 20. Executable behavioural specifications on agents — ⚪ Not started
 
@@ -494,6 +497,32 @@ This makes patterns like "try three drafts at different temperatures, ship the m
 
 **Difficulty: Moderate.** New executor (80% reuses `parallel`'s code path), new node type in the workflow-builder palette, trace-viewer surface for the discarded-branch view, validator integration, three selector implementations (LLM-judge, numeric, predicate). The selector machinery is the genuinely new code; the rest is composition. One sprint.
 
+### 23a. Production-conversation replay against new agent versions — ⚪ Not started
+
+**Why it matters.** Item 20 (executable behavioural specifications) tests an agent against the synthetic scenarios its authors thought to write — a known weakness of any test-suite-as-contract approach is that authors do not write tests for the questions they did not anticipate. The complement is to test against the questions users _actually asked_. When a partner pins an agent to a specific model and is later forced to migrate to a successor (deprecation, cost shift, capability win), the only signal that the upgrade is safe today is whatever specs the author wrote plus a vibe-check on a few recent conversations. This is structurally insufficient for the regulated-domain partners in `business-applications.md` — legal advisors, mortgage brokers, tenant-rights workers — whose answers have downstream consequences and whose real-user questions vary in ways the spec library cannot anticipate.
+
+Replay closes this. Given a window of historical `AiConversation` rows and a target `AiAgentVersion`, the platform re-runs the user turns through the new version with a deterministic seed where the provider supports it, scores divergence on the new outputs using item 6's faithfulness/groundedness/relevance metrics, and returns a per-conversation divergence report a human reviews before approving the version transition. The empirical pair to item 20's synthetic-spec approach — both belong in the Tier 5 quality story, which is why this item slots inside Tier 5 rather than alongside Tier 7's integration work.
+
+**What we'd ship.** A new `AiReplaySession` table linking `(sourceAgentVersionId, targetAgentVersionId, conversationWindow, status, divergenceSummary)`. A new admin route `POST /api/v1/admin/orchestration/agents/:id/replay` accepting `{ sourceVersionId, targetVersionId, conversationIds | { from, to, sampleSize } }`. The replay engine reuses `lib/orchestration/chat/` to re-walk user turns through the target version; system messages and tool-call sequences from the source run are excluded from the replay history (each new turn re-derives its own context from the conversation's user-side turns only). Per-turn scoring reuses the existing `lib/orchestration/evaluations/` pipeline; per-conversation divergence is the mean of per-turn metric deltas plus structural diffs (changed citations, changed tool calls, new refusals, changed refusals).
+
+**UI shape.** A new "Replay" tab on the Agent form, positioned after the existing Versions tab. Empty state: a "Run replay against a new version" CTA with version-picker, conversation-window picker (last 7 days / 30 days / custom), and a sample-size slider (default 50 conversations). Running state: a progress bar with per-conversation status. Completion state: the divergence-report dashboard with three top-line metric-delta cards (mean faithfulness delta, mean groundedness delta, mean relevance delta) and a sortable conversation list. The trace viewer for each replayed conversation renders side-by-side using the same primitives as item 10 but with a "delta" column added. A one-click "Promote target version" button on the report header updates the agent's published version atomically; a per-conversation "revert window" surfaces if the divergence on a specific high-stakes conversation is unacceptable.
+
+**Benefits.**
+
+- **Catches model-upgrade regressions on real questions the spec library cannot anticipate** — the structural complement to item 20's synthetic coverage.
+- **Decouples version-pinning from version-fear.** Today partners pin a version because they don't know what would change. Replay turns "I don't know what would change" into a divergence report.
+- **Composes with item 35 (canary routing).** Replay is the offline divergence signal; canary is the live-traffic divergence signal. Same scoring machinery, two windows of evidence.
+- **Reuses existing infrastructure end-to-end.** Chat handler, evaluation pipeline, trace viewer, agent-version model — all already there.
+
+**Risks.**
+
+- **Replay cost.** N conversations × M turns each × LLM cost per turn is non-trivial; a 500-conversation replay on a chatty agent could be a hundred-dollar test. Mitigation: configurable sample size (default 50), explicit cost preview before run, results cached per `(sourceVersion, targetVersion, conversationId)` so subsequent re-runs are free.
+- **Deterministic-seed limitations.** Many LLM providers do not honour seeds reliably. Mitigation: divergence is reported as a band against a calibration baseline established by replaying the source version against itself; per-turn variance below the noise floor is reported as "no significant change."
+- **Source-of-truth dilemma.** When the replayed answer is "different but arguably better," what does the admin do? Mitigation: divergence is reported, not gated — the report shows the new answer alongside the original with metric deltas; the human reads the trade.
+- **Context drift.** If the source conversation depended on capabilities or KB chunks since deleted, replay either fails or runs against a different reality. Mitigation: replay validates that all source-referenced capabilities and KB chunks still exist before running; skipped conversations are reported with reasons.
+
+**Difficulty: Moderate.** New table + new admin route + new engine module + new admin page + trace-viewer side-by-side mode. Reuses chat handler, evaluation pipeline, agent versioning. One sprint.
+
 ### Tier summary
 
 The four items are not independent. Item 20 (executable specs) is the spine — once an agent's contract is a structured object, items 21 (`run_check`) and 22 (feedback health) become naturally typed by it: a behavioural assertion _is_ a `run_check`-shaped object; a behavioural assertion failure _is_ the same health signal as a reflect non-convergence. Item 23 (`branch_and_select`) is the most architecturally independent but composes cleanly with the others — predicate selectors reuse `run_check` types, LLM-judge selectors are bounded behavioural-spec rubrics.
@@ -501,6 +530,8 @@ The four items are not independent. Item 20 (executable specs) is the spine — 
 Sequenced: **20 → 21 → 22 → 23**, with 23 reorderable forward if a specific pilot needs a structured "try three drafts, pick one" pattern. Items 21 and 22 are individually shippable as standalone wins; item 20 is the high-value, high-effort spine and is most worth doing first if a multi-sprint slot is available.
 
 The combined effect: agents stop being freeform-text prompts judged by another freeform LLM, and become structured objects whose contract is checkable, whose feedback is observable, and whose alternatives are first-class. That is the difference between an agent platform that "kind of works most of the time" and one that holds its quality posture as the underlying models change.
+
+Item 23a — production-conversation replay — was added later as the empirical complement to item 20. Where item 20 tests the agent against the synthetic scenarios authors thought to write, item 23a tests it against the questions users actually asked. Both belong in the Tier 5 quality story; the synthetic side gives coverage of intent, the empirical side gives coverage of reality. Slot 23a after items 20 and 22 in the sequencing — item 20 provides the predicate language replay's per-turn divergence scoring extends, and item 22 provides the dashboard surface where replay results most naturally land.
 
 ---
 
@@ -590,6 +621,256 @@ The five items split naturally into two pairs and a closer.
 - **Item 28 (live handover)** is the operational trust loop — the explicit admission that not every conversation should end inside the agent. It is the most common pilot-blocker in regulated verticals and reuses the most existing primitives (hooks, approval queue UI patterns, `widgetConfig`).
 
 Sequenced for shortest path to commercial impact: **24 → 28 → 25 → 27 → 26**, with item 24 first because it unlocks the largest new audience, item 28 second because it removes the most common pilot-blocker, items 25 and 27 picked up in the order partner conversations demand, and item 26 last because it is the most architecturally ambitious and the natural "save for a slot with a clear partner ask" item.
+
+---
+
+## Tier 7 — Proposed: lifecycle, integration, and operational symmetry
+
+A third category of proposed work covering symmetric gaps in the platform's existing primitives and lifecycle. Where Tier 5 deepens **what an agent is** and Tier 6 widens **where the agent reaches**, Tier 7 closes the **missing halves of primitives that have only shipped in one direction**. Two observations frame the shape:
+
+- **Several primitives shipped with only one half built.** Voice input arrived (item 19) without voice output; the MCP server arrived without an MCP client; scheduled retention arrived without on-demand erasure; on-upload ingestion (item 5) arrived without runtime freshness scanning; per-agent cost attribution arrived without per-end-user attribution. None of these absences is a principled choice — they are the natural shape of "ship the most pressing half first, defer the second half." Tier 7 is the second-half cohort.
+- **Workflow versioning and capability authoring each have a single residual failure mode.** Workflow versioning (item 12) shipped publish/draft/rollback as atomic snapshots but no gradual transition (canary) and no stubbed dry-run execution (today's dry-run is validation-only). Capability authoring shipped hand-coded `BaseCapability` subclasses but no codegen path from a partner's OpenAPI spec. Both gaps slow partner onboarding without being load-bearing themselves.
+
+Items 29 and 30 are commercial-priority — they unblock procurement objections and multiply integration reach. Items 31 through 33 are operational-symmetry — they close gaps in primitives partners already use. Items 34 through 36 are velocity-multipliers — they reduce the cost of changing what's already built.
+
+| #   | Improvement                                       | Value         | Effort        | Status         |
+| --- | ------------------------------------------------- | ------------- | ------------- | -------------- |
+| 29  | GDPR end-user erasure (DSAR / Right-to-Erasure)   | Very high     | Moderate      | ⚪ Not started |
+| 30  | MCP outbound client                               | High          | Moderate      | ⚪ Not started |
+| 31  | Knowledge-base freshness scanner                  | High          | Moderate      | ⚪ Not started |
+| 32  | Voice output (TTS) — symmetric to item 19         | Moderate      | Low–Moderate  | ⚪ Not started |
+| 33  | Per-end-user cost attribution                     | Moderate–High | Low–Moderate  | ⚪ Not started |
+| 34  | Workflow agentic dry-run (stubbed-execution mode) | Moderate–High | Moderate      | ⚪ Not started |
+| 35  | Shadow / canary version routing                   | Moderate      | Moderate–High | ⚪ Not started |
+| 36  | OpenAPI-driven capability generator               | Moderate      | Moderate      | ⚪ Not started |
+
+### 29. GDPR end-user erasure (DSAR / Right-to-Erasure) — ⚪ Not started
+
+**Why it matters.** Every regulated-vertical worked example in `business-applications.md` — legal advice, mortgage broking, tenant rights, council planning, health protocols, financial planning, customer-resolution — is sold into procurement teams that treat GDPR Article 17 Right-to-Erasure and Article 15 Right-of-Access as non-negotiable. Today the platform has _scheduled_ retention plumbing (`AiAgent.retentionDays`, `costLogRetentionDays`, `webhookRetentionDays`, `auditLogRetentionDays`) but no _on-demand_ operation that, given an end-user identifier, finds and erases their data across the eight-plus models that store it. `functional-robustness-test-plan.md` documents this as an unimplemented test scenario. The recurring partner-procurement objection makes this commercial-risk rather than nice-to-have — it is the kind of feature whose absence terminates a sales conversation regardless of how good the platform's quality posture is.
+
+This is the on-demand half of a primitive whose scheduled half already exists.
+
+**What we'd ship.** A new `lib/orchestration/data-subject/` module owning the lookup contract: identifier → list of touchpoints. New admin routes `POST /api/v1/admin/orchestration/data-subject/export` and `/erase` taking `{ identifier: { type: 'email' | 'phone' | 'channelAddress' | 'userId', value } }`. The lookup walks `AiConversation` rows via the `(channel, fromAddress)` key item 14 already populates, or via `User.id` cascade for registered users, then traverses every owning model: `AiMessage`, `AiCostLog`, `AiEvaluationLog`, `AiUserMemory`, `AiWorkflowExecution.inputData`, `AiInboundTriggerDelivery.payload`, plus any future model that captures user content (a per-model audit during implementation enumerates the full surface). Export returns a signed-URL JSON bundle (chains `upload_to_storage` from item 16). Erasure runs the same walk inside a single `$transaction`, replaces user-content fields with redaction markers where rows must survive for aggregate integrity (`AiCostLog.metadata` retains tokens but nulls user-identifying fields; `AiAdminAuditLog` rows are preserved because the audit trail of erasure must itself be auditable, but with content redacted), and writes a `data_subject.erasure` audit row recording the actor, identifier hash, and which models were touched. A new `AiDataSubjectRequest` table records every request with `requestId`, `requestType`, `identifierHash` (SHA-256 with a system-secret salt so the audit table does not itself become a re-identification surface), `requestedAt`, `completedAt`, `actorUserId`, and `affectedRowCounts` for the compliance audit trail partners will be asked for during their own audits.
+
+**UI shape.** A new admin page `/admin/orchestration/compliance/data-subject` with two tabs — "Pending Requests" and "History". Pending tab has a form with identifier-type dropdown + value input + action dropdown (Export / Erase) + preview button. Preview returns the lookup-walk result counts (e.g. "Would erase: 3 conversations, 47 messages, 12 cost logs, 1 user memory entry") without committing; admin clicks Confirm to execute. History tab is a paged list of past requests with status, actor, and a "Re-run export" button for export requests (erasure is irreversible). FieldHelp on the identifier-type dropdown explains the inbound-trigger channel-key model for non-registered users.
+
+**Benefits.**
+
+- **Unblocks regulated-vertical pilots.** Procurement teams in legal, financial, health, council, and customer-resolution domains list DSAR as a binary gate. Today partners write the SQL by hand or refuse the pilot.
+- **Compliance audit trail by design.** The `AiDataSubjectRequest` table is the artefact partners hand to their own auditors. Without it they hand over screenshots.
+- **Composes with item 25 (email-out threading).** DSAR confirmation can thread back into the original inbound email conversation, closing the loop for the requester.
+- **Reuses existing infrastructure.** Retention plumbing, audit log, `upload_to_storage`, channel-key model from item 14 — all already there.
+- **Forces honest reckoning with retention defaults.** Building the on-demand walk surfaces every model that captures user content; that audit drives better defaults for retention scheduling.
+
+**Risks.**
+
+- **Aggregate-integrity vs erasure tension.** Some rows (cost logs, audit logs) must persist for billing or compliance reasons. Mitigation: redaction-not-deletion for those models, with explicit field-level rules documented per model. The DSAR request bundle includes the redaction map so the requester sees what was kept and why.
+- **Identifier resolution ambiguity.** A single email may appear across multiple `(channel, fromAddress)` rows from different inbound channels. Mitigation: the lookup walk is union-of-matches by default; the preview shows what would be touched so the admin can scope down with additional filters before confirming.
+- **Async dispatched work.** Inbound triggers and outbound webhooks both fire-and-forget — erasure cannot reach in-flight or yet-to-fire work. Mitigation: a 24-hour cooling period during which the erasure record is "pending dispatch", after which any newly-arriving data for that identifier is rejected at the channel-key match in the inbound handler.
+- **Audit-of-audit.** Who erases the erasure record? Mitigation: never. Erasure records carry only `identifierHash`, not the identifier itself, so the audit trail does not itself become a re-identification surface.
+
+**Difficulty: Moderate.** New module + two admin routes + one new table + one new admin page + redaction rules per model. The architectural work is bounded; the schedule risk is auditing every Prisma model for user-content fields. One sprint.
+
+### 30. MCP outbound client — ⚪ Not started
+
+**Why it matters.** Sunrise is an MCP _server_ today — IDE extensions, Claude Desktop, and third-party agents can call into Sunrise via `/api/v1/mcp`. The symmetric piece is missing: Sunrise agents cannot call _out_ to other MCP servers. The MCP ecosystem now publishes hundreds of first-party servers (filesystem, database, search engines, GitHub, Linear, Notion, Stripe, Sentry, Cloudflare, vendor SaaS); each one Sunrise can speak to is an integration partners get without per-vendor capability code. The framing matches Sunrise's existing "most-interoperable starter template" posture and gives partners a real choice for each new integration: HMAC-signed REST recipe (item 3, today) or MCP outbound (new) — both first-class.
+
+This is distinct from A2A protocol support (Tier 4 de-prioritised): A2A is inter-system _agent coordination_; MCP outbound is single-system tool-calling against external servers. The arch-decisions doc treats MCP-client as a scope decision ("Sunrise is MCP server; client consumption not in scope"), not a principled rejection. This proposal makes it scope.
+
+**What we'd ship.** A new `lib/orchestration/mcp-client/` module mirroring the existing `lib/orchestration/mcp/` server shape. A new `call_mcp_tool` system capability with args `{ serverSlug, toolName, arguments }`. A new `AiMcpServer` table linking `(slug, serverUrl, authMode, authSecret, allowedAgentIds, isEnabled)` so admins register external servers once and bind them to specific agents via the existing capability-binding flow. Per-agent `customConfig.allowedMcpServers` allowlist (URL-slug matched, same posture as the SSRF protection on `external_call`) controls which servers each agent can hit. Connection pooling per `(serverSlug, authSecret)` with the same 1-hour idle TTL as the server's session manager. Auth modes mirror the HTTP fetcher: `none` / `bearer` / `api-key` / `query-param`. Tool-discovery is `list_tools` on first connection; results cached for the per-server-config TTL (default 1 hour) and refreshable by clicking "Refresh tools" on the server config page.
+
+**UI shape.** A new admin page `/admin/orchestration/mcp/servers` (sibling to the existing `/admin/orchestration/mcp` server-side config). Card grid: each server card shows status dot, last successful discovery, tool count, agents using. Click into a card → server-form with URL, auth-mode picker, allowlist editor, and a "Discover tools" button that lists the live tool catalogue. The Agent form's Capabilities tab gains a "MCP servers" sub-section (collapsed by default) listing this agent's allowed servers. The trace viewer's tool-call sub-panel renders MCP outbound calls distinctly from REST `external_call` so admins can identify them at a glance.
+
+**Benefits.**
+
+- **Multiplies the integration surface for free.** Every MCP server in the ecosystem becomes a candidate integration without per-vendor capability code.
+- **Symmetric architecture.** The platform is both an MCP server and an MCP client — closes the obvious gap.
+- **Pairs with item 3 (HTTP recipes) for choice.** Partners pick the integration mode best suited to each vendor.
+- **Pairs with item 36 (OpenAPI generator)** as the alternative integration mode for vendors who ship OpenAPI but not MCP, and vice versa.
+- **Reuses item 14's SSRF allowlist posture and auth-mode plumbing.** No new security surface beyond the per-server allowlist.
+
+**Risks.**
+
+- **External tool quality varies.** A misbehaving MCP server can return malformed tool schemas or hang on `tools/call`. Mitigation: per-call timeout (default 30s), schema validation against the discovered shape, circuit-breaker fall-through to a step error rather than a hung agent.
+- **Tool-name collisions.** Two MCP servers may expose tools named `search` or `list`. Mitigation: capability resolver namespaces external tools as `mcp:{serverSlug}:{toolName}` so the LLM sees disambiguated names.
+- **Auth-secret hygiene.** External tokens stored in `AiMcpServer.authSecret` are sensitive. Mitigation: same plaintext-in-DB posture as `AiWorkflowTrigger.signingSecret` (acknowledged operational gap in `architectural-decisions.md`), with the same future-hardening path to envelope encryption.
+- **Discovery drift.** A server may add or remove tools between discoveries. Mitigation: agents bind to tool-names, not tool-shapes; missing tools surface as a step error with "tool no longer offered" rather than silent skip.
+
+**Difficulty: Moderate.** New module + new capability + new table + new admin page + protocol-handler client implementation. Mirrors the existing server-side MCP work; same auth and allowlist primitives. One sprint.
+
+### 31. Knowledge-base freshness scanner — ⚪ Not started
+
+**Why it matters.** Item 5 (ingestion robustness) closed the on-upload side; the runtime side is unobserved. Source URLs go 404 (council pages restructure, legal sites move, vendor docs version themselves), source PDFs get revised upstream (planning policy updates, lender criteria refreshes), and citations end up pointing at content that no longer says what the agent claims it does. For the citation-grounded advisor templates that shipped in item 4 (`tpl-cited-knowledge-advisor`) and the regulated-domain partner pilots that depend on them, this is the silent quality-erosion story item 22 (feedback-loop health) talks about, but for the corpus rather than the loop.
+
+The platform today has no runtime freshness signal at all. Citations look fresh because the _citation envelope_ is fresh; the _content_ they cite may be months out of date. Closing this gap is the runtime complement to item 5.
+
+**What we'd ship.** A scheduled `knowledge-freshness-tick` reusing the maintenance-tick plumbing from item 8's async execution model. The tick walks `AiKnowledgeDocument` rows with `sourceUrl IS NOT NULL`, re-fetches via the existing `url-fetcher`, compares SHA-256 against `metadata.fetchedHash`, and emits one of four states: `unchanged`, `changed-minor` (whitespace / metadata only), `changed-content` (text body diff), `gone` (404 / 410). State transitions write to a new `AiKnowledgeStaleness` table linking `(documentId, detectedAt, previousState, newState, diffSize, resolvedAt, resolverUserId)` and emit a `knowledge.source.stale` event hook so partner ops can route to Slack via the existing webhook dispatcher (item 14).
+
+A new admin page `/admin/orchestration/knowledge/stale` queues changed and gone documents for triage with three actions per row: re-ingest (rebuilds chunks and embeddings from the new source), mark-resolved (the changes are not material), mark-deprecated (the document should no longer be cited; agents see citations to it suffixed with a deprecation marker). Per-document `freshnessConfig.checkIntervalDays` (default 7) keeps the load bounded; documents with `sourceUrl IS NULL` (uploaded PDFs without a source URL) are excluded from the tick.
+
+**UI shape.** Page header card shows three counts — Changed, Gone, Unresolved — with a sparkline of the last 30 days. Table below: document name, source URL, last-checked, state (chip), diff size, age-of-staleness, action buttons. Clicking a "changed-content" row opens a side panel with a text-diff view of the parsed content before/after; clicking a "gone" row opens a side panel showing the last-known fetch result. The existing Knowledge tab on the Agent form gains a "stale citations" badge if any of the agent's accessible documents are in `changed-content` or `gone` state.
+
+**Benefits.**
+
+- **Closes the silent quality-erosion gap** between "we shipped a cited answer" and "the citation is still true."
+- **Pairs with item 2 (citations).** A citation pointing at deprecated content gets a `[N: source updated YYYY-MM-DD]` chip in the agent's response, surfacing the staleness to end-users.
+- **Pairs with item 22 (feedback-loop health).** Same dashboard surface, complementary signal — feedback-loop health watches the _loop_, freshness watches the _corpus_.
+- **Reuses existing infrastructure.** Maintenance-tick, URL fetcher, event-hook dispatcher, agent-knowledge access model.
+- **Bounded load.** Per-document interval keeps the tick cheap; admin can scope frequency per-document for high-volatility sources.
+
+**Risks.**
+
+- **False positives on volatile pages.** A page with rotating ads or a "last viewed: X" timestamp triggers `changed-content` on every check. Mitigation: a content-extraction step strips known noise (script tags, common rotating elements) before hashing; admins can mark specific change patterns as "noise" per document.
+- **Aggressive re-fetch posture.** Some sources rate-limit or block frequent fetches. Mitigation: per-document interval with a sensible default; respect `Retry-After` and back off; log persistent failures distinctly from `gone`.
+- **Re-ingestion cost.** Re-ingesting a 200-page PDF every week is wasteful when only the version footer changed. Mitigation: `changed-minor` state does _not_ auto-trigger re-ingestion; only `changed-content` does, and the admin decides when to re-ingest from the queue.
+- **Citation-deprecation UX.** A response that cites a deprecated source needs to surface the deprecation without alarming the end-user unnecessarily. Mitigation: chip styling matches the existing citation chip, with hover text "this source was updated on YYYY-MM-DD; the cited content may have changed" — informational, not alarmist.
+
+**Difficulty: Moderate.** New scheduled tick + new table + new admin page + hook event + minor chip rendering change in the citation envelope. Reuses URL fetcher, maintenance-tick, event-hook plumbing. One sprint.
+
+### 32. Voice output (TTS) — symmetric to item 19 — ⚪ Not started
+
+**Why it matters.** Item 19 shipped voice _in_ via Whisper transcription. The symmetric piece — text _out_ as audio — closes the accessibility and mobile-UX argument that drove item 19 in the first place. End-user populations that rely on screen-readers, partners building kiosk / automotive / smart-speaker pilots, and the same WhatsApp-voice-note audience that item 24 targets all benefit. The infrastructure shape is already proven by item 19: provider-capability gating (`'audio'` filter on `AiProviderModel`), per-agent `enableVoiceInput` toggle plus org-wide setting, fire-and-forget cost logging with per-row `metadata.durationMs`, `Permissions-Policy: microphone=(self)` headers — every piece extends cleanly to a `speaker` Permissions-Policy and a `synthesize` capability on the provider abstraction.
+
+The asymmetry of "we listen but we don't talk back" is conspicuous after item 19 shipped; partners ask about it within the first demo session.
+
+**What we'd ship.** A new optional method `LlmProvider.synthesize?(text, options)` on the provider interface; one first-party implementation against OpenAI-compatible `audio.speech.create` (works for OpenAI proper and any compatible host such as Groq's TTS-capable hosts). New `CostOperation = 'synthesis'` rows in the cost-tracking pipeline with per-character or per-minute pricing (provider-dependent). New per-agent `AiAgent.enableVoiceOutput` and org-wide `AiOrchestrationSettings.voiceOutputGloballyEnabled` toggles mirroring item 19's gating. An SSE event variant `audio_url` that the streaming handler emits after a turn completes when `enableVoiceOutput` is on; the URL is a signed link to an `upload_to_storage`-persisted MP3 (item 16). Admin agent-test-chat and embed widget both render a "play" button per assistant message; widget-config endpoint advertises the `voiceOutput` capability so the loader does not surface a control guaranteed to error.
+
+**UI shape.** Per-agent toggle on the Agent form's "Multimodal" sub-section (alongside the existing voice-input and vision toggles). FieldHelp explains cost-per-character and the provider-capability gating. End-user surface: a small play-button next to each assistant message; first click streams audio; subsequent clicks replay from cache. The embed widget mirrors via a vanilla `<audio>` element. Org-wide settings page gains a `voiceOutputGloballyEnabled` toggle and a default provider/voice picker (OpenAI ships six voices; default `alloy`).
+
+**Benefits.**
+
+- **Symmetric to item 19.** Voice-in shipped; voice-out is the obvious complement and is asked for in every demo.
+- **Accessibility win.** Screen-reader users get a parallel audio surface without browser-TTS quality issues.
+- **Pairs with item 24 (WhatsApp / SMS) for voice-note replies.** MMS-capable Twilio channels can carry the synthesized audio directly back to the user's phone.
+- **Low schedule cost.** Item 19's plumbing extends cleanly; the new code is the provider method plus the SSE event variant plus two render surfaces.
+
+**Risks.**
+
+- **Voice selection sprawl.** Six OpenAI voices is manageable; eleven providers × dozens of voices each becomes a configuration nightmare. Mitigation: org-wide default voice; per-agent override only when specifically configured.
+- **Cost surprise.** Long replies × per-character pricing add up. Mitigation: cost-preview in the agent test chat ("this 800-character reply would cost $0.012 to synthesize"); per-agent monthly cap on synthesis cost.
+- **Audio file lifecycle.** Synthesized audio accumulates in `upload_to_storage`. Mitigation: tied to conversation lifecycle — synthesized audio gets the same retention as the conversation that produced it.
+- **Streaming vs file UX.** Voice output is naturally streaming, but the simpler MVP is "synthesize-then-play." Mitigation: ship file-based v1; streaming TTS is a follow-on if partners ask.
+
+**Difficulty: Low–Moderate.** Provider method + SSE event + two render surfaces + cost integration + per-agent toggle. Half-to-one sprint.
+
+### 33. Per-end-user cost attribution — ⚪ Not started
+
+**Why it matters.** Cost rollups today aggregate by `agentId`, `conversationId`, and `workflowExecutionId`. For consumer-facing chatbots (the embed-widget audience from item 7), B2B SaaS deployments where the operator invoices per-seat, and regulated-vertical pilots where partners need per-user fair-use enforcement, the missing column is `endUserId` — the end-visitor that drove the spend. Today partners back into per-user spend by joining `AiCostLog` to `AiConversation` to whatever identifies the user — a query that works for them once but does not show up as a dashboard card or feed budget enforcement.
+
+Pairs with item 29 (GDPR erasure) — both walk the same end-user identifier graph — and with item 28 (live handover), where a rising per-user cost is itself a handover-trigger signal.
+
+**What we'd ship.** Additive migration: `AiCostLog.endUserId String?` plus `AiCostLog.endUserChannel String?` (the channel-specific identifier discriminator — `'registered'` / `'embed'` / `'twilio'` / `'postmark'` / etc.). `AiConversation` already carries the channel-key from item 14; the streaming handler threads it into `logCost()`. Admin route `/api/v1/admin/orchestration/analytics/cost-by-end-user` returns paged rollups keyed on `(endUserChannel, endUserId)` with the standard `from` / `to` / `agentId` filters. Per-end-user budget caps via `AiOrchestrationSettings.endUserMonthlyBudgetUsdDefault` and per-agent override reuse the existing budget-enforcement loop, with one additional check inside the tool loop. Privacy: end-user identifiers are subject to the item 29 erasure walk — the lookup module added in item 29 already handles the channel-key form.
+
+**UI shape.** New "Cost by end-user" card on the existing Costs dashboard. Sortable table: end-user (with masked identifier — `j****@example.com`), conversations, messages, total cost, last-active. Filter chips: channel, agent, date range. Drill-in shows per-conversation cost breakdown with links to each conversation in the trace viewer. A "set budget cap" action per row creates a per-end-user override entry.
+
+**Benefits.**
+
+- **Closes a known partner question that today requires ad-hoc SQL.**
+- **Pairs with item 29 (GDPR erasure)** — the identifier-walk machinery is shared; building 33 makes 29 cheaper.
+- **Pairs with item 22 (feedback-loop health)** — per-end-user cost trend is a new dashboard card, and a rising trend is a quality signal as well as a cost signal.
+- **Enables consumer-grade fair-use enforcement** without per-partner custom code.
+- **Conditional value.** Earns its keep when partner pilots become consumer-shaped (items 24 / 25 / 26 unlocking those audiences); less valuable for purely-internal deployments.
+
+**Risks.**
+
+- **PII vs analytics tension.** End-user identifiers (email, phone) are PII. Mitigation: store hashed identifiers in `AiCostLog` (the raw value lives on `AiConversation`); analytics display masks the identifier; erasure (item 29) zeroes both.
+- **Cardinality.** A widely-deployed agent could see millions of end-user rows. Mitigation: partition the rollup table by month if cardinality bites; reuse the maintenance-tick pruning logic.
+- **Budget enforcement granularity.** Hitting an end-user cap mid-conversation is jarring. Mitigation: enforcement is at _conversation start_ by default (subsequent messages within the same conversation are allowed to complete); per-agent config can opt into hard mid-conversation enforcement for strict use cases.
+
+**Difficulty: Low–Moderate.** Additive migration + one new route + one new dashboard card + budget-enforcement integration + erasure-walk extension. Half-to-one sprint.
+
+### 34. Workflow agentic dry-run (stubbed-execution mode) — ⚪ Not started
+
+**Why it matters.** The existing dry-run endpoint is _validation-only_ — DAG checks, semantic validation, template-variable extraction. It does not walk the DAG with stubbed step outputs. For workflow authors iterating on long-running cron- or inbound-triggered workflows (item 14) where a real run costs money and writes to side-effects via `external_call`, `send_notification`, `upload_to_storage`, the missing piece is an execution mode that does a real DAG walk with side-effects stubbed and trace captured. Closes the gap between "I authored a workflow" and "I am confident it will behave on first real fire."
+
+The Big-Bang failure mode of "we set the workflow live, it called the wrong API" is what this prevents. Composes with workflow versioning (item 12) — dry-run a _draft_ against test inputs before clicking Publish.
+
+**What we'd ship.** Extend the existing dry-run route to accept `{ mode: 'validate' | 'execute', inputData?, stubOverrides? }`. In `execute` mode, the engine walks the DAG with the supplied `inputData` and runs every step through stubbed executors that return type-shape-valid mock outputs: `external_call` returns `{ status: 200, body: <stub-from-output-schema> }`; `send_notification` records the would-have-been payload but does not dispatch; `tool_call` returns a stubbed schema-valid result; `human_approval` immediately resolves with `approved: true`. The `llm_call` step has two stub modes — "echo" (returns a deterministic shape-valid placeholder) and "live" (actually calls the LLM provider; the LLM is rarely the side-effect risk, just the cost risk). `stubOverrides` lets the author seed specific step outputs for branch-coverage testing.
+
+The full execution trace is captured in the same `executionTraceEntry` shape as a real run, surfaced through the same trace viewer (item 10) with a "Dry Run" banner and per-step "Stubbed" chips. A `discardOnComplete` flag prevents stubbed runs from polluting the executions list (default true; admins can opt to retain for diff-after-edit comparison).
+
+**UI shape.** The workflow builder's existing Test tab gains a mode toggle: "Validate only" (today) / "Execute stubbed" (new). Execute-stubbed mode shows a stub-override panel where authors can override specific step outputs before running. Results render in the existing trace viewer with the Dry Run banner; a "Compare to last real run" button surfaces a diff against the most recent production execution of the same workflow if one exists.
+
+**Benefits.**
+
+- **Trust before publish.** Authors gain a real DAG walk without real side-effects.
+- **Pairs with item 12 (workflow versioning).** Dry-run a draft, see the trace, click Publish.
+- **Reuses item 10's trace viewer.** Same surface, same shortcuts; no second mental model for inspection.
+- **Standalone high-ROI for workflow-heavy partners.** Inbound-trigger and cron-driven pilots benefit disproportionately.
+
+**Risks.**
+
+- **Stub realism.** A stubbed `external_call` may pass a step that would have failed in production. Mitigation: stubs are schema-valid by construction; authors can override stub outputs to seed adverse cases; documentation frames dry-run as "shape and flow check" rather than "behaviour guarantee."
+- **Trace pollution.** Dry-runs in the executions list confuse audit views. Mitigation: `discardOnComplete: true` by default; retained dry-runs render with the Dry Run banner everywhere they appear.
+- **`llm_call` cost in live mode.** Authors who choose live mode get charged. Mitigation: cost preview before running; explicit "this will cost approximately $X" confirmation.
+
+**Difficulty: Moderate.** Engine extension + stubbed-executor implementations + trace-viewer banner + workflow-builder mode toggle. One sprint.
+
+### 35. Shadow / canary version routing — ⚪ Not started
+
+**Why it matters.** Item 12 (workflow versioning) shipped publish/draft/rollback as atomic snapshots. The missing operational piece is the _gradual_ version transition: route N% of traffic to a new version, score divergence, expand or revert. Composes with the existing experiments traffic-splitting framework and item 34's stubbed dry-run to give partners a three-step safety profile — "stub-test, canary-test, full-publish" — that the publish-and-pray flow cannot match. Pairs symmetrically with item 23a (replay testing): replay scores divergence on historical traffic, canary scores divergence on live traffic.
+
+This is the most architecturally-dependent item in Tier 7. It is _not_ a standalone wedge — its value is conditional on item 12 (already shipped) and item 23a (Tier 5) landing. Defer until at least one partner has run a model upgrade behind item 23a and asked for "the same but on live traffic."
+
+**What we'd ship.** A new `AiWorkflowCanary` table linking `(workflowId, canaryVersionId, baselineVersionId, percentTraffic, startedAt, endedAt, status)`. For chat agents, a parallel `AiAgentCanary` table with the same shape against `AiAgentVersion`. The execution dispatcher consults the canary table when resolving the version to run; assignment is sticky per `(channel, fromAddress)` so end-users see a consistent version within a conversation. The trace viewer gains a "canary divergence" sub-panel that scores per-step output divergence using the same metrics as item 23a (replay): Levenshtein for strings, structural diff for JSON, cost delta, citation diff. A new admin page `/admin/orchestration/canaries` lists active canaries with promote / abort buttons; promotion is the same atomic operation as item 12's `publishDraft()`.
+
+**UI shape.** A new "Canary" tab on the Workflow and Agent forms, alongside Versions. Start-canary flow: pick draft version, set traffic percentage (5% / 10% / 25% / 50% / 75%), set evaluation window (24h / 72h / 7d). Running state: live divergence card with metric deltas and a sample of diverging executions. Promote / abort buttons gated by minimum-sample-size threshold (default 50 executions).
+
+**Benefits.**
+
+- **Closes the publish-and-pray gap** that item 12 left open by design.
+- **Pairs with item 23a (replay).** Two windows of evidence on the same model upgrade.
+- **Reuses traffic-splitting plumbing** from the experiments framework.
+- **Sticky per end-user.** No mid-conversation version swap; experience is consistent within a thread.
+
+**Risks.**
+
+- **Sticky-assignment skew.** Heavy users get permanently bucketed; light users may never see the canary. Mitigation: re-bucket on conversation start, not on first-ever interaction; document the trade.
+- **Two-version cost.** Cost dashboards aggregate to agent/workflow level; canary-on means costs double for a slice of traffic. Mitigation: cost breakdown by version on the canary dashboard so the overhead is visible.
+- **Diverging-result anxiety.** A canary that produces "different but arguably better" answers is the same dilemma as item 23a — the operator has to read the trade. Mitigation: the report is the same shape as item 23a's divergence report; same reading skill applies.
+- **Engine-dispatcher complexity.** Version resolution now consults a canary table on every execution. Mitigation: the canary lookup is a single indexed row read; cache the active-canary set in-process with invalidation on the canary admin routes.
+
+**Difficulty: Moderate–High.** Two new tables + dispatcher integration + canary admin page + trace-viewer divergence panel + promotion atomic operation. One-to-two sprints. Defer until item 23a has shipped and a partner has explicitly asked for the live-traffic complement.
+
+### 36. OpenAPI-driven capability generator — ⚪ Not started
+
+**Why it matters.** Item 3 (HTTP recipes) made integration cheap but still requires a human to author the recipe per vendor. For partners delivering an OpenAPI spec at procurement time — every SaaS vendor, every enterprise API gateway — the next step is "drop the spec, get a typed capability class." Three to five hours of partner-onboarding work collapses to minutes. Pairs with item 30 (MCP outbound client) as the alternative integration mode for vendors who ship OpenAPI but not MCP.
+
+The `architectural-decisions.md` flag here is real ("Zod at every boundary; OpenAPI kept separate to avoid drift"). This proposal addresses the principle: the generator runs at _codegen time_, not at _runtime_. The generated Zod schema becomes the persistent runtime contract; the OpenAPI artefact is consumed once and discarded. Drift is concerned with runtime-OpenAPI-interpretation; codegen-time use is structurally different — the proposal text and the generated-capability file headers both state explicitly that OpenAPI is consumed once at codegen and the Zod schema is the source of truth and may be hand-edited after generation.
+
+**What we'd ship.** A new `npm run generate:capability -- --spec=path/to/openapi.yaml --slug=acme-billing` command and an admin upload UI that runs the same generator server-side. The generator emits a `BaseCapability` subclass under `lib/orchestration/capabilities/generated/`, a Zod args schema derived from the OpenAPI operation's `parameters` and `requestBody`, an execution handler that maps args to an `httpFetch()` call against the operation path, and a Prisma seed row for `AiCapability`. The output is _plain source_ — readable, diffable, hand-editable post-generation, version-controlled like any other capability. Operations marked `x-internal: true` in the spec are skipped; operations without a `summary` or `operationId` trigger a generator warning rather than emitting a poorly-named capability.
+
+The generator pulls from the existing `lib/orchestration/http/` fetcher for the actual call; auth modes are inferred from the OpenAPI `security` blocks where possible, with admin override at generation time. Generated capabilities require admin enablement in the standard capabilities-list page before agents can use them — generation does not auto-enable.
+
+**UI shape.** A new admin route `/admin/orchestration/capabilities/import-openapi`. Upload field for the spec; once uploaded, the UI shows an operation list with checkboxes (default: all enabled), per-operation slug input (pre-filled from `operationId`), and an auth-mode picker. "Generate" runs the codegen and writes to disk (in dev) or stages a PR (in production deployments with git integration). Generated capabilities show a "From OpenAPI" chip in the capabilities list so admins know their provenance.
+
+**Benefits.**
+
+- **Collapses partner-onboarding cost** from hours to minutes for vendors with OpenAPI specs.
+- **Pairs with item 30 (MCP outbound).** Two paths; partners pick the right one per vendor.
+- **Generated source is auditable and hand-editable.** No runtime-OpenAPI dependency.
+- **Reuses item 3's HTTP fetcher.** The generated capability is a thin shim over existing infrastructure.
+
+**Risks.**
+
+- **OpenAPI quality varies.** Many real-world specs have missing types, `oneOf` ambiguities, and informal extensions. Mitigation: generator warns on each ambiguity and emits the best-effort Zod with a `TODO: refine` comment; the admin reviews before enablement.
+- **Codegen output sprawl.** Specs with hundreds of operations generate hundreds of capabilities. Mitigation: per-operation enable in the import UI; the LLM-binding step (which agents see which capabilities) is unaffected by the count.
+- **Spec drift from generated code.** If a vendor revises their spec, regeneration overwrites the file. Mitigation: generated files carry a header marker; regeneration prompts before overwriting; hand-edits are preserved as a `.local.ts` sibling.
+- **Arch-decisions misreading.** A future reader sees "OpenAPI generator" and assumes runtime-OpenAPI was reconsidered. Mitigation: the proposal text and the generated-capability file headers both state explicitly that OpenAPI is consumed once at codegen and the Zod schema is the persistent contract.
+
+**Difficulty: Moderate.** Generator CLI + admin upload UI + OpenAPI → Zod conversion (off-the-shelf library available) + Prisma seed emission + auth-mode inference. One sprint.
+
+### Tier summary
+
+The eight items split into three sub-groups by motivation rather than by surface area.
+
+- **Items 29 and 30 are commercial-priority.** GDPR end-user erasure is the most common procurement objection in regulated verticals — it is what closes (or kills) the pilot before quality even gets to make its case. MCP outbound multiplies the integration surface every other partner-facing item benefits from. Both unblock work, rather than improve it.
+- **Items 31 through 33 are operational-symmetry.** Knowledge-base freshness, voice output, and per-end-user cost attribution each complete a primitive that shipped one-sided. None is load-bearing on its own; together they remove the "we have half of that" answer from demo conversations.
+- **Items 34 through 36 are velocity-multipliers.** Stubbed-execution dry-run lowers the cost of authoring workflows that touch real systems; canary routing lowers the cost of upgrading a published version; OpenAPI-driven capability generation lowers the cost of every new vendor integration. Each item earns its keep on the second or third use, not the first.
+
+Sequenced for shortest path to commercial / engineering / quality leverage: **29 → 30 → 31 → 32 → 33 → 34 → 35 → 36**, with **29** first because procurement is a binary gate, **30** second because every external MCP server is a free integration, and **35** deferred until **23a** has shipped and a partner has explicitly asked for the live-traffic complement to replay. Items 32 and 33 are opportunistic — pick them up when the consumer-shaped audiences from items 24 / 25 / 26 are live and asking. Items 34 and 36 reward themselves on the second use; pick them up when the workflow-author or vendor-onboarding cost is felt for the second time, not the first.
+
+The unifying property: every Tier 7 item points at an existing Sunrise primitive and says "this primitive ships only its outbound half." That is why these belong together — not as miscellaneous gaps, but as the obvious second halves of features that already shipped.
 
 ---
 
