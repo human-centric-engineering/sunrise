@@ -245,8 +245,8 @@ The matrix toolbar includes an **Audit Models** button that triggers the Provide
 2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`, captures the `executionId` from the SSE stream's `workflow_started` event, and swaps its body for an inline live-progress panel
 3. The dialog stays open and shows the run's status, current step, wall-clock, tokens and cost, plus a Gantt timeline strip — the admin stays on the providers page while the audit progresses
 4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
-5. A `human_approval` step pauses execution; the inline panel renders the proposed-changes prompt as markdown with inline approve/reject controls
-6. On approval, the `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds newly discovered models, and `deactivate_provider_models` soft-deletes deprecated ones — all invalidate the model cache
+5. A `human_approval` step pauses execution. The execution surfaces in `/admin/orchestration/approvals` and expands into the **structured viewer** — three sections (existing-model changes, new model proposals, deactivations) with per-change Accept / Reject / Modify controls. Modify swaps the proposed value for an enum-aware `<Select>` (or text input for free-text fields) so the admin can edit the audit's suggestion before accepting. See [`orchestration-approvals.md`](./orchestration-approvals.md#structured-approval-views) for the schema and dispatch details.
+6. On approval, the admin's filtered selection flows through as the `approvalPayload`. The `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds approved new models, and `deactivate_provider_models` soft-deletes confirmed deprecations — all invalidate the model cache. Rejected items are silently dropped from the payload.
 
 ### Backgrounding a long run
 
