@@ -30,6 +30,10 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/prefetch-helpers', () => ({
   getProviders: vi.fn(),
+  // The edit page now uses getAgentModels (matrix-only, capability-filtered)
+  // instead of the broader getModels registry view. The old name is kept
+  // mocked anyway so any leftover transitive import doesn't blow up.
+  getAgentModels: vi.fn(),
   getModels: vi.fn(),
   getEffectiveAgentDefaults: vi.fn(async () => ({
     provider: 'anthropic',
@@ -76,7 +80,7 @@ import EditAgentPage, { generateMetadata } from '@/app/admin/orchestration/agent
 import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
-import { getProviders, getModels } from '@/lib/orchestration/prefetch-helpers';
+import { getProviders, getAgentModels } from '@/lib/orchestration/prefetch-helpers';
 import { API } from '@/lib/api/endpoints';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
@@ -149,7 +153,7 @@ describe('EditAgentPage', () => {
     vi.clearAllMocks();
     // Default: providers and models succeed
     vi.mocked(getProviders).mockResolvedValue(mockProviders);
-    vi.mocked(getModels).mockResolvedValue(mockModels);
+    vi.mocked(getAgentModels).mockResolvedValue(mockModels);
   });
 
   // ── notFound paths ─────────────────────────────────────────────────────────
@@ -251,18 +255,18 @@ describe('EditAgentPage', () => {
       expect(form).toHaveAttribute('data-providers', JSON.stringify(mockProviders));
     });
 
-    it('passes models from getModels to AgentForm', async () => {
+    it('passes models from getAgentModels to AgentForm', async () => {
       // Arrange
       const agent = createMockAgent();
       vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
       vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      vi.mocked(getModels).mockResolvedValue(mockModels);
+      vi.mocked(getAgentModels).mockResolvedValue(mockModels);
       const params = Promise.resolve({ id: 'agent-123' });
 
       // Act
       render(await EditAgentPage({ params }));
 
-      // Assert: models from getModels are forwarded to AgentForm
+      // Assert: models from getAgentModels are forwarded to AgentForm
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-models', JSON.stringify(mockModels));
     });
@@ -283,12 +287,12 @@ describe('EditAgentPage', () => {
       expect(form).toHaveAttribute('data-providers', 'null');
     });
 
-    it('passes null models to AgentForm when getModels fails', async () => {
+    it('passes null models to AgentForm when getAgentModels fails', async () => {
       // Arrange — page tolerates model registry fetch failures
       const agent = createMockAgent();
       vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
       vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      vi.mocked(getModels).mockResolvedValue(null);
+      vi.mocked(getAgentModels).mockResolvedValue(null);
       const params = Promise.resolve({ id: 'agent-123' });
 
       // Act
