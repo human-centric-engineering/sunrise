@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { SourcesField } from '@/components/admin/orchestration/approvals/sources-field';
 import { ENUM_BY_AUDIT_FIELD, NAMED_ENUMS } from '@/lib/orchestration/model-audit/enums';
 import type { FieldSpec } from '@/lib/orchestration/review-schema/types';
 
@@ -52,6 +53,14 @@ export function ReviewField({ field, value, rowContext, editable, onChange }: Re
     return (
       <EditableField field={field} value={value} rowContext={rowContext} onChange={onChange} />
     );
+  }
+
+  // The 'sources' renderer handles its own empty/invalid states. Skip the
+  // generic empty-value short-circuit so an empty array still routes
+  // through SourcesField (which renders the same dash) rather than
+  // falling through to the default text path.
+  if (field.display === 'sources') {
+    return <SourcesField value={value} />;
   }
 
   if (value === null || value === undefined || value === '') {

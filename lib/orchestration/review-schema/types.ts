@@ -21,6 +21,12 @@ import { z } from 'zod';
  * How a field value renders, and which input replaces it when the row is
  * being modified. Pure presentation — value coercion happens in the
  * resolver, not in the component.
+ *
+ * `'sources'` renders an array of {@link ProvenanceItem} values as a row
+ * of pills (one per source) with hover-out detail. Use for surfacing the
+ * audit trail of an LLM-produced claim — the structured analogue of the
+ * free-text `reason` field. Validation falls through to a JSON `<pre>`
+ * if the value doesn't shape-validate against the provenance contract.
  */
 export const fieldDisplaySchema = z.enum([
   'text',
@@ -30,6 +36,7 @@ export const fieldDisplaySchema = z.enum([
   'number',
   'boolean',
   'textarea',
+  'sources',
 ]);
 
 export type FieldDisplay = z.infer<typeof fieldDisplaySchema>;
