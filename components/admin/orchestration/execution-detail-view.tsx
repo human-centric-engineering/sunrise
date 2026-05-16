@@ -717,6 +717,7 @@ export function ExecutionDetailView({
                   outputTokens={entry.outputTokens}
                   llmDurationMs={entry.llmDurationMs}
                   costEntries={costEntriesByStep.get(entry.stepId)}
+                  provenance={entry.provenance}
                   retries={entry.retries}
                   highlighted={highlightedStepId === entry.stepId}
                   forkNumber={parallelForkNumberByStepId.get(entry.stepId)}

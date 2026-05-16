@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { isMarkdown } from '@/lib/utils/is-markdown';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
+import { SourcesField } from '@/components/admin/orchestration/approvals/sources-field';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 const RETRY_PILL_CLASS =
@@ -75,6 +76,14 @@ export interface ExecutionTraceEntryRowProps {
   llmDurationMs?: number;
   /** Cost-log rows attributed to this step, for the per-call breakdown. */
   costEntries?: TraceCostEntry[];
+  /**
+   * Source attribution lifted by the engine from the step's `output.sources`.
+   * Rendered as a Sources sub-panel under the Input/Output grid in the
+   * expanded body — same pill design as the structured approval UI, so
+   * admins debugging an execution see the audit trail without leaving
+   * the trace viewer.
+   */
+  provenance?: ExecutionTraceEntry['provenance'];
   /**
    * Bounded-retry events emitted from this step. Rendered as amber
    * sub-rows so users can see at a glance which step looped, how many
@@ -132,6 +141,7 @@ export function ExecutionTraceEntryRow({
   outputTokens,
   llmDurationMs,
   costEntries,
+  provenance,
   retries,
   highlighted,
   onRetry,
@@ -294,6 +304,14 @@ export function ExecutionTraceEntryRow({
               {output !== undefined && output !== null && (
                 <JsonPane label="Output" data={output} testId={`trace-entry-output-${stepId}`} />
               )}
+            </div>
+          )}
+          {provenance && provenance.length > 0 && (
+            <div data-testid={`trace-entry-sources-${stepId}`}>
+              <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+                Sources ({provenance.length})
+              </p>
+              <SourcesField value={provenance} layout="stack" />
             </div>
           )}
           {costEntries && costEntries.length > 0 && (
