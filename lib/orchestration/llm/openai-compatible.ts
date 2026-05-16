@@ -194,11 +194,38 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       .map(toolCallFromSdk)
       .filter((c): c is LlmToolCall => c !== null);
 
+    const content = choice.message.content ?? '';
+    const reasoningTokens = completion.usage?.completion_tokens_details?.reasoning_tokens;
+
+    // Truncation guard. For reasoning models (o-series, gpt-5) the
+    // `max_completion_tokens` cap covers reasoning tokens AND visible
+    // output combined; when reasoning consumes the entire budget the
+    // API returns `finish_reason: 'length'` with empty content. Without
+    // this check we'd silently emit `''` and downstream steps would
+    // mistake the void for a valid empty result — what bit the audit
+    // workflow in production. Raise it as a retriable provider error
+    // so the operator sees a clear "raise maxTokens" message in the
+    // step trace instead of a mysterious downstream validation loop.
+    if (choice.finish_reason === 'length' && content.length === 0 && toolCalls.length === 0) {
+      const cap =
+        (params as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens ??
+        (params as { max_tokens?: number }).max_tokens;
+      const reasoningNote =
+        reasoningTokens !== undefined
+          ? ` Reasoning consumed ${reasoningTokens} tokens of the ${cap ?? 'configured'} budget.`
+          : '';
+      throw new ProviderError(
+        `Model "${options.model}" hit max_completion_tokens before producing visible output.${reasoningNote} Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        { code: 'truncated_no_output', retriable: false }
+      );
+    }
+
     const response: LlmResponse = {
-      content: choice.message.content ?? '',
+      content,
       usage: {
         inputTokens: completion.usage?.prompt_tokens ?? 0,
         outputTokens: completion.usage?.completion_tokens ?? 0,
+        ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
       },
       model: completion.model,
       finishReason: mapFinishReason(choice.finish_reason),

@@ -331,6 +331,23 @@ bound this — the orchestrator step's default is also 120s.
 
 Every long-running call accepts an `AbortSignal` via `LlmOptions.signal`. Aborts surface as non-retriable `ProviderError('aborted')`.
 
+### Truncation guard (`truncated_no_output`)
+
+Both providers fail loudly when the model hits its token cap **without producing visible text**:
+
+- OpenAI-compatible: `finish_reason: 'length'` + empty content + no tool calls → `ProviderError('truncated_no_output')`.
+- Anthropic: `stop_reason: 'max_tokens'` + empty content + no tool calls → `ProviderError('truncated_no_output')`.
+
+This catches a class of silent corruption unique to reasoning models (gpt-5, o-series, Claude with extended thinking). For these models the `max_completion_tokens` / `max_tokens` cap is shared between **reasoning tokens** and **visible output tokens**; when reasoning consumes the whole budget the SDK returns an empty `content` string. Without this guard the engine would happily store `""` as a "successful" step output and downstream guards/validators would invent confused failures. The error message includes the model id, the current cap, and (for OpenAI) the reasoning-token count, so the operator's first move ("raise maxTokens") is obvious from the trace.
+
+The error is **non-retriable** — retrying with the same cap will hit the same wall. Bump the agent's or step's `maxTokens` to address it (16384 is a reasonable headroom for reasoning-heavy workloads producing structured JSON).
+
+Short-but-non-empty responses that hit the cap are **not** flagged — the visible content is meaningful, and we surface `finishReason: 'length'` so callers that care (e.g. continuation flows) can detect it.
+
+### Reasoning-token observability
+
+For OpenAI reasoning models, `LlmResponse.usage` exposes an optional `reasoningTokens` count — the subset of `outputTokens` consumed by internal reasoning. Captured from `completion.usage.completion_tokens_details.reasoning_tokens`. Useful when tuning `maxTokens` for a new agent or diagnosing the truncation guard above. Undefined for non-reasoning models and providers that don't report the breakdown.
+
 ## Configuration
 
 `AiProviderConfig` rows (see `prisma/schema.prisma`) drive the provider manager. Fields used here:

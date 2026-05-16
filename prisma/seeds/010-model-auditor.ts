@@ -331,7 +331,12 @@ const unit: SeedUnit = {
         model: '',
         provider: '',
         temperature: 0.2,
-        maxTokens: 4096,
+        // Reasoning models (gpt-5, o-series) split this cap between
+        // reasoning_tokens and visible output; the audit workflow
+        // asks for verbose structured JSON over ~30 models, so 4096
+        // gets entirely consumed by reasoning and visible content
+        // comes back empty. 16384 leaves comfortable headroom.
+        maxTokens: 16384,
         monthlyBudgetUsd: 25,
         isActive: true,
         isSystem: true,
@@ -449,7 +454,10 @@ const unit: SeedUnit = {
         model: '',
         provider: '',
         temperature: 0.3,
-        maxTokens: 4096,
+        // Long consolidated markdown report over many audit outputs;
+        // shares the reasoning-model headroom rationale with
+        // provider-model-auditor above.
+        maxTokens: 16384,
         isActive: true,
         isSystem: true,
         createdBy,

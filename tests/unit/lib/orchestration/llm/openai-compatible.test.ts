@@ -332,6 +332,91 @@ describe('chat', () => {
     expect(calledParams?.max_tokens).toBe(256);
     expect(response.content).toBe('ok');
   });
+
+  it('throws truncated_no_output when finish_reason is length with empty content and no tool calls', async () => {
+    // Arrange — gpt-5 reasoning models can consume the entire
+    // `max_completion_tokens` budget on reasoning, leaving empty
+    // visible content. The SDK reports this as
+    // `finish_reason: 'length'`. Without this guard the engine
+    // would silently treat the empty content as valid and downstream
+    // steps would invent confused validation failures.
+    chatCreateMock.mockResolvedValue({
+      id: 'cmpl-test',
+      model: 'gpt-5',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '', tool_calls: null },
+          finish_reason: 'length',
+        },
+      ],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 4096,
+        completion_tokens_details: { reasoning_tokens: 4096 },
+      },
+    });
+
+    // Act
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-5',
+        maxTokens: 4096,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert — clear ProviderError surfaces, mentioning reasoning tokens
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as Error).message).toMatch(/maxTokens/i);
+    expect((caught as Error).message).toMatch(/4096/);
+  });
+
+  it('returns content normally when finish_reason is length but content is non-empty', async () => {
+    // Arrange — a short-but-valid response that hit the cap. We
+    // must NOT throw here: the visible content is meaningful even
+    // if the model wanted to say more.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('partial answer', 'length'));
+
+    // Act
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], { model: 'gpt-4o' });
+
+    // Assert
+    expect(response.content).toBe('partial answer');
+    expect(response.finishReason).toBe('length');
+  });
+
+  it('surfaces reasoning_tokens in usage when the SDK reports it', async () => {
+    // Arrange
+    chatCreateMock.mockResolvedValue({
+      id: 'cmpl-test',
+      model: 'gpt-5',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'done', tool_calls: null },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: 50,
+        completion_tokens: 1200,
+        completion_tokens_details: { reasoning_tokens: 800 },
+      },
+    });
+
+    // Act
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], { model: 'gpt-5' });
+
+    // Assert
+    expect(response.usage.reasoningTokens).toBe(800);
+    expect(response.usage.outputTokens).toBe(1200);
+  });
 });
 
 // ---------------------------------------------------------------------------
