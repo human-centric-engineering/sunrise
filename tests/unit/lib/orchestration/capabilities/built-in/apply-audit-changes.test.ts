@@ -261,9 +261,14 @@ describe('ApplyAuditChangesCapability', () => {
       expect('models' in result && result.models).toHaveLength(2);
     });
 
-    it('rejects multi-model input with empty models array', () => {
+    it('accepts multi-model input with empty models array as a no-op', () => {
+      // Admins can reject every proposed change via the structured
+      // approval UI; the resulting `{ models: [] }` payload is a valid
+      // no-op rather than an error. The execute() path early-returns
+      // when entries is empty.
       const cap = new ApplyAuditChangesCapability();
-      expect(() => cap.validate({ models: [] })).toThrow(CapabilityValidationError);
+      const result = cap.validate({ models: [] });
+      expect('models' in result && result.models).toEqual([]);
     });
 
     it('rejects multi-model input when a model has empty changes', () => {
@@ -279,6 +284,31 @@ describe('ApplyAuditChangesCapability', () => {
       const cap = new ApplyAuditChangesCapability();
       const result = cap.validate({ newModels: [], deactivateModels: [] });
       expect('models' in result && result.models).toEqual([]);
+    });
+
+    it('accepts a wrapped approval envelope from approval-actions', () => {
+      // `approval-actions.executeApproval` writes the trace entry's
+      // output as `{ approved, notes, actor, approvalPayload }`.
+      // `argsFrom: 'review_changes'` forwards that whole object to this
+      // capability, so the unwrap preprocess must lift the payload's
+      // `models` key to top-level before schema validation.
+      const cap = new ApplyAuditChangesCapability();
+      const result = cap.validate({
+        approved: true,
+        notes: 'Reviewed',
+        actor: 'admin:user-1',
+        approvalPayload: {
+          models: [
+            {
+              model_id: 'model-1',
+              changes: [makeChange({ field: 'tierRole' })],
+            },
+          ],
+          newModels: [],
+          deactivateModels: [],
+        },
+      });
+      expect('models' in result && result.models).toHaveLength(1);
     });
   });
 

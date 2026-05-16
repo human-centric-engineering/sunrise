@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -55,9 +56,15 @@ const newModelSchema = z.object({
   quality: z.enum(['high', 'medium', 'budget']).optional(),
 });
 
-const schema = z.object({
-  newModels: z.array(newModelSchema).max(20).default([]),
-});
+// Unwrap an `approvalPayload: { newModels }` envelope written by
+// `approval-actions.ts` so the existing top-level `newModels` schema
+// matches when called via `argsFrom` from a human_approval step.
+const schema = z.preprocess(
+  unwrapApprovalPayload,
+  z.object({
+    newModels: z.array(newModelSchema).max(20).default([]),
+  })
+);
 
 type Args = z.infer<typeof schema>;
 

@@ -78,13 +78,21 @@ export async function executeApproval(
     });
   }
 
+  // Wrap the approval into an envelope that preserves the audit trail
+  // (actor + notes) alongside the admin's structured selection. The
+  // history route and the approvals admin UI read `output.actor` /
+  // `output.notes` — keeping them at the top level avoids breaking
+  // those consumers. Downstream `tool_call` steps that read the step's
+  // output via `argsFrom` unwrap `approvalPayload` via the
+  // `unwrapApprovalPayload` Zod preprocess on each capability's schema.
   trace[awaitingIdx] = {
     ...trace[awaitingIdx],
     status: 'completed',
-    output: opts.approvalPayload ?? {
+    output: {
       approved: true,
       notes: opts.notes ?? null,
       actor: opts.actorLabel,
+      approvalPayload: opts.approvalPayload ?? null,
     },
     completedAt: new Date().toISOString(),
   };

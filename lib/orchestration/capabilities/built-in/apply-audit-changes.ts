@@ -17,6 +17,7 @@ import { logger } from '@/lib/logging';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -65,7 +66,6 @@ const multiModelSchema = z.object({
         changes: z.array(auditChangeSchema).min(1).max(50),
       })
     )
-    .min(1)
     .max(50),
 });
 
@@ -74,19 +74,30 @@ const multiModelSchema = z.object({
  * deactivateModels). When this capability receives the full payload and
  * neither `model_id`/`changes` nor `models` is present, there are no
  * changes to apply — we normalise to an empty multi-model input.
+ *
+ * A `preprocess(unwrapApprovalPayload, ...)` lifts an
+ * `approvalPayload: { models, ... }` envelope (written by
+ * `approval-actions.ts`) to top-level so the existing union picks the
+ * `models` array directly.
+ *
+ * `multiModelSchema.models` accepts an empty array — admins can reject
+ * every proposed change, and the no-op is recorded without erroring.
  */
-const schema = z.union([
-  singleModelSchema,
-  multiModelSchema,
-  z
-    .object({})
-    .passthrough()
-    .refine(
-      (v) => !('model_id' in v) && !('models' in v) && !('changes' in v),
-      'Expected model_id + changes, or models array'
-    )
-    .transform(() => ({ models: [] as z.infer<typeof multiModelSchema>['models'] })),
-]);
+const schema = z.preprocess(
+  unwrapApprovalPayload,
+  z.union([
+    singleModelSchema,
+    multiModelSchema,
+    z
+      .object({})
+      .passthrough()
+      .refine(
+        (v) => !('model_id' in v) && !('models' in v) && !('changes' in v),
+        'Expected model_id + changes, or models array'
+      )
+      .transform(() => ({ models: [] as z.infer<typeof multiModelSchema>['models'] })),
+  ])
+);
 
 type Args = z.infer<typeof schema>;
 
