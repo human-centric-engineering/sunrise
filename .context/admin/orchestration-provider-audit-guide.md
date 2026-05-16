@@ -198,21 +198,32 @@ Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) 
 ```json
 {
   "field": "tierRole",
-  "currentValue": "embedding",
+  "currentValue": "worker",
   "proposedValue": "thinking",
-  "reason": "Qwen2.5-72B is a general-purpose LLM, not an embedding model",
+  "reason": "Worker tier mismatches Qwen2.5-72B's reasoning_depth='very_high' and bestRole as a planner-grade open-weight model — Anthropic, OpenAI, and Mistral classify 70B+ flagship models as thinking-tier.",
   "confidence": "high",
   "sources": [
     {
       "source": "web_search",
       "confidence": "high",
       "reference": "https://qwenlm.github.io/blog/qwen2.5/",
-      "snippet": "Qwen2.5 series flagship: 72B-parameter general-purpose language model with strong reasoning and coding…",
-      "note": "Official Qwen release notes describe it as a chat/reasoning model, not embedding"
+      "snippet": "Qwen2.5-72B-Instruct is the flagship 72B model with strong reasoning, coding, and long-context capabilities…",
+      "note": "Official Qwen release notes describe it as a flagship reasoning model"
     }
   ]
 }
 ```
+
+Note the `reason` references the current value (`worker`) by name — Rule 10 of `validate_proposals` rejects rationale that doesn't engage with what's actually changing, so generic "this is a chat model" framings get caught at the guard step.
+
+### Two-axis model classification
+
+Provider models carry two orthogonal classifications. The audit workflow evaluates them as separate questions and the prompts spell out the orthogonality so the LLM can't conflate them:
+
+- **`tierRole`** — capability tier (what the model is FOR): `thinking`, `worker`, `infrastructure`, `control_plane`, `embedding`. Drives the model-selection heuristic for non-private intents.
+- **`deploymentProfiles`** — deployment locus (WHERE the model runs): array of one or more of `hosted`, `sovereign`. Drives the heuristic for the `private` intent.
+
+A model like Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['sovereign']` — both are true. The audit workflow can propose a change to either field independently without forcing a misclassification on the other. See `.context/orchestration/meta/architectural-decisions.md` §3.11 for the design rationale.
 
 The web search step (`search_provider_info`) renders Brave results as a numbered block in each producer's prompt: `[1] title — url\nsnippet`. The LLM is told to cite by `[N]` when a claim is search-backed and to fall back to `training_knowledge` (capped at `medium`/`low` confidence) when it isn't.
 
