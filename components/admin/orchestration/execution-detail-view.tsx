@@ -69,6 +69,7 @@ import {
 } from '@/components/admin/orchestration/execution-trace-filters';
 import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
+import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -269,6 +270,16 @@ export function ExecutionDetailView({
     return [...persisted, synth];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveTrace, liveCurrentStep, tickClock]);
+
+  // Interpolation context for the per-row "Show resolved" toggle.
+  // Re-derives the LLM input client-side from the trace; vars set by the
+  // engine's retry path (e.g. `vars.__retryContext`) aren't persisted in
+  // the trace so they render as empty here. See
+  // `interpolate-from-trace.ts` for the caveats.
+  const interpolationContext = useMemo(
+    () => buildInterpolationContextFromTrace(displayTrace, execution.inputData),
+    [displayTrace, execution.inputData]
+  );
 
   // Group cost entries by stepId so each ExecutionTraceEntryRow can render
   // its own per-call breakdown. Memoised so the grouping doesn't re-run
@@ -697,6 +708,14 @@ export function ExecutionDetailView({
           <div className="space-y-2">
             {filteredTrace.map((entry, idx) => {
               const rowKey = `${entry.stepId}-${idx}`;
+              // Engine semantics for `{{previous.output}}`: the most
+              // recent completed step in the full trace, NOT the
+              // previous DAG predecessor. Look back through
+              // `displayTrace` (unfiltered) so the resolved view shows
+              // what the engine actually saw even when the user has
+              // filtered the visible rows.
+              const fullIdx = displayTrace.findIndex((e) => e.stepId === entry.stepId);
+              const previousStepId = fullIdx > 0 ? displayTrace[fullIdx - 1].stepId : undefined;
               return (
                 <ExecutionTraceEntryRow
                   key={rowKey}
@@ -724,6 +743,8 @@ export function ExecutionDetailView({
                   parallelBranchOfNumber={parallelBranchOfByStepId.get(entry.stepId)}
                   expanded={expandedStepKey === rowKey}
                   onExpandedChange={(next) => setExpandedStepKey(next ? rowKey : null)}
+                  interpolationContext={interpolationContext}
+                  previousStepId={previousStepId}
                 />
               );
             })}
