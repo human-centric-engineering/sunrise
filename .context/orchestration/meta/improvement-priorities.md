@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-12 (Tier 6 added — proposed channel-reach, conversational-surface, and operational-trust features)
+**Last updated:** 2026-05-16 (consistency pass — every pending item across Tiers 5–8 now carries an explicit `**Priority justification.**` paragraph alongside `**Difficulty.**` so cherry-picking sessions can target the best effort/reward ratio; Tier 8 added — proposed pre-launch foundation: reliability, operational trust, and partner-readiness; Tier 7 added earlier today — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20)
 
 ---
 
@@ -380,6 +380,9 @@ Closing these gaps is what differentiates an agent platform that "kind of works 
 | 21  | External-signal feedback — `run_check` capability + `reflect` integration | High      | Moderate     | ⚪ Not started |
 | 22  | Feedback-loop health observability                                        | Moderate  | Low–Moderate | ⚪ Not started |
 | 23  | `branch_and_select` step — explore-and-pick primitive                     | Moderate  | Moderate     | ⚪ Not started |
+| 23a | Production-conversation replay against new agent versions                 | High      | Moderate     | ⚪ Not started |
+
+> Item 23a was added 2026-05-16 as the empirical complement to item 20's synthetic-spec approach. The two answer different questions: item 20 asks "does the agent obey the spec on the scenarios authors wrote?"; item 23a asks "did the agent give a worse answer to the questions users actually asked after the model upgrade?" The full proposal sits at the end of this tier, after item 23.
 
 ### 20. Executable behavioural specifications on agents — ⚪ Not started
 
@@ -409,6 +412,8 @@ Two execution paths consume the spec:
 - **Adoption friction.** An empty Behaviour tab is worse than no tab — it shouts "more work to do." Mitigation: starter packs that seed five sensible predicates the moment the tab is opened, plus per-assertion "Run now" so admins see immediate feedback on whether their current prompt already satisfies the assertion.
 - **Storage overhead.** Per-response runtime evaluation writes a row per applicable predicate per message. Mitigation: sampled evaluation (configurable, default 20% of messages once an agent crosses N requests/day), with always-on for the structural predicates that are cheap.
 
+**Priority justification.** Highest-leverage / highest-effort item in Tier 5 — the structural spine items 21, 22, 23, and 23a all compose with. Pick this when there is a 2–3-sprint slot and the partner roadmap is quality-driven rather than reach-driven; defer if the next pilot needs Tier 6 channels or Tier 7 integrations instead. The work splits cleanly: schema + publish-time validation in sprint 1, runtime evaluation + trace integration in sprint 2, predicate starter packs + authoring UX in sprint 3.
+
 **Difficulty: High.** Schema work (`AiAgentBehaviourSpec` versioned alongside `AiAgentVersion`), a predicate evaluator with N built-in predicate types and a registration surface for custom ones, publish-time blocking + runtime scoring + audit events + new evaluation-log metric, a new tab on the agent form with a meaningful empty state and predicate builder, trace-viewer integration. Realistically two to three sprints.
 
 ### 21. External-signal feedback — `run_check` capability + `reflect` integration — ⚪ Not started
@@ -435,6 +440,8 @@ This is the missing half of the reflect loop. Today `reflect` asks "is this good
 - **Over-use.** Not every reflect loop needs an external check. Documentation should frame `checks` as "when ground truth lives outside the model" and `evaluate` as "when the question is judgement-bound."
 - **Check errors create false-failure loops.** A network blip on `httpProbe` could create an infinite revision loop if treated as `passed: false`. Mitigation: tri-state result — `passed` / `failed` / `errored`. `errored` short-circuits the reflect loop with a clear telemetry signal; it never silently masks as a quality failure.
 - **Slow checks slow the loop.** A `sqlExecute` that takes 5s adds 5s × iterations to every run. Mitigation: per-check timeout (default 10s, configurable), surfaced in the trace's per-iteration latency strip.
+
+**Priority justification.** Top Tier 5 standalone win — 80% of the structural benefit is in the three non-executing check types (`jsonSchema`, `regex`, `httpProbe`) which carry no new attack surface. Ship those first; defer `sqlExecute` and `shell` behind opt-in env vars when a partner asks. Composes most cleanly with item 20, but does not depend on it — independently shippable and lower per-sprint cost.
 
 **Difficulty: Moderate.** New `run_check` capability with N check types behind a registration surface, a `reflect` executor extension to plumb checks into convergence, workflow-builder UI for check config, trace-viewer surface, sandbox plumbing for the runnable types. The capability itself is one sprint; the SQL and shell sandboxes are the schedule risk and can be deferred without losing the structural win.
 
@@ -467,6 +474,8 @@ The raw data already exists. `reflect` emits per-iteration events; `AiEvaluation
 - **Noisy per-agent baselines on low-traffic agents.** A pilot agent doing 30 requests/day has noisy stats. Mitigation: suppress the chip below a sample-size floor and surface "Insufficient data" explicitly rather than implying a false green.
 - **Misinterpretation.** A high retry-exhaustion rate could mean an upstream provider degraded, not that the feedback loop itself is broken. Mitigation: the dashboard's "Why?" drilldown segments the failures by cause (provider failure, validation failure, timeout) so the operator reads the signal correctly.
 
+**Priority justification.** Lowest-effort, highest-leverage Tier 5 item. Pure aggregation over data the platform already captures; no new instrumentation. Ship first if the slot is one sprint and the partner question is "are our agents still good a month from now?" Pairs naturally with #41 (operational health dashboard) — same admin surface, complementary lens (quality vs operational).
+
 **Difficulty: Low–Moderate.** Aggregation queries against already-captured data, one new dashboard page, settings-singleton threshold fields, hook event emission, drilldown filter routing. No new instrumentation — this is a presentation and alerting layer on top of what exists. One sprint.
 
 ### 23. `branch_and_select` step — explore-and-pick primitive — ⚪ Not started
@@ -492,7 +501,37 @@ This makes patterns like "try three drafts at different temperatures, ship the m
 - **Selector quality bounds the step.** A bad LLM judge picks the wrong branch and the structural advantage of multiple candidates is wasted. Mitigation: encourage predicate selectors where possible; LLM-judge selectors always require a written rubric (the config UI refuses to save without one); add the rubric to the trace so it's auditable post-hoc.
 - **Trace-row size growth.** Persisting discarded branch outputs grows the execution trace row. Mitigation: per-step `discardedBranches.maxBytes` cap that truncates outputs to head+tail; full outputs available via a separate paged API if the operator needs them.
 
+**Priority justification.** Lowest-priority Tier 5 item unless a specific pilot needs structured "try N, pick one" patterns (legal drafting, content-review pipelines, structured-data extraction with verification). Reorderable forward if such a pilot is active; otherwise defer until items 20–22 land. Composition with items 20 and 21 (predicate selectors reuse `run_check` types) means building those first makes 23 cheaper.
+
 **Difficulty: Moderate.** New executor (80% reuses `parallel`'s code path), new node type in the workflow-builder palette, trace-viewer surface for the discarded-branch view, validator integration, three selector implementations (LLM-judge, numeric, predicate). The selector machinery is the genuinely new code; the rest is composition. One sprint.
+
+### 23a. Production-conversation replay against new agent versions — ⚪ Not started
+
+**Why it matters.** Item 20 (executable behavioural specifications) tests an agent against the synthetic scenarios its authors thought to write — a known weakness of any test-suite-as-contract approach is that authors do not write tests for the questions they did not anticipate. The complement is to test against the questions users _actually asked_. When a partner pins an agent to a specific model and is later forced to migrate to a successor (deprecation, cost shift, capability win), the only signal that the upgrade is safe today is whatever specs the author wrote plus a vibe-check on a few recent conversations. This is structurally insufficient for the regulated-domain partners in `business-applications.md` — legal advisors, mortgage brokers, tenant-rights workers — whose answers have downstream consequences and whose real-user questions vary in ways the spec library cannot anticipate.
+
+Replay closes this. Given a window of historical `AiConversation` rows and a target `AiAgentVersion`, the platform re-runs the user turns through the new version with a deterministic seed where the provider supports it, scores divergence on the new outputs using item 6's faithfulness/groundedness/relevance metrics, and returns a per-conversation divergence report a human reviews before approving the version transition. The empirical pair to item 20's synthetic-spec approach — both belong in the Tier 5 quality story, which is why this item slots inside Tier 5 rather than alongside Tier 7's integration work.
+
+**What we'd ship.** A new `AiReplaySession` table linking `(sourceAgentVersionId, targetAgentVersionId, conversationWindow, status, divergenceSummary)`. A new admin route `POST /api/v1/admin/orchestration/agents/:id/replay` accepting `{ sourceVersionId, targetVersionId, conversationIds | { from, to, sampleSize } }`. The replay engine reuses `lib/orchestration/chat/` to re-walk user turns through the target version; system messages and tool-call sequences from the source run are excluded from the replay history (each new turn re-derives its own context from the conversation's user-side turns only). Per-turn scoring reuses the existing `lib/orchestration/evaluations/` pipeline; per-conversation divergence is the mean of per-turn metric deltas plus structural diffs (changed citations, changed tool calls, new refusals, changed refusals).
+
+**UI shape.** A new "Replay" tab on the Agent form, positioned after the existing Versions tab. Empty state: a "Run replay against a new version" CTA with version-picker, conversation-window picker (last 7 days / 30 days / custom), and a sample-size slider (default 50 conversations). Running state: a progress bar with per-conversation status. Completion state: the divergence-report dashboard with three top-line metric-delta cards (mean faithfulness delta, mean groundedness delta, mean relevance delta) and a sortable conversation list. The trace viewer for each replayed conversation renders side-by-side using the same primitives as item 10 but with a "delta" column added. A one-click "Promote target version" button on the report header updates the agent's published version atomically; a per-conversation "revert window" surfaces if the divergence on a specific high-stakes conversation is unacceptable.
+
+**Benefits.**
+
+- **Catches model-upgrade regressions on real questions the spec library cannot anticipate** — the structural complement to item 20's synthetic coverage.
+- **Decouples version-pinning from version-fear.** Today partners pin a version because they don't know what would change. Replay turns "I don't know what would change" into a divergence report.
+- **Composes with item 35 (canary routing).** Replay is the offline divergence signal; canary is the live-traffic divergence signal. Same scoring machinery, two windows of evidence.
+- **Reuses existing infrastructure end-to-end.** Chat handler, evaluation pipeline, trace viewer, agent-version model — all already there.
+
+**Risks.**
+
+- **Replay cost.** N conversations × M turns each × LLM cost per turn is non-trivial; a 500-conversation replay on a chatty agent could be a hundred-dollar test. Mitigation: configurable sample size (default 50), explicit cost preview before run, results cached per `(sourceVersion, targetVersion, conversationId)` so subsequent re-runs are free.
+- **Deterministic-seed limitations.** Many LLM providers do not honour seeds reliably. Mitigation: divergence is reported as a band against a calibration baseline established by replaying the source version against itself; per-turn variance below the noise floor is reported as "no significant change."
+- **Source-of-truth dilemma.** When the replayed answer is "different but arguably better," what does the admin do? Mitigation: divergence is reported, not gated — the report shows the new answer alongside the original with metric deltas; the human reads the trade.
+- **Context drift.** If the source conversation depended on capabilities or KB chunks since deleted, replay either fails or runs against a different reality. Mitigation: replay validates that all source-referenced capabilities and KB chunks still exist before running; skipped conversations are reported with reasons.
+
+**Priority justification.** Top-3 Tier 5 priority. Ships independently — no dependency on items 20–23. The signal to build it: the first time a partner has to migrate to a new model version. Pairs with item 35 (canary routing) for the full "offline + live" divergence story; build 23a first so the canary scoring machinery is well-shaped. Defer if no model migrations are imminent.
+
+**Difficulty: Moderate.** New table + new admin route + new engine module + new admin page + trace-viewer side-by-side mode. Reuses chat handler, evaluation pipeline, agent versioning. One sprint.
 
 ### Tier summary
 
@@ -501,6 +540,8 @@ The four items are not independent. Item 20 (executable specs) is the spine — 
 Sequenced: **20 → 21 → 22 → 23**, with 23 reorderable forward if a specific pilot needs a structured "try three drafts, pick one" pattern. Items 21 and 22 are individually shippable as standalone wins; item 20 is the high-value, high-effort spine and is most worth doing first if a multi-sprint slot is available.
 
 The combined effect: agents stop being freeform-text prompts judged by another freeform LLM, and become structured objects whose contract is checkable, whose feedback is observable, and whose alternatives are first-class. That is the difference between an agent platform that "kind of works most of the time" and one that holds its quality posture as the underlying models change.
+
+Item 23a — production-conversation replay — was added later as the empirical complement to item 20. Where item 20 tests the agent against the synthetic scenarios authors thought to write, item 23a tests it against the questions users actually asked. Both belong in the Tier 5 quality story; the synthetic side gives coverage of intent, the empirical side gives coverage of reality. Slot 23a after items 20 and 22 in the sequencing — item 20 provides the predicate language replay's per-turn divergence scoring extends, and item 22 provides the dashboard surface where replay results most naturally land.
 
 ---
 
@@ -531,6 +572,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** The 24-hour WhatsApp conversation window means an unsolicited outbound reply outside that window must be a pre-approved Meta template — there is no way around this and it is a frequent surprise for partners. Mitigation: ship a recipe walking through Meta template approval and a small starter set of templates aligned to the worked examples (appointment reminder, follow-up nudge, action-required). Twilio's price-per-message is non-trivial at scale — cost dashboards need a per-channel breakdown so partners can see WhatsApp / SMS spend separately from LLM spend. MMS media attachments require Basic-auth fetches against Twilio — wired through the existing HTTP fetcher's auth modes rather than baked into the adapter.
 
+**Priority justification.** Top Tier 6 priority — unlocks the WhatsApp- and SMS-first audiences that are central to the proactive-outreach, customer-experience, mutual-aid, and tenant-rights subcategories in `business-applications.md` and which the embed widget structurally cannot reach. Sprint cost is bounded because both adapters mirror existing inbound adapter shapes; the longest tail is partner-side WhatsApp template approval, which runs in parallel.
+
 **Difficulty: Moderate.** Two adapters mirror the shape of the three existing ones (Slack, Postmark, generic-HMAC). The outbound capability is a thin wrapper over the existing HTTP fetcher plus a per-conversation channel lookup. The recipe is the longest tail item. Realistically one sprint of platform work, with WhatsApp template approval being a real-world dependency partners drive in parallel.
 
 ### 25. Email-out conversation thread — ⚪ Not started
@@ -542,6 +585,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 **Benefits.** Closes the most common partner objection to email-in flows ("but then we can't actually have a conversation"). Reuses ~90% of the transactional-email recipe — adding the three threading headers is the entire new functionality. Threading itself is RFC 5322 standard, so every major mail client (Gmail, Outlook, Apple Mail, Thunderbird) renders the result as a normal conversation without per-client special-casing. The conversation's email thread becomes a shareable, forwardable, archivable artefact living in the partner's existing email system — no Sunrise login required to access the record.
 
 **Risks.** Auto-reply loops are the perennial email hazard — an agent reply to a vacation auto-responder that itself auto-replies produces an infinite ping-pong. Mitigation: detect `Auto-Submitted: auto-replied` and `Precedence: bulk` headers on inbound and skip; cap per-conversation outbound rate to N replies per hour. Some inboxes (notably older on-premise Outlook) handle the `References` header poorly and split threads unexpectedly — documented as a known mail-client quirk rather than something to solve at the platform layer. Subject-line drift over many turns is also a real concern — partners need to know that "we changed the subject to be more specific on turn 5" is a feature their compliance lead might query.
+
+**Priority justification.** Cheap, high-leverage Tier 6 item. Closes the most common Postmark-inbound objection ("but then we can't actually have a conversation") for half a sprint of work. Pairs with item 29 (GDPR erasure) — DSAR confirmation can thread back into the original conversation. Sequence opportunistically — when a partner specifically asks for back-and-forth email flows.
 
 **Difficulty: Low–Moderate.** The plumbing is small: one new column, one new capability built on the existing HTTP fetcher, one new recipe variant. The risk is concentrated in the edge cases (auto-reply loops, multipart attachments on the reply path, quoted-block formatting that mail clients do not double-quote) — careful work rather than complex work. Half a sprint.
 
@@ -555,6 +600,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** Card sprawl is the biggest risk — every additional card type doubles the surface to test, the embed-widget mirror to maintain, and the documentation footprint. Mitigation: ship the four starter types, document a clear extension path via the capability registry (a custom card type is a capability that emits a `ui_card` event), and resist adding more without a partner-driven use case. Charts in the embed widget are a real complication — Recharts is React; the embed is vanilla Shadow DOM. Initial scope is a small in-house SVG renderer for bar and line charts only; if a partner asks for richer charts, the embed widget can graduate to React, a bigger architectural step that earns its keep at that point, not before. Mobile rendering of date / time pickers uses native `<input type="date">` and `<input type="time">` — adequate everywhere but not beautiful; revisit only if partners complain.
 
+**Priority justification.** Most architecturally ambitious Tier 6 item; save for a slot with a clear partner ask. The four starter card types ship cleanly together as a 1.5–2 sprint slot; resist adding additional card types without a partner-driven case to avoid sprawl. Defer unless a worked example specifically degrades to clunky free-text (date booking, address picking, chart-on-data) without it.
+
 **Difficulty: Moderate–High.** The SSE event variant + React components + capability is one sprint of focused work. The embed-widget mirrors (especially the SVG chart renderer) are the schedule risk — every card type doubles to two implementations. Realistically one and a half to two sprints if all four card types ship together, or one sprint per pair if scoped down.
 
 ### 27. Conversation export / share (PDF or signed link) — ⚪ Not started
@@ -566,6 +613,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 **Benefits.** Closes a known recurring partner ask without per-pilot custom work. Pairs naturally with the items that already shipped — `upload_to_storage` for persistence, Gotenberg for rendering, signed URLs for sharing, citation envelope for grounded references in the export. Makes conversations portable across team boundaries: a partner's compliance lead can be sent a PDF rather than given a Sunrise admin login. The Markdown variant doubles as the export format for downstream tools (Slack, Notion, internal wikis).
 
 **Risks.** Authorisation on the share link is the main risk — the signed URL alone is a capability, anyone with it sees the conversation. Acceptable for most cases (the partner shares intentionally); sensitive cases need a one-time-token-with-login model that is a bigger feature, deferred until a partner asks. Truncation of long conversations: default to "full export" but flag conversations over N turns to prevent an accidental unbounded PDF render — soft cap at 200 turns with a "download as multi-part" affordance if exceeded. The export captures the conversation at a moment in time — versioning the export itself (re-export a year later, are the citations still pointing at live sources?) is out of scope for v1 and documented as a known limitation.
+
+**Priority justification.** Reliable second-pilot ask — partners rarely request it pre-pilot but consistently ask once a pilot is live. Reuses nearly all existing infrastructure (`upload_to_storage` from item 16, Gotenberg from item 17, citation envelope from item 2). Half-to-one sprint; pick up the first time a partner asks. Composes with #29 (GDPR erasure — same upload+sign machinery) and #47 (provenance bundle — same render-template plumbing).
 
 **Difficulty: Low–Moderate.** Most of the moving parts already exist: persistence (`upload_to_storage`), PDF generation (Gotenberg + multipart), signed URLs, citation envelope. The new work is the HTML template, the capability wrapper, the per-agent toggle in `widgetConfig`, and the download buttons on two surfaces. Half a sprint to a sprint, depending on how many format variants ship together.
 
@@ -579,6 +628,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** Asynchronous handover is the messy case — if no duty admin is available within N seconds, the user is stuck waiting on a person who is not coming. Mitigation: configurable per-agent timeout with a fallback message ("No one is available right now — we'll get back to you within X hours") and an automatic transition to an email / SMS follow-up flow that pairs with item 25. Queue priority (FIFO vs urgency-weighted vs round-robin) needs an admin knob — default FIFO, with urgency weighting as a follow-on. The takeover-mode injection point in the streaming handler is the trickiest piece of plumbing — SSE is one-way, so admin-typed messages POST to a new endpoint that emits into the user's existing stream; this works but requires careful state management to avoid race conditions (an in-flight LLM call when the admin accepts). Trust-and-safety: an admin in takeover mode is sending messages to an end user as the platform — same threat model as a customer-support tool, and audit-logged accordingly.
 
+**Priority justification.** Highest-leverage Tier 6 commercial item after #24 — removes the most common pilot-blocker in regulated verticals (legal, mortgage, tenant-rights, council). Build after item 24 so handover can route to the operator's preferred duty channel (Slack / SMS / WhatsApp) without per-pilot custom code. Schedule risk concentrated in the streaming-handler takeover-mode plumbing; the rest is composition over existing patterns.
+
 **Difficulty: Moderate.** New capability + new admin surface + streaming-handler takeover-mode plumbing + new event hook + per-agent config + audit integration. Most of the pieces are extensions of existing patterns (the approval queue's admin UI for the handover list, the hook dispatcher for duty notification, `widgetConfig` for per-agent toggles). The streaming-handler injection is the genuinely new code and is the schedule risk. One and a half sprints.
 
 ### Tier summary
@@ -590,6 +641,697 @@ The five items split naturally into two pairs and a closer.
 - **Item 28 (live handover)** is the operational trust loop — the explicit admission that not every conversation should end inside the agent. It is the most common pilot-blocker in regulated verticals and reuses the most existing primitives (hooks, approval queue UI patterns, `widgetConfig`).
 
 Sequenced for shortest path to commercial impact: **24 → 28 → 25 → 27 → 26**, with item 24 first because it unlocks the largest new audience, item 28 second because it removes the most common pilot-blocker, items 25 and 27 picked up in the order partner conversations demand, and item 26 last because it is the most architecturally ambitious and the natural "save for a slot with a clear partner ask" item.
+
+---
+
+## Tier 7 — Proposed: lifecycle, integration, and operational symmetry
+
+A third category of proposed work covering symmetric gaps in the platform's existing primitives and lifecycle. Where Tier 5 deepens **what an agent is** and Tier 6 widens **where the agent reaches**, Tier 7 closes the **missing halves of primitives that have only shipped in one direction**. Two observations frame the shape:
+
+- **Several primitives shipped with only one half built.** Voice input arrived (item 19) without voice output; the MCP server arrived without an MCP client; scheduled retention arrived without on-demand erasure; on-upload ingestion (item 5) arrived without runtime freshness scanning; per-agent cost attribution arrived without per-end-user attribution. None of these absences is a principled choice — they are the natural shape of "ship the most pressing half first, defer the second half." Tier 7 is the second-half cohort.
+- **Workflow versioning and capability authoring each have a single residual failure mode.** Workflow versioning (item 12) shipped publish/draft/rollback as atomic snapshots but no gradual transition (canary) and no stubbed dry-run execution (today's dry-run is validation-only). Capability authoring shipped hand-coded `BaseCapability` subclasses but no codegen path from a partner's OpenAPI spec. Both gaps slow partner onboarding without being load-bearing themselves.
+
+Items 29 and 30 are commercial-priority — they unblock procurement objections and multiply integration reach. Items 31 through 33 are operational-symmetry — they close gaps in primitives partners already use. Items 34 through 36 are velocity-multipliers — they reduce the cost of changing what's already built.
+
+| #   | Improvement                                       | Value         | Effort        | Status         |
+| --- | ------------------------------------------------- | ------------- | ------------- | -------------- |
+| 29  | GDPR end-user erasure (DSAR / Right-to-Erasure)   | Very high     | Moderate      | ⚪ Not started |
+| 30  | MCP outbound client                               | High          | Moderate      | ⚪ Not started |
+| 31  | Knowledge-base freshness scanner                  | High          | Moderate      | ⚪ Not started |
+| 32  | Voice output (TTS) — symmetric to item 19         | Moderate      | Low–Moderate  | ⚪ Not started |
+| 33  | Per-end-user cost attribution                     | Moderate–High | Low–Moderate  | ⚪ Not started |
+| 34  | Workflow agentic dry-run (stubbed-execution mode) | Moderate–High | Moderate      | ⚪ Not started |
+| 35  | Shadow / canary version routing                   | Moderate      | Moderate–High | ⚪ Not started |
+| 36  | OpenAPI-driven capability generator               | Moderate      | Moderate      | ⚪ Not started |
+
+### 29. GDPR end-user erasure (DSAR / Right-to-Erasure) — ⚪ Not started
+
+**Why it matters.** Every regulated-vertical worked example in `business-applications.md` — legal advice, mortgage broking, tenant rights, council planning, health protocols, financial planning, customer-resolution — is sold into procurement teams that treat GDPR Article 17 Right-to-Erasure and Article 15 Right-of-Access as non-negotiable. Today the platform has _scheduled_ retention plumbing (`AiAgent.retentionDays`, `costLogRetentionDays`, `webhookRetentionDays`, `auditLogRetentionDays`) but no _on-demand_ operation that, given an end-user identifier, finds and erases their data across the eight-plus models that store it. `functional-robustness-test-plan.md` documents this as an unimplemented test scenario. The recurring partner-procurement objection makes this commercial-risk rather than nice-to-have — it is the kind of feature whose absence terminates a sales conversation regardless of how good the platform's quality posture is.
+
+This is the on-demand half of a primitive whose scheduled half already exists.
+
+**What we'd ship.** A new `lib/orchestration/data-subject/` module owning the lookup contract: identifier → list of touchpoints. New admin routes `POST /api/v1/admin/orchestration/data-subject/export` and `/erase` taking `{ identifier: { type: 'email' | 'phone' | 'channelAddress' | 'userId', value } }`. The lookup walks `AiConversation` rows via the `(channel, fromAddress)` key item 14 already populates, or via `User.id` cascade for registered users, then traverses every owning model: `AiMessage`, `AiCostLog`, `AiEvaluationLog`, `AiUserMemory`, `AiWorkflowExecution.inputData`, `AiInboundTriggerDelivery.payload`, plus any future model that captures user content (a per-model audit during implementation enumerates the full surface). Export returns a signed-URL JSON bundle (chains `upload_to_storage` from item 16). Erasure runs the same walk inside a single `$transaction`, replaces user-content fields with redaction markers where rows must survive for aggregate integrity (`AiCostLog.metadata` retains tokens but nulls user-identifying fields; `AiAdminAuditLog` rows are preserved because the audit trail of erasure must itself be auditable, but with content redacted), and writes a `data_subject.erasure` audit row recording the actor, identifier hash, and which models were touched. A new `AiDataSubjectRequest` table records every request with `requestId`, `requestType`, `identifierHash` (SHA-256 with a system-secret salt so the audit table does not itself become a re-identification surface), `requestedAt`, `completedAt`, `actorUserId`, and `affectedRowCounts` for the compliance audit trail partners will be asked for during their own audits.
+
+**UI shape.** A new admin page `/admin/orchestration/compliance/data-subject` with two tabs — "Pending Requests" and "History". Pending tab has a form with identifier-type dropdown + value input + action dropdown (Export / Erase) + preview button. Preview returns the lookup-walk result counts (e.g. "Would erase: 3 conversations, 47 messages, 12 cost logs, 1 user memory entry") without committing; admin clicks Confirm to execute. History tab is a paged list of past requests with status, actor, and a "Re-run export" button for export requests (erasure is irreversible). FieldHelp on the identifier-type dropdown explains the inbound-trigger channel-key model for non-registered users.
+
+**Benefits.**
+
+- **Unblocks regulated-vertical pilots.** Procurement teams in legal, financial, health, council, and customer-resolution domains list DSAR as a binary gate. Today partners write the SQL by hand or refuse the pilot.
+- **Compliance audit trail by design.** The `AiDataSubjectRequest` table is the artefact partners hand to their own auditors. Without it they hand over screenshots.
+- **Composes with item 25 (email-out threading).** DSAR confirmation can thread back into the original inbound email conversation, closing the loop for the requester.
+- **Reuses existing infrastructure.** Retention plumbing, audit log, `upload_to_storage`, channel-key model from item 14 — all already there.
+- **Forces honest reckoning with retention defaults.** Building the on-demand walk surfaces every model that captures user content; that audit drives better defaults for retention scheduling.
+
+**Risks.**
+
+- **Aggregate-integrity vs erasure tension.** Some rows (cost logs, audit logs) must persist for billing or compliance reasons. Mitigation: redaction-not-deletion for those models, with explicit field-level rules documented per model. The DSAR request bundle includes the redaction map so the requester sees what was kept and why.
+- **Identifier resolution ambiguity.** A single email may appear across multiple `(channel, fromAddress)` rows from different inbound channels. Mitigation: the lookup walk is union-of-matches by default; the preview shows what would be touched so the admin can scope down with additional filters before confirming.
+- **Async dispatched work.** Inbound triggers and outbound webhooks both fire-and-forget — erasure cannot reach in-flight or yet-to-fire work. Mitigation: a 24-hour cooling period during which the erasure record is "pending dispatch", after which any newly-arriving data for that identifier is rejected at the channel-key match in the inbound handler.
+- **Audit-of-audit.** Who erases the erasure record? Mitigation: never. Erasure records carry only `identifierHash`, not the identifier itself, so the audit trail does not itself become a re-identification surface.
+
+**Priority justification.** Highest-leverage Tier 7 item — procurement-binary in regulated verticals (legal, financial, health, council, customer-resolution). Today partners write the SQL by hand or refuse the pilot. One sprint of bounded architectural work plus a per-model audit. Build first so Tier 7's downstream items (#33 per-end-user cost, #49 data portability) inherit the same identifier-walk machinery.
+
+**Difficulty: Moderate.** New module + two admin routes + one new table + one new admin page + redaction rules per model. The architectural work is bounded; the schedule risk is auditing every Prisma model for user-content fields. One sprint.
+
+### 30. MCP outbound client — ⚪ Not started
+
+**Why it matters.** Sunrise is an MCP _server_ today — IDE extensions, Claude Desktop, and third-party agents can call into Sunrise via `/api/v1/mcp`. The symmetric piece is missing: Sunrise agents cannot call _out_ to other MCP servers. The MCP ecosystem now publishes hundreds of first-party servers (filesystem, database, search engines, GitHub, Linear, Notion, Stripe, Sentry, Cloudflare, vendor SaaS); each one Sunrise can speak to is an integration partners get without per-vendor capability code. The framing matches Sunrise's existing "most-interoperable starter template" posture and gives partners a real choice for each new integration: HMAC-signed REST recipe (item 3, today) or MCP outbound (new) — both first-class.
+
+This is distinct from A2A protocol support (Tier 4 de-prioritised): A2A is inter-system _agent coordination_; MCP outbound is single-system tool-calling against external servers. The arch-decisions doc treats MCP-client as a scope decision ("Sunrise is MCP server; client consumption not in scope"), not a principled rejection. This proposal makes it scope.
+
+**What we'd ship.** A new `lib/orchestration/mcp-client/` module mirroring the existing `lib/orchestration/mcp/` server shape. A new `call_mcp_tool` system capability with args `{ serverSlug, toolName, arguments }`. A new `AiMcpServer` table linking `(slug, serverUrl, authMode, authSecret, allowedAgentIds, isEnabled)` so admins register external servers once and bind them to specific agents via the existing capability-binding flow. Per-agent `customConfig.allowedMcpServers` allowlist (URL-slug matched, same posture as the SSRF protection on `external_call`) controls which servers each agent can hit. Connection pooling per `(serverSlug, authSecret)` with the same 1-hour idle TTL as the server's session manager. Auth modes mirror the HTTP fetcher: `none` / `bearer` / `api-key` / `query-param`. Tool-discovery is `list_tools` on first connection; results cached for the per-server-config TTL (default 1 hour) and refreshable by clicking "Refresh tools" on the server config page.
+
+**UI shape.** A new admin page `/admin/orchestration/mcp/servers` (sibling to the existing `/admin/orchestration/mcp` server-side config). Card grid: each server card shows status dot, last successful discovery, tool count, agents using. Click into a card → server-form with URL, auth-mode picker, allowlist editor, and a "Discover tools" button that lists the live tool catalogue. The Agent form's Capabilities tab gains a "MCP servers" sub-section (collapsed by default) listing this agent's allowed servers. The trace viewer's tool-call sub-panel renders MCP outbound calls distinctly from REST `external_call` so admins can identify them at a glance.
+
+**Benefits.**
+
+- **Multiplies the integration surface for free.** Every MCP server in the ecosystem becomes a candidate integration without per-vendor capability code.
+- **Symmetric architecture.** The platform is both an MCP server and an MCP client — closes the obvious gap.
+- **Pairs with item 3 (HTTP recipes) for choice.** Partners pick the integration mode best suited to each vendor.
+- **Pairs with item 36 (OpenAPI generator)** as the alternative integration mode for vendors who ship OpenAPI but not MCP, and vice versa.
+- **Reuses item 14's SSRF allowlist posture and auth-mode plumbing.** No new security surface beyond the per-server allowlist.
+
+**Risks.**
+
+- **External tool quality varies.** A misbehaving MCP server can return malformed tool schemas or hang on `tools/call`. Mitigation: per-call timeout (default 30s), schema validation against the discovered shape, circuit-breaker fall-through to a step error rather than a hung agent.
+- **Tool-name collisions.** Two MCP servers may expose tools named `search` or `list`. Mitigation: capability resolver namespaces external tools as `mcp:{serverSlug}:{toolName}` so the LLM sees disambiguated names.
+- **Auth-secret hygiene.** External tokens stored in `AiMcpServer.authSecret` are sensitive. Mitigation: same plaintext-in-DB posture as `AiWorkflowTrigger.signingSecret` (acknowledged operational gap in `architectural-decisions.md`), with the same future-hardening path to envelope encryption.
+- **Discovery drift.** A server may add or remove tools between discoveries. Mitigation: agents bind to tool-names, not tool-shapes; missing tools surface as a step error with "tool no longer offered" rather than silent skip.
+
+**Priority justification.** Top-3 Tier 7 priority. Every external MCP server an agent can speak to is a new partner integration without per-vendor capability code. One-sprint build that pays off on the second integration onward. Sequence after #29 (the regulated-vertical procurement gate) and before #31 (which assumes external connectivity is solid).
+
+**Difficulty: Moderate.** New module + new capability + new table + new admin page + protocol-handler client implementation. Mirrors the existing server-side MCP work; same auth and allowlist primitives. One sprint.
+
+### 31. Knowledge-base freshness scanner — ⚪ Not started
+
+**Why it matters.** Item 5 (ingestion robustness) closed the on-upload side; the runtime side is unobserved. Source URLs go 404 (council pages restructure, legal sites move, vendor docs version themselves), source PDFs get revised upstream (planning policy updates, lender criteria refreshes), and citations end up pointing at content that no longer says what the agent claims it does. For the citation-grounded advisor templates that shipped in item 4 (`tpl-cited-knowledge-advisor`) and the regulated-domain partner pilots that depend on them, this is the silent quality-erosion story item 22 (feedback-loop health) talks about, but for the corpus rather than the loop.
+
+The platform today has no runtime freshness signal at all. Citations look fresh because the _citation envelope_ is fresh; the _content_ they cite may be months out of date. Closing this gap is the runtime complement to item 5.
+
+**What we'd ship.** A scheduled `knowledge-freshness-tick` reusing the maintenance-tick plumbing from item 8's async execution model. The tick walks `AiKnowledgeDocument` rows with `sourceUrl IS NOT NULL`, re-fetches via the existing `url-fetcher`, compares SHA-256 against `metadata.fetchedHash`, and emits one of four states: `unchanged`, `changed-minor` (whitespace / metadata only), `changed-content` (text body diff), `gone` (404 / 410). State transitions write to a new `AiKnowledgeStaleness` table linking `(documentId, detectedAt, previousState, newState, diffSize, resolvedAt, resolverUserId)` and emit a `knowledge.source.stale` event hook so partner ops can route to Slack via the existing webhook dispatcher (item 14).
+
+A new admin page `/admin/orchestration/knowledge/stale` queues changed and gone documents for triage with three actions per row: re-ingest (rebuilds chunks and embeddings from the new source), mark-resolved (the changes are not material), mark-deprecated (the document should no longer be cited; agents see citations to it suffixed with a deprecation marker). Per-document `freshnessConfig.checkIntervalDays` (default 7) keeps the load bounded; documents with `sourceUrl IS NULL` (uploaded PDFs without a source URL) are excluded from the tick.
+
+**UI shape.** Page header card shows three counts — Changed, Gone, Unresolved — with a sparkline of the last 30 days. Table below: document name, source URL, last-checked, state (chip), diff size, age-of-staleness, action buttons. Clicking a "changed-content" row opens a side panel with a text-diff view of the parsed content before/after; clicking a "gone" row opens a side panel showing the last-known fetch result. The existing Knowledge tab on the Agent form gains a "stale citations" badge if any of the agent's accessible documents are in `changed-content` or `gone` state.
+
+**Benefits.**
+
+- **Closes the silent quality-erosion gap** between "we shipped a cited answer" and "the citation is still true."
+- **Pairs with item 2 (citations).** A citation pointing at deprecated content gets a `[N: source updated YYYY-MM-DD]` chip in the agent's response, surfacing the staleness to end-users.
+- **Pairs with item 22 (feedback-loop health).** Same dashboard surface, complementary signal — feedback-loop health watches the _loop_, freshness watches the _corpus_.
+- **Reuses existing infrastructure.** Maintenance-tick, URL fetcher, event-hook dispatcher, agent-knowledge access model.
+- **Bounded load.** Per-document interval keeps the tick cheap; admin can scope frequency per-document for high-volatility sources.
+
+**Risks.**
+
+- **False positives on volatile pages.** A page with rotating ads or a "last viewed: X" timestamp triggers `changed-content` on every check. Mitigation: a content-extraction step strips known noise (script tags, common rotating elements) before hashing; admins can mark specific change patterns as "noise" per document.
+- **Aggressive re-fetch posture.** Some sources rate-limit or block frequent fetches. Mitigation: per-document interval with a sensible default; respect `Retry-After` and back off; log persistent failures distinctly from `gone`.
+- **Re-ingestion cost.** Re-ingesting a 200-page PDF every week is wasteful when only the version footer changed. Mitigation: `changed-minor` state does _not_ auto-trigger re-ingestion; only `changed-content` does, and the admin decides when to re-ingest from the queue.
+- **Citation-deprecation UX.** A response that cites a deprecated source needs to surface the deprecation without alarming the end-user unnecessarily. Mitigation: chip styling matches the existing citation chip, with hover text "this source was updated on YYYY-MM-DD; the cited content may have changed" — informational, not alarmist.
+
+**Priority justification.** Mid-tier Tier 7 priority. Becomes urgent the moment partners are running citation-grounded advisors for several months; defer until the first partner pilot is at the corpus-rot timescale. Sprint cost is bounded (one sprint), runs on existing maintenance-tick + URL-fetcher plumbing. Pairs with item 22 (feedback-loop health) — both feed the same operations dashboard.
+
+**Difficulty: Moderate.** New scheduled tick + new table + new admin page + hook event + minor chip rendering change in the citation envelope. Reuses URL fetcher, maintenance-tick, event-hook plumbing. One sprint.
+
+### 32. Voice output (TTS) — symmetric to item 19 — ⚪ Not started
+
+**Why it matters.** Item 19 shipped voice _in_ via Whisper transcription. The symmetric piece — text _out_ as audio — closes the accessibility and mobile-UX argument that drove item 19 in the first place. End-user populations that rely on screen-readers, partners building kiosk / automotive / smart-speaker pilots, and the same WhatsApp-voice-note audience that item 24 targets all benefit. The infrastructure shape is already proven by item 19: provider-capability gating (`'audio'` filter on `AiProviderModel`), per-agent `enableVoiceInput` toggle plus org-wide setting, fire-and-forget cost logging with per-row `metadata.durationMs`, `Permissions-Policy: microphone=(self)` headers — every piece extends cleanly to a `speaker` Permissions-Policy and a `synthesize` capability on the provider abstraction.
+
+The asymmetry of "we listen but we don't talk back" is conspicuous after item 19 shipped; partners ask about it within the first demo session.
+
+**What we'd ship.** A new optional method `LlmProvider.synthesize?(text, options)` on the provider interface; one first-party implementation against OpenAI-compatible `audio.speech.create` (works for OpenAI proper and any compatible host such as Groq's TTS-capable hosts). New `CostOperation = 'synthesis'` rows in the cost-tracking pipeline with per-character or per-minute pricing (provider-dependent). New per-agent `AiAgent.enableVoiceOutput` and org-wide `AiOrchestrationSettings.voiceOutputGloballyEnabled` toggles mirroring item 19's gating. An SSE event variant `audio_url` that the streaming handler emits after a turn completes when `enableVoiceOutput` is on; the URL is a signed link to an `upload_to_storage`-persisted MP3 (item 16). Admin agent-test-chat and embed widget both render a "play" button per assistant message; widget-config endpoint advertises the `voiceOutput` capability so the loader does not surface a control guaranteed to error.
+
+**UI shape.** Per-agent toggle on the Agent form's "Multimodal" sub-section (alongside the existing voice-input and vision toggles). FieldHelp explains cost-per-character and the provider-capability gating. End-user surface: a small play-button next to each assistant message; first click streams audio; subsequent clicks replay from cache. The embed widget mirrors via a vanilla `<audio>` element. Org-wide settings page gains a `voiceOutputGloballyEnabled` toggle and a default provider/voice picker (OpenAI ships six voices; default `alloy`).
+
+**Benefits.**
+
+- **Symmetric to item 19.** Voice-in shipped; voice-out is the obvious complement and is asked for in every demo.
+- **Accessibility win.** Screen-reader users get a parallel audio surface without browser-TTS quality issues.
+- **Pairs with item 24 (WhatsApp / SMS) for voice-note replies.** MMS-capable Twilio channels can carry the synthesized audio directly back to the user's phone.
+- **Low schedule cost.** Item 19's plumbing extends cleanly; the new code is the provider method plus the SSE event variant plus two render surfaces.
+
+**Risks.**
+
+- **Voice selection sprawl.** Six OpenAI voices is manageable; eleven providers × dozens of voices each becomes a configuration nightmare. Mitigation: org-wide default voice; per-agent override only when specifically configured.
+- **Cost surprise.** Long replies × per-character pricing add up. Mitigation: cost-preview in the agent test chat ("this 800-character reply would cost $0.012 to synthesize"); per-agent monthly cap on synthesis cost.
+- **Audio file lifecycle.** Synthesized audio accumulates in `upload_to_storage`. Mitigation: tied to conversation lifecycle — synthesized audio gets the same retention as the conversation that produced it.
+- **Streaming vs file UX.** Voice output is naturally streaming, but the simpler MVP is "synthesize-then-play." Mitigation: ship file-based v1; streaming TTS is a follow-on if partners ask.
+
+**Priority justification.** Opportunistic Tier 7 item — low-effort symmetric polish to item 19 (voice input). Ship when the partner roadmap includes kiosk / IVR / accessibility-driven pilots, or as half-sprint filler between higher-priority work. Defer indefinitely if the partner pull is all desktop / chat.
+
+**Difficulty: Low–Moderate.** Provider method + SSE event + two render surfaces + cost integration + per-agent toggle. Half-to-one sprint.
+
+### 33. Per-end-user cost attribution — ⚪ Not started
+
+**Why it matters.** Cost rollups today aggregate by `agentId`, `conversationId`, and `workflowExecutionId`. For consumer-facing chatbots (the embed-widget audience from item 7), B2B SaaS deployments where the operator invoices per-seat, and regulated-vertical pilots where partners need per-user fair-use enforcement, the missing column is `endUserId` — the end-visitor that drove the spend. Today partners back into per-user spend by joining `AiCostLog` to `AiConversation` to whatever identifies the user — a query that works for them once but does not show up as a dashboard card or feed budget enforcement.
+
+Pairs with item 29 (GDPR erasure) — both walk the same end-user identifier graph — and with item 28 (live handover), where a rising per-user cost is itself a handover-trigger signal.
+
+**What we'd ship.** Additive migration: `AiCostLog.endUserId String?` plus `AiCostLog.endUserChannel String?` (the channel-specific identifier discriminator — `'registered'` / `'embed'` / `'twilio'` / `'postmark'` / etc.). `AiConversation` already carries the channel-key from item 14; the streaming handler threads it into `logCost()`. Admin route `/api/v1/admin/orchestration/analytics/cost-by-end-user` returns paged rollups keyed on `(endUserChannel, endUserId)` with the standard `from` / `to` / `agentId` filters. Per-end-user budget caps via `AiOrchestrationSettings.endUserMonthlyBudgetUsdDefault` and per-agent override reuse the existing budget-enforcement loop, with one additional check inside the tool loop. Privacy: end-user identifiers are subject to the item 29 erasure walk — the lookup module added in item 29 already handles the channel-key form.
+
+**UI shape.** New "Cost by end-user" card on the existing Costs dashboard. Sortable table: end-user (with masked identifier — `j****@example.com`), conversations, messages, total cost, last-active. Filter chips: channel, agent, date range. Drill-in shows per-conversation cost breakdown with links to each conversation in the trace viewer. A "set budget cap" action per row creates a per-end-user override entry.
+
+**Benefits.**
+
+- **Closes a known partner question that today requires ad-hoc SQL.**
+- **Pairs with item 29 (GDPR erasure)** — the identifier-walk machinery is shared; building 33 makes 29 cheaper.
+- **Pairs with item 22 (feedback-loop health)** — per-end-user cost trend is a new dashboard card, and a rising trend is a quality signal as well as a cost signal.
+- **Enables consumer-grade fair-use enforcement** without per-partner custom code.
+- **Conditional value.** Earns its keep when partner pilots become consumer-shaped (items 24 / 25 / 26 unlocking those audiences); less valuable for purely-internal deployments.
+
+**Risks.**
+
+- **PII vs analytics tension.** End-user identifiers (email, phone) are PII. Mitigation: store hashed identifiers in `AiCostLog` (the raw value lives on `AiConversation`); analytics display masks the identifier; erasure (item 29) zeroes both.
+- **Cardinality.** A widely-deployed agent could see millions of end-user rows. Mitigation: partition the rollup table by month if cardinality bites; reuse the maintenance-tick pruning logic.
+- **Budget enforcement granularity.** Hitting an end-user cap mid-conversation is jarring. Mitigation: enforcement is at _conversation start_ by default (subsequent messages within the same conversation are allowed to complete); per-agent config can opt into hard mid-conversation enforcement for strict use cases.
+
+**Priority justification.** Conditional Tier 7 priority. Highest leverage for consumer-shaped pilots unlocked by items 24/25/26; low leverage for purely-internal deployments. Build alongside #29 so the identifier-walk module added there can be reused (the marginal cost is small if #29 has already shipped). Defer pre-consumer-pilots; pick up the first time a partner needs per-user billing or fair-use enforcement.
+
+**Difficulty: Low–Moderate.** Additive migration + one new route + one new dashboard card + budget-enforcement integration + erasure-walk extension. Half-to-one sprint.
+
+### 34. Workflow agentic dry-run (stubbed-execution mode) — ⚪ Not started
+
+**Why it matters.** The existing dry-run endpoint is _validation-only_ — DAG checks, semantic validation, template-variable extraction. It does not walk the DAG with stubbed step outputs. For workflow authors iterating on long-running cron- or inbound-triggered workflows (item 14) where a real run costs money and writes to side-effects via `external_call`, `send_notification`, `upload_to_storage`, the missing piece is an execution mode that does a real DAG walk with side-effects stubbed and trace captured. Closes the gap between "I authored a workflow" and "I am confident it will behave on first real fire."
+
+The Big-Bang failure mode of "we set the workflow live, it called the wrong API" is what this prevents. Composes with workflow versioning (item 12) — dry-run a _draft_ against test inputs before clicking Publish.
+
+**What we'd ship.** Extend the existing dry-run route to accept `{ mode: 'validate' | 'execute', inputData?, stubOverrides? }`. In `execute` mode, the engine walks the DAG with the supplied `inputData` and runs every step through stubbed executors that return type-shape-valid mock outputs: `external_call` returns `{ status: 200, body: <stub-from-output-schema> }`; `send_notification` records the would-have-been payload but does not dispatch; `tool_call` returns a stubbed schema-valid result; `human_approval` immediately resolves with `approved: true`. The `llm_call` step has two stub modes — "echo" (returns a deterministic shape-valid placeholder) and "live" (actually calls the LLM provider; the LLM is rarely the side-effect risk, just the cost risk). `stubOverrides` lets the author seed specific step outputs for branch-coverage testing.
+
+The full execution trace is captured in the same `executionTraceEntry` shape as a real run, surfaced through the same trace viewer (item 10) with a "Dry Run" banner and per-step "Stubbed" chips. A `discardOnComplete` flag prevents stubbed runs from polluting the executions list (default true; admins can opt to retain for diff-after-edit comparison).
+
+**UI shape.** The workflow builder's existing Test tab gains a mode toggle: "Validate only" (today) / "Execute stubbed" (new). Execute-stubbed mode shows a stub-override panel where authors can override specific step outputs before running. Results render in the existing trace viewer with the Dry Run banner; a "Compare to last real run" button surfaces a diff against the most recent production execution of the same workflow if one exists.
+
+**Benefits.**
+
+- **Trust before publish.** Authors gain a real DAG walk without real side-effects.
+- **Pairs with item 12 (workflow versioning).** Dry-run a draft, see the trace, click Publish.
+- **Reuses item 10's trace viewer.** Same surface, same shortcuts; no second mental model for inspection.
+- **Standalone high-ROI for workflow-heavy partners.** Inbound-trigger and cron-driven pilots benefit disproportionately.
+
+**Risks.**
+
+- **Stub realism.** A stubbed `external_call` may pass a step that would have failed in production. Mitigation: stubs are schema-valid by construction; authors can override stub outputs to seed adverse cases; documentation frames dry-run as "shape and flow check" rather than "behaviour guarantee."
+- **Trace pollution.** Dry-runs in the executions list confuse audit views. Mitigation: `discardOnComplete: true` by default; retained dry-runs render with the Dry Run banner everywhere they appear.
+- **`llm_call` cost in live mode.** Authors who choose live mode get charged. Mitigation: cost preview before running; explicit "this will cost approximately $X" confirmation.
+
+**Priority justification.** Standalone Tier 7 win for workflow-heavy partners (inbound-trigger pilots, cron-driven workflows, anything with `external_call` or `send_notification` side-effects). One sprint, composes with item 12 (versioning) and item 10 (trace viewer) — both already shipped. Mid-tier priority — pick up when authoring fatigue on complex workflows becomes a felt problem.
+
+**Difficulty: Moderate.** Engine extension + stubbed-executor implementations + trace-viewer banner + workflow-builder mode toggle. One sprint.
+
+### 35. Shadow / canary version routing — ⚪ Not started
+
+**Why it matters.** Item 12 (workflow versioning) shipped publish/draft/rollback as atomic snapshots. The missing operational piece is the _gradual_ version transition: route N% of traffic to a new version, score divergence, expand or revert. Composes with the existing experiments traffic-splitting framework and item 34's stubbed dry-run to give partners a three-step safety profile — "stub-test, canary-test, full-publish" — that the publish-and-pray flow cannot match. Pairs symmetrically with item 23a (replay testing): replay scores divergence on historical traffic, canary scores divergence on live traffic.
+
+This is the most architecturally-dependent item in Tier 7. It is _not_ a standalone wedge — its value is conditional on item 12 (already shipped) and item 23a (Tier 5) landing. Defer until at least one partner has run a model upgrade behind item 23a and asked for "the same but on live traffic."
+
+**What we'd ship.** A new `AiWorkflowCanary` table linking `(workflowId, canaryVersionId, baselineVersionId, percentTraffic, startedAt, endedAt, status)`. For chat agents, a parallel `AiAgentCanary` table with the same shape against `AiAgentVersion`. The execution dispatcher consults the canary table when resolving the version to run; assignment is sticky per `(channel, fromAddress)` so end-users see a consistent version within a conversation. The trace viewer gains a "canary divergence" sub-panel that scores per-step output divergence using the same metrics as item 23a (replay): Levenshtein for strings, structural diff for JSON, cost delta, citation diff. A new admin page `/admin/orchestration/canaries` lists active canaries with promote / abort buttons; promotion is the same atomic operation as item 12's `publishDraft()`.
+
+**UI shape.** A new "Canary" tab on the Workflow and Agent forms, alongside Versions. Start-canary flow: pick draft version, set traffic percentage (5% / 10% / 25% / 50% / 75%), set evaluation window (24h / 72h / 7d). Running state: live divergence card with metric deltas and a sample of diverging executions. Promote / abort buttons gated by minimum-sample-size threshold (default 50 executions).
+
+**Benefits.**
+
+- **Closes the publish-and-pray gap** that item 12 left open by design.
+- **Pairs with item 23a (replay).** Two windows of evidence on the same model upgrade.
+- **Reuses traffic-splitting plumbing** from the experiments framework.
+- **Sticky per end-user.** No mid-conversation version swap; experience is consistent within a thread.
+
+**Risks.**
+
+- **Sticky-assignment skew.** Heavy users get permanently bucketed; light users may never see the canary. Mitigation: re-bucket on conversation start, not on first-ever interaction; document the trade.
+- **Two-version cost.** Cost dashboards aggregate to agent/workflow level; canary-on means costs double for a slice of traffic. Mitigation: cost breakdown by version on the canary dashboard so the overhead is visible.
+- **Diverging-result anxiety.** A canary that produces "different but arguably better" answers is the same dilemma as item 23a — the operator has to read the trade. Mitigation: the report is the same shape as item 23a's divergence report; same reading skill applies.
+- **Engine-dispatcher complexity.** Version resolution now consults a canary table on every execution. Mitigation: the canary lookup is a single indexed row read; cache the active-canary set in-process with invalidation on the canary admin routes.
+
+**Priority justification.** Lowest-priority Tier 7 item taken standalone — depends on item 23a (replay) shipping first to share scoring infrastructure. Sequence: ship 23a, run a model-upgrade replay against historical traffic, then build 35 when a partner asks for the live-traffic complement. One-to-two sprints; do not build speculatively.
+
+**Difficulty: Moderate–High.** Two new tables + dispatcher integration + canary admin page + trace-viewer divergence panel + promotion atomic operation. One-to-two sprints. Defer until item 23a has shipped and a partner has explicitly asked for the live-traffic complement.
+
+### 36. OpenAPI-driven capability generator — ⚪ Not started
+
+**Why it matters.** Item 3 (HTTP recipes) made integration cheap but still requires a human to author the recipe per vendor. For partners delivering an OpenAPI spec at procurement time — every SaaS vendor, every enterprise API gateway — the next step is "drop the spec, get a typed capability class." Three to five hours of partner-onboarding work collapses to minutes. Pairs with item 30 (MCP outbound client) as the alternative integration mode for vendors who ship OpenAPI but not MCP.
+
+The `architectural-decisions.md` flag here is real ("Zod at every boundary; OpenAPI kept separate to avoid drift"). This proposal addresses the principle: the generator runs at _codegen time_, not at _runtime_. The generated Zod schema becomes the persistent runtime contract; the OpenAPI artefact is consumed once and discarded. Drift is concerned with runtime-OpenAPI-interpretation; codegen-time use is structurally different — the proposal text and the generated-capability file headers both state explicitly that OpenAPI is consumed once at codegen and the Zod schema is the source of truth and may be hand-edited after generation.
+
+**What we'd ship.** A new `npm run generate:capability -- --spec=path/to/openapi.yaml --slug=acme-billing` command and an admin upload UI that runs the same generator server-side. The generator emits a `BaseCapability` subclass under `lib/orchestration/capabilities/generated/`, a Zod args schema derived from the OpenAPI operation's `parameters` and `requestBody`, an execution handler that maps args to an `httpFetch()` call against the operation path, and a Prisma seed row for `AiCapability`. The output is _plain source_ — readable, diffable, hand-editable post-generation, version-controlled like any other capability. Operations marked `x-internal: true` in the spec are skipped; operations without a `summary` or `operationId` trigger a generator warning rather than emitting a poorly-named capability.
+
+The generator pulls from the existing `lib/orchestration/http/` fetcher for the actual call; auth modes are inferred from the OpenAPI `security` blocks where possible, with admin override at generation time. Generated capabilities require admin enablement in the standard capabilities-list page before agents can use them — generation does not auto-enable.
+
+**UI shape.** A new admin route `/admin/orchestration/capabilities/import-openapi`. Upload field for the spec; once uploaded, the UI shows an operation list with checkboxes (default: all enabled), per-operation slug input (pre-filled from `operationId`), and an auth-mode picker. "Generate" runs the codegen and writes to disk (in dev) or stages a PR (in production deployments with git integration). Generated capabilities show a "From OpenAPI" chip in the capabilities list so admins know their provenance.
+
+**Benefits.**
+
+- **Collapses partner-onboarding cost** from hours to minutes for vendors with OpenAPI specs.
+- **Pairs with item 30 (MCP outbound).** Two paths; partners pick the right one per vendor.
+- **Generated source is auditable and hand-editable.** No runtime-OpenAPI dependency.
+- **Reuses item 3's HTTP fetcher.** The generated capability is a thin shim over existing infrastructure.
+
+**Risks.**
+
+- **OpenAPI quality varies.** Many real-world specs have missing types, `oneOf` ambiguities, and informal extensions. Mitigation: generator warns on each ambiguity and emits the best-effort Zod with a `TODO: refine` comment; the admin reviews before enablement.
+- **Codegen output sprawl.** Specs with hundreds of operations generate hundreds of capabilities. Mitigation: per-operation enable in the import UI; the LLM-binding step (which agents see which capabilities) is unaffected by the count.
+- **Spec drift from generated code.** If a vendor revises their spec, regeneration overwrites the file. Mitigation: generated files carry a header marker; regeneration prompts before overwriting; hand-edits are preserved as a `.local.ts` sibling.
+- **Arch-decisions misreading.** A future reader sees "OpenAPI generator" and assumes runtime-OpenAPI was reconsidered. Mitigation: the proposal text and the generated-capability file headers both state explicitly that OpenAPI is consumed once at codegen and the Zod schema is the persistent contract.
+
+**Priority justification.** Conditional Tier 7 priority — earns its keep only on the second or third OpenAPI-shipping vendor integration. Pre-launch the integration count is too low to justify; post-launch it becomes high-leverage. Build the first time procurement hands you a spec and asks "can your platform consume this?" One sprint, reuses item 3 (HTTP recipes) plumbing.
+
+**Difficulty: Moderate.** Generator CLI + admin upload UI + OpenAPI → Zod conversion (off-the-shelf library available) + Prisma seed emission + auth-mode inference. One sprint.
+
+### Tier summary
+
+The eight items split into three sub-groups by motivation rather than by surface area.
+
+- **Items 29 and 30 are commercial-priority.** GDPR end-user erasure is the most common procurement objection in regulated verticals — it is what closes (or kills) the pilot before quality even gets to make its case. MCP outbound multiplies the integration surface every other partner-facing item benefits from. Both unblock work, rather than improve it.
+- **Items 31 through 33 are operational-symmetry.** Knowledge-base freshness, voice output, and per-end-user cost attribution each complete a primitive that shipped one-sided. None is load-bearing on its own; together they remove the "we have half of that" answer from demo conversations.
+- **Items 34 through 36 are velocity-multipliers.** Stubbed-execution dry-run lowers the cost of authoring workflows that touch real systems; canary routing lowers the cost of upgrading a published version; OpenAPI-driven capability generation lowers the cost of every new vendor integration. Each item earns its keep on the second or third use, not the first.
+
+Sequenced for shortest path to commercial / engineering / quality leverage: **29 → 30 → 31 → 32 → 33 → 34 → 35 → 36**, with **29** first because procurement is a binary gate, **30** second because every external MCP server is a free integration, and **35** deferred until **23a** has shipped and a partner has explicitly asked for the live-traffic complement to replay. Items 32 and 33 are opportunistic — pick them up when the consumer-shaped audiences from items 24 / 25 / 26 are live and asking. Items 34 and 36 reward themselves on the second use; pick them up when the workflow-author or vendor-onboarding cost is felt for the second time, not the first.
+
+The unifying property: every Tier 7 item points at an existing Sunrise primitive and says "this primitive ships only its outbound half." That is why these belong together — not as miscellaneous gaps, but as the obvious second halves of features that already shipped.
+
+---
+
+## Tier 8 — Proposed: pre-launch foundation — reliability, operational trust, and partner-readiness
+
+A fourth category of proposed work focused on **hardening what's already built** rather than extending what the platform does. Where Tier 5 deepens _what an agent is_, Tier 6 widens _where the agent reaches_, and Tier 7 closes _missing halves of primitives_, Tier 8 closes the **load-bearing reliability, operability, and partner-trust gaps** that determine whether a serious partner can confidently build on Sunrise as a foundation. Three observations frame the shape:
+
+- **Several reliability primitives exist as fragments.** Idempotency is opt-in on one outbound capability; outbound webhook retry policy is hardcoded; cost caps are monthly only. Each fragment was the right MVP at the time, but together they leave the platform short of a coherent correctness story for partners doing anything with side-effects (billing, notifications, ticket creation, downstream writes).
+- **Observability is split between traces and a quality dashboard.** Item 10 (trace viewer) is per-execution; item 22 (feedback-loop health) is per-quality-signal. There is no first-party operational dashboard answering "is the engine itself healthy?" and no live page answering "what is it doing right now?"
+- **Partner-facing surfaces are documentation-only.** 65+ admin routes are prose-documented; the embed widget is a `<script>` tag; the audit log has no tamper-evidence; conversations have no exportable provenance. Pre-launch is the moment to fix these — every one is harder to retrofit once partner code exists against the current shape.
+
+Items 37–39 are correctness — they prevent silent damage. Items 40–43 are observability and operational control — they make the running system inspectable and tunable. Items 44–45 are developer experience — they multiply partner integration velocity. Items 46–47 are audit defensibility — they answer compliance questions. Items 48–49 are partner trust — they unblock public-sector pilots and remove vendor-lock-in concerns.
+
+| #   | Improvement                                                    | Value         | Effort       | Status         |
+| --- | -------------------------------------------------------------- | ------------- | ------------ | -------------- |
+| 37  | End-to-end idempotency model                                   | Very high     | Moderate     | ⚪ Not started |
+| 38  | Outbound webhook retry policy + dead-letter queue              | High          | Low–Moderate | ⚪ Not started |
+| 39  | Per-execution hard cost cap (runaway-loop guard)               | High          | Low–Moderate | ⚪ Not started |
+| 40  | Stuck-execution / live-engine admin surface                    | Very high     | Moderate     | ⚪ Not started |
+| 41  | Workflow-execution health dashboard (operational, not quality) | Moderate      | Moderate     | ⚪ Not started |
+| 42  | Capability emergency-disable / quarantine                      | Moderate      | Low–Moderate | ⚪ Not started |
+| 43  | Orchestration-specific load + chaos test harness               | Moderate–High | Moderate     | ⚪ Not started |
+| 44  | Orchestration admin API OpenAPI + generated SDK                | High          | Moderate     | ⚪ Not started |
+| 45  | Embed widget as installable npm package                        | Moderate–High | Low–Moderate | ⚪ Not started |
+| 46  | Audit-log tamper-evidence (hash chain)                         | High          | Low–Moderate | ⚪ Not started |
+| 47  | Conversation provenance bundle                                 | High          | Moderate     | ⚪ Not started |
+| 48  | WCAG 2.1 AA conformance — orchestration surfaces only          | Very high     | Moderate     | ⚪ Not started |
+| 49  | Orchestration data portability — transactional-data extension  | Moderate      | Moderate     | ⚪ Not started |
+
+### 37. End-to-end idempotency model — ⚪ Not started
+
+**Why it matters.** Sunrise sits between three retry surfaces: inbound (clients retrying against admin / consumer APIs), engine-internal (step retries via `maxRetries`), and outbound (webhook deliveries, capability HTTP calls). At each boundary, "the same logical operation happens twice" is a real failure mode — a retried mobile chat POST creates two conversations, a retried workflow execution fires the side-effect twice, an outbound webhook receiver has no platform-supplied way to dedupe duplicate deliveries. For partners building on Sunrise to do anything with side-effects (billing, notifications, ticket creation, downstream writes), the absence of a coherent idempotency story is a correctness gap, not a hardening concern. Cheap to add now; expensive to retrofit once partner code is built against the current shape.
+
+**What exists today.** Outbound HTTP capability (`call-external-api`) has opt-in `autoIdempotency` that injects a UUID `Idempotency-Key` header per call (`lib/orchestration/capabilities/built-in/call-external-api.ts` lines 88–91, test-covered). That is the only idempotency surface. Outbound webhook dispatcher (`lib/orchestration/webhooks/dispatcher.ts` lines 213–221) sends `X-Webhook-Signature` and `X-Webhook-Event` only — no `Idempotency-Key`. Inbound mutating routes (`POST /api/v1/chat`, `POST /api/v1/workflows/{id}/execute`, plus the admin POSTs that create agents / conversations) do not read or validate an `Idempotency-Key` header. The capability dispatcher (`lib/orchestration/capabilities/dispatcher.ts`) dedupes concurrent identical calls via `dispatch-cache.ts` but has no protection against retries that arrive after the original returns.
+
+**What we'd ship.**
+
+1. **Outbound webhook header.** Add an `Idempotency-Key` header to every webhook delivery derived from `AiEventHookDelivery.id` (or a deterministic content hash so retries of the same delivery carry the same key). Document in `.context/orchestration/hooks.md` so partners can dedupe on it.
+2. **Inbound idempotency middleware.** New `lib/api/idempotency.ts` middleware reads the `Idempotency-Key` request header, persists `(idempotencyKey, userId, route, responseHash, statusCode, expiresAt)` in a new `AiIdempotencyKey` table (TTL 24h, indexed on `(userId, route)`), and returns the cached response body+status on duplicate keys. Apply to `POST /chat`, `POST /workflows/{id}/execute`, `POST /admin/orchestration/agents`, `POST /admin/orchestration/conversations`, and any new mutating route via decorator/wrapper.
+3. **Capability dispatcher replay-after-completion.** Extend `dispatch-cache.ts` to honour a caller-supplied `idempotencyKey` arg: a capability call with a previously-seen key within a configurable window returns the previously-computed result (with `costUsd = 0` on the replay row) instead of re-executing.
+4. **Streaming-route nuance.** `POST /chat` streams SSE — replay of a stream is not meaningful. Idempotency applies only to the conversation-creation/turn-creation step; a retried request returns the existing turn's `messageId` plus a `replay: true` flag, and the client re-fetches the message via the existing GET endpoint rather than re-streaming.
+
+**Benefits.**
+
+- **Correctness at every retry boundary.** One mental model across inbound, internal, outbound.
+- **Composes with #38 (webhook retry policy + DLQ).** Aggressive retries become safe when receivers can dedupe on `Idempotency-Key`.
+- **Composes with item 33 (per-end-user cost).** Duplicate fires today inflate per-user spend; idempotency caps the damage.
+- **Extends an existing pattern.** The `autoIdempotency` flag on `call-external-api` is the proof-of-concept; we are generalising, not inventing.
+
+**Risks.**
+
+- **Idempotency-cache row growth.** A 24h cache across every mutating route accumulates rows. Mitigation: dedicated table with TTL pruning via the maintenance tick (item 8 plumbing); indexed on `(userId, route)`; per-key max body size before truncation.
+- **Streaming-response semantics.** Replay of an SSE stream is not meaningful. Mitigation: return `{ replay: true, messageId }` and let the client re-fetch — explicit and documented.
+- **Admin-route over-application.** Some admin routes (e.g. evaluation bulk-actions) may want last-write-wins, not idempotent. Mitigation: middleware is opt-in per route; default off; admin POSTs opt in case-by-case.
+
+**Priority justification.** Top-3 Tier 8 priority. Cheap to add now; expensive to retrofit later. The current `autoIdempotency` pattern is already proven in code, so this is "extend a known pattern" rather than "design a new abstraction." Correctness gaps compound silently — a partner that builds against the current shape and discovers duplicate-fire issues weeks later is a worse outcome than a sprint of work now.
+
+**Difficulty: Moderate.** One new table + one middleware module + two route-set applications + outbound webhook header + dispatcher extension + docs + one recipe. One sprint, well-bounded.
+
+### 38. Outbound webhook retry policy + dead-letter queue — ⚪ Not started
+
+**Why it matters.** `AiEventHookDelivery` tracks retries today, but the retry policy is hardcoded — `MAX_ATTEMPTS = 3`, `RETRY_DELAYS_MS = [10_000, 60_000, 300_000]` in `lib/orchestration/webhooks/dispatcher.ts` lines 31–35. When a partner's receiver is degraded for an hour, what does Sunrise do? Three attempts spread across ~6 minutes, then give up — and the failed deliveries sit in `AiEventHookDelivery` but the admin has no UI to inspect them, replay them, or hold-and-retry-later. For any production-shaped partner pilot, this is "we lost data and no one noticed."
+
+**What exists today.** Hardcoded retry constants in `webhooks/dispatcher.ts`. `AiEventHookDelivery` records every attempt with status, error, latency. A `/deliveries` API route exists at `app/api/v1/admin/orchestration/webhooks/[id]/deliveries/route.ts`. The admin webhooks page (`app/admin/orchestration/webhooks/page.tsx`) lists subscriptions but does not surface failed deliveries or expose any DLQ UI. `AiEventHook` schema has no `retryPolicy` column; retry behaviour is global.
+
+**What we'd ship.**
+
+1. **Per-hook retry policy.** Add `AiEventHook.retryPolicy Json?` carrying `{ maxAttempts, backoffStrategy: 'exponential' | 'linear' | 'fixed', baseDelayMs, maxDelayMs, jitter }`. Default to the current hardcoded values when null so existing hooks are unaffected. Validate via Zod in `lib/validations/event-hooks.ts`.
+2. **Dead-letter state.** Add `AiEventHookDelivery.state` enum (`pending` / `succeeded` / `failed` / `dead-lettered` / `manually-replayed`) and `deadLetteredAt` timestamp. The dispatcher transitions `failed → dead-lettered` after `maxAttempts` is exhausted; nothing auto-retries dead-lettered deliveries.
+3. **DLQ admin UI.** New `app/admin/orchestration/webhooks/[id]/dlq/page.tsx` (or a tab on the existing hook detail page) listing dead-lettered deliveries with payload preview, last error, status code, attempt timeline. Per-row "Replay" action that re-queues the delivery with attempt counter reset. Bulk-replay with confirmation.
+4. **Retry-policy UI.** New panel on the hook form with retry-policy fields and FieldHelp linking to a recipe explaining backoff curves and when to use each.
+
+**Benefits.**
+
+- **Production-grade reliability.** Hooks become tunable per partner — chatty receivers get aggressive retries, sensitive receivers get gentle ones.
+- **Operator confidence.** "We lost a webhook and no one noticed" stops being possible — DLQ surfaces every failed delivery.
+- **Composes with #37 (idempotency).** Aggressive retries (e.g. 10 attempts over 24h) are safe when receivers dedupe on `Idempotency-Key`.
+- **Reuses existing storage.** `AiEventHookDelivery` already records every attempt; the change is two new columns and a UI.
+
+**Risks.**
+
+- **Configuration footgun.** Admins setting `maxAttempts: 50` could DoS their own receivers. Mitigation: hard cap at 20 attempts and 7-day max-retry-window in the Zod schema; admin form rejects beyond the cap.
+- **DLQ growth.** Dead-lettered deliveries accumulate indefinitely if no one replays them. Mitigation: respect `webhookRetentionDays` — dead-lettered rows older than retention are pruned by the maintenance tick.
+- **Replay safety.** Replaying a dead-lettered delivery weeks after the event may be wrong (state has moved on). Mitigation: replay panel shows event age + a "this event is N days old — sure?" confirmation for stale replays.
+
+**Priority justification.** Top-3 Tier 8 priority. Production-readiness gap; partners with real receivers will hit this within the first month of any pilot. The current behaviour (silently give up after 6 minutes) is not defensible in any production conversation. Schema is additive; backward-compatible.
+
+**Difficulty: Low–Moderate.** Two additive Prisma columns + dispatcher policy lookup + new admin page + retry-policy form panel. Half-to-one sprint.
+
+### 39. Per-execution hard cost cap (runaway-loop guard) — ⚪ Not started
+
+**Why it matters.** `AiAgent.monthlyBudgetUsd` caps spend over a month, enforced by `checkBudget()` at `lib/orchestration/llm/cost-tracker.ts` lines 417–476. What it does not cap is a single misbehaving execution. A `reflect` loop that doesn't converge, an `orchestrator` re-planning 50 times, a tool-call loop with a misbehaving capability — any of these can spend a hundred dollars within a single execution before any quality signal fires. The platform tracks a `budgetLimitUsd` parameter at execution-creation time on `AiWorkflowExecution`, but this is a per-execution _record_, not enforced incrementally as the execution runs.
+
+**What exists today.** Monthly budget enforcement only. `budgetLimitUsd` is stored on `AiWorkflowExecution` rows but the engine does not consult it inside the run. No `maxCostPerExecutionUsd` or `maxCostPerTurnUsd` fields on `AiAgent` or `AiWorkflow`. No inline check inside `reflect`, `orchestrator`, or `tool-call` executors.
+
+**What we'd ship.**
+
+1. **Schema additions.** `AiAgent.maxCostPerTurnUsd Float?`, `AiWorkflow.maxCostPerExecutionUsd Float?`, plus org-wide defaults on `AiOrchestrationSettings.defaultMaxCostPerExecutionUsd` and `defaultMaxCostPerTurnUsd`.
+2. **Inline enforcement.** Inside the engine's per-step cost roll-up (`lib/orchestration/engine/`), after every cost-emitting step (`llm-call`, `tool-call`, `external-call`, `rag-retrieve`, evaluations), compare the running execution total against the configured cap. On breach: terminate the execution with a `BUDGET_EXCEEDED_PER_EXECUTION` error, write a clear trace entry, fire a new `workflow.budget_exceeded` hook event.
+3. **Per-turn enforcement on chat.** The streaming chat handler (`lib/orchestration/chat/`) rolls up cost per assistant turn (LLM + tool calls + RAG). When the running turn cost crosses `maxCostPerTurnUsd`, the tool loop stops (no more iterations) and the partial answer is returned with a `budget_exceeded_per_turn` metadata flag.
+4. **Admin form integration.** Agent form's "Routing" tab gains `maxCostPerTurnUsd` with FieldHelp explaining the runaway-loop framing. Workflow form's "Budget" section gains `maxCostPerExecutionUsd`. Both nullable; null means "no per-call cap, monthly budget applies."
+
+**Benefits.**
+
+- **Stops runaway spend before it happens.** A bad deployment becomes a $5 mistake instead of a $500 one.
+- **Pairs with item 22 (feedback-loop health).** Item 22 catches systemic loop divergence over time; #39 catches the single bad execution before it accumulates.
+- **Pairs with item 33 (per-end-user cost).** Defends the per-user cap from a single rogue turn blowing through it.
+- **Reuses the existing cost-tracking pipeline.** No architectural change; the in-process running total is already maintained.
+
+**Risks.**
+
+- **False-positive terminations on legitimate long workflows.** A multi-hour batch-style workflow might legitimately spend a lot. Mitigation: per-workflow override on the cap; default is null (= unlimited).
+- **Mid-turn cutoff UX.** A chat user sees the answer cut off. Mitigation: the partial answer is returned with a clear `budget_exceeded` marker and a user-facing fallback message configurable per agent.
+- **Cost-tracking lag.** If cost-log writes are fire-and-forget, the running total may be stale. Mitigation: enforcement uses the in-process running total maintained inside the engine, not a re-read from `AiCostLog`.
+
+**Priority justification.** Top-5 Tier 8 priority. Small implementation, prevents the single class of "this deployment cost us $500 overnight" incidents that erode platform trust faster than any quality gap. Schema-additive; ships without breaking any existing agents.
+
+**Difficulty: Low–Moderate.** Three Prisma fields + engine-internal check + chat-handler check + two admin form panels + one new hook event. Half-to-one sprint.
+
+### 40. Stuck-execution / live-engine admin surface — ⚪ Not started
+
+**Why it matters.** Item 15 (checkpoint recovery) shipped a lease-based orphan sweep, and the executions admin page supports filtering by status. What's missing is the operational view that answers "what is the engine doing right now, and what's wrong with it?" When a partner reports "my workflow has been running for 20 minutes," today the answer is: open the trace viewer, click through each step, eyeball the timestamps. For partners running cron- or inbound-trigger-driven workflows, this is the first operational problem they hit.
+
+**What exists today.** `app/admin/orchestration/executions/page.tsx` lists executions with status filter (`pending` / `running` / `completed` / `failed`); the `running` filter works. The page does not surface: time-stuck-in-current-step, queue-wait time, current lease holder, force-fail action. Lease-status and orphan-sweep state live in `lib/orchestration/engine/lease.ts` but are not exposed in any admin UI.
+
+**What we'd ship.**
+
+1. **Live-engine page** at `app/admin/orchestration/executions/live`. Auto-refreshing dashboard (SSE push or 5-second poll) showing four cards: currently-running executions (count + p95 age), queued executions (count + max wait-time), orphaned executions (lease-expired, awaiting sweep), and provider-saturation indicators (per-provider in-flight call counts).
+2. **Per-execution stuck-state column.** A new computed field `timeInCurrentStepMs` (now - last cost-log timestamp for the execution) surfaced as a sortable column on the live page. Highlight rows where this exceeds a configurable threshold (default 5 minutes) as "stuck-looking."
+3. **Force-fail action.** Per-row admin action `POST /api/v1/admin/orchestration/executions/{id}/force-fail` that transitions a running execution to `failed` with an audit-log entry, fires the `workflow.failed` hook, and releases any held lease. Confirmation dialog with execution context.
+4. **Lease inspector drill-in.** Per-row panel showing current lease holder, lease expiry, and lease history. Helps debug "I keep seeing the same execution stuck — is the engine restarting?"
+
+**Benefits.**
+
+- **First debugging surface for operational issues.** Today this debugging is "read the trace viewer carefully"; tomorrow it's "open the live page."
+- **Composes with #41 (execution health dashboard).** Live page = "right now"; dashboard = "trend over time." Two complementary lenses.
+- **Reuses existing infrastructure.** Lease module, executions list, cost-log timestamps — all already there.
+- **Closes the obvious item 15 follow-on.** Lease-based sweep without admin visibility is half a feature.
+
+**Risks.**
+
+- **Auto-refresh load.** A live page polling every 5 seconds across multiple admins could pressure Postgres. Mitigation: SSE push from a singleton in-process aggregator that materialises the snapshot once per tick; clients subscribe.
+- **Force-fail misuse.** An impatient admin force-fails a slow-but-legitimate execution. Mitigation: confirmation dialog warns about side-effects partially completed; audit-log captures actor and (optional) reason.
+
+**Priority justification.** Top-3 Tier 8 priority. The cheapest operational visibility win — every primitive needed is already in the codebase, the missing piece is the UI. Partner pilots will hit "the workflow is stuck" within the first week of running anything non-trivial.
+
+**Difficulty: Moderate.** New admin page + four cards + computed field + force-fail route + lease drill-in. One sprint.
+
+### 41. Workflow-execution health dashboard (operational, not quality) — ⚪ Not started
+
+**Why it matters.** Item 22 (feedback-loop health) watches quality signals — `reflect` convergence, `evaluate` drift, retry exhaustion. What it doesn't watch is the engine's own operational health: executions/min by workflow, p95 step latency by step type, failure rate by step type, provider-failure rate, queue-wait time. These are the "is the engine healthy?" questions that don't fit into item 22's quality framing. Today these signals exist only if the operator wires OTEL out to Grafana / Datadog (item 13). For partners deploying in-the-box without external observability stacks, there is no first-party answer to "is the system healthy?"
+
+**What exists today.** `app/admin/orchestration/analytics/page.tsx` is engagement-focused (requests, unique users, popular topics, unanswered queries, content gaps). The orchestration dashboard at `app/admin/orchestration/page.tsx` shows cost trends, top capabilities, recent activity, and a single error-rate scalar. Neither surfaces step-level latency percentiles, provider-failure breakdown, queue-wait time, or per-workflow execution rates.
+
+**What we'd ship.**
+
+1. **Dashboard page** at `app/admin/orchestration/observability/execution-health`. Top cards: executions/min (trailing 5m), success rate, p50/p95/p99 execution duration, queue-wait p95. Per-workflow breakdown table sortable on each metric. Per-step-type table showing latency + failure rate per step type (`llm_call`, `tool_call`, `external_call`, `rag_retrieve`, evaluations, etc.). Per-provider panel: success rate per provider, fallback-chain activation rate.
+2. **Aggregation queries.** All metrics derived from `AiCostLog` (already records per-step latency, status, provider, model) and `AiWorkflowExecution` (queue-enqueued-at, started-at, completed-at). No new instrumentation; new queries only.
+3. **Pre-computed rollups.** A new `AiExecutionHealthRollup` table updated by the maintenance tick (1-minute granularity) so the dashboard reads rollups, not raw cost-log rows.
+4. **Threshold alerting.** Per-workflow `degradationThresholds` JSON on `AiWorkflow` carrying optional failure-rate / latency / queue-wait thresholds; breaches fire `execution.health.degraded` hooks consumable by partner Slack / PagerDuty (reuse item 22's hook event pattern).
+5. **Time-window picker.** Default trailing 1h; 24h, 7d, 30d options. Sparkline per metric on the per-workflow row.
+
+**Benefits.**
+
+- **First-party operational lens.** Reads the same data OTEL exporters emit, without requiring an external stack.
+- **Pairs with item 22 (feedback-loop health) and #40 (live page).** Three complementary observability surfaces — quality, operational, real-time.
+- **No new data captured.** Aggregation-only over existing tables.
+- **Composes with #38 (DLQ).** Webhook-delivery failure rate joins the dashboard naturally.
+
+**Risks.**
+
+- **Query cost.** Aggregating millions of `AiCostLog` rows for percentiles is expensive. Mitigation: pre-computed rollups in a new `AiExecutionHealthRollup` table updated by the maintenance tick (1-minute granularity); the dashboard reads rollups, not raw logs.
+- **Threshold noise.** A new low-volume workflow will breach thresholds on a single failure. Mitigation: sample-size floor before threshold evaluation (default 30 executions over the window).
+
+**Priority justification.** Mid-tier Tier 8 priority. Less urgent than #37–#40 because partners with OTEL stacks already get this from item 13, but high-leverage for the in-the-box deployment profile. Composes cleanly with #40 (live) and item 22 (quality) — building all three creates the full observability story.
+
+**Difficulty: Moderate.** New page + four cards + two tables + aggregation queries + rollup table + threshold-hook event. One sprint.
+
+### 42. Capability emergency-disable / quarantine — ⚪ Not started
+
+**Why it matters.** When an external capability misbehaves at scale — returning malformed data, hanging, rate-limit-exceeded across all calling agents — the admin needs a one-click "stop using this capability across every agent" action, not an "edit each agent's bindings one at a time" tour. The need is rare but acute: the difference between a 5-minute remediation and a 30-minute one when a vendor's API has degraded. Today the closest action is to deactivate the global `AiCapability.isActive` flag, which is a hard delete — every agent loses the capability silently, the bindings persist but no longer resolve, and there's no clear audit signal that "we are in degraded mode."
+
+**What exists today.** Per-agent binding has `AiAgentCapability.isEnabled` (toggle per binding). Global `AiCapability.isActive` (toggle all). No `quarantined` state distinct from full deactivation; no bulk-action UI; no audit-distinguished signal.
+
+**What we'd ship.**
+
+1. **Quarantine state.** Add `AiCapability.quarantineState` enum (`active` / `quarantined-soft` / `quarantined-hard`), plus `quarantineReason String?` and `quarantineUntil DateTime?`. `quarantined-soft`: dispatcher returns a structured error to the agent (the agent sees "tool temporarily unavailable" and can route around it via `plan` / `orchestrator`). `quarantined-hard`: dispatcher refuses dispatch with no fallback path; useful for "this capability is sending wrong data, don't use it at all."
+2. **Admin UI on capability detail page.** Big amber "Quarantine" button with mode selector (soft/hard), reason text, optional auto-expiry. Quarantine writes a high-severity audit-log entry with actor and reason; un-quarantine writes the matching un-quarantine entry.
+3. **Banner across affected agents.** Every agent that binds a quarantined capability surfaces a banner on its detail page: "Capability X is quarantined (reason: ...) — N tools unavailable until re-enabled."
+4. **Hook event.** `capability.quarantined` fires for downstream consumers (Slack alert pattern).
+
+**Benefits.**
+
+- **Five-minute remediation.** Vendor down? One click, every agent picks up the change immediately.
+- **Audit trail by design.** Quarantine is auditable, distinct from accidental deactivation.
+- **Pairs with #38 (DLQ) and #40 (live page).** A quarantine plus the DLQ tells the full story: "we caught it, here's where the failures went, here's how long we held."
+
+**Risks.**
+
+- **Quarantine forgetting.** Admin quarantines, fixes the upstream, forgets to un-quarantine. Mitigation: optional auto-expiry; admin dashboard shows a count of active quarantines with age.
+- **Agent-side cascade.** An agent with a critical quarantined tool may fail every call. Mitigation: agent-detail-page banner makes the impact visible; agent designers can mark capabilities as critical so quarantine triggers an `agent.degraded` hook.
+
+**Priority justification.** Mid-tier Tier 8 priority. Rare incident but acute when it hits; the cost of building is low. Composes naturally with #38 and #40. Worth shipping as part of the operational-readiness cohort.
+
+**Difficulty: Low–Moderate.** Three Prisma fields + dispatcher-side state check + admin form panel + per-agent banner + audit-log integration + one hook event. Half-to-one sprint.
+
+### 43. Orchestration-specific load + chaos test harness — ⚪ Not started
+
+**Why it matters.** Pre-launch credibility. Today `npm run smoke:chat` and a handful of other smoke scripts exercise basic end-to-end wiring against the dev DB. None of them sustain load, none of them simulate provider failure, none of them have published baselines. For partners evaluating whether to commit production traffic, "have you load-tested this?" is binary — and the answer today is "we have smoke tests." Pre-launch is the cheap moment: traffic shapes can be designed against the worked-example scenarios in `business-applications.md`; baselines establish a regression bar for every subsequent sprint.
+
+**What exists today.** `npm run smoke:*` in `package.json` (chat, orchestration, transcribe, hybrid-search, vision) under `scripts/smoke/`. No `scripts/load/`, no `scripts/chaos/`, no k6 / artillery / autocannon usage. No published baseline metrics anywhere in `.context/`.
+
+**What we'd ship.**
+
+1. **Load scripts under `scripts/load/`.** k6 (preferred — single binary, no Node dependency) scripts for: concurrent chat conversations against a real workflow (`load-chat.js`), workflow throughput (`load-workflow.js` — sustained executions/sec), inbound trigger stress (`load-inbound.js` — Slack-style burst), hybrid-search throughput (`load-search.js`). Each script accepts `--vus`, `--duration` parameters and emits a JSON results bundle.
+2. **Chaos scripts under `scripts/chaos/`.** `chaos-provider-flap.ts` (configures a primary provider to return 503 for N seconds, verifies fallback chain activates), `chaos-db-saturation.ts` (saturates Postgres connection pool, verifies graceful degradation), `chaos-queue-flood.ts` (floods the async-execution queue, verifies queue-wait p95 and orphan-sweep behaviour).
+3. **Published baselines.** A new `.context/orchestration/load-baselines.md` documenting the platform's claims: "1000 concurrent chat conversations sustained at p95 < 2s on 4 vCPU / 8GB Postgres", "500 workflow executions/sec sustained for 10 minutes", "Slack-burst 5000 events/sec absorbed without backpressure" — with the exact `npm run loadtest:*` command that reproduces each.
+4. **CI integration.** Optional nightly run via GitHub Actions hitting an ephemeral environment; results commit to a `.load-history/` directory so regressions surface as PR diffs.
+
+**Benefits.**
+
+- **Pre-launch credibility.** The claim "we have load-tested this to X" becomes a defensible answer in partner conversations.
+- **Regression bar.** Every subsequent perf-sensitive PR can be evaluated against the baseline.
+- **Composes with #41 (health dashboard).** The dashboard makes the load-test results visible in real time as the test runs.
+
+**Risks.**
+
+- **Ephemeral-environment cost.** Nightly CI load tests against a real Postgres + Redis cost money. Mitigation: nightly is opt-in via GH Actions cron; PR-gated load tests run only when label is applied; baselines update on tagged release only.
+- **k6 vs Node-only.** k6 is a separate binary; some teams prefer Node-only. Mitigation: ship k6 with a Node fallback (autocannon-based) for partners who want Node-only.
+
+**Priority justification.** Mid-tier Tier 8 priority. Pre-launch credibility matters; once partners are running production traffic, retrofitting load tests is harder because there's no clean baseline to claim. Half-to-one sprint of focused work + ongoing tuning. Build the scripts now, claim the baselines once they stabilise.
+
+**Difficulty: Moderate.** k6 scripts + chaos scripts + baseline docs + optional CI workflow. One sprint.
+
+### 44. Orchestration admin API OpenAPI + generated SDK — ⚪ Not started
+
+**Why it matters.** 65+ orchestration admin routes are documented as prose in `.context/api/orchestration-endpoints.md`. A partner wanting to script against admin — bulk-deploy 50 agents from a config repo, automate KB updates from a CMS, integration-test their workflow against a real Sunrise — has nothing typed to import. Tooling velocity (both internal and partner) is bounded by the lack of a machine-readable contract. Auto-generating an OpenAPI spec from the existing Zod schemas via `zod-openapi` and emitting a TypeScript client via `openapi-typescript` is well-trodden ground; the work is wiring, not invention.
+
+**What exists today.** Zero OpenAPI dependencies in `package.json` (`zod-openapi`, `openapi-typescript`, `@asteasolutions/zod-to-openapi` all absent). Zero `*.openapi.ts` / `openapi.json` / `swagger.json` files. Admin route handlers each use Zod for validation but the schemas are not aggregated into a single contract surface. No `packages/` directory.
+
+**What we'd ship.**
+
+1. **OpenAPI generation.** Add `zod-openapi` (or `@asteasolutions/zod-to-openapi`). A new `lib/api/openapi-registry.ts` collects route metadata (path, method, request schema, response schema, error envelope) registered by each admin route as a side-effect of import. A new `npm run generate:openapi` walks the route tree, builds an OpenAPI 3.1 document, writes `openapi/admin-orchestration.json`.
+2. **SDK generation.** `openapi-typescript` consumes the JSON and emits `packages/orchestration-admin-sdk/src/types.ts` (typed paths) plus a thin handwritten client wrapper using `fetch` with auth-header injection.
+3. **Publish posture.** Generated SDK lives in a `packages/` directory (introduces npm workspaces — small repo restructure). Published as `@sunrise/orchestration-admin-sdk` to npm on tagged release.
+4. **OpenAPI-served route.** New `GET /api/v1/admin/orchestration/openapi.json` serves the generated spec for partners who want to feed it into Postman / Swagger UI / their own codegen.
+5. **Internal test-suite migration.** Internal admin-route tests migrate from raw `fetch` calls to the typed SDK, surfacing route changes as type errors at PR time.
+
+**Benefits.**
+
+- **Multiplies tooling velocity.** Internal tests + partner scripts + Postman collections all derive from one source.
+- **Surfaces contract drift at PR time.** A route schema change becomes a type error in the SDK and tests.
+- **Pairs with #45 (embed npm package).** Same workspaces foundation; same publish discipline.
+- **Reuses existing Zod schemas.** No second source of truth; OpenAPI is generated, not authored.
+
+**Risks.**
+
+- **Workspaces refactor.** Adding `packages/` is a repo-shape change. Mitigation: keep the main app at the root; only the SDK lives under `packages/`; lockfile-pin is the only widely-felt change.
+- **Schema coverage.** Some routes (file uploads, SSE) don't map cleanly to OpenAPI. Mitigation: those routes are documented with an `x-non-openapi` extension and a manual SDK section; everything else generates cleanly.
+- **Version drift after publish.** Once the SDK is on npm, downstream pinning matters. Mitigation: semver discipline + a `CHANGELOG.md` in `packages/orchestration-admin-sdk` generated from PR titles.
+
+**Priority justification.** Top-5 Tier 8 priority. The DX multiplier is real — every internal integration test, every partner integration script, every documentation example benefits. Pre-launch is the right moment because the API shape is still malleable; post-launch, every change risks breaking partner code.
+
+**Difficulty: Moderate.** OpenAPI registry module + generator script + SDK package skeleton + workspaces setup + one new served route + test-suite migration. One sprint.
+
+### 45. Embed widget as installable npm package — ⚪ Not started
+
+**Why it matters.** Today the embed widget is `<script src="https://your.sunrise/api/v1/embed/widget.js">` — a vanilla Shadow-DOM ES5 bundle that mounts itself. This is fine for static-site partners but feels Web 1.0 for the many partners with React / Vue / Svelte apps who want a type-safe component, declarative props, and lifecycle events. The widget loader itself stays (some partners genuinely don't have a build pipeline), but the gap is the absence of a first-party companion package: `@sunrise/embed-react` exposing `<SunriseChat agentToken={...} onMessage={...} theme={...} />`.
+
+**What exists today.** Vanilla widget at `app/api/v1/embed/widget.js/route.ts` (Shadow DOM, plain ES5, self-contained). Admin embed-config UI at `components/admin/orchestration/agents/embed-config-panel.tsx` (internal — generates the `<script>` snippet for partners to copy). No `packages/` directory; no published wrapper packages.
+
+**What we'd ship.**
+
+1. **`packages/embed-react/`.** A small package exposing `<SunriseChat>` and `<SunriseChatButton>` (floating-button variant). Props are typed: `agentToken`, `apiBaseUrl`, `theme` (object derived from `widgetConfig`), `welcomeMessage`, plus event callbacks (`onConversationStarted`, `onMessage`, `onCardSubmit`, `onError`). Internally, the package dynamically imports the vanilla widget's logic (or re-implements the small surface as a thin React layer) — the vanilla widget remains the source of truth so behaviour is identical.
+2. **`packages/embed-vue/` and `packages/embed-svelte/`.** Same shape, framework-idiomatic. Ship React first; add Vue / Svelte only when a partner asks.
+3. **Theme tokens.** A typed `WidgetTheme` interface exporting every customisable token from `widgetConfig`; package consumers get autocomplete.
+4. **CDN ESM build.** Same package available via `https://unpkg.com/@sunrise/embed-react@latest/dist/index.mjs` for partners doing import-map / `<script type="module">`.
+5. **Docs.** Worked examples for each framework in the package READMEs + a section in `.context/orchestration/embed.md`.
+
+**Benefits.**
+
+- **Modern partner DX.** Type-safe, declarative integration matching how partners build today.
+- **Same behaviour, different surface.** The vanilla widget remains the source of truth; the packages are thin wrappers.
+- **Pairs with #44 (admin SDK).** Both packages live under `packages/`; same publish pipeline; same workspaces setup.
+- **Reduces partner onboarding friction.** The `<script>` snippet still works for partners who want it; the npm path is for partners who want better DX.
+
+**Risks.**
+
+- **Three-framework maintenance burden.** React + Vue + Svelte triples the surface. Mitigation: ship React first (the largest partner audience); add Vue / Svelte only when a partner asks. Document the extension path so community contributions are tractable.
+- **Vanilla-widget-and-react-package drift.** Two implementations risk diverging. Mitigation: React package depends on the vanilla widget as a peer dep; the wrapper is documented as "thin layer," not a re-implementation.
+- **Type-only changes breaking partners.** A theme-token rename breaks every consumer's tsc. Mitigation: semver discipline; major-version bumps for breaking type changes.
+
+**Priority justification.** Top-7 Tier 8 priority. Lower than #44 because the `<script>` path works today; higher than #43 because partner-facing DX directly affects pilot velocity. Ship React first; defer Vue / Svelte. Pre-launch is the right moment to establish the package + versioning shape.
+
+**Difficulty: Low–Moderate (React only).** Workspaces setup (shared with #44) + React wrapper + theme-token export + docs. Half-to-one sprint for React. Each additional framework: half a sprint.
+
+### 46. Audit-log tamper-evidence (hash chain) — ⚪ Not started
+
+**Why it matters.** Compliance auditors in regulated verticals (legal, finance, health, public sector) ask one specific question of every audit log: "can you prove no one has tampered with this?" Today `AiAdminAuditLog` records every admin mutation with fields for `userId`, `action`, `entityType`, `entityId`, `changes`, `metadata`, `clientIp`, `createdAt` — but every one of those rows is mutable at the database level without detection. A hash chain (each row carries the hash of the previous row plus its own content; a periodic signature on the chain head) makes tampering detectable and is table-stakes for partners going through SOC 2 / ISO 27001 audits.
+
+**What exists today.** `AiAdminAuditLog` schema has no `prevHash`, `contentHash`, `signature`, or `chainHeadSignature` fields. No verification logic in `lib/orchestration/audit/`. No periodic chain-head signing.
+
+**What we'd ship.**
+
+1. **Schema additions.** `AiAdminAuditLog.prevHash String?` (SHA-256 of the previous row's `contentHash` in this chain), `contentHash String` (SHA-256 of `userId | action | entityType | entityId | changes | metadata | createdAt`), `chainPosition Int` (monotonic, with a per-table sequence). Computed at insert time inside the same transaction as the audit-row insert.
+2. **Chain-head signing.** Every N minutes (configurable; default 15), a maintenance-tick job reads the latest row, signs its `contentHash` with a system-private-key, writes the signature to a new `AiAuditChainHead` table. The system-public-key is exposed via `GET /api/v1/admin/orchestration/audit/public-key`.
+3. **Verification route.** `POST /api/v1/admin/orchestration/audit/verify` walks the chain backwards from the latest signed head, recomputes each `contentHash`, recomputes each `prevHash` link, returns `{ verified: true, lastSignedAt }` or `{ verified: false, firstBrokenRowId }`. Available in admin UI as a "Verify integrity" button on the audit-log page.
+4. **Erasure interop.** When item 29 (GDPR erasure) redacts a row, the row's `contentHash` does not change (it's the hash of the original content, immutable); only the user-visible content fields are nulled. Verification still passes.
+
+**Benefits.**
+
+- **Compliance audit table-stakes.** Partners hand auditors a signed verification result, not a screenshot.
+- **Composes with item 29 (GDPR erasure).** Erasure-redacts user content without breaking the integrity chain — the chain proves the row existed and when it was redacted.
+- **Small implementation.** Additive schema, deterministic hashing, one verification route, one signing job.
+
+**Risks.**
+
+- **Signing-key management.** Where does the private key live? Mitigation: derived from `BETTER_AUTH_SECRET` (or a dedicated `AUDIT_SIGNING_SECRET` env var) at boot; documented as "rotate via env-var change + chain re-anchor migration."
+- **Verification cost.** A million-row chain takes time to walk. Mitigation: signed chain-heads checkpoint the chain — verification only re-walks rows since the last signed head (typically < 15 minutes' worth).
+- **Schema-additive risk on existing rows.** Existing audit rows have no `prevHash` / `contentHash`. Mitigation: a one-shot back-fill migration computes the chain from row-creation order; existing rows get retroactive hashes, future rows are chained inline.
+
+**Priority justification.** Top-7 Tier 8 priority. Small implementation, large credibility gain. Defers cleanly until a partner actually goes through an audit, but the moment one does, "we have a hash chain with periodic signing" is the difference between a 30-minute conversation and a six-week remediation project. Ship before the first regulated-vertical pilot.
+
+**Difficulty: Low–Moderate.** Three Prisma fields + one new table + insert-time hashing + signing tick + verification route + admin button + back-fill migration. Half-to-one sprint.
+
+### 47. Conversation provenance bundle — ⚪ Not started
+
+**Why it matters.** For legal-advice, mortgage-broking, tenant-rights, council-planning, health-protocol, financial-planning pilots, the conversation itself is the audit artefact partners hand to their reviewers. The question "show me how the agent arrived at this answer on this date" needs a defensible answer, not a SQL join across half a dozen tables. Today `AiMessage` does not record the agent version, workflow version, model ID, or KB chunks cited at message time — reconstructing this requires inferring from execution traces and citation envelopes, and the inference is lossy if the agent was edited or knowledge re-ingested between the message and the audit. Pre-launch is the cheap moment to add the pinning; post-launch retrofitting it means every legacy message carries a "pre-vN" asterisk.
+
+**What exists today.** Conversation export route at `app/api/v1/admin/orchestration/conversations/export/route.ts` returns JSON/CSV with `conversationId`, `agentId`, `agentSlug`, `agentName`, messages, timestamps — but no per-message agent version / workflow version / model ID, no KB chunks cited, no capability calls made. `AiMessage` has no `agentVersionId` / `workflowVersionId` / `modelId` fields. Item 2 (citations) captures KB chunks in the citation envelope (in-band on the rendered message) but not in the export. Item 12 (workflow versioning) pins `AiWorkflowExecution.versionId` but not per-message. Reconstructing "what was running when this message was sent" requires manual joins across `AiConversation → AiWorkflowExecution → AiWorkflowVersion`.
+
+**What we'd ship.**
+
+1. **Per-message version pinning.** Add `AiMessage.agentVersionId String?`, `AiMessage.workflowVersionId String?` (nullable; populated for workflow-fired messages), `AiMessage.modelId String?`, `AiMessage.providerSlug String?`. The chat handler writes these at message-creation time.
+2. **Per-message citation pinning.** Add `AiMessage.citations Json?` carrying the resolved chunk refs at message time: `[{ chunkId, documentId, documentVersion, contentHash }]`. Item 31 (KB freshness scanner) makes `documentVersion` meaningful.
+3. **Per-message capability pinning.** Add `AiMessage.capabilityCalls Json?` carrying `[{ capabilityId, capabilitySlug, capabilityVersion, args, result, costUsd, latencyMs }]` for the tool calls that produced the message.
+4. **Provenance endpoint.** `GET /api/v1/admin/orchestration/conversations/{id}/provenance` returns the full bundle: every message with its pinned versions + citations + capability calls, plus conversation-level metadata (start time, end time, total cost, agent-version transitions during the conversation, model-routing decisions). Output format: JSON, plus a PDF rendering via the Gotenberg recipe (chains item 17). Composes with item 27 (conversation export) — the export is the _conversation_; provenance is the _audit trail_.
+
+**Benefits.**
+
+- **Audit defensibility.** Partners hand auditors a versioned provenance bundle, not "trust us, we logged it."
+- **Composes with item 12 (versioning), item 2 (citations), item 31 (freshness).** Every existing primitive that pins state at one level becomes per-message-pinned.
+- **Pre-launch timing matters.** Retrofitting version pinning to existing messages means accepting a "pre-vN messages don't have provenance" carve-out.
+
+**Risks.**
+
+- **Row growth.** Four new columns × millions of messages × JSON for citations and capability-calls. Mitigation: citations and capability-calls are JSONB; pruning policy via the existing retention plumbing.
+- **Provenance-export cost.** A long conversation with deep citations produces a large bundle. Mitigation: page the provenance endpoint by message ranges; PDF rendering is opt-in.
+- **Schema migration on existing messages.** Existing messages lack version pins. Mitigation: a best-effort back-fill migration joins against `AiWorkflowExecution.versionId` and the conversation's then-current agent version; rows that can't be back-filled get a `provenance: 'partial'` marker.
+
+**Priority justification.** Top-7 Tier 8 priority. The kind of feature whose absence is invisible until a compliance audit asks for it; cheap to add pre-launch; expensive to retrofit post-launch. Composes with multiple existing items, so the marginal cost of building it is lower than implied by the row counts.
+
+**Difficulty: Moderate.** Four Prisma fields + chat-handler write integration + provenance route + PDF rendering recipe + back-fill migration. One sprint.
+
+### 48. WCAG 2.1 AA conformance — orchestration surfaces only — ⚪ Not started
+
+**Why it matters.** Required for any public-sector partner — council, NHS, education, regulated charities — and increasingly a procurement-checklist item in private-sector pilots too. The audit dimensions are well-defined: keyboard navigation, screen-reader support (ARIA), color contrast, focus management, form labels. The platform has baseline tooling but no systematic audit, no automated regression gate, and conspicuous gaps in some recently-shipped components (chat, agent test surfaces, embed widget). Public-sector audiences are central to `business-applications.md`; this is not a polish item, it's a procurement blocker.
+
+**What exists today.** `eslint-plugin-jsx-a11y` v6.10.2 configured in `eslint.config.mjs`. Sampled orchestration components: 8 of 10 have ARIA attributes; 2 (`agent-test-card.tsx`, `execution-progress-inline.tsx`) lack them. Targeted contrast test for the embed widget customisation form at `tests/unit/components/admin/orchestration/widget-appearance-section.test.tsx` validates contrast ratio ≥ 4.5. No axe-core / jest-axe in `package.json`. No keyboard navigation tests, no focus-management tests, no screen-reader-output assertions. No accessibility audit docs in `.context/`. The embed widget (vanilla Shadow DOM) has no documented ARIA.
+
+**What we'd ship.**
+
+1. **Automated regression gate.** Add `jest-axe` (vitest-compatible) to the test suite. A new test pattern `tests/a11y/<page>.spec.tsx` renders each orchestration admin page and asserts zero axe violations. Add a `:axe` filter to `npm run test` for fast feedback during development. CI runs the full a11y suite on every PR.
+2. **Manual audit pass.** A one-time systematic walk through `app/admin/orchestration/**`, `components/admin/orchestration/**`, the embed widget, and the consumer chat. Audit checklist captured in `.context/ui/accessibility.md`. Remediation PRs land file-by-file (small, reviewable changes).
+3. **Embed widget ARIA pass.** The vanilla Shadow-DOM widget gains explicit `role`, `aria-live`, `aria-label`, keyboard focus management, and a documented contract for partners embedding it (Permissions-Policy, focus-trap behaviour, Esc-to-close).
+4. **Component-library defaults.** The shared form / button / dialog components get ARIA defaults so new components inherit them rather than re-implementing.
+5. **Conformance doc.** `.context/ui/accessibility.md` documents the audit methodology, the level of conformance claimed (WCAG 2.1 AA), known exceptions with rationale, and the test surfaces that gate regressions.
+
+**Benefits.**
+
+- **Public-sector pilot unblock.** Partners in council / NHS / education / regulated charity sectors get a defensible "yes" to the procurement checkbox.
+- **Catches future regressions automatically.** A PR that introduces an a11y violation fails CI rather than shipping.
+- **Pairs with item 26 (structured cards).** Card components get a11y defaults from day one.
+- **Existing baseline is solid.** ESLint plugin already running; 8 of 10 sampled components already conform; the gap is systematic not catastrophic.
+
+**Risks.**
+
+- **Remediation time.** Manual audit + remediation is the longest work-tail. Mitigation: file-by-file PRs; lock new orchestration pages to "axe-clean" before merge; tolerate a known-exceptions list for existing pages until they're touched.
+- **Embed-widget complexity.** Shadow-DOM + ES5 makes a11y harder than React. Mitigation: focus on the WCAG basics (keyboard, contrast, focus trap, ARIA roles); defer screen-reader nuances if cost outweighs partner-pull.
+- **Test flakiness.** axe assertions on complex pages can be noisy. Mitigation: per-test rule allowlists; minor color-contrast wins via design-token review, not test-suppression.
+
+**Priority justification.** Top-3 Tier 8 priority. Unblocks the public-sector partner audiences `business-applications.md` explicitly targets. The cost is concentrated in the manual audit; the automated gate makes subsequent work cheap. Pre-launch is the right moment because audit + remediation against 30+ pages is a known-scope sprint, vs. a moving target post-launch.
+
+**Difficulty: Moderate (audit + remediation = 1–2 sprints).** Jest-axe integration + a11y test pattern + manual audit walk + remediation PRs + embed-widget ARIA pass + component-library defaults + conformance doc.
+
+### 49. Orchestration data portability — transactional-data extension — ⚪ Not started
+
+**Why it matters.** A partner that commits production traffic to Sunrise needs to know the exit path. "If we decide to leave, can we take our data with us?" is a binary procurement question and the answer today is "configuration yes, conversations and audit history no." The existing exporter exports configuration (agents, capabilities, workflows, knowledge tags, webhooks, settings) but explicitly excludes conversations, messages, embeddings, cost logs, execution history, audit logs, evaluation logs — by design, for the "clone-and-redeploy" use case. That design choice leaves vendor-lock-in concerns unaddressed for partners thinking about long-term commitment.
+
+**What exists today.** Backup export route at `app/api/v1/admin/orchestration/backup/export/route.ts`. Library at `lib/orchestration/backup/exporter.ts`. Admin UI in the settings tab. Documented exclusions at `.context/orchestration/backup.md` lines 36–42 — transactional data is explicitly out of scope. Tests at `tests/integration/api/v1/admin/orchestration/backup/export.test.ts` cover the config-only path.
+
+**What we'd ship.**
+
+1. **Two-tier export.** Existing config-only export stays. Add a new "full export" mode (`POST /api/v1/admin/orchestration/backup/export?mode=full`) that bundles transactional data in addition to configuration: conversations + messages (with item 47's provenance fields), KB documents + chunks + embeddings, audit logs (with item 46's hash chain intact so partners can re-verify the chain after import), cost logs, evaluation logs, execution traces.
+2. **Streaming + paged.** Full exports for established deployments may be gigabytes. The export route streams chunks (NDJSON or a tarball over a streaming response); the admin UI shows progress and the final URL is signed (chains item 16, `upload_to_storage`).
+3. **Documented schema.** `.context/orchestration/backup-full-schema.md` describes the exact wire format per entity with version pinning so a partner re-importing into a different deployment knows what to expect.
+4. **Restorability test.** A new `npm run smoke:backup-roundtrip` exports a non-trivial environment, imports it into a fresh DB, and asserts row-count and content-hash parity for every entity. Becomes part of the CI suite so backup format changes can't silently break round-tripping.
+5. **Selective import.** Import gains the same `mode` parameter (config / full). Existing config-only import path is unchanged.
+
+**Benefits.**
+
+- **Removes vendor-lock-in anxiety at procurement.** Partners commit more readily when the exit door is documented and tested.
+- **Pairs with item 29 (GDPR erasure).** The full-export bundle is exactly what a Subject-Access-Request needs, scoped to one user.
+- **Pairs with #46 (audit hash chain).** Importing an audit log preserves the chain — the imported deployment can re-verify history.
+- **Reuses existing infrastructure.** Backup machinery exists; the gap is scope, not architecture.
+
+**Risks.**
+
+- **Export size.** Multi-gigabyte tarballs are awkward. Mitigation: streaming with progress; partial-export by date range; documented size estimates.
+- **Embedding compatibility.** Vector embeddings from one model don't transfer to a deployment using a different embedding model. Mitigation: export records the embedding model + dimension; import warns if the target deployment's model differs; documented re-embedding path on the import side.
+- **PII surfaces.** Full export includes conversations, which contain PII. Mitigation: export is admin-only with an explicit "this contains user data" confirmation; signed URLs have short TTLs; access is audit-logged.
+
+**Priority justification.** Lower-tier Tier 8 priority. Less acute than #37–#40 because the current config-only export covers the most common operational need (clone-and-redeploy). But high-leverage for commercial conversations — "we have full data portability" closes a known procurement concern. Build after #46 (audit chain) and #47 (provenance) so the exported data is itself trustworthy.
+
+**Difficulty: Moderate.** Exporter extension + streaming response + admin UI + roundtrip smoke test + documentation. One sprint.
+
+### Tier summary
+
+The thirteen items split into five sub-groups that share an order-of-completion: **correctness → operational visibility → DX → compliance → partner trust**. Each group provides cheap leverage for the next: correctness (#37–#39) makes the dashboards (#40–#41) meaningful; the dashboards make the load tests (#43) interpretable; the load tests give the SDK (#44) defensible baselines; the SDK gives partners the contract; the audit chain (#46) and provenance (#47) give partners the audit trail; WCAG (#48) and portability (#49) close the procurement objections.
+
+Sequenced for shortest path to a partner-defensible foundation: **37 → 40 → 38 → 39 → 48 → 44 → 46 → 47 → 42 → 41 → 43 → 45 → 49**, with #37 (idempotency) first because correctness gaps compound silently, #40 (live engine) second because operational visibility is the first thing partners ask for, #48 (WCAG) early because public-sector procurement is binary, and #44 (OpenAPI/SDK) middle because it multiplies every subsequent iteration. Items #41–#43 and #45–#49 are reorderable based on partner pull.
+
+The unifying property: every Tier 8 item answers "what makes the platform solid enough to build on?" rather than "what new thing does the platform do?" Pre-launch is the moment to spend on these. Retrofitting any of them after partner code is in production is strictly more expensive — and several (per-message version pinning in #47, audit-chain back-fill in #46, idempotency shape in #37) carry a permanent "before vN / after vN" asterisk if deferred.
+
+If the team has 1 sprint: **#37**. If 2–3 sprints: **#37 → #40 → #48**. If 4–6 sprints: **#37 → #40 → #38 → #39 → #48 → #44**. Beyond that, partner-pull and operational pressure dictate the order — the items are independent enough that any individual sprint pays off on its own.
 
 ---
 
