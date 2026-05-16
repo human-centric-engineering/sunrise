@@ -1228,6 +1228,24 @@ export class OrchestrationEngine {
         ? result.nextStepIds
         : step.nextSteps.map((edge) => edge.targetStepId);
 
+    // `failWorkflow` is the explicit "this step authored a failure
+    // termination" signal — used by `send_notification` with
+    // `terminalStatus: 'failed'` so a fail-branch's tail step doesn't
+    // leave the execution marked COMPLETED. Yield workflow_failed here
+    // (mirroring the step-error path at 1149) so the DAG walk's main
+    // loop sees `failed: true` and finalises the row accordingly.
+    if (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) {
+      const reason = result.failWorkflow;
+      yield workflowFailed(reason, step.id);
+      return {
+        failed: true,
+        paused: false,
+        terminal: true,
+        failureReason: reason,
+        nextIds: [],
+      };
+    }
+
     return {
       failed: false,
       paused: false,
@@ -1485,6 +1503,18 @@ export class OrchestrationEngine {
       }
 
       lastOutput = stepResult.output;
+
+      // Mirror the sequential `failWorkflow` handling: if any branch of
+      // a parallel batch authored a failure-termination signal, treat
+      // the whole batch as failed and propagate the reason. The batch
+      // already records each branch's trace row above, so the operator
+      // can see which branch tripped the failure.
+      if (typeof stepResult.failWorkflow === 'string' && stepResult.failWorkflow.length > 0) {
+        allEvents.push(workflowFailed(stepResult.failWorkflow, step.id));
+        batchFailed = true;
+        batchFailureReason = stepResult.failWorkflow;
+        continue;
+      }
 
       const nextIds =
         stepResult.nextStepIds && stepResult.nextStepIds.length > 0

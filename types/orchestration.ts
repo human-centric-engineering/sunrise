@@ -553,6 +553,23 @@ export interface StepResult {
    * trace entry so the viewer can tone the row down.
    */
   expectedSkip?: boolean;
+  /**
+   * If set, terminates the workflow with status `FAILED` after this
+   * step's trace entry is written. The string becomes the
+   * `errorMessage` on the execution row and the `reason` on the
+   * `workflow_failed` event.
+   *
+   * Use this for steps that author a structured "this is a failure
+   * branch" — e.g. a `send_notification` configured with
+   * `terminalStatus: 'failed'` that mails an admin AND wants the
+   * workflow's final status to reflect the underlying problem. Without
+   * this, a terminal `send_notification` on a fail-branch leaves the
+   * execution marked COMPLETED, which misrepresents what happened.
+   *
+   * Mutually exclusive with `terminal` — if both are set, `failWorkflow`
+   * wins (failure-termination is the more specific signal).
+   */
+  failWorkflow?: string;
 }
 
 /** Minimal summary of a workflow execution row, for list views. */

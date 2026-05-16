@@ -2666,11 +2666,19 @@ export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
     to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
     subject: z.string().min(1).max(200),
     bodyTemplate: z.string().min(1).max(10_000),
+    // Opt-in: 'failed' tells the engine to finalise the workflow as
+    // FAILED with the interpolated bodyTemplate as the visible reason
+    // after the notification has been sent (or skipped per
+    // errorStrategy). Use on fail-branch tail steps so the execution
+    // row's status matches what actually happened. See
+    // `lib/orchestration/engine/executors/notification.ts` for details.
+    terminalStatus: z.enum(['completed', 'failed']).optional(),
   }),
   stepErrorConfigSchema.extend({
     channel: z.literal('webhook'),
     webhookUrl: z.string().url(),
     bodyTemplate: z.string().min(1).max(10_000),
+    terminalStatus: z.enum(['completed', 'failed']).optional(),
   }),
 ]);
 

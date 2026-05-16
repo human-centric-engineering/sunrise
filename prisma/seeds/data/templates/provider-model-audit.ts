@@ -513,7 +513,14 @@ ${ENUM_SPEC_JSON}
    - \`local_sovereign\` — removed 2026-05-16; deployment locus lives in \`deploymentProfiles\` now
    - \`reasoning\`, \`vision\`, \`multimodal\` — capabilities, not tiers
 
-3. \`capabilities\` must be an array where every element appears in the \`capabilities\` spec array above. Reject elements like "multimodal", "pdf", or "text" — they are not in the spec.
+3. \`capabilities\` is an ARRAY field — apply per-element membership, NOT array-equality. The rule is: for every \`element\` in the proposal's \`capabilities\` array, check that \`element\` appears in the \`capabilities\` spec array above. Do NOT check whether the array as a whole appears in the spec — the spec lists individual capability tokens, not arrays. Concretely:
+
+   - \`capabilities: ["chat"]\` → PASS (the single element "chat" is in the spec).
+   - \`capabilities: ["chat", "vision"]\` → PASS (both elements are in the spec).
+   - \`capabilities: ["multimodal"]\` → FAIL (the element "multimodal" is not in the spec).
+   - \`capabilities: []\` → FAIL only if a separate field rule requires non-empty.
+
+   A previous validator run rejected \`capabilities: ["chat"]\` with the reason ' \`capabilities: ["chat"]\` is not in [...]' — that is the wrong check. The element "chat" IS in the spec; that array is valid.
 
 4. \`deploymentProfiles\` (when present on a change or new-model entry) must be an array where every element appears in the \`deploymentProfiles\` spec array above (\`hosted\`, \`sovereign\`). Empty arrays are invalid — every model has at least one deployment locus.
 
@@ -544,6 +551,8 @@ ${ENUM_SPEC_JSON}
 ## WORKED EXAMPLES
 
 - \`{ "field": "bestRole", "currentValue": "Lightweight worker", "proposedValue": "Planner / orchestrator", "reason": "Current 'Lightweight worker' undersells this model's reasoning capability...", "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://example.com/", "note": "..." }] }\` → PASS.
+- \`{ "name": "Claude Sonnet 5", "capabilities": ["chat"], "tierRole": "worker", "deploymentProfiles": ["hosted"], "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://anthropic.com/news", "note": "..." }] }\` → PASS (capabilities is checked per-element; "chat" is in the spec).
+- \`{ "name": "Multimodal Foo", "capabilities": ["chat", "multimodal"] }\` → FAIL (per-element check: "multimodal" is not in the capabilities spec).
 - \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier mismatches the model's very_high reasoning depth...", "sources": [{ "source": "training_knowledge", "confidence": "medium", "note": "..." }] }\` → PASS.
 - \`{ "field": "tierRole", "proposedValue": "edge", "sources": [...] }\` → FAIL (not in tierRole array).
 - \`{ "field": "tierRole", "proposedValue": "chat", "sources": [...] }\` → FAIL (capability, not a tier role).
@@ -855,11 +864,15 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       // Reached when the validate_proposals guard exhausts its retry
       // budget. The engine looks for a sibling fail edge without
       // maxRetries (this one) and routes here instead of silently
-      // halting. Terminal step — workflow ends after notification.
-      // Also `errorStrategy: 'skip'` so a broken email channel cannot
-      // mask the underlying validation-exhaustion signal: the trace
-      // already records the guard's three failed attempts plus the
-      // routing decision, and that's the authoritative diagnostic.
+      // halting. Terminal step — workflow ends with FAILED status after
+      // notification because `terminalStatus: 'failed'` tells the engine
+      // to set `errorMessage` from the interpolated body and emit
+      // workflow_failed instead of workflow_completed.
+      //
+      // `errorStrategy: 'skip'` is still set so a broken email channel
+      // cannot mask the underlying validation-exhaustion signal:
+      // terminalStatus is honoured even on skip, so the workflow still
+      // finalises as FAILED with the body as the reason.
       {
         id: 'report_validation_failure',
         name: 'Notify admin: validation exhausted',
@@ -871,6 +884,7 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
           bodyTemplate:
             'The Provider Model Audit halted at the schema-validation gate after exhausting the retry budget.\n\nFinal validator output: {{validate_proposals.output}}\n\nNo changes were applied. Open the execution trace in the admin dashboard for the full proposal payload and retry timeline, then re-run the workflow after refining the analysis prompts or reviewing the offending proposals.',
           errorStrategy: 'skip',
+          terminalStatus: 'failed',
         },
         nextSteps: [],
       },
