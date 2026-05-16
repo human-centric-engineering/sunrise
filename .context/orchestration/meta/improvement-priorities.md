@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-16 (Tier 8 added — proposed pre-launch foundation: reliability, operational trust, and partner-readiness; Tier 7 added earlier today — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20)
+**Last updated:** 2026-05-16 (consistency pass — every pending item across Tiers 5–8 now carries an explicit `**Priority justification.**` paragraph alongside `**Difficulty.**` so cherry-picking sessions can target the best effort/reward ratio; Tier 8 added — proposed pre-launch foundation: reliability, operational trust, and partner-readiness; Tier 7 added earlier today — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20)
 
 ---
 
@@ -412,6 +412,8 @@ Two execution paths consume the spec:
 - **Adoption friction.** An empty Behaviour tab is worse than no tab — it shouts "more work to do." Mitigation: starter packs that seed five sensible predicates the moment the tab is opened, plus per-assertion "Run now" so admins see immediate feedback on whether their current prompt already satisfies the assertion.
 - **Storage overhead.** Per-response runtime evaluation writes a row per applicable predicate per message. Mitigation: sampled evaluation (configurable, default 20% of messages once an agent crosses N requests/day), with always-on for the structural predicates that are cheap.
 
+**Priority justification.** Highest-leverage / highest-effort item in Tier 5 — the structural spine items 21, 22, 23, and 23a all compose with. Pick this when there is a 2–3-sprint slot and the partner roadmap is quality-driven rather than reach-driven; defer if the next pilot needs Tier 6 channels or Tier 7 integrations instead. The work splits cleanly: schema + publish-time validation in sprint 1, runtime evaluation + trace integration in sprint 2, predicate starter packs + authoring UX in sprint 3.
+
 **Difficulty: High.** Schema work (`AiAgentBehaviourSpec` versioned alongside `AiAgentVersion`), a predicate evaluator with N built-in predicate types and a registration surface for custom ones, publish-time blocking + runtime scoring + audit events + new evaluation-log metric, a new tab on the agent form with a meaningful empty state and predicate builder, trace-viewer integration. Realistically two to three sprints.
 
 ### 21. External-signal feedback — `run_check` capability + `reflect` integration — ⚪ Not started
@@ -438,6 +440,8 @@ This is the missing half of the reflect loop. Today `reflect` asks "is this good
 - **Over-use.** Not every reflect loop needs an external check. Documentation should frame `checks` as "when ground truth lives outside the model" and `evaluate` as "when the question is judgement-bound."
 - **Check errors create false-failure loops.** A network blip on `httpProbe` could create an infinite revision loop if treated as `passed: false`. Mitigation: tri-state result — `passed` / `failed` / `errored`. `errored` short-circuits the reflect loop with a clear telemetry signal; it never silently masks as a quality failure.
 - **Slow checks slow the loop.** A `sqlExecute` that takes 5s adds 5s × iterations to every run. Mitigation: per-check timeout (default 10s, configurable), surfaced in the trace's per-iteration latency strip.
+
+**Priority justification.** Top Tier 5 standalone win — 80% of the structural benefit is in the three non-executing check types (`jsonSchema`, `regex`, `httpProbe`) which carry no new attack surface. Ship those first; defer `sqlExecute` and `shell` behind opt-in env vars when a partner asks. Composes most cleanly with item 20, but does not depend on it — independently shippable and lower per-sprint cost.
 
 **Difficulty: Moderate.** New `run_check` capability with N check types behind a registration surface, a `reflect` executor extension to plumb checks into convergence, workflow-builder UI for check config, trace-viewer surface, sandbox plumbing for the runnable types. The capability itself is one sprint; the SQL and shell sandboxes are the schedule risk and can be deferred without losing the structural win.
 
@@ -470,6 +474,8 @@ The raw data already exists. `reflect` emits per-iteration events; `AiEvaluation
 - **Noisy per-agent baselines on low-traffic agents.** A pilot agent doing 30 requests/day has noisy stats. Mitigation: suppress the chip below a sample-size floor and surface "Insufficient data" explicitly rather than implying a false green.
 - **Misinterpretation.** A high retry-exhaustion rate could mean an upstream provider degraded, not that the feedback loop itself is broken. Mitigation: the dashboard's "Why?" drilldown segments the failures by cause (provider failure, validation failure, timeout) so the operator reads the signal correctly.
 
+**Priority justification.** Lowest-effort, highest-leverage Tier 5 item. Pure aggregation over data the platform already captures; no new instrumentation. Ship first if the slot is one sprint and the partner question is "are our agents still good a month from now?" Pairs naturally with #41 (operational health dashboard) — same admin surface, complementary lens (quality vs operational).
+
 **Difficulty: Low–Moderate.** Aggregation queries against already-captured data, one new dashboard page, settings-singleton threshold fields, hook event emission, drilldown filter routing. No new instrumentation — this is a presentation and alerting layer on top of what exists. One sprint.
 
 ### 23. `branch_and_select` step — explore-and-pick primitive — ⚪ Not started
@@ -494,6 +500,8 @@ This makes patterns like "try three drafts at different temperatures, ship the m
 - **Easy to over-use.** A `branch_and_select` is N× the cost of a single LLM call. If every step in a workflow uses one, cost explodes. Mitigation: the workflow validator warns when a workflow has more than two `branch_and_select` steps on the same path, and the cost analytics surfaces "discarded cost %" prominently on the workflow detail page so the trade is unmissable.
 - **Selector quality bounds the step.** A bad LLM judge picks the wrong branch and the structural advantage of multiple candidates is wasted. Mitigation: encourage predicate selectors where possible; LLM-judge selectors always require a written rubric (the config UI refuses to save without one); add the rubric to the trace so it's auditable post-hoc.
 - **Trace-row size growth.** Persisting discarded branch outputs grows the execution trace row. Mitigation: per-step `discardedBranches.maxBytes` cap that truncates outputs to head+tail; full outputs available via a separate paged API if the operator needs them.
+
+**Priority justification.** Lowest-priority Tier 5 item unless a specific pilot needs structured "try N, pick one" patterns (legal drafting, content-review pipelines, structured-data extraction with verification). Reorderable forward if such a pilot is active; otherwise defer until items 20–22 land. Composition with items 20 and 21 (predicate selectors reuse `run_check` types) means building those first makes 23 cheaper.
 
 **Difficulty: Moderate.** New executor (80% reuses `parallel`'s code path), new node type in the workflow-builder palette, trace-viewer surface for the discarded-branch view, validator integration, three selector implementations (LLM-judge, numeric, predicate). The selector machinery is the genuinely new code; the rest is composition. One sprint.
 
@@ -520,6 +528,8 @@ Replay closes this. Given a window of historical `AiConversation` rows and a tar
 - **Deterministic-seed limitations.** Many LLM providers do not honour seeds reliably. Mitigation: divergence is reported as a band against a calibration baseline established by replaying the source version against itself; per-turn variance below the noise floor is reported as "no significant change."
 - **Source-of-truth dilemma.** When the replayed answer is "different but arguably better," what does the admin do? Mitigation: divergence is reported, not gated — the report shows the new answer alongside the original with metric deltas; the human reads the trade.
 - **Context drift.** If the source conversation depended on capabilities or KB chunks since deleted, replay either fails or runs against a different reality. Mitigation: replay validates that all source-referenced capabilities and KB chunks still exist before running; skipped conversations are reported with reasons.
+
+**Priority justification.** Top-3 Tier 5 priority. Ships independently — no dependency on items 20–23. The signal to build it: the first time a partner has to migrate to a new model version. Pairs with item 35 (canary routing) for the full "offline + live" divergence story; build 23a first so the canary scoring machinery is well-shaped. Defer if no model migrations are imminent.
 
 **Difficulty: Moderate.** New table + new admin route + new engine module + new admin page + trace-viewer side-by-side mode. Reuses chat handler, evaluation pipeline, agent versioning. One sprint.
 
@@ -562,6 +572,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** The 24-hour WhatsApp conversation window means an unsolicited outbound reply outside that window must be a pre-approved Meta template — there is no way around this and it is a frequent surprise for partners. Mitigation: ship a recipe walking through Meta template approval and a small starter set of templates aligned to the worked examples (appointment reminder, follow-up nudge, action-required). Twilio's price-per-message is non-trivial at scale — cost dashboards need a per-channel breakdown so partners can see WhatsApp / SMS spend separately from LLM spend. MMS media attachments require Basic-auth fetches against Twilio — wired through the existing HTTP fetcher's auth modes rather than baked into the adapter.
 
+**Priority justification.** Top Tier 6 priority — unlocks the WhatsApp- and SMS-first audiences that are central to the proactive-outreach, customer-experience, mutual-aid, and tenant-rights subcategories in `business-applications.md` and which the embed widget structurally cannot reach. Sprint cost is bounded because both adapters mirror existing inbound adapter shapes; the longest tail is partner-side WhatsApp template approval, which runs in parallel.
+
 **Difficulty: Moderate.** Two adapters mirror the shape of the three existing ones (Slack, Postmark, generic-HMAC). The outbound capability is a thin wrapper over the existing HTTP fetcher plus a per-conversation channel lookup. The recipe is the longest tail item. Realistically one sprint of platform work, with WhatsApp template approval being a real-world dependency partners drive in parallel.
 
 ### 25. Email-out conversation thread — ⚪ Not started
@@ -573,6 +585,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 **Benefits.** Closes the most common partner objection to email-in flows ("but then we can't actually have a conversation"). Reuses ~90% of the transactional-email recipe — adding the three threading headers is the entire new functionality. Threading itself is RFC 5322 standard, so every major mail client (Gmail, Outlook, Apple Mail, Thunderbird) renders the result as a normal conversation without per-client special-casing. The conversation's email thread becomes a shareable, forwardable, archivable artefact living in the partner's existing email system — no Sunrise login required to access the record.
 
 **Risks.** Auto-reply loops are the perennial email hazard — an agent reply to a vacation auto-responder that itself auto-replies produces an infinite ping-pong. Mitigation: detect `Auto-Submitted: auto-replied` and `Precedence: bulk` headers on inbound and skip; cap per-conversation outbound rate to N replies per hour. Some inboxes (notably older on-premise Outlook) handle the `References` header poorly and split threads unexpectedly — documented as a known mail-client quirk rather than something to solve at the platform layer. Subject-line drift over many turns is also a real concern — partners need to know that "we changed the subject to be more specific on turn 5" is a feature their compliance lead might query.
+
+**Priority justification.** Cheap, high-leverage Tier 6 item. Closes the most common Postmark-inbound objection ("but then we can't actually have a conversation") for half a sprint of work. Pairs with item 29 (GDPR erasure) — DSAR confirmation can thread back into the original conversation. Sequence opportunistically — when a partner specifically asks for back-and-forth email flows.
 
 **Difficulty: Low–Moderate.** The plumbing is small: one new column, one new capability built on the existing HTTP fetcher, one new recipe variant. The risk is concentrated in the edge cases (auto-reply loops, multipart attachments on the reply path, quoted-block formatting that mail clients do not double-quote) — careful work rather than complex work. Half a sprint.
 
@@ -586,6 +600,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** Card sprawl is the biggest risk — every additional card type doubles the surface to test, the embed-widget mirror to maintain, and the documentation footprint. Mitigation: ship the four starter types, document a clear extension path via the capability registry (a custom card type is a capability that emits a `ui_card` event), and resist adding more without a partner-driven use case. Charts in the embed widget are a real complication — Recharts is React; the embed is vanilla Shadow DOM. Initial scope is a small in-house SVG renderer for bar and line charts only; if a partner asks for richer charts, the embed widget can graduate to React, a bigger architectural step that earns its keep at that point, not before. Mobile rendering of date / time pickers uses native `<input type="date">` and `<input type="time">` — adequate everywhere but not beautiful; revisit only if partners complain.
 
+**Priority justification.** Most architecturally ambitious Tier 6 item; save for a slot with a clear partner ask. The four starter card types ship cleanly together as a 1.5–2 sprint slot; resist adding additional card types without a partner-driven case to avoid sprawl. Defer unless a worked example specifically degrades to clunky free-text (date booking, address picking, chart-on-data) without it.
+
 **Difficulty: Moderate–High.** The SSE event variant + React components + capability is one sprint of focused work. The embed-widget mirrors (especially the SVG chart renderer) are the schedule risk — every card type doubles to two implementations. Realistically one and a half to two sprints if all four card types ship together, or one sprint per pair if scoped down.
 
 ### 27. Conversation export / share (PDF or signed link) — ⚪ Not started
@@ -598,6 +614,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 
 **Risks.** Authorisation on the share link is the main risk — the signed URL alone is a capability, anyone with it sees the conversation. Acceptable for most cases (the partner shares intentionally); sensitive cases need a one-time-token-with-login model that is a bigger feature, deferred until a partner asks. Truncation of long conversations: default to "full export" but flag conversations over N turns to prevent an accidental unbounded PDF render — soft cap at 200 turns with a "download as multi-part" affordance if exceeded. The export captures the conversation at a moment in time — versioning the export itself (re-export a year later, are the citations still pointing at live sources?) is out of scope for v1 and documented as a known limitation.
 
+**Priority justification.** Reliable second-pilot ask — partners rarely request it pre-pilot but consistently ask once a pilot is live. Reuses nearly all existing infrastructure (`upload_to_storage` from item 16, Gotenberg from item 17, citation envelope from item 2). Half-to-one sprint; pick up the first time a partner asks. Composes with #29 (GDPR erasure — same upload+sign machinery) and #47 (provenance bundle — same render-template plumbing).
+
 **Difficulty: Low–Moderate.** Most of the moving parts already exist: persistence (`upload_to_storage`), PDF generation (Gotenberg + multipart), signed URLs, citation envelope. The new work is the HTML template, the capability wrapper, the per-agent toggle in `widgetConfig`, and the download buttons on two surfaces. Half a sprint to a sprint, depending on how many format variants ship together.
 
 ### 28. Live agent handover ("talk to a human") — ⚪ Not started
@@ -609,6 +627,8 @@ Items 24 and 25 close the channel-reach gap. Items 26 and 27 raise the conversat
 **Benefits.** Closes the most common partner pilot-blocker in regulated domains. Reuses the hook + outbound-webhook plumbing already in place for routing notifications. Composes cleanly with items 24 (SMS / WhatsApp as the duty channel) and 25 (email handover via a threaded reply). Creates a clean audit trail of human interventions — a metric of "% conversations escalated to human" becomes a partner-visible quality signal alongside the existing faithfulness / groundedness / relevance metrics. Pairs with item 22 (feedback-loop health) — a rising handover rate is itself a feedback-loop signal that the agent's confidence model may be degrading.
 
 **Risks.** Asynchronous handover is the messy case — if no duty admin is available within N seconds, the user is stuck waiting on a person who is not coming. Mitigation: configurable per-agent timeout with a fallback message ("No one is available right now — we'll get back to you within X hours") and an automatic transition to an email / SMS follow-up flow that pairs with item 25. Queue priority (FIFO vs urgency-weighted vs round-robin) needs an admin knob — default FIFO, with urgency weighting as a follow-on. The takeover-mode injection point in the streaming handler is the trickiest piece of plumbing — SSE is one-way, so admin-typed messages POST to a new endpoint that emits into the user's existing stream; this works but requires careful state management to avoid race conditions (an in-flight LLM call when the admin accepts). Trust-and-safety: an admin in takeover mode is sending messages to an end user as the platform — same threat model as a customer-support tool, and audit-logged accordingly.
+
+**Priority justification.** Highest-leverage Tier 6 commercial item after #24 — removes the most common pilot-blocker in regulated verticals (legal, mortgage, tenant-rights, council). Build after item 24 so handover can route to the operator's preferred duty channel (Slack / SMS / WhatsApp) without per-pilot custom code. Schedule risk concentrated in the streaming-handler takeover-mode plumbing; the rest is composition over existing patterns.
 
 **Difficulty: Moderate.** New capability + new admin surface + streaming-handler takeover-mode plumbing + new event hook + per-agent config + audit integration. Most of the pieces are extensions of existing patterns (the approval queue's admin UI for the handover list, the hook dispatcher for duty notification, `widgetConfig` for per-agent toggles). The streaming-handler injection is the genuinely new code and is the schedule risk. One and a half sprints.
 
@@ -669,6 +689,8 @@ This is the on-demand half of a primitive whose scheduled half already exists.
 - **Async dispatched work.** Inbound triggers and outbound webhooks both fire-and-forget — erasure cannot reach in-flight or yet-to-fire work. Mitigation: a 24-hour cooling period during which the erasure record is "pending dispatch", after which any newly-arriving data for that identifier is rejected at the channel-key match in the inbound handler.
 - **Audit-of-audit.** Who erases the erasure record? Mitigation: never. Erasure records carry only `identifierHash`, not the identifier itself, so the audit trail does not itself become a re-identification surface.
 
+**Priority justification.** Highest-leverage Tier 7 item — procurement-binary in regulated verticals (legal, financial, health, council, customer-resolution). Today partners write the SQL by hand or refuse the pilot. One sprint of bounded architectural work plus a per-model audit. Build first so Tier 7's downstream items (#33 per-end-user cost, #49 data portability) inherit the same identifier-walk machinery.
+
 **Difficulty: Moderate.** New module + two admin routes + one new table + one new admin page + redaction rules per model. The architectural work is bounded; the schedule risk is auditing every Prisma model for user-content fields. One sprint.
 
 ### 30. MCP outbound client — ⚪ Not started
@@ -695,6 +717,8 @@ This is distinct from A2A protocol support (Tier 4 de-prioritised): A2A is inter
 - **Tool-name collisions.** Two MCP servers may expose tools named `search` or `list`. Mitigation: capability resolver namespaces external tools as `mcp:{serverSlug}:{toolName}` so the LLM sees disambiguated names.
 - **Auth-secret hygiene.** External tokens stored in `AiMcpServer.authSecret` are sensitive. Mitigation: same plaintext-in-DB posture as `AiWorkflowTrigger.signingSecret` (acknowledged operational gap in `architectural-decisions.md`), with the same future-hardening path to envelope encryption.
 - **Discovery drift.** A server may add or remove tools between discoveries. Mitigation: agents bind to tool-names, not tool-shapes; missing tools surface as a step error with "tool no longer offered" rather than silent skip.
+
+**Priority justification.** Top-3 Tier 7 priority. Every external MCP server an agent can speak to is a new partner integration without per-vendor capability code. One-sprint build that pays off on the second integration onward. Sequence after #29 (the regulated-vertical procurement gate) and before #31 (which assumes external connectivity is solid).
 
 **Difficulty: Moderate.** New module + new capability + new table + new admin page + protocol-handler client implementation. Mirrors the existing server-side MCP work; same auth and allowlist primitives. One sprint.
 
@@ -725,6 +749,8 @@ A new admin page `/admin/orchestration/knowledge/stale` queues changed and gone 
 - **Re-ingestion cost.** Re-ingesting a 200-page PDF every week is wasteful when only the version footer changed. Mitigation: `changed-minor` state does _not_ auto-trigger re-ingestion; only `changed-content` does, and the admin decides when to re-ingest from the queue.
 - **Citation-deprecation UX.** A response that cites a deprecated source needs to surface the deprecation without alarming the end-user unnecessarily. Mitigation: chip styling matches the existing citation chip, with hover text "this source was updated on YYYY-MM-DD; the cited content may have changed" — informational, not alarmist.
 
+**Priority justification.** Mid-tier Tier 7 priority. Becomes urgent the moment partners are running citation-grounded advisors for several months; defer until the first partner pilot is at the corpus-rot timescale. Sprint cost is bounded (one sprint), runs on existing maintenance-tick + URL-fetcher plumbing. Pairs with item 22 (feedback-loop health) — both feed the same operations dashboard.
+
 **Difficulty: Moderate.** New scheduled tick + new table + new admin page + hook event + minor chip rendering change in the citation envelope. Reuses URL fetcher, maintenance-tick, event-hook plumbing. One sprint.
 
 ### 32. Voice output (TTS) — symmetric to item 19 — ⚪ Not started
@@ -751,6 +777,8 @@ The asymmetry of "we listen but we don't talk back" is conspicuous after item 19
 - **Audio file lifecycle.** Synthesized audio accumulates in `upload_to_storage`. Mitigation: tied to conversation lifecycle — synthesized audio gets the same retention as the conversation that produced it.
 - **Streaming vs file UX.** Voice output is naturally streaming, but the simpler MVP is "synthesize-then-play." Mitigation: ship file-based v1; streaming TTS is a follow-on if partners ask.
 
+**Priority justification.** Opportunistic Tier 7 item — low-effort symmetric polish to item 19 (voice input). Ship when the partner roadmap includes kiosk / IVR / accessibility-driven pilots, or as half-sprint filler between higher-priority work. Defer indefinitely if the partner pull is all desktop / chat.
+
 **Difficulty: Low–Moderate.** Provider method + SSE event + two render surfaces + cost integration + per-agent toggle. Half-to-one sprint.
 
 ### 33. Per-end-user cost attribution — ⚪ Not started
@@ -776,6 +804,8 @@ Pairs with item 29 (GDPR erasure) — both walk the same end-user identifier gra
 - **PII vs analytics tension.** End-user identifiers (email, phone) are PII. Mitigation: store hashed identifiers in `AiCostLog` (the raw value lives on `AiConversation`); analytics display masks the identifier; erasure (item 29) zeroes both.
 - **Cardinality.** A widely-deployed agent could see millions of end-user rows. Mitigation: partition the rollup table by month if cardinality bites; reuse the maintenance-tick pruning logic.
 - **Budget enforcement granularity.** Hitting an end-user cap mid-conversation is jarring. Mitigation: enforcement is at _conversation start_ by default (subsequent messages within the same conversation are allowed to complete); per-agent config can opt into hard mid-conversation enforcement for strict use cases.
+
+**Priority justification.** Conditional Tier 7 priority. Highest leverage for consumer-shaped pilots unlocked by items 24/25/26; low leverage for purely-internal deployments. Build alongside #29 so the identifier-walk module added there can be reused (the marginal cost is small if #29 has already shipped). Defer pre-consumer-pilots; pick up the first time a partner needs per-user billing or fair-use enforcement.
 
 **Difficulty: Low–Moderate.** Additive migration + one new route + one new dashboard card + budget-enforcement integration + erasure-walk extension. Half-to-one sprint.
 
@@ -804,6 +834,8 @@ The full execution trace is captured in the same `executionTraceEntry` shape as 
 - **Trace pollution.** Dry-runs in the executions list confuse audit views. Mitigation: `discardOnComplete: true` by default; retained dry-runs render with the Dry Run banner everywhere they appear.
 - **`llm_call` cost in live mode.** Authors who choose live mode get charged. Mitigation: cost preview before running; explicit "this will cost approximately $X" confirmation.
 
+**Priority justification.** Standalone Tier 7 win for workflow-heavy partners (inbound-trigger pilots, cron-driven workflows, anything with `external_call` or `send_notification` side-effects). One sprint, composes with item 12 (versioning) and item 10 (trace viewer) — both already shipped. Mid-tier priority — pick up when authoring fatigue on complex workflows becomes a felt problem.
+
 **Difficulty: Moderate.** Engine extension + stubbed-executor implementations + trace-viewer banner + workflow-builder mode toggle. One sprint.
 
 ### 35. Shadow / canary version routing — ⚪ Not started
@@ -829,6 +861,8 @@ This is the most architecturally-dependent item in Tier 7. It is _not_ a standal
 - **Two-version cost.** Cost dashboards aggregate to agent/workflow level; canary-on means costs double for a slice of traffic. Mitigation: cost breakdown by version on the canary dashboard so the overhead is visible.
 - **Diverging-result anxiety.** A canary that produces "different but arguably better" answers is the same dilemma as item 23a — the operator has to read the trade. Mitigation: the report is the same shape as item 23a's divergence report; same reading skill applies.
 - **Engine-dispatcher complexity.** Version resolution now consults a canary table on every execution. Mitigation: the canary lookup is a single indexed row read; cache the active-canary set in-process with invalidation on the canary admin routes.
+
+**Priority justification.** Lowest-priority Tier 7 item taken standalone — depends on item 23a (replay) shipping first to share scoring infrastructure. Sequence: ship 23a, run a model-upgrade replay against historical traffic, then build 35 when a partner asks for the live-traffic complement. One-to-two sprints; do not build speculatively.
 
 **Difficulty: Moderate–High.** Two new tables + dispatcher integration + canary admin page + trace-viewer divergence panel + promotion atomic operation. One-to-two sprints. Defer until item 23a has shipped and a partner has explicitly asked for the live-traffic complement.
 
@@ -857,6 +891,8 @@ The generator pulls from the existing `lib/orchestration/http/` fetcher for the 
 - **Codegen output sprawl.** Specs with hundreds of operations generate hundreds of capabilities. Mitigation: per-operation enable in the import UI; the LLM-binding step (which agents see which capabilities) is unaffected by the count.
 - **Spec drift from generated code.** If a vendor revises their spec, regeneration overwrites the file. Mitigation: generated files carry a header marker; regeneration prompts before overwriting; hand-edits are preserved as a `.local.ts` sibling.
 - **Arch-decisions misreading.** A future reader sees "OpenAPI generator" and assumes runtime-OpenAPI was reconsidered. Mitigation: the proposal text and the generated-capability file headers both state explicitly that OpenAPI is consumed once at codegen and the Zod schema is the persistent contract.
+
+**Priority justification.** Conditional Tier 7 priority — earns its keep only on the second or third OpenAPI-shipping vendor integration. Pre-launch the integration count is too low to justify; post-launch it becomes high-leverage. Build the first time procurement hands you a spec and asks "can your platform consume this?" One sprint, reuses item 3 (HTTP recipes) plumbing.
 
 **Difficulty: Moderate.** Generator CLI + admin upload UI + OpenAPI → Zod conversion (off-the-shelf library available) + Prisma seed emission + auth-mode inference. One sprint.
 
