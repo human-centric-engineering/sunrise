@@ -316,11 +316,16 @@ Uniform across every provider via `withRetry` + `fetchWithTimeout` (internal hel
 
 | Concern         | Cloud provider                               | Local provider              |
 | --------------- | -------------------------------------------- | --------------------------- |
-| Default timeout | 30s (overridable via `timeoutMs`)            | 10s (overridable)           |
+| Default timeout | 120s (overridable via `timeoutMs`)           | 60s (overridable)           |
 | Retry 429       | Yes (exp backoff)                            | Yes                         |
 | Retry 5xx       | Yes (exp backoff)                            | **No** — restart won't help |
-| Max retries     | 3 (overridable via `maxRetries`)             | 3 (overridable)             |
+| Max retries     | 2 (overridable via `maxRetries`)             | 2 (overridable)             |
 | Backoff         | 500ms → 1s → 2s + ±25% jitter, capped at 10s | same                        |
+
+Worst-case wall time on retriable failures: 3 attempts × 120s + ~3s of
+backoff ≈ 6 min for cloud, ~3 min for local. Workflow `llm_call` /
+`agent_call` steps run inside engine-level step timeouts that further
+bound this — the orchestrator step's default is also 120s.
 
 `ProviderError` carries `code` (stable short string), `status?` (HTTP code when known), `retriable` (consulted by `withRetry`), and `cause?`. SDK errors are narrowed via `toProviderError()` which extracts the `status` field that both `@anthropic-ai/sdk` and `openai` expose.
 
