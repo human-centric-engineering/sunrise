@@ -113,7 +113,7 @@ export function SourcesField({ value, layout = 'inline' }: SourcesFieldProps) {
   );
 }
 
-function SourcePill({ item }: { item: ProvenanceItem }) {
+export function SourcePill({ item }: { item: ProvenanceItem }) {
   const style = SOURCE_STYLES[item.source];
   const shortRef = shortenReference(item.reference);
   const glyph = CONFIDENCE_GLYPH[item.confidence];
@@ -140,7 +140,13 @@ function SourcePill({ item }: { item: ProvenanceItem }) {
   );
 }
 
-function SourceTooltipBody({ item, description }: { item: ProvenanceItem; description: string }) {
+export function SourceTooltipBody({
+  item,
+  description,
+}: {
+  item: ProvenanceItem;
+  description: string;
+}) {
   return (
     <div className="space-y-2 text-xs">
       <div className="flex items-center justify-between gap-3">
@@ -174,7 +180,7 @@ function SourceTooltipBody({ item, description }: { item: ProvenanceItem; descri
   );
 }
 
-function ReferenceLink({ reference, stepId }: { reference: string; stepId?: string }) {
+export function ReferenceLink({ reference, stepId }: { reference: string; stepId?: string }) {
   const isUrl = /^https?:\/\//i.test(reference);
   if (isUrl) {
     return (
@@ -195,7 +201,7 @@ function ReferenceLink({ reference, stepId }: { reference: string; stepId?: stri
   );
 }
 
-function shortenReference(reference: string | undefined): string | null {
+export function shortenReference(reference: string | undefined): string | null {
   if (!reference) return null;
   // Prefer a host for URLs; otherwise show a head-truncated reference so
   // the pill stays scannable in a dense table.
@@ -210,7 +216,7 @@ function shortenReference(reference: string | undefined): string | null {
   return reference.length > 24 ? `${reference.slice(0, 22)}…` : reference;
 }
 
-function tryStringify(value: unknown): string {
+export function tryStringify(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
