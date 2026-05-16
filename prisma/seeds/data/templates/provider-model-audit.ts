@@ -332,17 +332,20 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       //
       // The `reviewSchema` drives the structured admin UI: three
       // sections projected from the upstream parallel branch outputs,
-      // with per-change Accept / Reject (Phase 3 adds Modify). The
-      // markdown `prompt` is kept as a fallback for any approval
-      // surface that doesn't honour the schema (e.g. email notification
-      // bodies that interpolate the trace entry's `prompt`).
+      // with per-change Accept / Reject / Modify. The short markdown
+      // `prompt` is kept as a one-line summary for non-structured
+      // surfaces (e.g. email notification bodies, the markdown
+      // fallback when a section fails to parse). The full proposal
+      // detail lives in the trace entry's upstream step outputs —
+      // duplicating it into the prompt would be redundant and
+      // confusing once the structured viewer renders.
       {
         id: 'review_changes',
         name: 'Admin reviews proposed changes and new models',
         type: 'human_approval',
         config: {
           prompt:
-            'Review the proposed provider model changes, new model additions, and deactivation proposals below.\n\n## Proposed Changes to Existing Models\n\nThe audit has analysed your model entries and suggests the following updates. For each proposed change you can:\n- **Accept** — the change will be applied to the model entry\n- **Reject** — the change will be skipped\n- **Modify** — adjust the proposed value before accepting\n\n{{refine_findings.output}}\n\n## Proposed New Models\n\nThe audit has identified the following new models from your providers that are not yet in the registry. For each new model you can:\n- **Accept** — the model will be added to the registry\n- **Reject** — the model will not be added\n- **Modify** — adjust the proposed values before accepting\n\n{{discover_new_models.output}}\n\n## Proposed Deactivations\n\nThe audit has identified models that appear to be deprecated or discontinued by their providers. Deactivation sets isActive=false (soft delete) — the model can be reactivated later if needed. For each deactivation you can:\n- **Accept** — the model will be deactivated\n- **Reject** — the model will remain active\n\nDeactivation proposals from chat model analysis:\n{{analyse_chat.output}}\n\nDeactivation proposals from embedding model analysis:\n{{analyse_embedding.output}}\n\nAudit quality score: {{score_audit.output}}\n\n## Approval Payload Format\n\nWhen you approve, your payload should contain all three top-level keys (use an empty array for any category with no entries):\n- **models** — array of { model_id, changes: [{ field, currentValue, proposedValue, reason, confidence }] } for updates to existing models\n- **newModels** — array of new model entries to add (from the discovery section above)\n- **deactivateModels** — array of { modelId, reason } for models to deactivate',
+            "Review the proposed provider model audit results.\n\nThe audit produced field changes for existing models, new model proposals, and deactivation proposals — all visible in the structured viewer below. Audit quality score: {{score_audit.output}}.\n\nDecide per-change:\n- **Accept** — apply the change (default)\n- **Reject** — skip this change\n- **Modify** — edit the proposed value before accepting\n\nReject any change whose evidence looks thin or whose `currentValue` doesn't match what the audit saw (the registry may have moved on since the audit started).",
           timeoutMinutes: 1440,
           reviewSchema: {
             sections: [
