@@ -69,6 +69,8 @@ import {
 } from '@/components/admin/orchestration/execution-trace-filters';
 import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
+import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
+import { ExecutionStatusSynopsis } from '@/components/admin/orchestration/execution-status-synopsis';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -125,7 +127,19 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'outline' | 'destru
 
 // ─── Collapsible JSON card ──────────────────────────────────────────────────
 
-function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) {
+function CollapsibleJsonCard({
+  title,
+  data,
+  help,
+  helpTitle,
+}: {
+  title: string;
+  data: unknown;
+  /** Optional FieldHelp body — when provided, an ⓘ icon is shown next to the title. */
+  help?: React.ReactNode;
+  /** Heading shown inside the help popover. Defaults to `title`. */
+  helpTitle?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -164,6 +178,7 @@ function CollapsibleJsonCard({ title, data }: { title: string; data: unknown }) 
             )}
             <CardTitle className="text-sm">{title}</CardTitle>
           </button>
+          {help && <FieldHelp title={helpTitle ?? title}>{help}</FieldHelp>}
           <Button
             type="button"
             size="sm"
@@ -269,6 +284,16 @@ export function ExecutionDetailView({
     return [...persisted, synth];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveTrace, liveCurrentStep, tickClock]);
+
+  // Interpolation context for the per-row "Show resolved" toggle.
+  // Re-derives the LLM input client-side from the trace; vars set by the
+  // engine's retry path (e.g. `vars.__retryContext`) aren't persisted in
+  // the trace so they render as empty here. See
+  // `interpolate-from-trace.ts` for the caveats.
+  const interpolationContext = useMemo(
+    () => buildInterpolationContextFromTrace(displayTrace, execution.inputData),
+    [displayTrace, execution.inputData]
+  );
 
   // Group cost entries by stepId so each ExecutionTraceEntryRow can render
   // its own per-call breakdown. Memoised so the grouping doesn't re-run
@@ -654,23 +679,64 @@ export function ExecutionDetailView({
         </Card>
       </div>
 
-      {/* Error banner */}
-      {liveSnap.errorMessage && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap">
-            {liveSnap.errorMessage}
-          </pre>
-        </div>
-      )}
+      {/* Status synopsis — the "what went wrong" panel. Renders the
+          headline step, validator/executor reason, retry timeline,
+          predecessor output snippet, and skip tally for any non-clean
+          outcome. Subsumes the previous bare error banner: this
+          component reads errorMessage too, plus richer context. */}
+      <ExecutionStatusSynopsis
+        execution={{
+          status: liveSnap.status,
+          errorMessage: liveSnap.errorMessage,
+          currentStep: liveSnap.currentStep,
+        }}
+        trace={displayTrace}
+        onJumpToStep={handleSelectStep}
+        onRetry={canRetry ? (sid) => void handleRetryStep(sid) : undefined}
+      />
 
       {/* Input / Output cards */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <CollapsibleJsonCard title="Input Data" data={execution.inputData} />
-        <CollapsibleJsonCard title="Output Data" data={execution.outputData} />
+        <CollapsibleJsonCard
+          title="Input Data"
+          data={execution.inputData}
+          help={
+            <>
+              <p>
+                The payload supplied when this execution was started — the same object the engine
+                received from the caller.
+              </p>
+              <p className="mt-2">
+                Source depends on how the run was triggered: a chat message, webhook body, scheduled
+                trigger payload, MCP/API call, or the values entered on the admin{' '}
+                <strong>Run workflow</strong> form.
+              </p>
+              <p className="mt-2">
+                Steps reference it via <code>{'{{trigger.input.<field>}}'}</code>; top-level keys
+                also seed <code>vars</code>, so <code>{'{{vars.<field>}}'}</code> resolves the same
+                value at the start of the run.
+              </p>
+            </>
+          }
+        />
+        <CollapsibleJsonCard
+          title="Output Data"
+          data={execution.outputData}
+          help={
+            <>
+              <p>
+                The map of every completed step&apos;s output, keyed by step id. The engine writes
+                this only when the workflow reaches <strong>Completed</strong>; failed, cancelled,
+                and paused runs leave it empty (use the Step Timeline below for those).
+              </p>
+              <p className="mt-2">
+                It is the same object returned to whatever invoked the workflow — for example the
+                response body of a webhook trigger or the value resolved by an{' '}
+                <code>orchestrator</code> step in a parent workflow.
+              </p>
+            </>
+          }
+        />
       </div>
 
       {/* Aggregates + timeline strip — both hidden when trace.length < 2. */}
@@ -697,6 +763,14 @@ export function ExecutionDetailView({
           <div className="space-y-2">
             {filteredTrace.map((entry, idx) => {
               const rowKey = `${entry.stepId}-${idx}`;
+              // Engine semantics for `{{previous.output}}`: the most
+              // recent completed step in the full trace, NOT the
+              // previous DAG predecessor. Look back through
+              // `displayTrace` (unfiltered) so the resolved view shows
+              // what the engine actually saw even when the user has
+              // filtered the visible rows.
+              const fullIdx = displayTrace.findIndex((e) => e.stepId === entry.stepId);
+              const previousStepId = fullIdx > 0 ? displayTrace[fullIdx - 1].stepId : undefined;
               return (
                 <ExecutionTraceEntryRow
                   key={rowKey}
@@ -717,12 +791,15 @@ export function ExecutionDetailView({
                   outputTokens={entry.outputTokens}
                   llmDurationMs={entry.llmDurationMs}
                   costEntries={costEntriesByStep.get(entry.stepId)}
+                  provenance={entry.provenance}
                   retries={entry.retries}
                   highlighted={highlightedStepId === entry.stepId}
                   forkNumber={parallelForkNumberByStepId.get(entry.stepId)}
                   parallelBranchOfNumber={parallelBranchOfByStepId.get(entry.stepId)}
                   expanded={expandedStepKey === rowKey}
                   onExpandedChange={(next) => setExpandedStepKey(next ? rowKey : null)}
+                  interpolationContext={interpolationContext}
+                  previousStepId={previousStepId}
                 />
               );
             })}

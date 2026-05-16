@@ -27,6 +27,7 @@ function makeRow(overrides: Partial<AiProviderModel> = {}): AiProviderModel {
     description: '',
     capabilities: ['chat'],
     tierRole: 'thinking',
+    deploymentProfiles: ['hosted'],
     reasoningDepth: 'very_high',
     latency: 'medium',
     costEfficiency: 'medium',
@@ -56,8 +57,17 @@ describe('mapTierRoleToTier', () => {
     expect(mapTierRoleToTier('thinking')).toBe('frontier');
   });
 
-  it('maps local_sovereign → local', () => {
-    expect(mapTierRoleToTier('local_sovereign')).toBe('local');
+  it('maps sovereign deployment profile → local (overrides tier)', () => {
+    // Deployment locus takes precedence over capability tier — a
+    // thinking-tier sovereign-deployable model collapses to `local`
+    // so existing registry filters keep working.
+    expect(mapTierRoleToTier('thinking', ['sovereign'])).toBe('local');
+    expect(mapTierRoleToTier('worker', ['sovereign'])).toBe('local');
+  });
+
+  it('hosted-only tier roles preserve their capability mapping', () => {
+    expect(mapTierRoleToTier('worker', ['hosted'])).toBe('mid');
+    expect(mapTierRoleToTier('thinking', ['hosted'])).toBe('frontier');
   });
 
   it('maps infrastructure → budget', () => {

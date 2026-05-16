@@ -70,7 +70,9 @@ function makeExecutionDetail() {
       startedAt: '2026-04-28T10:00:00Z',
       completedAt: null,
       createdAt: '2026-04-28T10:00:00Z',
-      workflow: { id: 'wf-1', name: 'Compliance Review' },
+      // Non-audit slug so the structured dispatch in approvals-table
+      // does NOT activate for the default fixture.
+      workflow: { id: 'wf-1', name: 'Compliance Review', slug: 'tpl-compliance-review' },
     },
     trace: [
       {
@@ -706,6 +708,181 @@ describe('ApprovalsTable', () => {
       await waitFor(() => {
         expect(screen.getByText(/Completed steps before approval/)).toBeInTheDocument();
         expect(screen.getByText('Draft response')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('structured approval dispatch', () => {
+    // When the paused execution belongs to a workflow whose slug is in the
+    // structured-approval allowlist (currently only `tpl-provider-model-audit`)
+    // AND the awaiting_approval trace entry carries a valid `reviewSchema`,
+    // the table swaps the markdown view for `<StructuredApprovalView>`.
+    function makeAuditExecutionDetail() {
+      return {
+        ...makeExecutionDetail(),
+        execution: {
+          ...makeExecutionDetail().execution,
+          workflow: {
+            id: 'wf-1',
+            name: 'Provider Model Audit',
+            slug: 'tpl-provider-model-audit',
+          },
+        },
+        trace: [
+          {
+            stepId: 'discover_new_models',
+            stepType: 'agent_call' as const,
+            label: 'Discover new models',
+            status: 'completed' as const,
+            output: {
+              newModels: [{ slug: 'openai-gpt-5', name: 'GPT-5', providerSlug: 'openai' }],
+            },
+            tokensUsed: 100,
+            costUsd: 0.001,
+            startedAt: '2026-04-28T10:00:00Z',
+            completedAt: '2026-04-28T10:00:01Z',
+            durationMs: 1000,
+          },
+          {
+            stepId: 'review_changes',
+            stepType: 'human_approval' as const,
+            label: 'Review changes',
+            status: 'awaiting_approval' as const,
+            output: {
+              prompt: 'Review the audit results.',
+              reviewSchema: {
+                sections: [
+                  {
+                    id: 'newModels',
+                    title: 'Proposed new models',
+                    source: '{{discover_new_models.output.newModels}}',
+                    itemKey: 'slug',
+                    itemTitle: '{{item.name}} ({{item.providerSlug}})',
+                    fields: [{ key: 'name', label: 'Name', display: 'text' as const }],
+                  },
+                ],
+              },
+            },
+            tokensUsed: 0,
+            costUsd: 0,
+            startedAt: '2026-04-28T10:00:01Z',
+            completedAt: '2026-04-28T10:00:01Z',
+            durationMs: 0,
+          },
+        ],
+      };
+    }
+
+    it('renders the structured viewer for tpl-provider-model-audit', async () => {
+      const auditApprovals = [
+        {
+          ...TWO_APPROVALS[0],
+          workflow: {
+            id: 'wf-1',
+            name: 'Provider Model Audit',
+            slug: 'tpl-provider-model-audit',
+          },
+        },
+      ];
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: makeAuditExecutionDetail() })
+      );
+
+      render(
+        <ApprovalsTable
+          initialApprovals={auditApprovals as typeof TWO_APPROVALS}
+          initialMeta={MOCK_META}
+        />
+      );
+
+      const row = screen.getByText('Provider Model Audit').closest('tr');
+      await userEvent.click(row!);
+
+      // Structured viewer header — distinct from the markdown view's
+      // "Approval prompt" amber banner. Two indicators: the per-change
+      // summary text and the "Approve selected" button.
+      await waitFor(() => {
+        expect(screen.getByText(/will be applied on approve/)).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /Approve selected/ })).toBeInTheDocument();
+      expect(screen.queryByText('Approval prompt')).not.toBeInTheDocument();
+      // The proposed new model from the trace is rendered in a section.
+      expect(screen.getByText('Proposed new models')).toBeInTheDocument();
+      expect(screen.getByText(/GPT-5 \(openai\)/)).toBeInTheDocument();
+    });
+
+    it('keeps the markdown view for non-audit workflows even with a reviewSchema in trace', async () => {
+      // Defence-in-depth: the slug allowlist gates the structured branch
+      // even if a stray reviewSchema appears in trace. This prevents
+      // accidental opt-in via a malformed seed.
+      const detail = makeAuditExecutionDetail();
+      detail.execution.workflow.slug = 'tpl-not-allowlisted';
+      mockFetch.mockResolvedValueOnce(createMockFetchResponse({ success: true, data: detail }));
+
+      render(<ApprovalsTable initialApprovals={TWO_APPROVALS} initialMeta={MOCK_META} />);
+
+      const row = screen.getByText('Compliance Review').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByText('Approval prompt')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/will be applied on approve/)).not.toBeInTheDocument();
+    });
+
+    it('approve flow forwards the structured payload to the API', async () => {
+      const auditApprovals = [
+        {
+          ...TWO_APPROVALS[0],
+          workflow: {
+            id: 'wf-1',
+            name: 'Provider Model Audit',
+            slug: 'tpl-provider-model-audit',
+          },
+        },
+      ];
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: makeAuditExecutionDetail() })
+      );
+
+      render(
+        <ApprovalsTable
+          initialApprovals={auditApprovals as typeof TWO_APPROVALS}
+          initialMeta={MOCK_META}
+        />
+      );
+
+      const row = screen.getByText('Provider Model Audit').closest('tr');
+      await userEvent.click(row!);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Approve selected/ })).toBeInTheDocument();
+      });
+
+      // Stage the approve POST response.
+      mockFetch.mockResolvedValueOnce(
+        createMockFetchResponse({ success: true, data: { ok: true } })
+      );
+      await userEvent.click(screen.getByRole('button', { name: /Approve selected/ }));
+
+      // Confirm the AlertDialog and submit.
+      const approveButton = await screen.findByRole('button', { name: 'Approve' });
+      await userEvent.click(approveButton);
+
+      await waitFor(() => {
+        // Find the approve POST among the fetch calls (list refetch may
+        // also fire). The structured branch sends `approvalPayload` in
+        // the body keyed by section id.
+        const approveCall = mockFetch.mock.calls.find(
+          ([url, init]) =>
+            typeof url === 'string' && url.includes('/approve') && init?.method === 'POST'
+        );
+        expect(approveCall).toBeDefined();
+        const body = JSON.parse((approveCall![1] as RequestInit).body as string);
+        expect(body.approvalPayload).toBeDefined();
+        expect(body.approvalPayload.newModels).toEqual([
+          { slug: 'openai-gpt-5', name: 'GPT-5', providerSlug: 'openai' },
+        ]);
       });
     });
   });

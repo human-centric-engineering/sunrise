@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
+import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
 
 export const metadata: Metadata = {
   title: {
@@ -41,6 +42,7 @@ export default async function AdminLayout({
       <AdminSidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <AdminHeader />
+        <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
       </div>
     </div>

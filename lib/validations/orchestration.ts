@@ -17,6 +17,8 @@ import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
+import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
+import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 
 // ============================================================================
 // Shared Schemas
@@ -1364,14 +1366,28 @@ export const listProvidersQuerySchema = paginationQuerySchema.extend({
 // Provider Models (Selection Matrix)
 // ============================================================================
 
+// Capability tier — what kind of work the model is for. Orthogonal to
+// deploymentProfilesSchema below.
+//
+// `local_sovereign` was removed 2026-05-16. See
+// `.context/orchestration/meta/architectural-decisions.md` §3.11. Rows
+// that previously carried it are migrated to `tierRole: 'worker'` plus
+// `deploymentProfiles: ['sovereign']` via
+// `prisma/migrations/20260516120000_add_deployment_profiles`.
 const tierRoleSchema = z.enum([
   'thinking',
   'worker',
   'infrastructure',
   'control_plane',
-  'local_sovereign',
   'embedding',
 ]);
+
+const deploymentProfileSchema = z.enum(['hosted', 'sovereign']);
+
+const deploymentProfilesSchema = z
+  .array(deploymentProfileSchema)
+  .min(1, 'At least one deployment profile is required')
+  .max(8);
 
 const ratingLevelSchema = z.enum(['very_high', 'high', 'medium', 'none']);
 const contextLengthLevelSchema = z.enum(['very_high', 'high', 'medium', 'n_a']);
@@ -1418,6 +1434,7 @@ export const createProviderModelSchema = z.object({
 
   capabilities: z.array(capabilitySchema).min(1).default(['chat']),
   tierRole: tierRoleSchema,
+  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
   reasoningDepth: ratingLevelSchema,
   latency: latencyLevelSchema,
   costEfficiency: ratingLevelSchema,
@@ -1478,6 +1495,7 @@ export const updateProviderModelSchema = z.object({
 
   capabilities: z.array(capabilitySchema).min(1).optional(),
   tierRole: tierRoleSchema.optional(),
+  deploymentProfiles: deploymentProfilesSchema.optional(),
   reasoningDepth: ratingLevelSchema.optional(),
   latency: latencyLevelSchema.optional(),
   costEfficiency: ratingLevelSchema.optional(),
@@ -1529,6 +1547,7 @@ const bulkProviderModelRowSchema = z.object({
     .default(''),
   capabilities: z.array(capabilitySchema).min(1).default(['chat']),
   tierRole: tierRoleSchema,
+  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
   reasoningDepth: ratingLevelSchema,
   latency: latencyLevelSchema,
   costEfficiency: ratingLevelSchema,
@@ -2353,6 +2372,12 @@ export const executionTraceEntrySchema = z
       .array(turnEntrySchema)
       .optional()
       .catch(() => undefined),
+    // Source attribution lifted by the engine from `output.sources`. Like
+    // `turns`, this is best-effort observability — a malformed array on
+    // a legacy entry must not fail the parse and drop the row from
+    // resume / visited-set seeding. `.catch(() => undefined)` mirrors
+    // the `turns` defence above.
+    provenance: provenanceItemArraySchema.optional().catch(() => undefined),
   })
   // Forward-compat: keep unknown fields on the parsed entry so a future
   // engine version that adds a field, persists it, and is then read by
@@ -2451,6 +2476,14 @@ export const humanApprovalConfigSchema = stepErrorConfigSchema.extend({
   notificationChannel: notificationChannelSchema.optional(),
   /** User IDs who are allowed to approve/reject (in addition to the execution owner). */
   approverUserIds: z.array(z.string().cuid2()).optional(),
+  /**
+   * Optional declarative schema that drives the structured admin
+   * approval UI. When present, the admin sees per-section,
+   * per-item accept/reject/modify controls instead of a markdown
+   * prompt wall; selections are projected into the request's
+   * `approvalPayload`. See `lib/orchestration/review-schema/types.ts`.
+   */
+  reviewSchema: reviewSchemaSchema.optional(),
 });
 
 export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
@@ -2633,11 +2666,19 @@ export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
     to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
     subject: z.string().min(1).max(200),
     bodyTemplate: z.string().min(1).max(10_000),
+    // Opt-in: 'failed' tells the engine to finalise the workflow as
+    // FAILED with the interpolated bodyTemplate as the visible reason
+    // after the notification has been sent (or skipped per
+    // errorStrategy). Use on fail-branch tail steps so the execution
+    // row's status matches what actually happened. See
+    // `lib/orchestration/engine/executors/notification.ts` for details.
+    terminalStatus: z.enum(['completed', 'failed']).optional(),
   }),
   stepErrorConfigSchema.extend({
     channel: z.literal('webhook'),
     webhookUrl: z.string().url(),
     bodyTemplate: z.string().min(1).max(10_000),
+    terminalStatus: z.enum(['completed', 'failed']).optional(),
   }),
 ]);
 

@@ -61,6 +61,7 @@ import {
   type WorkflowStep,
 } from '@/types/orchestration';
 import { rollupTelemetry } from '@/lib/orchestration/trace/aggregate';
+import { extractProvenance } from '@/lib/orchestration/provenance/types';
 import {
   createContext,
   mergeStepResult,
@@ -1154,6 +1155,11 @@ export class OrchestrationEngine {
 
     const result = stepResult as StepResult;
     mergeStepResult(ctx, step.id, result);
+    // Lift `output.sources` (if present and shape-valid) onto a typed
+    // trace field. Opt-in: invalid or absent shapes return undefined and
+    // the spread-conditional below omits the key entirely. See
+    // `lib/orchestration/provenance/types.ts` for the contract.
+    const completedProvenance = result.skipped ? undefined : extractProvenance(result.output);
     trace.push({
       stepId: step.id,
       stepType: step.type,
@@ -1175,6 +1181,7 @@ export class OrchestrationEngine {
       input: step.config,
       ...rollupTelemetry(telemetryOut),
       ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
+      ...(completedProvenance ? { provenance: completedProvenance } : {}),
     });
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
@@ -1220,6 +1227,24 @@ export class OrchestrationEngine {
       result.nextStepIds && result.nextStepIds.length > 0
         ? result.nextStepIds
         : step.nextSteps.map((edge) => edge.targetStepId);
+
+    // `failWorkflow` is the explicit "this step authored a failure
+    // termination" signal — used by `send_notification` with
+    // `terminalStatus: 'failed'` so a fail-branch's tail step doesn't
+    // leave the execution marked COMPLETED. Yield workflow_failed here
+    // (mirroring the step-error path at 1149) so the DAG walk's main
+    // loop sees `failed: true` and finalises the row accordingly.
+    if (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) {
+      const reason = result.failWorkflow;
+      yield workflowFailed(reason, step.id);
+      return {
+        failed: true,
+        paused: false,
+        terminal: true,
+        failureReason: reason,
+        nextIds: [],
+      };
+    }
 
     return {
       failed: false,
@@ -1435,6 +1460,12 @@ export class OrchestrationEngine {
       // Success — merge result into context.
       const stepResult = result as StepResult;
       mergeStepResult(ctx, step.id, stepResult);
+      // Mirror the sequential path's provenance lift. Each branch in a
+      // parallel batch gets its own trace row with its own optional
+      // `provenance` field — there is no merging across siblings.
+      const parallelProvenance = stepResult.skipped
+        ? undefined
+        : extractProvenance(stepResult.output);
       trace.push({
         stepId: step.id,
         stepType: step.type,
@@ -1453,6 +1484,7 @@ export class OrchestrationEngine {
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
+        ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
       await this.checkpoint(lease, ctx, trace);
 
@@ -1471,6 +1503,18 @@ export class OrchestrationEngine {
       }
 
       lastOutput = stepResult.output;
+
+      // Mirror the sequential `failWorkflow` handling: if any branch of
+      // a parallel batch authored a failure-termination signal, treat
+      // the whole batch as failed and propagate the reason. The batch
+      // already records each branch's trace row above, so the operator
+      // can see which branch tripped the failure.
+      if (typeof stepResult.failWorkflow === 'string' && stepResult.failWorkflow.length > 0) {
+        allEvents.push(workflowFailed(stepResult.failWorkflow, step.id));
+        batchFailed = true;
+        batchFailureReason = stepResult.failWorkflow;
+        continue;
+      }
 
       const nextIds =
         stepResult.nextStepIds && stepResult.nextStepIds.length > 0

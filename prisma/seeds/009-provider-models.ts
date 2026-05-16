@@ -690,7 +690,8 @@ const unit: SeedUnit = {
         description:
           'Open-weight model for local/private deployment. No data leaves your infrastructure.',
         capabilities: ['chat'],
-        tierRole: 'local_sovereign',
+        tierRole: 'worker',
+        deploymentProfiles: ['sovereign'],
         reasoningDepth: 'medium',
         latency: 'medium',
         costEfficiency: 'very_high',
@@ -706,7 +707,8 @@ const unit: SeedUnit = {
         name: 'Llama 3.2 8B',
         description: 'Lightweight open-weight model. Fast local inference for simple tasks.',
         capabilities: ['chat'],
-        tierRole: 'local_sovereign',
+        tierRole: 'worker',
+        deploymentProfiles: ['sovereign'],
         reasoningDepth: 'medium',
         latency: 'fast',
         costEfficiency: 'very_high',
@@ -717,7 +719,7 @@ const unit: SeedUnit = {
       },
 
       // ========================================================================
-      // Alibaba — Sovereign
+      // Alibaba — Sovereign-deployable thinking-tier model
       // ========================================================================
       {
         slug: 'alibaba-qwen-2-5-72b',
@@ -727,7 +729,8 @@ const unit: SeedUnit = {
         description:
           'Strong multilingual model with competitive performance. Good for sovereign deployment.',
         capabilities: ['chat'],
-        tierRole: 'local_sovereign',
+        tierRole: 'thinking',
+        deploymentProfiles: ['sovereign'],
         reasoningDepth: 'high',
         latency: 'fast',
         costEfficiency: 'high',
@@ -815,6 +818,10 @@ const unit: SeedUnit = {
         description: model.description,
         capabilities: model.capabilities,
         tierRole: model.tierRole,
+        // Default to ['hosted'] for any row that doesn't declare its
+        // deployment profile explicitly. Sovereign rows are the explicit
+        // exception (see Llama 3, Qwen 2.5 above).
+        deploymentProfiles: model.deploymentProfiles ?? ['hosted'],
         reasoningDepth: model.reasoningDepth,
         latency: model.latency,
         costEfficiency: model.costEfficiency,

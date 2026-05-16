@@ -999,6 +999,7 @@ const matrixRowSchema = z.object({
   name: z.string(),
   providerSlug: z.string(),
   tierRole: z.string().optional(),
+  deploymentProfiles: z.array(z.string()).optional(),
 });
 
 const providerRowSchema = z.object({
@@ -1025,7 +1026,8 @@ const settingsObjectSchema = z.object({}).passthrough();
  * settings page version is a server-only module — duplicating five
  * lines is cheaper than wrestling it into a shared client-safe module.
  */
-function tierFromMatrixRole(role: string | undefined): ModelTier {
+function tierFromMatrixRole(role: string | undefined, deploymentProfiles?: string[]): ModelTier {
+  if (deploymentProfiles?.includes('sovereign')) return 'local';
   switch (role) {
     case 'thinking':
       return 'frontier';
@@ -1034,8 +1036,6 @@ function tierFromMatrixRole(role: string | undefined): ModelTier {
     case 'infrastructure':
     case 'control_plane':
       return 'budget';
-    case 'local_sovereign':
-      return 'local';
     default:
       return 'mid';
   }
@@ -1086,7 +1086,7 @@ function StepDefaultModels({ onComplete }: StepDefaultModelsProps): React.ReactE
                 id: row.modelId,
                 name: row.name,
                 provider: row.providerSlug,
-                tier: tierFromMatrixRole(row.tierRole),
+                tier: tierFromMatrixRole(row.tierRole, row.deploymentProfiles),
                 inputCostPerMillion: 0,
                 outputCostPerMillion: 0,
                 maxContext: 0,

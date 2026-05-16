@@ -31,9 +31,12 @@ import {
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import {
+  DEPLOYMENT_PROFILES,
+  DEPLOYMENT_PROFILE_META,
   MODEL_CAPABILITIES,
   STORAGE_ONLY_CAPABILITIES,
   TIER_ROLE_META,
+  type DeploymentProfile,
   type ModelCapability,
   type TierRole,
 } from '@/types/orchestration';
@@ -110,14 +113,10 @@ const modelFormSchema = z.object({
   modelId: z.string().min(1, 'Model ID is required').max(100),
   description: z.string().min(1, 'Description is required').max(2000),
   capabilities: z.array(z.enum(MODEL_CAPABILITIES)).min(1, 'At least one capability is required'),
-  tierRole: z.enum([
-    'thinking',
-    'worker',
-    'infrastructure',
-    'control_plane',
-    'local_sovereign',
-    'embedding',
-  ]),
+  tierRole: z.enum(['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding']),
+  deploymentProfiles: z
+    .array(z.enum(['hosted', 'sovereign']))
+    .min(1, 'At least one deployment profile is required'),
   reasoningDepth: z.enum(['very_high', 'high', 'medium', 'none']),
   latency: z.enum(['very_fast', 'fast', 'medium']),
   costEfficiency: z.enum(['very_high', 'high', 'medium', 'none']),
@@ -157,6 +156,7 @@ export interface ProviderModelData {
   description: string;
   capabilities: string[];
   tierRole: string;
+  deploymentProfiles?: string[];
   reasoningDepth: string;
   latency: string;
   costEfficiency: string;
@@ -217,6 +217,9 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
         return valid.length > 0 ? valid : model ? [] : ['chat'];
       })(),
       tierRole: (model?.tierRole as ModelFormData['tierRole']) ?? 'thinking',
+      deploymentProfiles: (model?.deploymentProfiles as ModelFormData['deploymentProfiles']) ?? [
+        'hosted',
+      ],
       reasoningDepth: (model?.reasoningDepth as ModelFormData['reasoningDepth']) ?? 'medium',
       latency: (model?.latency as ModelFormData['latency']) ?? 'medium',
       costEfficiency: (model?.costEfficiency as ModelFormData['costEfficiency']) ?? 'medium',
@@ -279,6 +282,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       description: data.description,
       capabilities: data.capabilities,
       tierRole: data.tierRole,
+      deploymentProfiles: data.deploymentProfiles,
       reasoningDepth: data.reasoningDepth,
       latency: data.latency,
       costEfficiency: data.costEfficiency,
@@ -496,6 +500,57 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
             </SelectContent>
           </Select>
           {errors.tierRole && <p className="text-destructive text-xs">{errors.tierRole.message}</p>}
+        </div>
+
+        {/* Deployment profile — orthogonal to tier role. A model carries
+            one or more profiles describing where it runs. */}
+        <div className="space-y-2">
+          <Label>
+            Deployment{' '}
+            <FieldHelp title="Deployment profile">
+              <p>
+                Where the model runs &mdash; orthogonal to its tier role. <strong>Hosted</strong>{' '}
+                means the vendor&apos;s managed API; <strong>Sovereign</strong> means it runs on
+                your own infrastructure (Ollama, vLLM, self-hosted). A model can carry both if
+                it&apos;s available either way.
+              </p>
+            </FieldHelp>
+          </Label>
+          <div className="space-y-2">
+            {DEPLOYMENT_PROFILES.map((profile) => {
+              const meta = DEPLOYMENT_PROFILE_META[profile];
+              const checked = watch('deploymentProfiles')?.includes(profile) ?? false;
+              const inputId = `deployment-profile-${profile}`;
+              return (
+                <label
+                  key={profile}
+                  htmlFor={inputId}
+                  className="hover:bg-muted/50 flex items-start gap-3 rounded-md border p-3"
+                >
+                  <Checkbox
+                    id={inputId}
+                    checked={checked}
+                    onCheckedChange={(next) => {
+                      const current = new Set<DeploymentProfile>(watch('deploymentProfiles') ?? []);
+                      if (next) current.add(profile);
+                      else current.delete(profile);
+                      setValue('deploymentProfiles', Array.from(current), {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      });
+                    }}
+                  />
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">{meta.label}</p>
+                    <p className="text-muted-foreground text-xs">{meta.description}</p>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          {errors.deploymentProfiles && (
+            <p className="text-destructive text-xs">{errors.deploymentProfiles.message}</p>
+          )}
         </div>
 
         {/* Rating dimensions */}

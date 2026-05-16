@@ -137,6 +137,30 @@ describe('AgentForm — Model tab', () => {
       });
     });
 
+    it('caps the model popover at 60vh so long lists scroll on short screens', async () => {
+      // Without an explicit max-h on the SelectContent the popover relies on
+      // Radix's `--radix-select-content-available-height`, which only covers
+      // the space below the trigger. On mid-page short screens with 20+ models
+      // the popover ran off the viewport with no scroll. The fix is a tighter
+      // viewport-relative cap. Asserting the class is the regression guard —
+      // a future cleanup that strips the className would re-introduce the bug.
+      const user = await renderAndOpenModelTab();
+
+      // Open the model combobox so Radix renders the SelectContent.
+      const modelSelect = screen.getByRole('combobox', { name: /model/i });
+      await user.click(modelSelect);
+
+      // The model combobox's `aria-controls` points at the SelectContent's
+      // outer wrapper — that's the element carrying max-h-[60vh].
+      await waitFor(() => {
+        const contentId = modelSelect.getAttribute('aria-controls');
+        expect(contentId).toBeTruthy();
+        const content = document.getElementById(contentId!);
+        expect(content).not.toBeNull();
+        expect(content!.className).toMatch(/max-h-\[60vh\]/);
+      });
+    });
+
     it('auto-resets model when provider changes to one that does not own current model', async () => {
       // Hits the useEffect at agent-form.tsx:172-179. Default provider is
       // anthropic with model claude-opus-4-6; switching to openai makes the
@@ -155,6 +179,135 @@ describe('AgentForm — Model tab', () => {
       await waitFor(() => {
         const modelTrigger = screen.getByRole('combobox', { name: /model/i });
         expect(modelTrigger).toHaveTextContent(/gpt-4o/i);
+      });
+    });
+  });
+
+  // ── Legacy model fallback (saved model no longer in matrix) ───────────────
+
+  describe('legacy model fallback on edit', () => {
+    // The agent form's model dropdown is restricted to the operator-
+    // curated provider matrix. When editing an existing agent whose
+    // saved model is no longer in that matrix (matrix row deactivated
+    // or deleted since the agent was last saved), the form must:
+    //   1. Surface the saved model as a SelectItem so the operator
+    //      doesn't silently lose the selection;
+    //   2. Mark it as "no longer in matrix" so they know to pick a
+    //      replacement before saving;
+    //   3. Skip the auto-reset that would otherwise switch to
+    //      filteredModels[0] (which would drop the legacy value).
+    //
+    // Without this fallback the existing agent's model field flips on
+    // first edit — a confusing UX regression.
+
+    const SAVED_AGENT_WITH_LEGACY_MODEL = {
+      id: 'agent-1',
+      slug: 'archived-bot',
+      name: 'Archived Bot',
+      description: 'Predates the current matrix',
+      provider: 'anthropic',
+      model: 'claude-opus-3-deprecated',
+      systemInstructions: 'be helpful',
+      visibility: 'internal' as const,
+      retentionDays: 30,
+      temperature: 0.7,
+      maxTokens: 4096,
+      isActive: true,
+      rateLimitRpm: null,
+      maxHistoryTokens: null,
+      maxHistoryMessages: null,
+      enableImageInput: false,
+      enableDocumentInput: false,
+      enableAudioInput: false,
+      enableVoiceInput: false,
+      inputGuardMode: 'inherit',
+      outputGuardMode: 'inherit',
+      contextWindowAlertThreshold: 80,
+      citationGuardMode: 'inherit',
+      knowledgeAccessMode: 'full' as const,
+      structuredOutputSchema: null,
+      providerFallbacks: [],
+      attachmentMaxBytes: null,
+      attachmentMaxCount: null,
+      attachmentAllowedExt: [],
+      voiceTtsModel: null,
+      voiceTtsVoice: null,
+      activeVersionId: null,
+      widgetConfig: null,
+      userId: 'user-1',
+      createdBy: 'user-1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function renderEditWithLegacyModel() {
+      // Use type assertion only for the unknown-prop mismatches between
+      // the fixture and the live Prisma model shape — irrelevant to the
+      // assertions below.
+
+      const agent = SAVED_AGENT_WITH_LEGACY_MODEL as any;
+      return render(<AgentForm mode="edit" agent={agent} providers={PROVIDERS} models={MODELS} />);
+    }
+
+    it('renders the saved model as a SelectItem even though it is not in the matrix', async () => {
+      const user = userEvent.setup();
+      renderEditWithLegacyModel();
+      await user.click(screen.getByRole('tab', { name: /model/i }));
+
+      // The model trigger displays the saved (legacy) value.
+      const modelTrigger = screen.getByRole('combobox', { name: /model/i });
+      expect(modelTrigger).toHaveTextContent('claude-opus-3-deprecated');
+
+      // Open the dropdown — the legacy option is present with the
+      // "no longer in matrix" marker, alongside the in-matrix options.
+      await user.click(modelTrigger);
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('model-option-legacy-claude-opus-3-deprecated')
+        ).toBeInTheDocument();
+        // In-matrix options still listed below.
+        expect(screen.getByRole('option', { name: /claude-opus-4-6/i })).toBeInTheDocument();
+      });
+    });
+
+    it('displays the "no longer in matrix" badge text on the legacy option', async () => {
+      const user = userEvent.setup();
+      renderEditWithLegacyModel();
+      await user.click(screen.getByRole('tab', { name: /model/i }));
+
+      // The badge appears in TWO places — Radix's SelectValue mirrors
+      // the selected option's children into the trigger, AND the
+      // dropdown renders the option itself. Both surfaces should show
+      // the marker so the operator sees it pre-open. Assert ≥ 1 to
+      // confirm the trigger displays it. The dropdown render is
+      // covered by the testid assertion in the previous test.
+      await waitFor(() => {
+        expect(screen.getAllByText(/no longer in matrix/i).length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('does NOT auto-reset the saved model on initial render', async () => {
+      // Regression guard against the auto-reset effect at agent-form.tsx
+      // (which kicks in when filteredModels lacks the current model).
+      // The legacy-entry synthesis must keep `currentModel` valid so the
+      // effect's `valid` check returns true and no reset fires.
+      const user = userEvent.setup();
+      renderEditWithLegacyModel();
+      await user.click(screen.getByRole('tab', { name: /model/i }));
+
+      const modelTrigger = screen.getByRole('combobox', { name: /model/i });
+      // Allow a frame for any effect-driven setValue calls to settle.
+      await waitFor(() => {
+        expect(modelTrigger).toHaveTextContent('claude-opus-3-deprecated');
+      });
+    });
+
+    it('does NOT show the legacy badge in create mode (only edit)', async () => {
+      const user = await renderAndOpenModelTab();
+      await user.click(screen.getByRole('combobox', { name: /model/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/no longer in matrix/i)).not.toBeInTheDocument();
       });
     });
   });

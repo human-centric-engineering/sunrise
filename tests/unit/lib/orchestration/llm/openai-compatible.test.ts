@@ -332,6 +332,91 @@ describe('chat', () => {
     expect(calledParams?.max_tokens).toBe(256);
     expect(response.content).toBe('ok');
   });
+
+  it('throws truncated_no_output when finish_reason is length with empty content and no tool calls', async () => {
+    // Arrange — gpt-5 reasoning models can consume the entire
+    // `max_completion_tokens` budget on reasoning, leaving empty
+    // visible content. The SDK reports this as
+    // `finish_reason: 'length'`. Without this guard the engine
+    // would silently treat the empty content as valid and downstream
+    // steps would invent confused validation failures.
+    chatCreateMock.mockResolvedValue({
+      id: 'cmpl-test',
+      model: 'gpt-5',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '', tool_calls: null },
+          finish_reason: 'length',
+        },
+      ],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 4096,
+        completion_tokens_details: { reasoning_tokens: 4096 },
+      },
+    });
+
+    // Act
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-5',
+        maxTokens: 4096,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert — clear ProviderError surfaces, mentioning reasoning tokens
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as Error).message).toMatch(/maxTokens/i);
+    expect((caught as Error).message).toMatch(/4096/);
+  });
+
+  it('returns content normally when finish_reason is length but content is non-empty', async () => {
+    // Arrange — a short-but-valid response that hit the cap. We
+    // must NOT throw here: the visible content is meaningful even
+    // if the model wanted to say more.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('partial answer', 'length'));
+
+    // Act
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], { model: 'gpt-4o' });
+
+    // Assert
+    expect(response.content).toBe('partial answer');
+    expect(response.finishReason).toBe('length');
+  });
+
+  it('surfaces reasoning_tokens in usage when the SDK reports it', async () => {
+    // Arrange
+    chatCreateMock.mockResolvedValue({
+      id: 'cmpl-test',
+      model: 'gpt-5',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'done', tool_calls: null },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: 50,
+        completion_tokens: 1200,
+        completion_tokens_details: { reasoning_tokens: 800 },
+      },
+    });
+
+    // Act
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], { model: 'gpt-5' });
+
+    // Assert
+    expect(response.usage.reasoningTokens).toBe(800);
+    expect(response.usage.outputTokens).toBe(1200);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1443,6 +1528,101 @@ describe('buildBaseParams', () => {
     // Assert
     const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(params?.temperature).toBeUndefined();
+  });
+
+  // ── Modern OpenAI convention (reasoning + gpt-5) ──────────────────────────
+  //
+  // OpenAI's o-series reasoning models (o1, o3, o4, …) and the gpt-5
+  // family reject the legacy `max_tokens` and any temperature ≠ 1. The
+  // SDK call must use `max_completion_tokens` instead, and the
+  // provider must omit `temperature` for these models even when the
+  // caller passes one. Without this branching, an agent set to o4-mini
+  // or gpt-5 returns a 400 from OpenAI on the first chat turn.
+
+  describe.each([
+    ['o1', 'o1'],
+    ['o1-mini', 'o1-mini'],
+    ['o1-preview', 'o1-preview'],
+    ['o3-mini', 'o3-mini'],
+    ['o4-mini', 'o4-mini'],
+    ['gpt-5', 'gpt-5'],
+    ['gpt-5-mini', 'gpt-5-mini'],
+  ])('modern convention — %s', (label, modelId) => {
+    it(`sends max_completion_tokens (not max_tokens) for ${label}`, async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], { model: modelId, maxTokens: 256 });
+
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.max_completion_tokens).toBe(256);
+      expect(params?.max_tokens).toBeUndefined();
+    });
+
+    it(`omits temperature for ${label} even when the caller supplies one`, async () => {
+      // Reasoning / gpt-5 models accept only the default temperature (1).
+      // The provider drops any caller-supplied temperature so the
+      // request goes through.
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: modelId,
+        temperature: 0.5,
+      });
+
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.temperature).toBeUndefined();
+    });
+
+    it(`defaults max_completion_tokens to 4096 for ${label} when caller omits it`, async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], { model: modelId });
+
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.max_completion_tokens).toBe(4096);
+      expect(params?.max_tokens).toBeUndefined();
+    });
+  });
+
+  describe.each([
+    // Legacy models that should keep using max_tokens + honouring temperature.
+    // Pinned so a future regex change can't accidentally up-shift them onto
+    // the modern convention.
+    ['gpt-4o', 'gpt-4o'],
+    ['gpt-4o-mini', 'gpt-4o-mini'],
+    ['gpt-4.1', 'gpt-4.1'],
+    ['gpt-3.5-turbo', 'gpt-3.5-turbo'],
+    // Non-OpenAI compatibles routed through this provider class —
+    // Llama / Mixtral / etc. via Groq, Together, Mistral all use the
+    // legacy convention.
+    ['llama-3.3-70b', 'llama-3.3-70b'],
+    ['mixtral-8x7b', 'mixtral-8x7b'],
+    // Defensive: a custom fine-tune named to *contain* an o-pattern
+    // substring elsewhere in the id must NOT trigger the modern branch
+    // — the predicate is anchored at the start of the string.
+    ['my-fine-tuned-gpt-4o', 'my-fine-tuned-gpt-4o'],
+  ])('legacy convention — %s', (label, modelId) => {
+    it(`sends max_tokens (not max_completion_tokens) for ${label}`, async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], { model: modelId, maxTokens: 256 });
+
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.max_tokens).toBe(256);
+      expect(params?.max_completion_tokens).toBeUndefined();
+    });
+
+    it(`honours caller-supplied temperature for ${label}`, async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: modelId,
+        temperature: 0.5,
+      });
+
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.temperature).toBe(0.5);
+    });
   });
 
   it('does not include tools when tools array is empty', async () => {

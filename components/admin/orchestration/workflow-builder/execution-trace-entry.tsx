@@ -27,6 +27,12 @@ import { cn } from '@/lib/utils';
 import { isMarkdown } from '@/lib/utils/is-markdown';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
+import { SourcesField } from '@/components/admin/orchestration/approvals/sources-field';
+import {
+  hasTemplateTokens,
+  resolveTemplatesIn,
+} from '@/lib/orchestration/engine/interpolate-from-trace';
+import type { InterpolationContext } from '@/lib/orchestration/engine/interpolate-prompt';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 const RETRY_PILL_CLASS =
@@ -76,6 +82,14 @@ export interface ExecutionTraceEntryRowProps {
   /** Cost-log rows attributed to this step, for the per-call breakdown. */
   costEntries?: TraceCostEntry[];
   /**
+   * Source attribution lifted by the engine from the step's `output.sources`.
+   * Rendered as a Sources sub-panel under the Input/Output grid in the
+   * expanded body — same pill design as the structured approval UI, so
+   * admins debugging an execution see the audit trail without leaving
+   * the trace viewer.
+   */
+  provenance?: ExecutionTraceEntry['provenance'];
+  /**
    * Bounded-retry events emitted from this step. Rendered as amber
    * sub-rows so users can see at a glance which step looped, how many
    * attempts ran, and why each one failed.
@@ -103,6 +117,22 @@ export interface ExecutionTraceEntryRowProps {
    */
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /**
+   * Context used to re-derive what the LLM actually received at this
+   * step. When provided AND `input` contains `{{...}}` template tokens,
+   * the expanded body offers a "Resolved" toggle that swaps the raw
+   * config view for an interpolated one. Built once at the trace-view
+   * level so we don't rebuild it for every row. See
+   * `interpolate-from-trace.ts`.
+   */
+  interpolationContext?: InterpolationContext;
+  /**
+   * Id of the step that ran immediately before this one (engine
+   * semantics — most recent completed step). Used for the
+   * `{{previous.output}}` token. Optional; if omitted, that token
+   * resolves to empty.
+   */
+  previousStepId?: string;
 }
 
 const STATUS_STYLES: Record<Status, { icon: React.ElementType; colour: string; text: string }> = {
@@ -132,6 +162,7 @@ export function ExecutionTraceEntryRow({
   outputTokens,
   llmDurationMs,
   costEntries,
+  provenance,
   retries,
   highlighted,
   onRetry,
@@ -139,8 +170,17 @@ export function ExecutionTraceEntryRow({
   parallelBranchOfNumber,
   expanded: expandedProp,
   onExpandedChange,
+  interpolationContext,
+  previousStepId,
 }: ExecutionTraceEntryRowProps) {
   const [expandedInternal, setExpandedInternal] = useState(false);
+  const [inputView, setInputView] = useState<'raw' | 'resolved'>('raw');
+  const canResolveInput =
+    interpolationContext !== undefined && input !== undefined && hasTemplateTokens(input);
+  const resolvedInput =
+    canResolveInput && inputView === 'resolved'
+      ? resolveTemplatesIn(input, interpolationContext, previousStepId)
+      : undefined;
   const isControlled = expandedProp !== undefined;
   const expanded = isControlled ? expandedProp : expandedInternal;
   const toggleExpanded = () => {
@@ -289,11 +329,42 @@ export function ExecutionTraceEntryRow({
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">
               {input !== undefined && input !== null && (
-                <JsonPane label="Input" data={input} testId={`trace-entry-input-${stepId}`} />
+                <JsonPane
+                  label="Input"
+                  data={
+                    inputView === 'resolved' && resolvedInput !== undefined ? resolvedInput : input
+                  }
+                  testId={`trace-entry-input-${stepId}`}
+                  toolbar={
+                    canResolveInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setInputView((v) => (v === 'raw' ? 'resolved' : 'raw'))}
+                        className="text-muted-foreground hover:text-foreground text-[10px] font-medium tracking-wide uppercase underline-offset-2 hover:underline"
+                        title={
+                          inputView === 'raw'
+                            ? 'Substitute {{stepId.output}} and {{input.foo}} tokens against the recorded trace'
+                            : 'Switch back to the raw config snapshot'
+                        }
+                        data-testid={`trace-entry-input-resolve-toggle-${stepId}`}
+                      >
+                        {inputView === 'raw' ? 'Show resolved' : 'Show raw'}
+                      </button>
+                    ) : undefined
+                  }
+                />
               )}
               {output !== undefined && output !== null && (
                 <JsonPane label="Output" data={output} testId={`trace-entry-output-${stepId}`} />
               )}
+            </div>
+          )}
+          {provenance && provenance.length > 0 && (
+            <div data-testid={`trace-entry-sources-${stepId}`}>
+              <p className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+                Sources ({provenance.length})
+              </p>
+              <SourcesField value={provenance} layout="stack" />
             </div>
           )}
           {costEntries && costEntries.length > 0 && (
@@ -398,7 +469,18 @@ function StepTypeChip({ stepId, stepType }: { stepId: string; stepType: string }
   );
 }
 
-function JsonPane({ label, data, testId }: { label: string; data: unknown; testId: string }) {
+function JsonPane({
+  label,
+  data,
+  testId,
+  toolbar,
+}: {
+  label: string;
+  data: unknown;
+  testId: string;
+  /** Optional extra control rendered alongside the Copy button. */
+  toolbar?: React.ReactNode;
+}) {
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
   const showMarkdown = isMarkdown(data);
   const [copied, setCopied] = useState(false);
@@ -422,26 +504,29 @@ function JsonPane({ label, data, testId }: { label: string; data: unknown; testI
         <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
           {label}
         </p>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-6 gap-1 px-1.5 text-[11px]"
-          onClick={handleCopy}
-          aria-label={`Copy ${label}`}
-        >
-          {copied ? (
-            <>
-              <Check className="h-3 w-3" />
-              Copied
-            </>
-          ) : (
-            <>
-              <Copy className="h-3 w-3" />
-              Copy
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          {toolbar}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-6 gap-1 px-1.5 text-[11px]"
+            onClick={handleCopy}
+            aria-label={`Copy ${label}`}
+          >
+            {copied ? (
+              <>
+                <Check className="h-3 w-3" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="h-3 w-3" />
+                Copy
+              </>
+            )}
+          </Button>
+        </div>
       </div>
       {showMarkdown ? (
         <MarkdownOrRawView content={text} rawMaxHeightClass="max-h-60 overflow-y-auto" />

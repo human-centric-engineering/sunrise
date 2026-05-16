@@ -156,6 +156,147 @@ describe('SetupWizard', () => {
     await waitFor(() => expect(screen.getByText(/Step 2 of 4/i)).toBeInTheDocument());
   });
 
+  it('Surfaces a friendly probing-error banner when the provider check fails', async () => {
+    // When the wizard's fresh-install probe fetch throws (network drop,
+    // CORS misconfiguration, etc.) the wizard shouldn't blank out — it
+    // shows a muted banner telling the operator they can still walk the
+    // wizard manually. Without this branch covered, a deploy gone wrong
+    // on the discovery endpoint would land an empty dialog.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        // Make the wizard's own probe fail; allow detection fetches to
+        // resolve so StepProvider can still render its content.
+        if (url.includes('/providers/detect')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, data: { detected: [] } }),
+          });
+        }
+        if (url.includes('/providers')) {
+          return Promise.reject(new Error('Network down'));
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      })
+    );
+
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+    expect(await screen.findByText(/Could not check your current setup/i)).toBeInTheDocument();
+    // Wizard still snaps to Step 1 (Provider) — the manual walk-through
+    // remains the fallback path.
+    expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument();
+  });
+
+  it('paginatedTotalGt0 returns false on non-OK provider response (treated as fresh)', async () => {
+    // The probe helper short-circuits to `false` when the providers
+    // fetch returns HTTP 4xx/5xx without reading the body. Covers the
+    // `if (!res.ok) return false` branch in `paginatedTotalGt0`.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/providers/detect')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, data: { detected: [] } }),
+          });
+        }
+        if (url.includes('/providers')) {
+          // Non-OK response — paginatedTotalGt0 returns false, treating
+          // the install as fresh.
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({}),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      })
+    );
+
+    // Persisted state points beyond Provider — with a non-OK probe the
+    // wizard should still snap back to Provider since hasProvider=false.
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 2 }));
+
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument());
+  });
+
+  it('paginatedTotalGt0 returns false when provider response body fails to JSON-parse', async () => {
+    // Covers the catch in `paginatedTotalGt0` — when res.json() throws
+    // (truncated body, non-JSON content), treat as no providers found.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/providers/detect')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, data: { detected: [] } }),
+          });
+        }
+        if (url.includes('/providers')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.reject(new Error('malformed JSON')),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      })
+    );
+
+    window.localStorage.setItem(STORAGE_KEY, makeStoredState({ stepIndex: 2 }));
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument());
+  });
+
+  it('StepProvider recovers gracefully when the detection fetch throws', async () => {
+    // The Step-1 component's parallel fetches (providers + detect) sit
+    // inside an IIFE with its own catch. If either rejects, hasExisting
+    // collapses to false and detection collapses to an empty array — the
+    // manual flavour-picker fallback takes over rather than the wizard
+    // hanging on a never-resolving state.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        // The wizard's top-level probe still resolves so the wizard
+        // mounts; the StepProvider's parallel fetches both fail and
+        // the IIFE's catch sets the fallback state.
+        if (url.includes('/providers/detect')) {
+          return Promise.reject(new Error('detect endpoint offline'));
+        }
+        if (url.includes('/providers')) {
+          // First call (probe) ok with 0 providers; subsequent calls
+          // from StepProvider also reject.
+          return Promise.reject(new Error('providers endpoint offline'));
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      })
+    );
+
+    render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+    // The wizard still renders Step 1 even though both Step-1 fetches
+    // failed — the manual flavour-picker path is the IIFE catch's
+    // fallback. Probing-error banner surfaces from the top-level probe.
+    await waitFor(() => {
+      expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Could not check your current setup/i)).toBeInTheDocument();
+  });
+
   it('Step indicator shows a clickable trail of completed steps', async () => {
     vi.stubGlobal('fetch', makeFetchMock({ providerTotal: 1 }));
     const user = userEvent.setup();

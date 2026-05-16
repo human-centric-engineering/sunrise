@@ -29,19 +29,46 @@ import { WorkflowNotification } from '@/emails/workflow-notification';
 
 // ─── Config schema ──────────────────────────────────────────────────────────
 
+/**
+ * Opt-in terminal status. When set to `'failed'`, the executor returns a
+ * StepResult with `failWorkflow` populated — the engine then marks the
+ * workflow as FAILED with the interpolated body as the reason. Use for
+ * fail-branch tail steps that send a notification AND want the workflow's
+ * final status to reflect the underlying problem (e.g. the
+ * `report_validation_failure` step in the provider-model-audit template).
+ *
+ * Default behaviour (unset) leaves status routing to the normal DAG-walk
+ * completion logic — the step is just a side effect.
+ */
+const terminalStatusSchema = z.enum(['completed', 'failed']).optional();
+
 const notificationConfigSchema = z.discriminatedUnion('channel', [
   z.object({
     channel: z.literal('email'),
     to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
     subject: z.string().min(1).max(200),
     bodyTemplate: z.string().min(1).max(10_000),
+    terminalStatus: terminalStatusSchema,
   }),
   z.object({
     channel: z.literal('webhook'),
     webhookUrl: z.string().url(),
     bodyTemplate: z.string().min(1).max(10_000),
+    terminalStatus: terminalStatusSchema,
   }),
 ]);
+
+/** Max length of the failure reason carried to `errorMessage` / the
+ * `workflow_failed` event. The bodyTemplate can be a multi-paragraph
+ * email; truncate so the column / event payload stays bounded. */
+const FAILURE_REASON_MAX = 2000;
+
+function deriveFailureReason(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) return 'Workflow terminated by send_notification (no body)';
+  if (trimmed.length <= FAILURE_REASON_MAX) return trimmed;
+  return `${trimmed.slice(0, FAILURE_REASON_MAX - 1).trimEnd()}…`;
+}
 
 // ─── Executor ───────────────────────────────────────────────────────────────
 
@@ -159,6 +186,19 @@ async function executeNotification(
         true
       );
     }
+  }
+
+  // Opt-in: terminal-with-failure. When the workflow author marked this
+  // step as a fail-branch tail (e.g. provider-audit's
+  // `report_validation_failure`), populate `failWorkflow` so the engine
+  // finalises the execution as FAILED with the interpolated body as the
+  // visible reason. Without this, a tail-end notification leaves the
+  // workflow marked COMPLETED — misleading for fail-branches.
+  if (config.terminalStatus === 'failed') {
+    stepResult = {
+      ...stepResult,
+      failWorkflow: deriveFailureReason(body),
+    };
   }
 
   // Record the dispatch so a re-drive after a crash returns the cached result.

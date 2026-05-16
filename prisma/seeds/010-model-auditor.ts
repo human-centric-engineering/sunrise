@@ -9,20 +9,24 @@ const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the S
 
 For each model entry, assess:
 
-1. **Tier role** — Is the classification correct given the model's capabilities?
+1. **Tier role** — capability classification (what the model is FOR):
    - thinking: deep reasoning, complex analysis
    - worker: general-purpose chat/completion
    - infrastructure: routing, classification, fast tasks
    - control_plane: orchestration, planning
-   - local_sovereign: on-premise, privacy-focused
    - embedding: vector embeddings only
 
-2. **Reasoning depth** — Does it match the model's actual capabilities?
-3. **Latency** — Based on known provider performance characteristics
-4. **Cost efficiency** — Relative to other models in the same tier
-5. **Context length** — Current window size classification
-6. **Tool use** — Actual function-calling capability level
-7. **Best role** — One-line summary of optimal use case
+2. **Deployment profiles** — deployment locus (WHERE the model runs); array of one or more:
+   - hosted: vendor-managed API (default)
+   - sovereign: runs on the operator's own infrastructure (Ollama, vLLM, self-hosted)
+   A model can carry both if it's available either way. These are ORTHOGONAL to tier role.
+
+3. **Reasoning depth** — Does it match the model's actual capabilities?
+4. **Latency** — Based on known provider performance characteristics
+5. **Cost efficiency** — Relative to other models in the same tier
+6. **Context length** — Current window size classification
+7. **Tool use** — Actual function-calling capability level
+8. **Best role** — One-line summary of optimal use case
 
 For embedding models, also evaluate dimensions, quality rating, and schema compatibility.
 
@@ -190,14 +194,14 @@ const ADD_PROVIDER_MODELS_DEFINITION = {
               },
               tierRole: {
                 type: 'string',
-                enum: [
-                  'thinking',
-                  'worker',
-                  'infrastructure',
-                  'control_plane',
-                  'local_sovereign',
-                  'embedding',
-                ],
+                enum: ['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding'],
+                description:
+                  'Capability tier — what the model is for. Orthogonal to deploymentProfiles.',
+              },
+              deploymentProfiles: {
+                type: 'array',
+                items: { type: 'string', enum: ['hosted', 'sovereign'] },
+                description: 'Where the model runs. Defaults to ["hosted"] for vendor APIs.',
               },
               reasoningDepth: {
                 type: 'string',
@@ -327,7 +331,12 @@ const unit: SeedUnit = {
         model: '',
         provider: '',
         temperature: 0.2,
-        maxTokens: 4096,
+        // Reasoning models (gpt-5, o-series) split this cap between
+        // reasoning_tokens and visible output; the audit workflow
+        // asks for verbose structured JSON over ~30 models, so 4096
+        // gets entirely consumed by reasoning and visible content
+        // comes back empty. 16384 leaves comfortable headroom.
+        maxTokens: 16384,
         monthlyBudgetUsd: 25,
         isActive: true,
         isSystem: true,
@@ -445,7 +454,10 @@ const unit: SeedUnit = {
         model: '',
         provider: '',
         temperature: 0.3,
-        maxTokens: 4096,
+        // Long consolidated markdown report over many audit outputs;
+        // shares the reasoning-model headroom rationale with
+        // provider-model-auditor above.
+        maxTokens: 16384,
         isActive: true,
         isSystem: true,
         createdBy,

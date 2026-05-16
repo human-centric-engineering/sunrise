@@ -37,7 +37,7 @@ Canonical definitions live in `types/orchestration.ts` (`MODEL_CAPABILITIES`, `S
 ### Filters
 
 - **Provider** — Radix `<Select>` seeded with distinct `providerSlug` values from the result set, plus "All providers".
-- **Tier** — all 6 `TIER_ROLE_META` entries (Thinking, Worker, Infrastructure, Control Plane, Local/Sovereign, Embedding).
+- **Tier** — all 5 `TIER_ROLE_META` entries (Thinking, Worker, Infrastructure, Control Plane, Embedding). Deployment locus (`hosted` / `sovereign`) is a separate axis on `deploymentProfiles`.
 - **Search** — substring match across `name`, `modelId`, `slug`, `bestRole`.
 - **Capability chips** — multi-select chips, one per matrix-storable capability: `Chat` · `Reasoning` · `Embedding` · `Audio` · `Image` · `Moderation`. OR semantics across chips. `Unknown` is **not** offered here — it's catalogue-only.
 - **Has agent** — toggle chip that hides rows with no directly-assigned agents (filters by `agents?.length > 0`). Rows that serve only as a default-settings fallback are also hidden — the filter matches the column it shares semantics with.
@@ -135,16 +135,17 @@ The result panel renders active conflicts and inactive conflicts under separate 
 
 `lib/orchestration/llm/model-heuristics.ts` — pure functions (no I/O) that map raw signals to the matrix's enum fields:
 
-| Function               | Output                                                   | Driven by                                                                                                                                           |
-| ---------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deriveCostEfficiency` | `very_high` / `high` / `medium` / `none`                 | `inputCostPerMillion` thresholds (≤$0.5 / ≤$2 / ≤$10 / >$10)                                                                                        |
-| `deriveContextLength`  | `very_high` / `high` / `medium` / `n_a`                  | `maxContext` (≥1M / ≥128K / ≥32K / else)                                                                                                            |
-| `deriveLatency`        | `very_fast` / `fast` / `medium`                          | id contains `nano` / `flash-lite` → very_fast; `mini` / `flash` / `haiku` / `turbo` → fast                                                          |
-| `deriveReasoningDepth` | `very_high` / `high` / `medium` / `none`                 | `opus` / `o1` / `o3` / `o4` → very_high; `gpt-4` / `gpt-5` / `sonnet` / `gemini-pro` → high; cheap variants → medium                                |
-| `deriveTierRole`       | one of the 6 `TIER_ROLES`                                | embedding capability → `embedding`; local → `local_sovereign`; reasoning_depth=very_high → `thinking`; cheap+fast → `worker`; else `infrastructure` |
-| `deriveToolUse`        | `strong` / `moderate` / `none`                           | OpenRouter's `supported_parameters` array                                                                                                           |
-| `deriveBestRole`       | Short canned phrase per `(tier, capability)` combination | Lookup table                                                                                                                                        |
-| `deriveMatrixSlug`     | `${providerSlug}-${modelId}` lowercased + hyphenated     | Matches the legacy form's `toSlug()` rule                                                                                                           |
+| Function                   | Output                                                   | Driven by                                                                                                                |
+| -------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `deriveCostEfficiency`     | `very_high` / `high` / `medium` / `none`                 | `inputCostPerMillion` thresholds (≤$0.5 / ≤$2 / ≤$10 / >$10)                                                             |
+| `deriveContextLength`      | `very_high` / `high` / `medium` / `n_a`                  | `maxContext` (≥1M / ≥128K / ≥32K / else)                                                                                 |
+| `deriveLatency`            | `very_fast` / `fast` / `medium`                          | id contains `nano` / `flash-lite` → very_fast; `mini` / `flash` / `haiku` / `turbo` → fast                               |
+| `deriveReasoningDepth`     | `very_high` / `high` / `medium` / `none`                 | `opus` / `o1` / `o3` / `o4` → very_high; `gpt-4` / `gpt-5` / `sonnet` / `gemini-pro` → high; cheap variants → medium     |
+| `deriveTierRole`           | one of the 5 `TIER_ROLES`                                | embedding capability → `embedding`; reasoning_depth=very_high → `thinking`; cheap+fast → `worker`; else `infrastructure` |
+| `deriveDeploymentProfiles` | Array of `DEPLOYMENT_PROFILES`                           | `isLocal` → `['sovereign']`, otherwise `['hosted']`. Orthogonal to tier role; split out of the tier enum 2026-05-16.     |
+| `deriveToolUse`            | `strong` / `moderate` / `none`                           | OpenRouter's `supported_parameters` array                                                                                |
+| `deriveBestRole`           | Short canned phrase per `(tier, capability)` combination | Lookup table                                                                                                             |
+| `deriveMatrixSlug`         | `${providerSlug}-${modelId}` lowercased + hyphenated     | Matches the legacy form's `toSlug()` rule                                                                                |
 
 Word-boundary regex on cheap-variant matchers — `gemini-pro` doesn't accidentally downgrade itself for containing the substring `mini`. Frontier-reasoning families take precedence over the cheap-variant downgrade so `o1-mini` stays `very_high`.
 
@@ -245,8 +246,8 @@ The matrix toolbar includes an **Audit Models** button that triggers the Provide
 2. On submit, the dialog creates a workflow execution via `POST /workflows/:id/execute` with selected model data as `inputData`, captures the `executionId` from the SSE stream's `workflow_started` event, and swaps its body for an inline live-progress panel
 3. The dialog stays open and shows the run's status, current step, wall-clock, tokens and cost, plus a Gantt timeline strip — the admin stays on the providers page while the audit progresses
 4. The workflow analyses each model's tier classification, capability ratings, and metadata using LLM evaluation
-5. A `human_approval` step pauses execution; the inline panel renders the proposed-changes prompt as markdown with inline approve/reject controls
-6. On approval, the `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds newly discovered models, and `deactivate_provider_models` soft-deletes deprecated ones — all invalidate the model cache
+5. A `human_approval` step pauses execution. The execution surfaces in `/admin/orchestration/approvals` and expands into the **structured viewer** — three sections (existing-model changes, new model proposals, deactivations) with per-change Accept / Reject / Modify controls. Modify swaps the proposed value for an enum-aware `<Select>` (or text input for free-text fields) so the admin can edit the audit's suggestion before accepting. See [`orchestration-approvals.md`](./orchestration-approvals.md#structured-approval-views) for the schema and dispatch details.
+6. On approval, the admin's filtered selection flows through as the `approvalPayload`. The `apply_audit_changes` capability writes accepted changes, `add_provider_models` adds approved new models, and `deactivate_provider_models` soft-deletes confirmed deprecations — all invalidate the model cache. Rejected items are silently dropped from the payload.
 
 ### Backgrounding a long run
 
@@ -283,7 +284,7 @@ This feature also serves as a reference implementation for the orchestration fra
 
 ## Related
 
-- [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — data model, 6-tier classification, `recommendModels()` library API
+- [Provider Selection Matrix](../orchestration/provider-selection-matrix.md) — data model, 5-tier classification + deployment-profile axis, `recommendModels()` library API
 - [Providers list](./orchestration-providers.md) — the Models tab is embedded here
 - [LLM providers (runtime)](../orchestration/llm-providers.md) — runtime provider abstraction
 - [Knowledge Base UI](./orchestration-knowledge-ui.md) — consumes the embedding-model entries for the comparison modal

@@ -205,6 +205,56 @@ describe('AnthropicProvider.chat', () => {
     expect(response.content).toBe('cool');
     expect(response.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
   });
+
+  it('throws truncated_no_output when stop_reason is max_tokens with empty content and no tool calls', async () => {
+    // Arrange — Anthropic equivalent of the gpt-5 silent-truncation
+    // bug. Extended thinking can consume the entire `max_tokens`
+    // budget on thinking blocks, leaving zero visible text output.
+    // Without this guard the engine would silently emit '' and
+    // downstream steps would mistake the void for a valid answer.
+    createMock.mockResolvedValue({
+      content: [],
+      usage: { input_tokens: 100, output_tokens: 4096 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'claude-opus-4-6',
+        maxTokens: 4096,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(ProviderError);
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as Error).message).toMatch(/maxTokens/i);
+    expect((caught as Error).message).toMatch(/4096/);
+  });
+
+  it('returns content normally when stop_reason is max_tokens but content is non-empty', async () => {
+    // Arrange — a short-but-valid response that hit the cap. We
+    // must NOT throw here: partial visible content is meaningful.
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'partial' }],
+      usage: { input_tokens: 10, output_tokens: 4096 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
+      model: 'claude-opus-4-6',
+      maxTokens: 4096,
+    });
+
+    expect(response.content).toBe('partial');
+    expect(response.finishReason).toBe('length');
+  });
 });
 
 describe('AnthropicProvider.chatStream', () => {

@@ -67,7 +67,12 @@ import { logger } from '@/lib/logging';
 type StepExecutorFn = (
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
-) => Promise<{ output: unknown; tokensUsed: number; costUsd: number }>;
+) => Promise<{
+  output: unknown;
+  tokensUsed: number;
+  costUsd: number;
+  failWorkflow?: string;
+}>;
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -462,6 +467,73 @@ describe('executeNotification', () => {
       );
       // Assert: step still returns the result (notification already sent)
       expect(result.output).toMatchObject({ sent: true, channel: 'email' });
+    });
+  });
+
+  describe('terminalStatus: failed', () => {
+    // Authored fail-branch tail steps opt into terminating the workflow
+    // as FAILED with the interpolated body as the visible reason.
+    // Without `terminalStatus: 'failed'` set, the same step would leave
+    // the execution marked COMPLETED — the bug that motivated this
+    // feature on the provider-model-audit template.
+
+    it('returns failWorkflow populated with the interpolated body for email', async () => {
+      const result = await executor(
+        makeEmailStep({
+          bodyTemplate: 'Validation failed: bad capabilities array',
+          terminalStatus: 'failed',
+        }),
+        makeCtx()
+      );
+
+      expect(result.failWorkflow).toBe('Validation failed: bad capabilities array');
+      // Side effect (email) still fires — terminalStatus is about
+      // status routing, not about gating the notification itself.
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
+    });
+
+    it('returns failWorkflow populated for webhook channel too', async () => {
+      const result = await executor(
+        makeWebhookStep({
+          bodyTemplate: 'pipeline aborted',
+          terminalStatus: 'failed',
+        }),
+        makeCtx()
+      );
+
+      expect(result.failWorkflow).toBe('pipeline aborted');
+    });
+
+    it('truncates the failure reason to keep errorMessage bounded', async () => {
+      // The reason flows into the execution row's `errorMessage` column
+      // and the `workflow_failed` event payload. A multi-paragraph email
+      // body is too much for both — the executor caps at 2000 chars.
+      const longBody = 'x'.repeat(3000);
+      const result = await executor(
+        makeEmailStep({ bodyTemplate: longBody, terminalStatus: 'failed' }),
+        makeCtx()
+      );
+
+      expect(result.failWorkflow).toBeDefined();
+      expect(result.failWorkflow!.length).toBeLessThanOrEqual(2000);
+      expect(result.failWorkflow!.endsWith('…')).toBe(true);
+    });
+
+    it('does not populate failWorkflow when terminalStatus is unset', async () => {
+      // Back-compat: the default behaviour is unchanged. Existing
+      // notification steps don't opt in and don't get failWorkflow.
+      const result = await executor(makeEmailStep(), makeCtx());
+
+      expect(result.failWorkflow).toBeUndefined();
+    });
+
+    it('does not populate failWorkflow when terminalStatus is "completed"', async () => {
+      // The explicit `'completed'` value is also a no-op for failWorkflow
+      // — it reserves the field for future "force completion despite
+      // downstream guards" use cases without changing today's behaviour.
+      const result = await executor(makeEmailStep({ terminalStatus: 'completed' }), makeCtx());
+
+      expect(result.failWorkflow).toBeUndefined();
     });
   });
 });
