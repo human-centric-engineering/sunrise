@@ -164,23 +164,47 @@ describe('ExecutionDetailView', () => {
     });
   });
 
-  describe('Error banner', () => {
-    it('renders error banner when errorMessage is present', () => {
+  describe('Failure synopsis (replaces the legacy bare error banner)', () => {
+    // The bare red-banner-on-any-errorMessage behaviour was replaced by
+    // the structured ExecutionStatusSynopsis. Synopsis-internal logic
+    // (retry timeline, predecessor output, expand/collapse, no-render
+    // on clean completions) is covered in `execution-status-synopsis.test.tsx`;
+    // these tests only verify the integration point in the detail view.
+
+    it('renders the failure synopsis when status=failed with errorMessage', () => {
       render(
         <ExecutionDetailView
-          execution={makeExecution({ errorMessage: 'Step 3 timed out' })}
+          execution={makeExecution({ status: 'failed', errorMessage: 'Step 3 timed out' })}
           trace={[]}
         />
       );
 
-      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByTestId('execution-synopsis-failure')).toBeInTheDocument();
       expect(screen.getByText('Step 3 timed out')).toBeInTheDocument();
     });
 
-    it('does not render error banner when errorMessage is null', () => {
+    it('renders nothing for the synopsis on clean completions', () => {
       render(<ExecutionDetailView execution={makeExecution({ errorMessage: null })} trace={[]} />);
 
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      // No failure or cancellation panel — completed run with no skips.
+      expect(screen.queryByTestId('execution-synopsis-failure')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('execution-synopsis-cancellation')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('execution-synopsis-skips')).not.toBeInTheDocument();
+    });
+
+    it('renders nothing when status=completed even if a stray errorMessage is set', () => {
+      // status=completed + errorMessage shouldn't surface a red banner —
+      // the engine only writes errorMessage on failed/cancelled paths
+      // post-2026-05-16, but we defend the synopsis against legacy rows
+      // that may have both set.
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'completed', errorMessage: 'old stale message' })}
+          trace={[]}
+        />
+      );
+
+      expect(screen.queryByTestId('execution-synopsis-failure')).not.toBeInTheDocument();
     });
   });
 
@@ -340,7 +364,13 @@ describe('ExecutionDetailView', () => {
     it('renders cancelled status with explicit badge variant', () => {
       render(<ExecutionDetailView execution={makeExecution({ status: 'cancelled' })} trace={[]} />);
 
-      expect(screen.getByText('Cancelled')).toBeInTheDocument();
+      // "Cancelled" now appears in two places: the status badge in the
+      // header AND the synopsis panel's headline. getAllByText
+      // confirms both are present rather than relying on a duplicate-
+      // sensitive single-element matcher.
+      const matches = screen.getAllByText('Cancelled');
+      expect(matches.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByTestId('execution-synopsis-cancellation')).toBeInTheDocument();
     });
 
     it('renders running status badge', () => {

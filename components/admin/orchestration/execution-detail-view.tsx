@@ -70,6 +70,7 @@ import {
 import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
+import { ExecutionStatusSynopsis } from '@/components/admin/orchestration/execution-status-synopsis';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -665,18 +666,21 @@ export function ExecutionDetailView({
         </Card>
       </div>
 
-      {/* Error banner */}
-      {liveSnap.errorMessage && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap">
-            {liveSnap.errorMessage}
-          </pre>
-        </div>
-      )}
+      {/* Status synopsis — the "what went wrong" panel. Renders the
+          headline step, validator/executor reason, retry timeline,
+          predecessor output snippet, and skip tally for any non-clean
+          outcome. Subsumes the previous bare error banner: this
+          component reads errorMessage too, plus richer context. */}
+      <ExecutionStatusSynopsis
+        execution={{
+          status: liveSnap.status,
+          errorMessage: liveSnap.errorMessage,
+          currentStep: liveSnap.currentStep,
+        }}
+        trace={displayTrace}
+        onJumpToStep={handleSelectStep}
+        onRetry={canRetry ? (sid) => void handleRetryStep(sid) : undefined}
+      />
 
       {/* Input / Output cards */}
       <div className="grid gap-4 lg:grid-cols-2">
