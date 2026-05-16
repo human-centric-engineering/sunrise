@@ -186,45 +186,51 @@ describe('OrchestrationSettingsPage', () => {
   // `{ ok: false }` from the global mock.
   it('passes chat models, providers, and embedding models through to DefaultModelsForm', async () => {
     // Cover every matrixTierToModelTier branch by including one row
-    // per tierRole the source maps. Without this the switch arms for
-    // worker / infrastructure / control_plane / local_sovereign /
-    // default stay uncovered.
+    // per tierRole + deploymentProfile combination the source maps.
+    // Without this the switch arms for worker / infrastructure /
+    // control_plane / sovereign-override / default stay uncovered.
     const chatRows = [
       {
         modelId: 'claude-sonnet-4-6',
         name: 'Claude Sonnet 4.6',
         providerSlug: 'anthropic',
         tierRole: 'thinking',
+        deploymentProfiles: ['hosted'],
       },
       {
         modelId: 'claude-haiku-4-5',
         name: 'Claude Haiku 4.5',
         providerSlug: 'anthropic',
         tierRole: 'worker',
+        deploymentProfiles: ['hosted'],
       },
       {
         modelId: 'embed-mini',
         name: 'Embed Mini',
         providerSlug: 'anthropic',
         tierRole: 'infrastructure',
+        deploymentProfiles: ['hosted'],
       },
       {
         modelId: 'control-plane-bot',
         name: 'Control Plane Bot',
         providerSlug: 'anthropic',
         tierRole: 'control_plane',
+        deploymentProfiles: ['hosted'],
       },
       {
         modelId: 'ollama-llama',
         name: 'Local Llama',
         providerSlug: 'ollama',
-        tierRole: 'local_sovereign',
+        tierRole: 'worker',
+        deploymentProfiles: ['sovereign'],
       },
       {
         modelId: 'unknown-tier',
         name: 'Unknown Tier',
         providerSlug: 'anthropic',
         tierRole: 'something-new',
+        deploymentProfiles: ['hosted'],
       },
     ];
     const providers = [{ slug: 'anthropic', name: 'Anthropic', isActive: true }];
@@ -265,7 +271,8 @@ describe('OrchestrationSettingsPage', () => {
     // matrixTierToModelTier maps:
     //   thinking → frontier, worker → mid,
     //   infrastructure / control_plane → budget,
-    //   local_sovereign → local, default → mid.
+    //   deploymentProfiles ⊇ sovereign → local (overrides tier),
+    //   default tier → mid.
     const tierByModelId = Object.fromEntries(
       passedModels.map((m: { id: string; tier: string }) => [m.id, m.tier])
     );

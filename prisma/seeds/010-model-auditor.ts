@@ -9,20 +9,24 @@ const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the S
 
 For each model entry, assess:
 
-1. **Tier role** — Is the classification correct given the model's capabilities?
+1. **Tier role** — capability classification (what the model is FOR):
    - thinking: deep reasoning, complex analysis
    - worker: general-purpose chat/completion
    - infrastructure: routing, classification, fast tasks
    - control_plane: orchestration, planning
-   - local_sovereign: on-premise, privacy-focused
    - embedding: vector embeddings only
 
-2. **Reasoning depth** — Does it match the model's actual capabilities?
-3. **Latency** — Based on known provider performance characteristics
-4. **Cost efficiency** — Relative to other models in the same tier
-5. **Context length** — Current window size classification
-6. **Tool use** — Actual function-calling capability level
-7. **Best role** — One-line summary of optimal use case
+2. **Deployment profiles** — deployment locus (WHERE the model runs); array of one or more:
+   - hosted: vendor-managed API (default)
+   - sovereign: runs on the operator's own infrastructure (Ollama, vLLM, self-hosted)
+   A model can carry both if it's available either way. These are ORTHOGONAL to tier role.
+
+3. **Reasoning depth** — Does it match the model's actual capabilities?
+4. **Latency** — Based on known provider performance characteristics
+5. **Cost efficiency** — Relative to other models in the same tier
+6. **Context length** — Current window size classification
+7. **Tool use** — Actual function-calling capability level
+8. **Best role** — One-line summary of optimal use case
 
 For embedding models, also evaluate dimensions, quality rating, and schema compatibility.
 
@@ -190,14 +194,14 @@ const ADD_PROVIDER_MODELS_DEFINITION = {
               },
               tierRole: {
                 type: 'string',
-                enum: [
-                  'thinking',
-                  'worker',
-                  'infrastructure',
-                  'control_plane',
-                  'local_sovereign',
-                  'embedding',
-                ],
+                enum: ['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding'],
+                description:
+                  'Capability tier — what the model is for. Orthogonal to deploymentProfiles.',
+              },
+              deploymentProfiles: {
+                type: 'array',
+                items: { type: 'string', enum: ['hosted', 'sovereign'] },
+                description: 'Where the model runs. Defaults to ["hosted"] for vendor APIs.',
               },
               reasoningDepth: {
                 type: 'string',

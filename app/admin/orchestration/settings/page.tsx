@@ -57,6 +57,7 @@ interface ChatMatrixRow {
   name: string;
   providerSlug: string;
   tierRole: string;
+  deploymentProfiles?: string[];
 }
 
 async function getChatModels(): Promise<ModelInfo[]> {
@@ -83,7 +84,7 @@ async function getChatModels(): Promise<ModelInfo[]> {
       id: row.modelId,
       name: row.name,
       provider: row.providerSlug,
-      tier: matrixTierToModelTier(row.tierRole),
+      tier: matrixTierToModelTier(row.tierRole, row.deploymentProfiles),
       inputCostPerMillion: 0,
       outputCostPerMillion: 0,
       maxContext: 0,
@@ -95,8 +96,14 @@ async function getChatModels(): Promise<ModelInfo[]> {
   }
 }
 
-/** Map matrix `tierRole` strings to the registry's narrower `ModelTier`. */
-function matrixTierToModelTier(tierRole: string): ModelInfo['tier'] {
+/** Map matrix `tierRole` strings + `deploymentProfiles` to the registry's narrower `ModelTier`.
+ *
+ * Sovereign deployment trumps tier classification — a sovereign-deployable
+ * thinking-tier model still collapses to the `local` registry label so
+ * existing filters keep behaving. Mirrors `mapTierRoleToTier()` in
+ * `lib/orchestration/llm/db-model-adapter.ts`. */
+function matrixTierToModelTier(tierRole: string, deploymentProfiles?: string[]): ModelInfo['tier'] {
+  if (deploymentProfiles?.includes('sovereign')) return 'local';
   switch (tierRole) {
     case 'thinking':
       return 'frontier';
@@ -105,8 +112,6 @@ function matrixTierToModelTier(tierRole: string): ModelInfo['tier'] {
     case 'infrastructure':
     case 'control_plane':
       return 'budget';
-    case 'local_sovereign':
-      return 'local';
     default:
       return 'mid';
   }
