@@ -32,6 +32,7 @@ import type {
  */
 export const AUDITABLE_FIELDS = [
   'tierRole',
+  'deploymentProfiles',
   'reasoningDepth',
   'latency',
   'costEfficiency',

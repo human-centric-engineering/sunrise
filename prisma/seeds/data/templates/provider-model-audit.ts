@@ -50,6 +50,7 @@ import {
   CONFIDENCE,
   CONTEXT_LENGTH,
   COST_EFFICIENCY,
+  DEPLOYMENT_PROFILES,
   LATENCY,
   QUALITY,
   REASONING_DEPTH,
@@ -72,6 +73,7 @@ import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 const ENUM_SPEC = {
   field: AUDITABLE_FIELDS,
   tierRole: TIER_ROLES,
+  deploymentProfiles: DEPLOYMENT_PROFILES,
   reasoningDepth: REASONING_DEPTH,
   latency: LATENCY,
   costEfficiency: COST_EFFICIENCY,
@@ -278,7 +280,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         name: 'Analyse chat/completion models',
         type: 'llm_call',
         config: {
-          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, and every change MUST carry a non-empty \`sources\` array.
+          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
 
 {{/if}}You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
 
@@ -292,16 +294,28 @@ ${SEARCH_RESULTS_BLOCK}
 
 ${SOURCES_INSTRUCTIONS}
 
+**Two orthogonal classifications.** \`tierRole\` describes what the model is *for* (its capability tier); \`deploymentProfiles\` describes where it *runs*. These are independent — a model can be \`tierRole: 'thinking'\` AND \`deploymentProfiles: ['sovereign']\` simultaneously. Never propose a tier role change because a model "is a chat model" or "runs locally" — those are capability and deployment-locus facts, not tier signals.
+
 For each chat/completion model, evaluate:
-1. **Tier role** — Is the classification correct? (thinking, worker, infrastructure, control_plane, local_sovereign)
-2. **Reasoning depth** — Accurate? (very_high, high, medium, none)
-3. **Latency** — Correct categorisation? (very_fast, fast, medium)
-4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)
-5. **Context length** — Current? (very_high, high, medium, n_a)
-6. **Tool use** — Correct? (strong, moderate, none)
-7. **Best role** — Still the right summary?
-8. **Description** — Accurate and current?
-9. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?
+1. **Tier role** — what is the model FOR? (thinking, worker, infrastructure, control_plane)
+   - \`thinking\` = expensive, sparse use; complex reasoning, planning, decomposition
+   - \`worker\` = cheap parallel work; tool execution, summarisation, transformation
+   - \`infrastructure\` = workhorse default for general chat
+   - \`control_plane\` = routing, fallback, compliance gates
+2. **Deployment profiles** — where does it RUN? Array of one or more: hosted, sovereign
+   - \`hosted\` = vendor-managed API (default for Anthropic, OpenAI, Google, etc.)
+   - \`sovereign\` = runs on the operator's own infrastructure (Ollama, vLLM, self-hosted)
+   - A model can carry both if it's available via vendor API AND for self-hosting
+3. **Reasoning depth** — Accurate? (very_high, high, medium, none)
+4. **Latency** — Correct categorisation? (very_fast, fast, medium)
+5. **Cost efficiency** — Still accurate? (very_high, high, medium, none)
+6. **Context length** — Current? (very_high, high, medium, n_a)
+7. **Tool use** — Correct? (strong, moderate, none)
+8. **Best role** — Still the right summary?
+9. **Description** — Accurate and current?
+10. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?
+
+**Rationale rule.** Every change's \`reason\` field MUST explicitly reference the model's \`currentValue\` for that field. "This is a chat model" is not a valid reason when the current tier is \`worker\` — explain why \`worker\` should change. Generic framings get rejected by the validator.
 
 Respond with a JSON object containing two arrays:
 
@@ -346,11 +360,11 @@ Respond with ONLY the JSON object, no markdown fencing.`,
         name: 'Analyse embedding models',
         type: 'llm_call',
         config: {
-          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, and every change MUST carry a non-empty \`sources\` array.
+          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
 
 {{/if}}You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
 
-**Critical scope check before proposing any change:** only models whose primary purpose is producing vector embeddings belong in this analysis. General-purpose chat / reasoning LLMs (including large open-weight models like Qwen2.5-72B, Llama 3 70B, DeepSeek-V2) are NOT embedding models even if some applications use their hidden states for similarity. If the model in front of you is a chat/reasoning LLM that has been mis-routed here, emit a "field: tierRole" change to its actual tier role with high-confidence sources, NOT a stream of embedding-specific edits.
+**In-scope models only.** A model belongs in this analysis when its capabilities array contains \`'embedding'\`. If you find a row whose capabilities do NOT include embedding (e.g. it's a chat/reasoning LLM that the router mis-classified), emit NO changes for it — the chat analyser handles it. Do not propose tier or capability edits to argue it isn't an embedding model; just skip it.
 
 Model data:
 {{load_models.output}}
@@ -362,15 +376,18 @@ ${SEARCH_RESULTS_BLOCK}
 
 ${SOURCES_INSTRUCTIONS}
 
-For each embedding model, evaluate:
-1. **Tier role** — Should be "embedding"
-2. **Dimensions** — Correct vector dimensions for this model?
-3. **Quality** — Accurate? (high, medium, budget)
-4. **Cost efficiency** — Still accurate? (very_high, high, medium, none)
-5. **Context length** — Current? (very_high, high, medium, n_a)
-6. **Best role** — Still the right summary?
-7. **Description** — Accurate and current?
-8. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?
+For each in-scope embedding model, evaluate:
+1. **Tier role** — Should be \`embedding\` (the dedicated tier for vector-embedding models)
+2. **Deployment profiles** — where does it run? Array of one or more: hosted, sovereign
+3. **Dimensions** — Correct vector dimensions for this model?
+4. **Quality** — Accurate? (high, medium, budget)
+5. **Cost efficiency** — Still accurate? (very_high, high, medium, none)
+6. **Context length** — Current? (very_high, high, medium, n_a)
+7. **Best role** — Still the right summary?
+8. **Description** — Accurate and current?
+9. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?
+
+**Rationale rule.** Every change's \`reason\` field MUST explicitly reference the model's \`currentValue\` for that field. Generic framings get rejected by the validator.
 
 Respond with a JSON object containing two arrays:
 
@@ -441,7 +458,8 @@ For each provider represented in the data, check if they have released new model
 - "modelId": The API model identifier (e.g. "claude-opus-4-20250514")
 - "description": Brief description of the model's purpose and strengths
 - "capabilities": array of one or more of: chat, reasoning, embedding, audio, image, moderation, vision, documents. Use these exact tokens — do not substitute synonyms (e.g. use "image" for image generation, "vision" for image input to a chat model; do not invent values like "multimodal" or "pdf")
-- "tierRole": one of: thinking, worker, infrastructure, control_plane, local_sovereign, embedding
+- "tierRole": one of: thinking, worker, infrastructure, control_plane, embedding — what the model is FOR (capability tier)
+- "deploymentProfiles": array of one or more of: hosted, sovereign — where the model RUNS. \`hosted\` for vendor-managed API (default); \`sovereign\` for self-hosted (Ollama, vLLM); both if available either way. NEVER omit this field.
 - "reasoningDepth": one of: very_high, high, medium, none
 - "latency": one of: very_fast, fast, medium
 - "costEfficiency": one of: very_high, high, medium, none
@@ -474,7 +492,74 @@ Respond with ONLY the JSON object, no markdown fencing.`,
         name: 'Validate proposed values against schemas',
         type: 'guard',
         config: {
-          rules: `You are a schema validator for AI-model-audit proposals. Validate every change, new-model entry, and deactivation proposal against the spec below.\n\n## ENUM SPEC (authoritative list of valid values)\n\nThe arrays below ARE the entire universe of valid values for each field. RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry. If a proposed value appears character-for-character in the corresponding array, it is valid. If it does not, it is invalid. There are no implicit synonyms.\n\n\`\`\`json\n${ENUM_SPEC_JSON}\n\`\`\`\n\n## VALIDATION RULES\n\n1. For every \`change\` object: its \`field\` value MUST be exactly one of the strings in \`field\` above. Treat these as literal identifiers, not natural-language phrases — \`bestRole\` is a recognised field (it is a free-text summary column on AiProviderModel, NOT an enum). Reject the change only if \`field\` is not present in the array.\n\n2. For every change AND every new-model entry, when a value is provided for one of these enum fields, it MUST appear in the corresponding spec array: \`tierRole\`, \`reasoningDepth\`, \`latency\`, \`costEfficiency\`, \`contextLength\`, \`toolUse\`, \`quality\`, \`confidence\`. Before judging, COUNT THE ENTRIES in the spec array and confirm the proposed value matches one of them by exact string comparison. Common mistake to avoid: silently dropping \`infrastructure\` from \`tierRole\` — it is in the list at index 2.\n\n3. \`capabilities\` must be an array where every element appears in the \`capabilities\` spec array above. Reject elements like "multimodal", "pdf", or "text" — they are not in the spec.\n\n4. \`bestRole\` and \`description\` are free-text; validate only that they are present and non-empty.\n\n5. \`slug\` (on new model proposals) must match \`^[a-z0-9]+(-[a-z0-9]+)*$\`.\n\n6. New-model entries must include: \`name\`, \`slug\`, \`providerSlug\`, \`modelId\`, \`description\`, \`capabilities\`, \`tierRole\`, \`bestRole\`. Reject entries missing any of these.\n\n7. Deactivation proposals must have a non-empty \`modelId\` and a non-empty \`reason\`. Reject otherwise.\n\n8. **Provenance.** Every \`change\` object MUST have a non-empty \`sources\` array. Every \`newModels\` entry MUST have a non-empty \`sources\` array. Every \`deactivateModels\` entry MUST have a non-empty \`sources\` array. Each \`sources[i]\` must:\n   - Have a \`source\` field equal to one of: \`training_knowledge\`, \`web_search\`, \`knowledge_base\`, \`prior_step\`, \`external_call\`, \`user_input\`.\n   - Have a \`confidence\` field equal to one of: \`high\`, \`medium\`, \`low\`.\n   - When \`source\` is \`web_search\`, \`knowledge_base\`, \`external_call\`, or \`prior_step\`: have a non-empty \`reference\` string (URL, chunk id, or step path).\n   - When \`source\` is \`training_knowledge\`: \`confidence\` MUST be \`medium\` or \`low\` (never \`high\`).\n   - \`snippet\` and \`note\` are optional but must be non-empty strings if present.\n   Reject the proposal if its sources array is missing, empty, or any entry fails the above. Quote the offending proposal so the producer can attribute on retry.\n\n## WORKED EXAMPLES\n\n- \`{ "field": "bestRole", "proposedValue": "Planner / orchestrator", "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://example.com/", "note": "..." }] }\` → PASS.\n- \`{ "field": "tierRole", "proposedValue": "infrastructure", "sources": [{ "source": "training_knowledge", "confidence": "medium", "note": "..." }] }\` → PASS.\n- \`{ "field": "tierRole", "proposedValue": "edge", "sources": [...] }\` → FAIL (not in tierRole array).\n- \`{ "field": "freshness", "proposedValue": "stale", "sources": [...] }\` → FAIL (\`freshness\` is not in the field array).\n- \`{ "field": "tierRole", "proposedValue": "embedding" }\` (no sources) → FAIL (Rule 8: missing sources).\n- \`{ "field": "tierRole", "proposedValue": "embedding", "sources": [{ "source": "training_knowledge", "confidence": "high" }] }\` → FAIL (Rule 8: training_knowledge cannot be \`high\` confidence).\n\n{{#if vars.__retryContext}}\n## RETRY CONTEXT\n\nA previous attempt failed validation: {{vars.__retryContext.failureReason}}. The producer is re-running. Apply the same checks; quote the exact spec entry alongside any rejection so the producer can fix the next attempt.\n{{/if}}\n\nFor each rejection in your verdict, quote the exact array entry the proposal failed to match (e.g. \`tierRole: "edge" is not in ["thinking","worker","infrastructure","control_plane","local_sovereign","embedding"]\`). This anchoring prevents you from omitting valid values by mistake.`,
+          rules: `You are a schema validator for AI-model-audit proposals. Validate every change, new-model entry, and deactivation proposal against the spec below.
+
+## ENUM SPEC (authoritative list of valid values)
+
+The arrays below ARE the entire universe of valid values for each field. RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry. If a proposed value appears character-for-character in the corresponding array, it is valid. If it does not, it is invalid. There are no implicit synonyms.
+
+\`\`\`json
+${ENUM_SPEC_JSON}
+\`\`\`
+
+## VALIDATION RULES
+
+1. For every \`change\` object: its \`field\` value MUST be exactly one of the strings in \`field\` above. Treat these as literal identifiers, not natural-language phrases — \`bestRole\` is a recognised field (it is a free-text summary column on AiProviderModel, NOT an enum). Reject the change only if \`field\` is not present in the array.
+
+2. For every change AND every new-model entry, when a value is provided for one of these enum fields, it MUST appear in the corresponding spec array: \`tierRole\`, \`reasoningDepth\`, \`latency\`, \`costEfficiency\`, \`contextLength\`, \`toolUse\`, \`quality\`, \`confidence\`. Before judging, COUNT THE ENTRIES in the spec array and confirm the proposed value matches one of them by exact string comparison.
+
+   **Specific values to NEVER let through.** \`tierRole\` is exactly the five values in the spec — \`thinking\`, \`worker\`, \`infrastructure\`, \`control_plane\`, \`embedding\`. Reject anything else, especially:
+   - \`chat\` — that's a capability, not a tier role
+   - \`local_sovereign\` — removed 2026-05-16; deployment locus lives in \`deploymentProfiles\` now
+   - \`reasoning\`, \`vision\`, \`multimodal\` — capabilities, not tiers
+
+3. \`capabilities\` must be an array where every element appears in the \`capabilities\` spec array above. Reject elements like "multimodal", "pdf", or "text" — they are not in the spec.
+
+4. \`deploymentProfiles\` (when present on a change or new-model entry) must be an array where every element appears in the \`deploymentProfiles\` spec array above (\`hosted\`, \`sovereign\`). Empty arrays are invalid — every model has at least one deployment locus.
+
+5. \`bestRole\` and \`description\` are free-text; validate only that they are present and non-empty.
+
+6. \`slug\` (on new model proposals) must match \`^[a-z0-9]+(-[a-z0-9]+)*$\`.
+
+7. New-model entries must include: \`name\`, \`slug\`, \`providerSlug\`, \`modelId\`, \`description\`, \`capabilities\`, \`tierRole\`, \`deploymentProfiles\`, \`bestRole\`. Reject entries missing any of these.
+
+8. Deactivation proposals must have a non-empty \`modelId\` and a non-empty \`reason\`. Reject otherwise.
+
+9. **Provenance.** Every \`change\` object MUST have a non-empty \`sources\` array. Every \`newModels\` entry MUST have a non-empty \`sources\` array. Every \`deactivateModels\` entry MUST have a non-empty \`sources\` array. Each \`sources[i]\` must:
+   - Have a \`source\` field equal to one of: \`training_knowledge\`, \`web_search\`, \`knowledge_base\`, \`prior_step\`, \`external_call\`, \`user_input\`.
+   - Have a \`confidence\` field equal to one of: \`high\`, \`medium\`, \`low\`.
+   - When \`source\` is \`web_search\`, \`knowledge_base\`, \`external_call\`, or \`prior_step\`: have a non-empty \`reference\` string (URL, chunk id, or step path).
+   - When \`source\` is \`training_knowledge\`: \`confidence\` MUST be \`medium\` or \`low\` (never \`high\`).
+   - \`snippet\` and \`note\` are optional but must be non-empty strings if present.
+
+   Reject the proposal if its sources array is missing, empty, or any entry fails the above. Quote the offending proposal so the producer can attribute on retry.
+
+10. **Rationale must engage with currentValue.** For every \`change\` object, the \`reason\` field MUST explicitly reference the \`currentValue\` (or the field whose value is changing). Generic framings that argue against an unrelated value are rejected. Concretely:
+    - PASS: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier is too low — this model's reasoning depth is very_high and it's used as a planner, which is the thinking-tier definition." }\` (engages with \`worker\` by name)
+    - FAIL: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This model is primarily a chat model, not an embedding model." }\` (irrelevant — current is \`worker\`, not embedding)
+    - FAIL: \`{ "field": "deploymentProfiles", "currentValue": ["hosted"], "proposedValue": ["sovereign"], "reason": "This is an open-weight model." }\` (doesn't engage with why \`hosted\` is wrong — the model may also be hosted via vendor API)
+
+    To pass, the reason string must either (a) literally contain the \`currentValue\` (as JSON-stringified text), or (b) explain why the field at its current value is incorrect for this model. Reject when the reason is generic, references unrelated framings, or fails to engage with the current value.
+
+## WORKED EXAMPLES
+
+- \`{ "field": "bestRole", "currentValue": "Lightweight worker", "proposedValue": "Planner / orchestrator", "reason": "Current 'Lightweight worker' undersells this model's reasoning capability...", "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://example.com/", "note": "..." }] }\` → PASS.
+- \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier mismatches the model's very_high reasoning depth...", "sources": [{ "source": "training_knowledge", "confidence": "medium", "note": "..." }] }\` → PASS.
+- \`{ "field": "tierRole", "proposedValue": "edge", "sources": [...] }\` → FAIL (not in tierRole array).
+- \`{ "field": "tierRole", "proposedValue": "chat", "sources": [...] }\` → FAIL (capability, not a tier role).
+- \`{ "field": "tierRole", "proposedValue": "local_sovereign", "sources": [...] }\` → FAIL (\`local_sovereign\` was removed; use \`deploymentProfiles: ["sovereign"]\` instead).
+- \`{ "field": "freshness", "proposedValue": "stale", "sources": [...] }\` → FAIL (\`freshness\` is not in the field array).
+- \`{ "field": "tierRole", "proposedValue": "embedding" }\` (no sources) → FAIL (Rule 9: missing sources).
+- \`{ "field": "tierRole", "proposedValue": "embedding", "sources": [{ "source": "training_knowledge", "confidence": "high" }] }\` → FAIL (Rule 9: training_knowledge cannot be \`high\` confidence).
+- \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This is a chat model, not an embedding model.", "sources": [...] }\` → FAIL (Rule 10: reason references "embedding" but currentValue is "worker").
+
+{{#if vars.__retryContext}}
+## RETRY CONTEXT
+
+A previous attempt failed validation: {{vars.__retryContext.failureReason}}. The producer is re-running. Apply the same checks; quote the exact spec entry alongside any rejection so the producer can fix the next attempt.
+{{/if}}
+
+For each rejection in your verdict, quote the exact array entry the proposal failed to match (e.g. \`tierRole: "edge" is not in ["thinking","worker","infrastructure","control_plane","embedding"]\`). This anchoring prevents you from omitting valid values by mistake.`,
           mode: 'llm',
           failAction: 'block',
           maxRetries: 2,
@@ -606,6 +691,15 @@ Respond with ONLY the JSON object, no markdown fencing.`,
                     display: 'badge',
                     editable: true,
                     enumValuesFrom: 'TIER_ROLES',
+                  },
+                  // Multi-value array — UI renders as `pre` for now; multi-select
+                  // editing is out of scope. Admin rejects the whole model if
+                  // the deployment profile is wrong.
+                  {
+                    key: 'deploymentProfiles',
+                    label: 'Deployment',
+                    display: 'pre',
+                    readonly: true,
                   },
                   {
                     key: 'reasoningDepth',

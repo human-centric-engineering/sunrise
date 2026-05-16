@@ -1366,14 +1366,28 @@ export const listProvidersQuerySchema = paginationQuerySchema.extend({
 // Provider Models (Selection Matrix)
 // ============================================================================
 
+// Capability tier — what kind of work the model is for. Orthogonal to
+// deploymentProfilesSchema below.
+//
+// `local_sovereign` was removed 2026-05-16. See
+// `.context/orchestration/meta/architectural-decisions.md` §3.11. Rows
+// that previously carried it are migrated to `tierRole: 'worker'` plus
+// `deploymentProfiles: ['sovereign']` via
+// `prisma/migrations/20260516120000_add_deployment_profiles`.
 const tierRoleSchema = z.enum([
   'thinking',
   'worker',
   'infrastructure',
   'control_plane',
-  'local_sovereign',
   'embedding',
 ]);
+
+const deploymentProfileSchema = z.enum(['hosted', 'sovereign']);
+
+const deploymentProfilesSchema = z
+  .array(deploymentProfileSchema)
+  .min(1, 'At least one deployment profile is required')
+  .max(8);
 
 const ratingLevelSchema = z.enum(['very_high', 'high', 'medium', 'none']);
 const contextLengthLevelSchema = z.enum(['very_high', 'high', 'medium', 'n_a']);
@@ -1420,6 +1434,7 @@ export const createProviderModelSchema = z.object({
 
   capabilities: z.array(capabilitySchema).min(1).default(['chat']),
   tierRole: tierRoleSchema,
+  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
   reasoningDepth: ratingLevelSchema,
   latency: latencyLevelSchema,
   costEfficiency: ratingLevelSchema,
@@ -1480,6 +1495,7 @@ export const updateProviderModelSchema = z.object({
 
   capabilities: z.array(capabilitySchema).min(1).optional(),
   tierRole: tierRoleSchema.optional(),
+  deploymentProfiles: deploymentProfilesSchema.optional(),
   reasoningDepth: ratingLevelSchema.optional(),
   latency: latencyLevelSchema.optional(),
   costEfficiency: ratingLevelSchema.optional(),
@@ -1531,6 +1547,7 @@ const bulkProviderModelRowSchema = z.object({
     .default(''),
   capabilities: z.array(capabilitySchema).min(1).default(['chat']),
   tierRole: tierRoleSchema,
+  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
   reasoningDepth: ratingLevelSchema,
   latency: latencyLevelSchema,
   costEfficiency: ratingLevelSchema,

@@ -29,6 +29,7 @@ import {
 import type {
   TaskIntent,
   TierRole,
+  DeploymentProfile,
   RatingLevel,
   ContextLengthLevel,
   LatencyLevel,
@@ -49,6 +50,7 @@ interface CachedModel {
   name: string;
   capabilities: string[];
   tierRole: TierRole;
+  deploymentProfiles: DeploymentProfile[];
   reasoningDepth: RatingLevel;
   latency: LatencyLevel;
   costEfficiency: RatingLevel;
@@ -104,13 +106,20 @@ export interface RecommendOptions {
   includeInactive?: boolean;
 }
 
-/** Map each intent to its preferred tier role. */
-const INTENT_TO_TIER: Record<TaskIntent, TierRole> = {
+/** Map each task intent to its preferred capability tier role.
+ *
+ * `private` is special: it's a deployment-locus intent, not a capability
+ * tier. The `recommendModels` function uses the dedicated `private`
+ * branch (scoring `deploymentProfiles.includes('sovereign')`) so the
+ * mapping below carries `null` for that intent. Other intents use the
+ * tier match as the primary score signal.
+ */
+const INTENT_TO_TIER: Record<TaskIntent, TierRole | null> = {
   thinking: 'thinking',
   doing: 'worker',
   fast_looping: 'infrastructure',
   high_reliability: 'control_plane',
-  private: 'local_sovereign',
+  private: null,
   embedding: 'embedding',
 };
 
@@ -191,20 +200,24 @@ export async function recommendModels(
       if (model.hasFreeTier) parts.push('free tier');
       reason = parts.join(', ');
     } else if (intent === 'private') {
-      // Privacy-specific scoring — local/sovereign models strongly preferred
-      const tierMatch = model.tierRole === preferredTier;
-      score = tierMatch ? 60 : 0;
+      // Privacy-specific scoring — sovereign deployment profile is the
+      // primary signal (was `tierRole === 'local_sovereign'` until
+      // 2026-05-16; that conflated deployment locus with capability tier
+      // and is no longer the right key). `model.local` is a secondary
+      // tiebreaker for self-hosted Ollama-style deployments.
+      const isSovereign = model.deploymentProfiles.includes('sovereign');
+      score = isSovereign ? 60 : 0;
       if (model.local) score += 30;
       score += (RATING_SCORE[model.costEfficiency] ?? 0) * 5;
       // Add tertiary tiebreaker from context length
       score += (RATING_SCORE[model.contextLength] ?? 0) * 2;
 
-      reason = tierMatch
-        ? `Local/Sovereign model${model.local ? ' (self-hosted)' : ''}`
-        : `Non-local tier (${tierLabel(model.tierRole)})${model.local ? ', self-hosted' : ''}`;
+      reason = isSovereign
+        ? `Sovereign-deployable ${tierLabel(model.tierRole).toLowerCase()} model${model.local ? ' (self-hosted)' : ''}`
+        : `Hosted-only ${tierLabel(model.tierRole).toLowerCase()} model${model.local ? ', self-hosted' : ''}`;
     } else {
       const secondaryKey = INTENT_SECONDARY[intent];
-      const tierMatch = model.tierRole === preferredTier;
+      const tierMatch = preferredTier !== null && model.tierRole === preferredTier;
       const primaryScore = tierMatch ? 60 : 0;
       const secondaryValue = model[secondaryKey] as keyof typeof RATING_SCORE;
       const secondaryScore = (RATING_SCORE[secondaryValue] ?? 0) * 10;
@@ -255,6 +268,7 @@ async function loadModels(): Promise<CachedModel[]> {
         name: true,
         capabilities: true,
         tierRole: true,
+        deploymentProfiles: true,
         reasoningDepth: true,
         latency: true,
         costEfficiency: true,
@@ -313,7 +327,6 @@ function tierLabel(tier: TierRole): string {
     worker: 'Worker',
     infrastructure: 'Infrastructure',
     control_plane: 'Control Plane',
-    local_sovereign: 'Local/Sovereign',
     embedding: 'Embedding',
   };
   return labels[tier] ?? tier;

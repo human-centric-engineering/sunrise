@@ -22,19 +22,30 @@ import type { AiProviderModel } from '@/types/prisma';
 import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
 
 /**
- * Map the DB row's `tierRole` (admin matrix vocabulary) onto the
- * `ModelTier` enum the registry uses for filtering / display.
+ * Map the DB row's `tierRole` (admin matrix vocabulary) and
+ * `deploymentProfiles` onto the `ModelTier` enum the registry uses for
+ * filtering / display.
  *
  * Best-effort: `tierRole` is a richer classification, so we collapse
- * down. Mostly used by the agent form's inline tier label and the
- * Costs / Settings tier filters, where exact alignment doesn't matter.
+ * down. The `deploymentProfiles` array carries the deployment-locus
+ * signal that used to live in `tierRole='local_sovereign'`; any model
+ * carrying the `sovereign` profile collapses to the `local` registry
+ * tier so existing filters / labels keep working.
+ *
+ * Until 2026-05-16 this function read `local_sovereign` directly from
+ * `tierRole`; see `.context/orchestration/meta/architectural-decisions.md`
+ * §3.11 for the rewrite rationale.
  */
-export function mapTierRoleToTier(tierRole: string): ModelTier {
+export function mapTierRoleToTier(tierRole: string, deploymentProfiles?: string[]): ModelTier {
+  // Deployment-locus signal takes precedence — a sovereign-deployed
+  // chat model still wants the `local` registry tier label even though
+  // its capability tier is `worker` or `thinking`.
+  if (deploymentProfiles?.includes('sovereign')) {
+    return 'local';
+  }
   switch (tierRole) {
     case 'thinking':
       return 'frontier';
-    case 'local_sovereign':
-      return 'local';
     case 'infrastructure':
       return 'budget';
     case 'worker':
@@ -72,7 +83,7 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
     id: row.modelId,
     name: row.name,
     provider: row.providerSlug,
-    tier: mapTierRoleToTier(row.tierRole),
+    tier: mapTierRoleToTier(row.tierRole, row.deploymentProfiles),
     inputCostPerMillion: cost,
     outputCostPerMillion: cost,
     maxContext: mapContextLengthToMax(row.contextLength),

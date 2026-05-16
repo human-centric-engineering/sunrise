@@ -18,14 +18,32 @@
  * orchestration.ts` when adding or removing enum values.
  */
 
+/**
+ * Capability tier — what kind of work the model is for. Orthogonal to
+ * deployment locus (see {@link DEPLOYMENT_PROFILES}).
+ *
+ * Until 2026-05-16 this enum included `local_sovereign`, which mixed
+ * deployment locus (where the model runs) into capability tier (what
+ * the model is for). The audit workflow repeatedly produced wrong
+ * proposals because the LLM was forced to pick one when a model like
+ * Qwen2.5-72B is legitimately worker-tier AND sovereign-deployable.
+ * `deploymentProfiles` now carries the sovereignty signal independently.
+ */
 export const TIER_ROLES = [
   'thinking',
   'worker',
   'infrastructure',
   'control_plane',
-  'local_sovereign',
   'embedding',
 ] as const;
+
+/**
+ * Deployment locus — where the model runs. A model can carry one or
+ * more profiles. `hosted` means a vendor-managed API; `sovereign` means
+ * the operator's own infrastructure. Future expansion: `edge`
+ * (browser/device), `air_gapped` (no outbound network).
+ */
+export const DEPLOYMENT_PROFILES = ['hosted', 'sovereign'] as const;
 
 export const REASONING_DEPTH = ['very_high', 'high', 'medium', 'none'] as const;
 
@@ -59,6 +77,7 @@ export const CAPABILITIES = [
  */
 export const NAMED_ENUMS: Record<string, readonly string[]> = {
   TIER_ROLES,
+  DEPLOYMENT_PROFILES,
   REASONING_DEPTH,
   LATENCY,
   COST_EFFICIENCY,
@@ -80,6 +99,7 @@ export const NAMED_ENUMS: Record<string, readonly string[]> = {
  */
 export const ENUM_BY_AUDIT_FIELD: Record<string, readonly string[]> = {
   tierRole: TIER_ROLES,
+  deploymentProfiles: DEPLOYMENT_PROFILES,
   reasoningDepth: REASONING_DEPTH,
   latency: LATENCY,
   costEfficiency: COST_EFFICIENCY,

@@ -1380,16 +1380,31 @@ export interface WorkflowTemplateMetadata {
 // Provider Selection Matrix
 // ============================================================================
 
-/** Provider tier roles for the selection matrix decision heuristic. */
+/** Provider tier roles for the selection matrix decision heuristic.
+ *
+ * Until 2026-05-16 this enum included `local_sovereign`, which conflated
+ * deployment locus with capability tier. The audit workflow repeatedly
+ * produced wrong proposals (e.g. labelling Qwen2.5-72B as an embedding
+ * engine) because the enum forced false choices. Deployment locus now
+ * lives in `deploymentProfiles` (see {@link DEPLOYMENT_PROFILES}); the
+ * tier role is restricted to actual capability classification. */
 export const TIER_ROLES = [
   'thinking',
   'worker',
   'infrastructure',
   'control_plane',
-  'local_sovereign',
   'embedding',
 ] as const;
 export type TierRole = (typeof TIER_ROLES)[number];
+
+/** Deployment locus profiles — orthogonal to {@link TIER_ROLES}.
+ *
+ * A model can carry one or more profiles. `hosted` is the most common
+ * (vendor-managed API); `sovereign` means the operator's own
+ * infrastructure. Designed for future expansion (`edge`, `air_gapped`)
+ * without breaking the enum semantics. */
+export const DEPLOYMENT_PROFILES = ['hosted', 'sovereign'] as const;
+export type DeploymentProfile = (typeof DEPLOYMENT_PROFILES)[number];
 
 /** Rating levels used for reasoning depth, cost efficiency, and context length. */
 export const RATING_LEVELS = ['very_high', 'high', 'medium', 'none'] as const;
@@ -1478,13 +1493,25 @@ export const TIER_ROLE_META: Record<TierRole, { label: string; description: stri
     label: 'Control Plane',
     description: 'Fallback logic, A/B testing, cost routing, enterprise compliance',
   },
-  local_sovereign: {
-    label: 'Local / Sovereign',
-    description: 'Privacy-sensitive workloads, offline capability',
-  },
   embedding: {
     label: 'Embedding',
     description: 'Vector embedding models for semantic search and retrieval',
+  },
+};
+
+/** Human-readable deployment-profile metadata for display. */
+export const DEPLOYMENT_PROFILE_META: Record<
+  DeploymentProfile,
+  { label: string; description: string }
+> = {
+  hosted: {
+    label: 'Hosted',
+    description: 'Vendor-managed API — no local infrastructure required',
+  },
+  sovereign: {
+    label: 'Sovereign',
+    description:
+      "Runs on the operator's own infrastructure — for privacy, compliance, or offline capability",
   },
 };
 
