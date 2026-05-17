@@ -100,6 +100,34 @@ describe('executeApproval', () => {
     expect((trace[0].output as Record<string, unknown>).notes).toBe('Looks good');
   });
 
+  it('preserves the audit trail when approvalPayload is supplied', async () => {
+    // The structured approval UI sends `approvalPayload` alongside notes
+    // and actor. The trace entry must keep actor/notes at top level (the
+    // history route reads `output.actor` / `output.notes`) while exposing
+    // the payload to downstream capabilities via the wrapped envelope.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+
+    const approvalPayload = {
+      models: [{ model_id: 'm1', changes: [{ field: 'tierRole' }] }],
+      newModels: [],
+      deactivateModels: [],
+    };
+
+    await executeApproval(EXECUTION_ID, {
+      actorLabel: 'admin:user-1',
+      notes: 'Reviewed',
+      approvalPayload,
+    });
+
+    const updateCall = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls[0][0];
+    const trace = updateCall.data.executionTrace as Array<Record<string, unknown>>;
+    const output = trace[0].output as Record<string, unknown>;
+    expect(output.approved).toBe(true);
+    expect(output.actor).toBe('admin:user-1');
+    expect(output.notes).toBe('Reviewed');
+    expect(output.approvalPayload).toEqual(approvalPayload);
+  });
+
   it('includes actor label in trace output', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
 

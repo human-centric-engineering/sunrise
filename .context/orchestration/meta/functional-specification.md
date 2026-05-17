@@ -284,6 +284,29 @@ Each step can define its own error handling:
 - **Step retry**: Individual failed steps can be retried without re-running the workflow
 - **Cancellation**: In-flight executions can be cancelled
 
+### 5.5a Provider model classification — capability tier vs deployment profile
+
+Each `AiProviderModel` row carries two orthogonal classifications used by the selector heuristic and the audit workflow:
+
+- **`tierRole`** (single enum): capability tier — what the model is FOR. One of `thinking`, `worker`, `infrastructure`, `control_plane`, `embedding`. Drives `recommendModels(intent)` scoring for task intents `thinking` / `doing` / `fast_looping` / `high_reliability` / `embedding`.
+- **`deploymentProfiles`** (array): deployment locus — WHERE the model runs. One or more of `hosted` (vendor API), `sovereign` (operator infrastructure). A model can carry both. Drives `recommendModels('private')` scoring.
+
+A model like Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['sovereign']` — both are true simultaneously. The two axes split in 2026-05-16; see `.context/orchestration/meta/architectural-decisions.md` §3.11.
+
+### 5.6 Step output provenance
+
+Optional, opt-in source-attribution contract for LLM and agent steps. When a step's output JSON carries a `sources: ProvenanceItem[]` array, the engine lifts it onto the trace entry's typed `provenance` field. The structured approval UI and the post-execution trace viewer render it as colour-coded pills with hover details (URL, snippet, note, confidence).
+
+- **`ProvenanceItem` contract**: `{ source, confidence, reference?, snippet?, stepId?, note? }`. `source` is one of `training_knowledge` / `web_search` / `knowledge_base` / `prior_step` / `external_call` / `user_input`. `training_knowledge` is confidence-capped at `medium`/`low` by convention; the other kinds require a non-empty `reference`.
+- **Capture is permissive**: workflows that don't emit `sources` get `provenance: undefined`. Malformed arrays silently drop. Provenance is observability, not a load-bearing primitive — the engine never fails a step because of it.
+- **Opt-in enforcement**: a reusable `provenanceRequiredRule()` helper returns a guard-prompt fragment workflow authors paste into a `guard` step's rules. The guard's existing LLM-mode validation rejects un-attributed proposals and uses its configured retry budget.
+- **First adopter**: the provider-model-audit workflow. The three producer steps (`analyse_chat`, `analyse_embedding`, `discover_new_models`) render Brave search results as a numbered block and require sources per change, new-model, and deactivation proposal; the `validate_proposals` guard enforces it via Rule 8.
+- **Surfaces**: the structured approval form (`display: 'sources'` on a `reviewSchema` field) and the trace viewer's expanded entry panel. Same pill component on both — one inspection pattern.
+
+Workflow-engine analogue of §6.4.1 (chat citation guard). Distinct from per-message conversation provenance (item 47 in `improvement-priorities.md`, not started) — that pins versions/citations/capability calls onto `AiMessage` rows; this pins source attribution per claim inside structured step output.
+
+Reference: `.context/orchestration/provenance.md`.
+
 ---
 
 ## 6. Streaming Chat

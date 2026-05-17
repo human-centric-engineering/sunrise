@@ -28,7 +28,7 @@ The workflow audits your provider model registry (the matrix of AI models you ha
        ↓
 8. score_audit          (evaluate)        Score quality on 1-10 scale (5 dimensions)
        ↓
-9. review_changes       (human_approval)  ⏸ Pause for admin to approve/reject
+9. review_changes       (human_approval)  ⏸ Pause for admin: Accept / Reject / Modify per change
        ↓
 10. apply_changes       (tool_call)       🔧 apply_audit_changes capability
        ↓
@@ -43,19 +43,19 @@ The workflow audits your provider model registry (the matrix of AI models you ha
 
 ### What makes each step type interesting
 
-| Step type               | What you will see                                                                                                                                                                                                                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`llm_call`**          | Raw LLM completion with structured JSON output. The engine interpolates `{{input}}` and prior step outputs into prompts.                                                                                                                                                                 |
-| **`external_call`**     | HTTP request to Brave Search API. Demonstrates auth, response transformation (jmespath), and graceful degradation via `errorStrategy: skip`.                                                                                                                                             |
-| **`route`**             | LLM classifies the input and the engine branches to different paths based on the classification.                                                                                                                                                                                         |
-| **`parallel`**          | Three branches run concurrently. The engine waits for all to complete (`wait-all` strategy).                                                                                                                                                                                             |
-| **`agent_call`**        | The `discover_new_models` step delegates to the `provider-model-auditor` agent, which has its own system instructions, model config, and 5 bound capabilities. The `compile_report` step delegates to a different agent (`audit-report-writer`) with zero capabilities — pure synthesis. |
-| **`guard`**             | The engine validates all proposed enum values. If validation fails, it retries up to 2 times before blocking.                                                                                                                                                                            |
-| **`reflect`**           | A draft-critique-revise loop. The engine generates a critique of the proposals, then revises them. You can see the iteration count in the execution trace.                                                                                                                               |
-| **`evaluate`**          | Scores the audit on 5 dimensions (accuracy, completeness, specificity, confidence calibration, consistency). The threshold is 6/10.                                                                                                                                                      |
-| **`human_approval`**    | The workflow pauses. You will see it appear in the **Approval Queue** with an orange badge in the sidebar. You approve or reject, and the workflow resumes or cancels.                                                                                                                   |
-| **`tool_call`**         | Three capabilities fire in sequence: apply changes, add models, deactivate models. Each goes through the capability dispatcher (Zod validation, rate limiting, execution, cost logging).                                                                                                 |
-| **`send_notification`** | Sends an email with the consolidated report (from the `compile_report` agent).                                                                                                                                                                                                           |
+| Step type               | What you will see                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`llm_call`**          | Raw LLM completion with structured JSON output. The engine interpolates `{{input}}` and prior step outputs into prompts.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **`external_call`**     | HTTP request to Brave Search API. Demonstrates auth, response transformation (jmespath), and graceful degradation via `errorStrategy: skip`.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **`route`**             | LLM classifies the input and the engine branches to different paths based on the classification.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **`parallel`**          | Three branches run concurrently. The engine waits for all to complete (`wait-all` strategy).                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **`agent_call`**        | The `discover_new_models` step delegates to the `provider-model-auditor` agent, which has its own system instructions, model config, and 5 bound capabilities. The `compile_report` step delegates to a different agent (`audit-report-writer`) with zero capabilities — pure synthesis.                                                                                                                                                                                                                                                                |
+| **`guard`**             | The engine validates all proposed enum values. If validation fails, it retries up to 2 times before blocking.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **`reflect`**           | A draft-critique-revise loop. The engine generates a critique of the proposals, then revises them. You can see the iteration count in the execution trace.                                                                                                                                                                                                                                                                                                                                                                                              |
+| **`evaluate`**          | Scores the audit on 5 dimensions (accuracy, completeness, specificity, confidence calibration, consistency). The threshold is 6/10.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **`human_approval`**    | The workflow pauses. You will see it appear in the **Approval Queue** with an orange badge in the sidebar. The audit workflow renders the **structured viewer** — three sections (existing-model changes, new model proposals, deactivations) with per-change Accept / Reject / Modify controls (enum-aware Selects for fields like `tierRole`, text inputs for free-text). Your filtered selection flows downstream to the apply capabilities. See [`orchestration-approvals.md`](./orchestration-approvals.md#structured-approval-views) for details. |
+| **`tool_call`**         | Three capabilities fire in sequence: apply changes, add models, deactivate models. Each goes through the capability dispatcher (Zod validation, rate limiting, execution, cost logging).                                                                                                                                                                                                                                                                                                                                                                |
+| **`send_notification`** | Sends an email with the consolidated report (from the `compile_report` agent).                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Prerequisites
 
@@ -146,16 +146,21 @@ The workflow needs model data as input. The easiest way is to copy it from the A
 2. The execution panel shows "Awaiting approval"
 3. Look at the sidebar — the **Approval Queue** item now has an **orange badge** showing "1"
 4. Click **Approval Queue** in the sidebar
-5. You will see the paused execution listed with:
-   - The workflow name
-   - The approval prompt showing all proposed changes, new models, and deactivations
-   - The quality score from the evaluation step
+5. Expand the row. Instead of a wall of JSON, the **structured viewer** renders three sections:
+   - **Proposed changes to existing models** — one parent per model, expandable into a per-field changes table (field, current, proposed, confidence, reason)
+   - **Proposed new models** — one card per new model with its full classification
+   - **Proposed deactivations** — one row per deprecated model with the reason
+   - Quality score from the evaluation step appears at the top
 6. Review the proposals — check if the tampered field was detected:
    - Look for your model in the changes list
    - The `proposedValue` should correct your deliberate tamper
    - The `confidence` should be "high" for obvious corrections
-7. Click **Approve** (add optional notes) to resume the workflow
-   - Or click **Reject** with a reason to cancel
+7. Decide per change:
+   - **Accept** is the default for every change — leave it alone to apply
+   - **Reject** any individual change you disagree with (use the per-row Reject button); the rest still apply
+   - **Modify** to edit the proposed value before accepting — for enum fields (`tierRole`, `latency`, etc.) you get a dropdown of valid values; for free-text fields (`bestRole`, `description`) you get an input. A "Modified" badge marks the edited row.
+8. Click **Approve selected** (add optional notes) — only the accepted (and possibly modified) changes flow downstream
+   - Or click **Reject** with a reason to cancel the whole workflow
 
 ### 6. See the results
 
@@ -185,6 +190,48 @@ After approval, the workflow continues:
 1. Navigate back to **Orchestration > Providers > Model Matrix**
 2. Find the model you tampered with
 3. Confirm the field was corrected back to its proper value
+
+## How attribution works
+
+Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) is required to attribute every claim it makes. The output JSON carries a `sources` array per change, per new model, and per deactivation:
+
+```json
+{
+  "field": "tierRole",
+  "currentValue": "worker",
+  "proposedValue": "thinking",
+  "reason": "Worker tier mismatches Qwen2.5-72B's reasoning_depth='very_high' and bestRole as a planner-grade open-weight model — Anthropic, OpenAI, and Mistral classify 70B+ flagship models as thinking-tier.",
+  "confidence": "high",
+  "sources": [
+    {
+      "source": "web_search",
+      "confidence": "high",
+      "reference": "https://qwenlm.github.io/blog/qwen2.5/",
+      "snippet": "Qwen2.5-72B-Instruct is the flagship 72B model with strong reasoning, coding, and long-context capabilities…",
+      "note": "Official Qwen release notes describe it as a flagship reasoning model"
+    }
+  ]
+}
+```
+
+Note the `reason` references the current value (`worker`) by name — Rule 10 of `validate_proposals` rejects rationale that doesn't engage with what's actually changing, so generic "this is a chat model" framings get caught at the guard step.
+
+### Two-axis model classification
+
+Provider models carry two orthogonal classifications. The audit workflow evaluates them as separate questions and the prompts spell out the orthogonality so the LLM can't conflate them:
+
+- **`tierRole`** — capability tier (what the model is FOR): `thinking`, `worker`, `infrastructure`, `control_plane`, `embedding`. Drives the model-selection heuristic for non-private intents.
+- **`deploymentProfiles`** — deployment locus (WHERE the model runs): array of one or more of `hosted`, `sovereign`. Drives the heuristic for the `private` intent.
+
+A model like Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['sovereign']` — both are true. The audit workflow can propose a change to either field independently without forcing a misclassification on the other. See `.context/orchestration/meta/architectural-decisions.md` §3.11 for the design rationale.
+
+The web search step (`search_provider_info`) renders Brave results as a numbered block in each producer's prompt: `[1] title — url\nsnippet`. The LLM is told to cite by `[N]` when a claim is search-backed and to fall back to `training_knowledge` (capped at `medium`/`low` confidence) when it isn't.
+
+The `validate_proposals` guard rejects any proposal whose `sources` array is missing or malformed, using the existing 2-retry budget. The retry context surfaces the offending object so the producer can re-attempt with attribution.
+
+The approval UI renders each source as a colour-coded pill: `web · qwenlm.github.io ●●●` (blue, high confidence), `training · ●○○` (amber, low confidence), `kb · doc.pdf ●●●` (emerald). Hover or focus pops a tooltip with the reference, snippet, and note. Admins reviewing a row of proposed changes can scan the pills and spot a stream of `training · low` claims that warrant rejection vs `web · high` claims that warrant acceptance.
+
+The same pills appear in the trace viewer (post-execution) under the Output panel of each step that emitted sources. See [`.context/orchestration/provenance.md`](../orchestration/provenance.md) for the full contract.
 
 ## What to explore next
 

@@ -65,13 +65,8 @@ const mockInvalidateModelCache = invalidateModelCache as ReturnType<typeof vi.fn
 // Fixture builders
 // ---------------------------------------------------------------------------
 
-type TierRole =
-  | 'thinking'
-  | 'worker'
-  | 'infrastructure'
-  | 'control_plane'
-  | 'local_sovereign'
-  | 'embedding';
+type TierRole = 'thinking' | 'worker' | 'infrastructure' | 'control_plane' | 'embedding';
+type DeploymentProfile = 'hosted' | 'sovereign';
 type RatingLevel = 'very_high' | 'high' | 'medium' | 'none';
 type LatencyLevel = 'very_fast' | 'fast' | 'medium';
 type ContextLevel = 'very_high' | 'high' | 'medium' | 'n_a';
@@ -87,6 +82,7 @@ function makeNewModel(
     description: string;
     capabilities: ('chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation')[];
     tierRole: TierRole;
+    deploymentProfiles: DeploymentProfile[];
     bestRole: string;
     reasoningDepth: RatingLevel;
     latency: LatencyLevel;
@@ -113,6 +109,7 @@ function makeNewModel(
       | 'moderation'
     )[],
     tierRole: 'thinking' as TierRole,
+    deploymentProfiles: ['hosted'] as DeploymentProfile[],
     bestRole: 'Complex multi-step reasoning and analysis' as string,
     reasoningDepth: 'very_high' as RatingLevel,
     latency: 'medium' as LatencyLevel,

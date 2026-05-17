@@ -39,6 +39,7 @@ import {
   deriveBestRole,
   deriveContextLength,
   deriveCostEfficiency,
+  deriveDeploymentProfiles,
   deriveLatency,
   deriveMatrixSlug,
   deriveReasoningDepth,
@@ -210,8 +211,8 @@ export const GET = withAdminAuth(async (request) => {
       reasoningDepth,
       costEfficiency,
       latency,
-      isLocal: providerRow.isLocal,
     });
+    const deploymentProfiles = deriveDeploymentProfiles({ isLocal: providerRow.isLocal });
     const toolUse = deriveToolUse({ supportsTools, capability: cap });
     const bestRole = deriveBestRole(tierRole, cap);
     const slug = deriveMatrixSlug(providerSlug, modelId);
@@ -234,6 +235,7 @@ export const GET = withAdminAuth(async (request) => {
       suggested: {
         capabilities,
         tierRole,
+        deploymentProfiles,
         reasoningDepth,
         latency,
         costEfficiency,

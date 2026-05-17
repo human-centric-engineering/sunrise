@@ -22,14 +22,42 @@ import type {
   TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
 
-/** Default request timeout for cloud providers. */
-export const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * Default request timeout for cloud providers.
+ *
+ * 2 minutes covers reasoning models (gpt-5, o-series, claude opus extended
+ * thinking) producing verbose structured JSON — the workload pattern that
+ * shows up in workflow `llm_call` steps with large `__loop__` inputs or
+ * many-object schemas. Aligned with the orchestrator step's own default
+ * (`lib/orchestration/engine/executors/orchestrator.ts`) so a workflow
+ * step and the LLM call inside it can't fight each other over timeout.
+ *
+ * Reference points: OpenAI/Anthropic SDK defaults are 10 minutes (too
+ * generous — masks stuck calls); 30s (the previous value here) was too
+ * aggressive — a single GPT-5 call analysing ~30 objects in JSON mode
+ * routinely runs past it.
+ */
+export const DEFAULT_TIMEOUT_MS = 120_000;
 
-/** Shorter timeout for local providers — they should be on-box and fast. */
-export const LOCAL_TIMEOUT_MS = 10_000;
+/**
+ * Timeout for local providers (Ollama, vLLM, llama.cpp).
+ *
+ * Local models on prosumer hardware are NOT instant — a 7B model
+ * producing ~500 output tokens on an M-series Mac takes ~10–30s, and
+ * larger models or quantised CPU inference can take longer. The
+ * previous 10s value was tuned for "tiny model on fast hardware"
+ * and broke every realistic local deployment.
+ */
+export const LOCAL_TIMEOUT_MS = 60_000;
 
-/** Default maximum retries on transient failures. */
-export const DEFAULT_MAX_RETRIES = 3;
+/**
+ * Default maximum retries on transient failures (after the initial
+ * attempt). 2 retries → 3 total attempts. Matches the OpenAI and
+ * Anthropic SDK defaults. With the longer per-attempt timeout above,
+ * keeping retries low bounds the worst-case wall time (~6 min for
+ * cloud, ~3 min for local).
+ */
+export const DEFAULT_MAX_RETRIES = 2;
 
 /** Base delay between retries (ms); doubled each attempt with jitter. */
 const RETRY_BASE_DELAY_MS = 500;

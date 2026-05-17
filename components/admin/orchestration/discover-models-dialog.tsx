@@ -77,6 +77,7 @@ import {
   TIER_ROLE_META,
   TOOL_USE_LEVELS,
   type ContextLengthLevel,
+  type DeploymentProfile,
   type LatencyLevel,
   type RatingLevel,
   type TierRole,
@@ -96,6 +97,7 @@ interface ProviderRow {
 interface SuggestedFields {
   capabilities: string[];
   tierRole: TierRole;
+  deploymentProfiles: DeploymentProfile[];
   reasoningDepth: RatingLevel;
   latency: LatencyLevel;
   costEfficiency: RatingLevel;
@@ -144,6 +146,7 @@ interface ReviewRow {
   description: string;
   capabilities: string[];
   tierRole: TierRole;
+  deploymentProfiles: DeploymentProfile[];
   reasoningDepth: RatingLevel;
   latency: LatencyLevel;
   costEfficiency: RatingLevel;
@@ -193,6 +196,7 @@ function reviewFromCandidate(c: Candidate): ReviewRow {
     description: '',
     capabilities: c.suggested.capabilities,
     tierRole: c.suggested.tierRole,
+    deploymentProfiles: c.suggested.deploymentProfiles,
     reasoningDepth: c.suggested.reasoningDepth,
     latency: c.suggested.latency,
     costEfficiency: c.suggested.costEfficiency,
@@ -408,6 +412,7 @@ export function DiscoverModelsDialog({
               description: r.description,
               capabilities: r.capabilities,
               tierRole: r.tierRole,
+              deploymentProfiles: r.deploymentProfiles,
               reasoningDepth: r.reasoningDepth,
               latency: r.latency,
               costEfficiency: r.costEfficiency,

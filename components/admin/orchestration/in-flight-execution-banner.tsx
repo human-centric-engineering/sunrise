@@ -153,7 +153,7 @@ function BannerInner({
       data-execution-id={entry.executionId}
       data-status={snapshot.status}
       role="status"
-      className="bg-card text-card-foreground sticky top-0 z-20 flex items-center gap-2 border-b px-3 py-1.5 text-xs shadow-sm"
+      className="bg-card text-card-foreground flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-xs shadow-sm"
     >
       {terminal ? (
         ok ? (

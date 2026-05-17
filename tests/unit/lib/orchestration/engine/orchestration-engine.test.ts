@@ -236,6 +236,55 @@ describe('OrchestrationEngine', () => {
     expect(events.filter((e) => e.type === 'step_started')).toHaveLength(1);
   });
 
+  it('failWorkflow on StepResult finalises workflow as FAILED with that reason', async () => {
+    // A step that returns `failWorkflow: '<reason>'` signals an
+    // authored failure-termination (e.g. send_notification with
+    // terminalStatus='failed'). The engine emits workflow_failed,
+    // stops the DAG walk, and persists the reason on the row.
+    registerStepType('llm_call', async (step) => {
+      if (step.id === 'a') {
+        return {
+          output: { sent: true },
+          tokensUsed: 0,
+          costUsd: 0,
+          failWorkflow: 'validator rejected proposals after 2 retries',
+        };
+      }
+      return { output: 'unreached', tokensUsed: 0, costUsd: 0 };
+    });
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
+    const types = events.map((e) => e.type);
+
+    expect(types).toContain('workflow_failed');
+    expect(types).not.toContain('workflow_completed');
+    // Step `b` must never run — the failure-termination is a hard stop.
+    expect(events.filter((e) => e.type === 'step_started')).toHaveLength(1);
+
+    const failed = events.find((e) => e.type === 'workflow_failed') as Extract<
+      ExecutionEvent,
+      { type: 'workflow_failed' }
+    >;
+    expect(failed.error).toBe('validator rejected proposals after 2 retries');
+    expect(failed.failedStepId).toBe('a');
+
+    // Row finalised with FAILED status — `updateMany` is the engine's
+    // checkpoint/finalize write call. Look for the `status: 'failed'`
+    // payload alongside the error message.
+    const updateCalls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+    const finalised = updateCalls.find(
+      (c) =>
+        typeof c[0]?.data === 'object' &&
+        c[0]?.data !== null &&
+        'status' in c[0].data &&
+        c[0].data.status === 'failed'
+    );
+    expect(finalised).toBeDefined();
+    expect((finalised![0].data as Record<string, unknown>).errorMessage).toBe(
+      'validator rejected proposals after 2 retries'
+    );
+  });
+
   it('skip strategy emits step_failed and continues with null output', async () => {
     const def = linearDefinition();
     def.steps[0].config = { ...def.steps[0].config, errorStrategy: 'skip' };

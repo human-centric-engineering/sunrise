@@ -55,6 +55,7 @@ import { prisma } from '@/lib/db/client';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import {
+  getAgentModels,
   getProviders,
   getModels,
   getEffectiveAgentDefaults,
@@ -197,6 +198,170 @@ describe('getModels', () => {
 
     expect(result).toBeNull();
     expect(logger.error).toHaveBeenCalledWith('prefetch: model registry fetch failed', err);
+  });
+});
+
+// ─── Tests: getAgentModels ───────────────────────────────────────────────────
+
+describe('getAgentModels', () => {
+  // The agent form's model dropdown source — restricted to operator-curated
+  // matrix rows with capability=chat OR capability=reasoning. Settings
+  // already uses the same source for its Default Models picker; this
+  // helper aligns the agent form so an operator can't pick a model the
+  // deployment never configured.
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeMatrixRow(
+    overrides: Partial<{
+      providerSlug: string;
+      modelId: string;
+      capabilities: string[];
+      tierRole: string;
+      deploymentProfiles: string[];
+    }> = {}
+  ) {
+    return {
+      providerSlug: 'anthropic',
+      modelId: 'claude-3-5-sonnet',
+      capabilities: ['chat'],
+      tierRole: 'thinking',
+      deploymentProfiles: ['hosted'],
+      ...overrides,
+    };
+  }
+
+  it('fetches /provider-models with capability=chat AND capability=reasoning in parallel', async () => {
+    // Two URLs in flight at once — the API's `capability` filter is a
+    // single value, so reasoning-only models (e.g. `o1-mini` with
+    // capabilities=['reasoning']) wouldn't appear under capability=chat.
+    vi.mocked(serverFetch).mockImplementation((url: string) => {
+      expect(url).toMatch(/\/provider-models\?capability=(chat|reasoning)&isActive=true/);
+      return Promise.resolve(okRes());
+    });
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: [makeMatrixRow()],
+    } as never);
+
+    await getAgentModels();
+
+    expect(serverFetch).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(serverFetch).mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes('capability=chat'))).toBe(true);
+    expect(calls.some((c) => c.includes('capability=reasoning'))).toBe(true);
+  });
+
+  it('merges the two responses and dedups by (provider, modelId)', async () => {
+    // A model tagged with BOTH chat and reasoning capabilities shows up
+    // in both responses; the helper must dedup so the agent form
+    // doesn't render two identical options.
+    const dualCapability = makeMatrixRow({
+      modelId: 'gpt-5',
+      providerSlug: 'openai',
+      capabilities: ['chat', 'reasoning'],
+    });
+    const reasoningOnly = makeMatrixRow({
+      modelId: 'o1-mini',
+      providerSlug: 'openai',
+      capabilities: ['reasoning'],
+      tierRole: 'thinking',
+    });
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse).mockImplementation((res: Response) => {
+      // The test's mock returns the same response regardless of URL,
+      // but the parseApiResponse mock can branch on which call it is —
+      // chatRes resolves first (the dual one), reasoningRes resolves
+      // second (both dual and reasoning-only). Returning the SAME
+      // dual row in both responses is what triggers the dedup branch.
+      void res;
+      const callIdx = vi.mocked(parseApiResponse).mock.calls.length;
+      if (callIdx === 1) return Promise.resolve({ success: true, data: [dualCapability] } as never);
+      return Promise.resolve({
+        success: true,
+        data: [dualCapability, reasoningOnly],
+      } as never);
+    });
+
+    const result = await getAgentModels();
+
+    expect(result).toHaveLength(2);
+    expect(result?.map((m) => m.id).sort()).toEqual(['gpt-5', 'o1-mini']);
+  });
+
+  it('maps tierRole + deploymentProfiles to a ModelOption tier hint', async () => {
+    const sovereign = makeMatrixRow({
+      modelId: 'llama-3.3-70b',
+      providerSlug: 'meta',
+      tierRole: 'worker',
+      deploymentProfiles: ['sovereign'],
+    });
+    const frontier = makeMatrixRow({
+      modelId: 'claude-3-5-sonnet',
+      providerSlug: 'anthropic',
+      tierRole: 'thinking',
+      deploymentProfiles: ['hosted'],
+    });
+    const budget = makeMatrixRow({
+      modelId: 'gpt-4o-mini',
+      providerSlug: 'openai',
+      tierRole: 'infrastructure',
+      deploymentProfiles: ['hosted'],
+    });
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: [sovereign, frontier, budget],
+    } as never);
+
+    const result = await getAgentModels();
+
+    const byId = new Map(result?.map((m) => [m.id, m]) ?? []);
+    // Sovereign deployment overrides the tier-role mapping → 'local'.
+    expect(byId.get('llama-3.3-70b')?.tier).toBe('local');
+    // thinking → frontier; infrastructure → budget.
+    expect(byId.get('claude-3-5-sonnet')?.tier).toBe('frontier');
+    expect(byId.get('gpt-4o-mini')?.tier).toBe('budget');
+  });
+
+  it('returns the chat-only rows when the reasoning fetch fails', async () => {
+    // Tolerant: if one of the two parallel fetches fails (network blip,
+    // 5xx) the helper still returns whatever rows the other call
+    // produced rather than collapsing the whole dropdown to null.
+    vi.mocked(serverFetch).mockImplementation((url: string) =>
+      Promise.resolve(url.includes('capability=chat') ? okRes() : notOkRes())
+    );
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: [makeMatrixRow()],
+    } as never);
+
+    const result = await getAgentModels();
+
+    expect(result).toHaveLength(1);
+    expect(result?.[0].id).toBe('claude-3-5-sonnet');
+  });
+
+  it('returns null when both fetches fail', async () => {
+    // The agent form treats null as "show free-text fallback" — same
+    // posture as getModels().
+    vi.mocked(serverFetch).mockResolvedValue(notOkRes());
+
+    const result = await getAgentModels();
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null and logs when serverFetch throws', async () => {
+    const err = new Error('Network failure');
+    vi.mocked(serverFetch).mockRejectedValue(err);
+
+    const result = await getAgentModels();
+
+    expect(result).toBeNull();
+    expect(logger.error).toHaveBeenCalledWith('prefetch: agent matrix fetch failed', err);
   });
 });
 

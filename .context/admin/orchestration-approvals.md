@@ -33,6 +33,7 @@ Admin UI for reviewing, approving, and rejecting paused workflow executions that
 - Approve an execution with optional notes — workflow resumes.
 - Reject an execution with a required reason — workflow is cancelled with `"Rejected: <reason>"` in `errorMessage`.
 - See pending approval count in the sidebar badge.
+- For audit-style workflows (currently the Provider Model Audit), the row expands into a **structured viewer** instead of the markdown prompt — per-change Accept / Reject / Modify with inline enum-aware widgets. See [Structured approval views](#structured-approval-views).
 
 ## What admins cannot do from the UI (API-only)
 
@@ -199,7 +200,27 @@ Trace entry status transitions: `awaiting_approval` → `completed`.
 
 ### Approval (custom payload)
 
-When the client sends `{ approvalPayload: { ... } }`, the payload **replaces** the entire output — `actor` and `notes` are **not** included. Use this only when the consuming step needs structured approval data. The admin UI and approval queue table do **not** use custom payloads (they send `{}`).
+When the client sends `{ approvalPayload: { ... } }`, the shared action writes a **wrapped envelope** that preserves both the audit trail AND the structured payload:
+
+```json
+{
+  "approved": true,
+  "notes": "Reviewed and applied" | null,
+  "actor": "admin:cuid123" | "token:external",
+  "approvalPayload": {
+    "models": [...],
+    "newModels": [...],
+    "deactivateModels": [...]
+  }
+}
+```
+
+This serves two consumers simultaneously:
+
+1. **Audit / history surfaces** read `output.actor` and `output.notes` at the top level — unchanged from the no-payload path.
+2. **Downstream `tool_call` capabilities** consumed via `argsFrom` see the wrapper. Each audit capability (`apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) wraps its Zod schema with `preprocess(unwrapApprovalPayload, ...)` from `lib/orchestration/capabilities/approval-payload-unwrap.ts`, which lifts `approvalPayload.models` (etc.) to top-level before validation. Legacy callers that send the payload shape directly without the envelope still validate — the preprocess is a no-op when there's no `approvalPayload` key.
+
+The Provider Model Audit admin UI sends this shape via `<StructuredApprovalView>`. Other workflows can opt into the same plumbing by setting a `reviewSchema` on their `human_approval` step config — see [Structured approval views](#structured-approval-views).
 
 ### Rejection
 
@@ -234,6 +255,93 @@ The `actor` field follows the pattern `<source>:<identifier>`:
 - `token:external` — public token endpoint (email / Slack / non-browser caller)
 - `token:chat` — channel-specific sub-route hit from the admin chat surface (`…/approve/chat`, `…/reject/chat`)
 - `token:embed` — channel-specific sub-route hit from the embed widget (`…/approve/embed`, `…/reject/embed`)
+
+## Structured approval views
+
+For workflows that propose structured changes (the Provider Model Audit is the first), the markdown prompt is replaced by a per-change form with Accept / Reject / Modify controls. The admin's selection is projected into the request's `approvalPayload`, which the [wrapped envelope](#approval-custom-payload) carries through to downstream `tool_call` capabilities.
+
+### Opting a workflow into the structured viewer
+
+Two requirements:
+
+1. Add a `reviewSchema` to the `human_approval` step's config. The schema declares one or more sections, each sourced from an upstream step's output and rendered as flat cards or a nested sub-row table.
+
+   ```ts
+   {
+     id: 'review_changes',
+     type: 'human_approval',
+     config: {
+       prompt: 'Review the audit results…', // markdown fallback
+       reviewSchema: {
+         sections: [
+           {
+             id: 'newModels',                          // becomes a top-level key on approvalPayload
+             title: 'Proposed new models',
+             source: '{{discover_new_models.output.newModels}}',
+             itemKey: 'slug',
+             itemTitle: '{{item.name}} ({{item.providerSlug}})',
+             fields: [
+               { key: 'tierRole', label: 'Tier', display: 'badge',
+                 editable: true, enumValuesFrom: 'TIER_ROLES' },
+               // …
+             ],
+           },
+         ],
+       },
+     },
+   }
+   ```
+
+2. Add the workflow's slug to the `STRUCTURED_APPROVAL_WORKFLOW_SLUGS` set in `components/admin/orchestration/approvals-table.tsx`. This is a safety gate while the primitive matures — when a second workflow opts in, consider dropping the slug check and detecting on `reviewSchema` presence alone.
+
+### Schema reference
+
+| Field on `ReviewSection` | Purpose                                                                                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                     | Becomes the key in `approvalPayload[id]`. Must be a JS-identifier-style key (no hyphens).                                                                                                  |
+| `source`                 | Template path like `{{stepId.output.foo}}`. Use `__merge__:path1,path2` to concat arrays from multiple paths into one section. The resolver JSON-parses string outputs (LLM step content). |
+| `itemKey`                | Field on each item used as a stable React key + selection-state key.                                                                                                                       |
+| `itemTitle`              | `{{item.foo}}` template for the item header.                                                                                                                                               |
+| `itemBadges`             | Pills rendered on the item header — sourced from item keys (e.g. `overallConfidence`).                                                                                                     |
+| `fields` _(flat)_        | Renders the item as a key/value card.                                                                                                                                                      |
+| `subItems` _(nested)_    | Renders the item as a parent header + sub-row table. `subItems.source: 'item.changes'` reads the parent's `changes` array.                                                                 |
+
+Each `FieldSpec` declares:
+
+| Field                  | Purpose                                                                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `display`              | `'text' \| 'badge' \| 'pre' \| 'enum' \| 'number' \| 'boolean' \| 'textarea'`. Picks the read-only renderer.                                                             |
+| `editable`             | Unlocks an input widget when the admin clicks Modify. Type-appropriate: `<Select>` for enum, `<Switch>` for boolean, `<Textarea>`, numeric `<Input>`, or text `<Input>`. |
+| `readonly`             | Wins over `editable` — useful for identity columns (`modelId`, `field`) that anchor a row but should never change.                                                       |
+| `enumValuesFrom`       | Looks up a static registry by name (`'TIER_ROLES'`, `'REASONING_DEPTH'`, etc. — see `lib/orchestration/model-audit/enums.ts`).                                           |
+| `enumValuesByFieldKey` | Per-row enum scoping: looks up the registry using another cell's value. Used by the audit-changes row so `proposedValue`'s enum tracks `field`.                          |
+| `enumValues`           | Inline literal list — for one-off use without registry indirection.                                                                                                      |
+
+### Selection state and payload projection
+
+The structured viewer owns selection state shaped per section, keyed by `itemKey`:
+
+- **Flat items**: `{ decision: 'accept' | 'reject', overrides?: Record<string, unknown> }`. Default is accept; overrides apply on the current decision (no separate 'modify' state on the wire).
+- **Nested items**: `{ decision: 'accept' | 'reject', subItems: Record<key, FlatItemState> }`. Parent reject drops the whole group; per-sub-item state controls inclusion of each change.
+
+On submit, `buildApprovalPayload` (`lib/orchestration/review-schema/resolver.ts`) projects state into the request body's `approvalPayload`, keyed by section id. Rejected items are dropped; overrides are applied only for fields whose `FieldSpec` has `editable: true` and not `readonly: true` (a defence against admin clients trying to slip overrides into protected columns).
+
+### Per-section graceful fallback
+
+If a section's `source` fails to resolve (missing step, parse error, non-array result), the viewer renders a `<SectionFallback>` for that section only — showing the markdown prompt as a fallback — while other sections continue to render structured. The markdown prompt stays useful for notification-email surfaces that never honour `reviewSchema`.
+
+### Files
+
+| What                           | Path                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| Schema types + Zod validator   | `lib/orchestration/review-schema/types.ts`                                                  |
+| Pure resolver helpers          | `lib/orchestration/review-schema/resolver.ts`                                               |
+| Top-level viewer               | `components/admin/orchestration/approvals/structured-approval-view.tsx`                     |
+| Section / item / field         | `components/admin/orchestration/approvals/review-{section,item,field}.tsx`                  |
+| Shared audit enum registry     | `lib/orchestration/model-audit/enums.ts`                                                    |
+| Approval-payload unwrap helper | `lib/orchestration/capabilities/approval-payload-unwrap.ts`                                 |
+| Dispatch from approvals-table  | `components/admin/orchestration/approvals-table.tsx` (`STRUCTURED_APPROVAL_WORKFLOW_SLUGS`) |
+| Audit workflow consumer        | `prisma/seeds/data/templates/provider-model-audit.ts` (review_changes step)                 |
 
 ## Chat-rendered approvals
 

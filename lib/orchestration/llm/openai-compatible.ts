@@ -79,8 +79,38 @@ const DEFAULT_CLOUD_EMBEDDING_MODEL = 'text-embedding-3-small';
 /** Default embedding model for local Ollama-style hosts. */
 const DEFAULT_LOCAL_EMBEDDING_MODEL = 'nomic-embed-text';
 
-/** Default max_tokens when caller doesn't supply one. */
+/** Default token cap when the caller doesn't supply one. Applied to whichever
+ *  field the model accepts — `max_tokens` for legacy chat models, or
+ *  `max_completion_tokens` for OpenAI's newer reasoning / gpt-5 families.
+ *  See {@link usesModernCompletionConvention}. */
 const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * Predicate: does this model id require the post-o-series OpenAI
+ * parameter convention?
+ *
+ * OpenAI's reasoning-class models (o1, o3, o4, future o5+) and the
+ * gpt-5 family reject the legacy `max_tokens` field in favour of
+ * `max_completion_tokens`, and reject any `temperature` other than the
+ * default `1`. Sending the legacy params returns a 400:
+ *
+ *   `Unsupported parameter: 'max_tokens' is not supported with this model.
+ *    Use 'max_completion_tokens' instead.`
+ *
+ * Anchored at the start of the id so a custom model called e.g.
+ * `my-fine-tuned-gpt-4o` doesn't accidentally trigger the new convention
+ * just because the substring matches. The list mirrors the existing
+ * reasoning-family detection in `lib/orchestration/llm/tokeniser.ts` and
+ * `lib/orchestration/llm/model-heuristics.ts`.
+ *
+ * Non-OpenAI providers (Groq, Together, Mistral) host different model
+ * families (Llama, Mixtral, …) and use the legacy chat-completions
+ * conventions — those ids don't match this pattern so they're
+ * unaffected.
+ */
+function usesModernCompletionConvention(modelId: string): boolean {
+  return /^(o\d+|gpt-5)/i.test(modelId);
+}
 
 /** Constructor options for `OpenAiCompatibleProvider`. */
 export interface OpenAiCompatibleProviderOptions {
@@ -164,11 +194,38 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       .map(toolCallFromSdk)
       .filter((c): c is LlmToolCall => c !== null);
 
+    const content = choice.message.content ?? '';
+    const reasoningTokens = completion.usage?.completion_tokens_details?.reasoning_tokens;
+
+    // Truncation guard. For reasoning models (o-series, gpt-5) the
+    // `max_completion_tokens` cap covers reasoning tokens AND visible
+    // output combined; when reasoning consumes the entire budget the
+    // API returns `finish_reason: 'length'` with empty content. Without
+    // this check we'd silently emit `''` and downstream steps would
+    // mistake the void for a valid empty result — what bit the audit
+    // workflow in production. Raise it as a retriable provider error
+    // so the operator sees a clear "raise maxTokens" message in the
+    // step trace instead of a mysterious downstream validation loop.
+    if (choice.finish_reason === 'length' && content.length === 0 && toolCalls.length === 0) {
+      const cap =
+        (params as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens ??
+        (params as { max_tokens?: number }).max_tokens;
+      const reasoningNote =
+        reasoningTokens !== undefined
+          ? ` Reasoning consumed ${reasoningTokens} tokens of the ${cap ?? 'configured'} budget.`
+          : '';
+      throw new ProviderError(
+        `Model "${options.model}" hit max_completion_tokens before producing visible output.${reasoningNote} Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        { code: 'truncated_no_output', retriable: false }
+      );
+    }
+
     const response: LlmResponse = {
-      content: choice.message.content ?? '',
+      content,
       usage: {
         inputTokens: completion.usage?.prompt_tokens ?? 0,
         outputTokens: completion.usage?.completion_tokens ?? 0,
+        ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
       },
       model: completion.model,
       finishReason: mapFinishReason(choice.finish_reason),
@@ -401,12 +458,23 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     messages: LlmMessage[],
     options: LlmOptions
   ): ChatCompletionCreateParamsNonStreaming {
+    const tokenCap = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+    const modern = usesModernCompletionConvention(options.model);
+
+    // OpenAI's reasoning / gpt-5 families reject `max_tokens` (400:
+    // "Unsupported parameter") and reject any temperature other than
+    // the default 1. Branch the parameter shape based on the model id.
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: options.model,
       messages: messages.map(toSdkMessage),
-      max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
+      ...(modern ? { max_completion_tokens: tokenCap } : { max_tokens: tokenCap }),
     };
-    if (options.temperature !== undefined) params.temperature = options.temperature;
+    // Skip the temperature send for modern OpenAI models — they only
+    // accept the default. Legacy chat models honour any value the
+    // caller supplied.
+    if (!modern && options.temperature !== undefined) {
+      params.temperature = options.temperature;
+    }
     if (options.tools?.length) {
       params.tools = options.tools.map<ChatCompletionTool>((t) => ({
         type: 'function',

@@ -24,7 +24,7 @@ These three properties together mean a Sunrise deployment can act as a knowledge
 - Multi-provider LLM support with cost tracking means you can start cheap (Ollama/local) and scale to production (Anthropic/OpenAI) without re-architecture
 - Knowledge base with document ingestion means domain expertise can be loaded, not coded
 - Inline source attribution — RAG-grounded responses carry numbered citations and a sources panel showing the document, section, and excerpt for each claim. The opt-in citation guard can flag or block responses that don't cite their retrieved sources. Critical for compliance-heavy verticals (legal rights, financial planning, healthcare navigation, planning permission) where unverified answers are a liability.
-- Workflow engine with approval gates and a dedicated admin approval queue means human oversight is built in — critical for regulated domains
+- Workflow engine with approval gates, a dedicated admin approval queue, and per-claim source attribution on proposed changes means human oversight is built in — and the reviewer can see colour-coded source pills (`web`, `kb`, `training`) on every workflow-proposed action so confabulated proposals are visible at a glance. Critical for regulated domains.
 - Budget controls and cost tracking mean you can offer predictable pricing from day one
 - Admin UI means non-technical partners can manage agents, update knowledge, and monitor costs
 

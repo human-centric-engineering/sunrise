@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -35,14 +36,12 @@ const newModelSchema = z.object({
     .array(z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']))
     .min(1)
     .default(['chat']),
-  tierRole: z.enum([
-    'thinking',
-    'worker',
-    'infrastructure',
-    'control_plane',
-    'local_sovereign',
-    'embedding',
-  ]),
+  tierRole: z.enum(['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding']),
+  deploymentProfiles: z
+    .array(z.enum(['hosted', 'sovereign']))
+    .min(1)
+    .max(8)
+    .default(['hosted']),
   reasoningDepth: z.enum(['very_high', 'high', 'medium', 'none']).default('medium'),
   latency: z.enum(['very_fast', 'fast', 'medium']).default('medium'),
   costEfficiency: z.enum(['very_high', 'high', 'medium', 'none']).default('medium'),
@@ -55,9 +54,15 @@ const newModelSchema = z.object({
   quality: z.enum(['high', 'medium', 'budget']).optional(),
 });
 
-const schema = z.object({
-  newModels: z.array(newModelSchema).max(20).default([]),
-});
+// Unwrap an `approvalPayload: { newModels }` envelope written by
+// `approval-actions.ts` so the existing top-level `newModels` schema
+// matches when called via `argsFrom` from a human_approval step.
+const schema = z.preprocess(
+  unwrapApprovalPayload,
+  z.object({
+    newModels: z.array(newModelSchema).max(20).default([]),
+  })
+);
 
 type Args = z.infer<typeof schema>;
 
@@ -110,15 +115,15 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
               },
               tierRole: {
                 type: 'string',
-                enum: [
-                  'thinking',
-                  'worker',
-                  'infrastructure',
-                  'control_plane',
-                  'local_sovereign',
-                  'embedding',
-                ],
-                description: 'Tier classification.',
+                enum: ['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding'],
+                description:
+                  'Capability tier classification — what the model is for. Orthogonal to deploymentProfiles (where it runs).',
+              },
+              deploymentProfiles: {
+                type: 'array',
+                items: { type: 'string', enum: ['hosted', 'sovereign'] },
+                description:
+                  'Deployment locus — where the model runs. `hosted` is vendor-managed; `sovereign` is operator infrastructure. Defaults to ["hosted"].',
               },
               reasoningDepth: {
                 type: 'string',
@@ -188,6 +193,7 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
             description: model.description,
             capabilities: model.capabilities,
             tierRole: model.tierRole,
+            deploymentProfiles: model.deploymentProfiles,
             reasoningDepth: model.reasoningDepth,
             latency: model.latency,
             costEfficiency: model.costEfficiency,

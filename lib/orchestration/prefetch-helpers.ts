@@ -6,6 +6,7 @@
  * the form falls back to free-text inputs with a warning banner.
  */
 
+import { z } from 'zod';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -133,5 +134,142 @@ export async function getModels(): Promise<ModelOption[] | null> {
   } catch (err) {
     logger.error('prefetch: model registry fetch failed', err);
     return null;
+  }
+}
+
+/**
+ * Subset of an `AiProviderModel` row needed to shape into `ModelOption`.
+ *
+ * Defined as a Zod schema so the API response is runtime-validated at
+ * the boundary (not just type-asserted). Per CLAUDE.md: never `as` on
+ * external data — Zod-parse at the edge instead. Without this guard
+ * an upstream rename (e.g. `modelId` → `id`) would silently pass
+ * `undefined` rows through and collapse the dedup key downstream.
+ */
+const providerMatrixRowSchema = z.object({
+  modelId: z.string(),
+  providerSlug: z.string(),
+  capabilities: z.array(z.string()).nullish(),
+  /** Optional matrix metadata used purely for the dropdown's tier hint. */
+  tierRole: z.string().nullish(),
+  deploymentProfiles: z.array(z.string()).nullish(),
+});
+type ProviderMatrixRow = z.infer<typeof providerMatrixRowSchema>;
+
+/**
+ * Agent-form model dropdown source — restricted to the operator-curated
+ * provider matrix, filtered to capabilities an agent can actually chat
+ * through (`chat` OR `reasoning`), and only models with `isActive: true`.
+ *
+ * Why this exists separately from `getModels()`. The broader registry
+ * view returns every model the static fallback or OpenRouter pricing
+ * fetch knows about, even ones the operator has never configured. The
+ * agent form is the wrong surface for that — selecting an unconfigured
+ * model leads to a runtime "provider unavailable" error on the first
+ * chat turn. The settings page's "Default Models" picker already uses
+ * the matrix-only source; this helper aligns the agent form with the
+ * same curation discipline.
+ *
+ * Two parallel fetches because the `/provider-models` endpoint's
+ * `capability` query is a single value (`{ capabilities: { has: capability } }`).
+ * Reasoning-only models (e.g. `o1-mini` if a deployment seeds it as
+ * `capabilities: ['reasoning']`) wouldn't appear under `capability=chat`.
+ * Merge by slug to deduplicate models tagged with both.
+ *
+ * On failure (network, non-2xx) returns `null` and the form falls back
+ * to a free-text input with a warning banner — same posture as
+ * `getModels()` for back-compat.
+ */
+export async function getAgentModels(): Promise<ModelOption[] | null> {
+  try {
+    const [chatRes, reasoningRes] = await Promise.all([
+      serverFetch(
+        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=chat&isActive=true&limit=100`
+      ),
+      serverFetch(
+        `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?capability=reasoning&isActive=true&limit=100`
+      ),
+    ]);
+    if (!chatRes.ok && !reasoningRes.ok) return null;
+
+    const chatRows = await readProviderMatrixRows(chatRes);
+    const reasoningRows = await readProviderMatrixRows(reasoningRes);
+
+    // Dedup by (provider, modelId) — a model tagged with BOTH chat and
+    // reasoning capabilities shows up in both responses.
+    const seen = new Set<string>();
+    const merged: ModelOption[] = [];
+    for (const row of [...chatRows, ...reasoningRows]) {
+      const key = `${row.providerSlug}::${row.modelId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({
+        provider: row.providerSlug,
+        id: row.modelId,
+        // Tier hint mirrors `lib/orchestration/llm/db-model-adapter.ts`
+        // `mapTierRoleToTier` — sovereign deployments collapse to
+        // `local`; other tier roles keep their narrower mapping.
+        tier: deriveTier(row.tierRole ?? null, row.deploymentProfiles ?? null),
+        capabilities: row.capabilities ?? undefined,
+      });
+    }
+    return merged;
+  } catch (err) {
+    logger.error('prefetch: agent matrix fetch failed', err);
+    return null;
+  }
+}
+
+/**
+ * Row payload sniffer + Zod parser. The `/provider-models` endpoint
+ * currently returns a flat array, but the defensive wrap-check absorbs
+ * either shape without crashing the form. Either way, the array
+ * elements are `safeParse`'d through {@link providerMatrixRowSchema}
+ * so we never widen unvalidated JSON into the typed return.
+ */
+async function readProviderMatrixRows(res: Response): Promise<ProviderMatrixRow[]> {
+  if (!res.ok) return [];
+  const body = await parseApiResponse<unknown>(res);
+  if (!body.success) return [];
+
+  // Unwrap either the flat-array shape or the `{ data: [...] }` shape.
+  const raw = body.data;
+  const candidate = Array.isArray(raw)
+    ? raw
+    : raw &&
+        typeof raw === 'object' &&
+        'data' in raw &&
+        Array.isArray((raw as { data: unknown }).data)
+      ? (raw as { data: unknown[] }).data
+      : null;
+  if (candidate === null) return [];
+
+  const parsed = z.array(providerMatrixRowSchema).safeParse(candidate);
+  if (!parsed.success) {
+    logger.warn('prefetch: provider-matrix row shape drifted from schema', {
+      issueCount: parsed.error.issues.length,
+      sampleIssue: parsed.error.issues[0]?.message,
+    });
+    return [];
+  }
+  return parsed.data;
+}
+
+function deriveTier(
+  tierRole: string | null,
+  deploymentProfiles: string[] | null
+): string | undefined {
+  if (deploymentProfiles?.includes('sovereign')) return 'local';
+  switch (tierRole) {
+    case 'thinking':
+      return 'frontier';
+    case 'infrastructure':
+      return 'budget';
+    case 'worker':
+    case 'control_plane':
+    case 'embedding':
+      return 'mid';
+    default:
+      return undefined;
   }
 }

@@ -19,6 +19,7 @@
 
 import type {
   ContextLengthLevel,
+  DeploymentProfile,
   LatencyLevel,
   RatingLevel,
   TierRole,
@@ -128,24 +129,27 @@ export function deriveReasoningDepth(modelId: string, capability: Capability): R
 }
 
 /**
- * Map a candidate to one of the six tier roles. The decision tree
- * mirrors the seed catalogue's classification:
+ * Map a candidate to one of the five capability tier roles. The
+ * decision tree mirrors the seed catalogue's classification:
  *
  *   - Embedding capability → `embedding` (only tier for that role)
- *   - Local model → `local_sovereign` (regardless of other dims)
  *   - Frontier reasoning → `thinking` (expensive, sparse use)
  *   - Cheap + fast → `worker` (parallel tool execution)
  *   - Otherwise → `infrastructure` (default workhorse tier)
+ *
+ * Deployment locus (`isLocal` / `sovereign`) used to short-circuit this
+ * function with `local_sovereign`. That was a structural mistake — a
+ * local model can be a high-reasoning thinking-tier model AND
+ * sovereign-deployable. The deployment-locus signal now lives in a
+ * separate `deploymentProfiles` array (see {@link deriveDeploymentProfiles}).
  */
 export function deriveTierRole(args: {
   capability: Capability;
   reasoningDepth: RatingLevel;
   costEfficiency: RatingLevel;
   latency: LatencyLevel;
-  isLocal: boolean;
 }): TierRole {
   if (args.capability === 'embedding') return 'embedding';
-  if (args.isLocal) return 'local_sovereign';
   if (args.reasoningDepth === 'very_high') return 'thinking';
   if (
     (args.costEfficiency === 'very_high' || args.costEfficiency === 'high') &&
@@ -154,6 +158,16 @@ export function deriveTierRole(args: {
     return 'worker';
   }
   return 'infrastructure';
+}
+
+/**
+ * Deployment-locus signal — orthogonal to the capability tier. A model
+ * marked `isLocal: true` runs on the operator's own infrastructure and
+ * carries the `sovereign` profile; everything else defaults to
+ * `hosted` (vendor-managed API).
+ */
+export function deriveDeploymentProfiles(args: { isLocal: boolean }): DeploymentProfile[] {
+  return args.isLocal ? ['sovereign'] : ['hosted'];
 }
 
 /**
@@ -198,8 +212,6 @@ export function deriveBestRole(tier: TierRole, capability: Capability): string {
       return 'General-purpose workhorse';
     case 'control_plane':
       return 'Routing / fallback / compliance';
-    case 'local_sovereign':
-      return 'On-prem / private inference';
     case 'embedding':
       return 'Embedding for KB search';
   }

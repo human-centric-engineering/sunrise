@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
@@ -611,6 +611,179 @@ describe('ExecutionTraceEntryRow', () => {
       // No error escapes the click — the component catches in its IIFE.
       await user.click(copyBtn);
       expect(writeText).toHaveBeenCalled();
+    });
+  });
+
+  describe('Copy → Copied state reverts after timeout', () => {
+    // Both JsonPane and ErrorPane fire setTimeout(() => setCopied(false), 2000)
+    // after a successful clipboard write. Use fake timers so the test can
+    // assert the label flips back to "Copy" without waiting two real seconds.
+
+    // user-event v14 has known issues co-operating with vi.useFakeTimers()
+    // (its setup uses setTimeout internally), so these tests drive the
+    // click via fireEvent + a real navigator.clipboard.writeText that
+    // resolves immediately, then flush microtasks and advance the
+    // setTimeout that resets the Copied state.
+
+    it('JsonPane reverts the Copy button label to "Copy" after 2s', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', {
+          value: { writeText },
+          configurable: true,
+          writable: true,
+        });
+
+        render(<ExecutionTraceEntryRow {...BASE_PROPS} output={{ message: 'hello' }} />);
+        // Expand the row to surface the JsonPane.
+        fireEvent.click(screen.getAllByRole('button')[0]);
+
+        const copyBtn = screen.getByRole('button', { name: /copy output/i });
+        await act(async () => {
+          fireEvent.click(copyBtn);
+        });
+
+        // Flushing the promise chain inside the click handler's IIFE.
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(screen.getByText('Copied')).toBeInTheDocument();
+
+        // Advance past the 2000ms revert timeout to fire the setCopied(false).
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2100);
+        });
+
+        expect(screen.queryByText('Copied')).not.toBeInTheDocument();
+        expect(screen.getByText('Copy')).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ErrorPane reverts the Copy button label after 2s', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', {
+          value: { writeText },
+          configurable: true,
+          writable: true,
+        });
+
+        render(
+          <ExecutionTraceEntryRow
+            {...BASE_PROPS}
+            status="failed"
+            error="Network error: ETIMEDOUT"
+          />
+        );
+        fireEvent.click(screen.getByRole('button', { name: /Generate Summary/i }));
+
+        const copyBtn = screen.getByRole('button', { name: /copy error message/i });
+        await act(async () => {
+          fireEvent.click(copyBtn);
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(screen.getByText('Copied')).toBeInTheDocument();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2100);
+        });
+        expect(screen.queryByText('Copied')).not.toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('input view: raw vs resolved toggle', () => {
+    // When interpolationContext is supplied AND the step's input contains
+    // {{...}} template tokens, the JsonPane offers a "Show resolved" toggle
+    // that swaps the raw config snapshot for an interpolated one. Without
+    // tokens (or without context) the toggle isn't rendered at all.
+
+    const stepInputWithTokens = {
+      prompt: 'Summarise {{previous.output}}',
+    };
+
+    const interpolationContext = {
+      inputData: {},
+      stepOutputs: {
+        'prior-step': { content: 'the original text' },
+      },
+      variables: {},
+    };
+
+    it('does not render the toggle when interpolationContext is missing', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} input={stepInputWithTokens} />);
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+      expect(
+        screen.queryByTestId('trace-entry-input-resolve-toggle-step-1')
+      ).not.toBeInTheDocument();
+    });
+
+    it('does not render the toggle when input has no template tokens', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          input={{ prompt: 'plain literal' }}
+          interpolationContext={interpolationContext}
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+      expect(
+        screen.queryByTestId('trace-entry-input-resolve-toggle-step-1')
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders the "Show resolved" toggle when context + tokens are present', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          input={stepInputWithTokens}
+          interpolationContext={interpolationContext}
+          previousStepId="prior-step"
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+      const toggle = screen.getByTestId('trace-entry-input-resolve-toggle-step-1');
+      expect(toggle).toHaveTextContent(/show resolved/i);
+    });
+
+    it('clicking the toggle swaps the raw token for the resolved value', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          input={stepInputWithTokens}
+          interpolationContext={interpolationContext}
+          previousStepId="prior-step"
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /Generate Summary/i }));
+
+      // Raw view: the literal template token is visible in the JsonPretty
+      // output. The exact rendered text may include syntax highlighting,
+      // so use a substring match against the pane container.
+      const pane = screen.getByTestId('trace-entry-input-step-1');
+      expect(pane.textContent).toContain('{{previous.output}}');
+
+      // Toggle and expect the substituted value to replace it.
+      await user.click(screen.getByTestId('trace-entry-input-resolve-toggle-step-1'));
+      expect(pane.textContent).not.toContain('{{previous.output}}');
+      expect(pane.textContent).toContain('the original text');
+
+      // Toggle label flips so the operator can return to the raw snapshot.
+      expect(screen.getByTestId('trace-entry-input-resolve-toggle-step-1')).toHaveTextContent(
+        /show raw/i
+      );
     });
   });
 

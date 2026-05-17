@@ -401,7 +401,12 @@ export function DefaultModelsForm({
                   <SelectTrigger id={`model-${task}`}>
                     <SelectValue placeholder="Not set — pick a model" />
                   </SelectTrigger>
-                  <SelectContent>
+                  {/* Cap at 60% of viewport so providers with 20–30+ models
+                      (OpenAI, OpenRouter, etc.) still scroll on shorter
+                      screens. The primitive's default available-height only
+                      covers space below the trigger; mid-page selectors on
+                      short monitors need a tighter, viewport-relative cap. */}
+                  <SelectContent className="max-h-[60vh]">
                     {optionsForTask.length === 0 ? (
                       <SelectItem value="__none" disabled>
                         No options

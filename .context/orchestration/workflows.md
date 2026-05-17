@@ -269,9 +269,16 @@ If a new step type (`WorkflowStep.type`) carries required config, add the check 
 - Add a unit test in `tests/unit/lib/orchestration/workflows/validator.test.ts` that asserts on the new `code`, not on the message.
 - Never make the validator read from the DB or call `process.env`. If a check needs external data, it belongs in the engine, not the validator.
 
+## Step output conventions
+
+Step outputs are typed as `unknown` — the engine only requires that what a step emits is JSON-serialisable. Two opt-in conventions sit on top:
+
+- **`output.sources` → provenance.** When an LLM/agent step's output carries a `sources: ProvenanceItem[]` array matching the contract in [`provenance.md`](./provenance.md), the engine lifts it onto the trace entry's typed `provenance` field. The structured approval UI and the trace viewer surface it as colour-coded pills. Authors enforce attribution via the `provenanceRequiredRule()` helper inlined into a `guard` step's rules. First adopter: the [provider-model-audit](../../prisma/seeds/data/templates/provider-model-audit.ts) template.
+
 ## Related
 
 - [`engine.md`](./engine.md) — Runtime orchestration engine, executors, events
+- [`provenance.md`](./provenance.md) — Step-level source attribution
 - [`admin-api.md`](./admin-api.md) — Workflow CRUD + `/validate` + live executions
 - [`overview.md`](./overview.md) — Orchestration module layout
 - `lib/orchestration/workflows/validator.ts` — Implementation

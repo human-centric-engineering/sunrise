@@ -138,6 +138,13 @@ The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain 
 
 - **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. No default — pick one of the providers configured via the setup wizard or the Providers page."
 - **Model** — "The exact model identifier your provider exposes. Changing this switches which model actually answers — cost, latency, and quality all shift. No default — pick one from the dropdown filtered to the chosen provider."
+
+The model dropdown is sourced from the **operator-curated provider matrix** (`AiProviderModel` rows with `isActive: true`), filtered to capabilities an agent can chat through (`chat` OR `reasoning`). Mirrors the discipline already used by the `/admin/orchestration/settings` Default Models picker. Selecting a model the deployment hasn't actually added is not possible — avoids the runtime "provider unavailable" trap the previous merged-registry source allowed.
+
+Implementation: `getAgentModels()` in `lib/orchestration/prefetch-helpers.ts` fires two parallel `GET /provider-models` requests (one per capability filter), merges + dedups by `(provider, modelId)`, and shapes into `ModelOption[]`. Failure modes mirror `getModels()` — partial failure (one fetch ok, one fails) returns whatever rows the successful call produced; full failure returns `null` and the form falls back to a free-text input with a warning banner.
+
+**Legacy model fallback.** When editing an agent whose saved model is no longer in the matrix (matrix row deactivated or deleted since the agent was last saved), the form synthesises a one-off SelectItem for the saved model with a "no longer in matrix" amber badge — both in the dropdown option list and in the SelectValue trigger (Radix mirrors selected children). Stops the auto-reset effect from silently swapping the operator's selection on first edit. Tested in `tests/unit/components/admin/orchestration/agent-form-model.test.tsx` (`describe('legacy model fallback on edit')`).
+
 - **Temperature** — "How much the model varies its wording. 0 = always picks the most likely next word (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes incoherent. Default: `0.7`."
 - **Max output tokens** — "Upper bound on how long one reply can be. Defaults to `4096`. Only raise this if replies are getting cut off — higher values cost more on every turn."
 - **Monthly budget (USD)** — "Hard spend cap for this agent, in USD. When month-to-date spend exceeds the cap, new chats are rejected until the calendar month rolls over or you raise the limit. Leave blank to disable the cap."

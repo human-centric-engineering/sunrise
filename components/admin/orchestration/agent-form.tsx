@@ -14,7 +14,7 @@
  * rest of Phase 4 — copy the voice, not just the structure.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
@@ -210,7 +210,44 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
     if (currentName) setValue('slug', toSlug(currentName), { shouldValidate: false });
   }, [currentName, slugTouched, isEdit, setValue]);
 
-  const filteredModels = models?.filter((m) => m.provider === currentProvider) ?? [];
+  // Filter the matrix down to models for the selected provider, then
+  // synthesise a "legacy" entry when editing an agent whose ORIGINALLY
+  // saved model is no longer in the matrix (matrix row deactivated or
+  // deleted since the agent was last saved). We key off the raw
+  // `agent.model` prop — NOT the form-state `currentModel` — so the
+  // synthesised entry only fires for a genuinely-saved value and never
+  // for the hardcoded fallback (`'claude-opus-4-6'`) that the form
+  // seeds when an empty system-agent model resolves to a default. The
+  // entry renders with an amber "no longer in matrix" badge so the
+  // operator knows to pick a replacement before saving; without it,
+  // the auto-reset effect below would silently change the model on
+  // first edit and the saved selection would be lost.
+  const filteredModels = useMemo(() => {
+    const matched = models?.filter((m) => m.provider === currentProvider) ?? [];
+    const savedModel = agent?.model ?? '';
+    const savedProvider = agent?.provider ?? '';
+    // Only synthesise when (a) we're editing, (b) the agent ROW had a
+    // non-empty model saved, (c) the saved provider matches the current
+    // selection (synthesising a legacy entry for a different provider's
+    // model would be misleading), and (d) that saved model isn't
+    // already in the matched list.
+    if (
+      !isEdit ||
+      savedModel.length === 0 ||
+      savedProvider !== currentProvider ||
+      matched.some((m) => m.id === savedModel)
+    ) {
+      return matched;
+    }
+    // `isLegacy` is a UI-only flag carried alongside the ModelOption
+    // shape — the SelectItem render branches on it for the badge.
+    const legacyEntry: ModelOption & { isLegacy: true } = {
+      provider: savedProvider,
+      id: savedModel,
+      isLegacy: true,
+    };
+    return [legacyEntry, ...matched];
+  }, [models, currentProvider, isEdit, agent?.model, agent?.provider]);
 
   // Derive capability flags for the currently-selected model so we can
   // pre-emptively disable image/document toggles when the model can't
@@ -707,13 +744,35 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                 <SelectTrigger id="model">
                   <SelectValue placeholder="Pick a model" />
                 </SelectTrigger>
-                <SelectContent>
-                  {filteredModels.map((m) => (
-                    <SelectItem key={`${m.provider}:${m.id}`} value={m.id}>
-                      {m.id}
-                      {m.tier ? ` — ${m.tier}` : ''}
-                    </SelectItem>
-                  ))}
+                {/* Cap the popover at 60% of viewport height so a provider
+                    with 20–30+ models still scrolls instead of running off
+                    the screen on shorter monitors. The primitive's default
+                    `max-h-[--radix-select-content-available-height]` only
+                    covers the space below the trigger; on mid-page short
+                    screens that's not enough. Combines with the existing
+                    overflow-y-auto in the SelectContent base styles. */}
+                <SelectContent className="max-h-[60vh]">
+                  {filteredModels.map((m) => {
+                    const isLegacy = (m as ModelOption & { isLegacy?: boolean }).isLegacy === true;
+                    return (
+                      <SelectItem
+                        key={`${m.provider}:${m.id}`}
+                        value={m.id}
+                        data-testid={isLegacy ? `model-option-legacy-${m.id}` : undefined}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={isLegacy ? 'italic' : undefined}>{m.id}</span>
+                          {isLegacy ? (
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-amber-900 uppercase dark:bg-amber-950/40 dark:text-amber-200">
+                              no longer in matrix
+                            </span>
+                          ) : m.tier ? (
+                            <span className="text-muted-foreground text-xs">— {m.tier}</span>
+                          ) : null}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             )}

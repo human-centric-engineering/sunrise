@@ -304,7 +304,7 @@ function ApprovalInlineCard({
               Reject
             </Button>
             <Link
-              href={`/admin/orchestration/executions/${executionId}`}
+              href="/admin/orchestration/approvals"
               className="text-muted-foreground ml-auto inline-flex items-center gap-1 text-xs hover:underline"
             >
               Open in full view

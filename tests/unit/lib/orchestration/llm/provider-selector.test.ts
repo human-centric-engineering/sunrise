@@ -36,6 +36,7 @@ interface ModelOverrides {
   name?: string;
   capabilities?: string[];
   tierRole?: string;
+  deploymentProfiles?: string[];
   reasoningDepth?: string;
   latency?: string;
   costEfficiency?: string;
@@ -60,6 +61,7 @@ function makeModel(overrides: ModelOverrides = {}) {
     name: overrides.name ?? 'Test Model',
     capabilities: overrides.capabilities ?? ['chat'],
     tierRole: overrides.tierRole ?? 'thinking',
+    deploymentProfiles: overrides.deploymentProfiles ?? ['hosted'],
     reasoningDepth: overrides.reasoningDepth ?? 'medium',
     latency: overrides.latency ?? 'medium',
     costEfficiency: overrides.costEfficiency ?? 'medium',
@@ -119,12 +121,16 @@ describe('recommendModels', () => {
       tierRole: 'control_plane',
       toolUse: 'strong',
     });
+    // Sovereign-deployable worker (used to live as tierRole='local_sovereign'
+    // until 2026-05-16 when deployment locus was split out of the tier enum).
     const localModel = makeModel({
       slug: 'meta-llama',
       providerSlug: 'meta',
       modelId: 'llama-3.3-70b',
-      tierRole: 'local_sovereign',
+      tierRole: 'worker',
+      deploymentProfiles: ['sovereign'],
       costEfficiency: 'very_high',
+      local: true,
     });
 
     const allModels = [thinkingModel, workerModel, infraModel, controlModel, localModel];
@@ -139,8 +145,16 @@ describe('recommendModels', () => {
     it('ranks worker-tier models highest for "doing" intent', async () => {
       mockModels(allModels);
       const results = await recommendModels('doing');
+      // Both deepseek-chat and meta-llama are worker-tier (Llama 3.3 70B
+      // moved to worker+sovereign in the 2026-05-16 enum split). They
+      // tie on the primary score for "doing"; deepseek-chat wins the
+      // alphabetical tiebreaker. Non-worker tiers must still rank
+      // strictly lower than the worker pair.
       expect(results[0].slug).toBe('deepseek-chat');
-      expect(results[0].score).toBeGreaterThan(results[1].score);
+      expect(results[0].score).toBeGreaterThanOrEqual(results[1].score);
+      // The third result is a non-worker model — assert the worker tier
+      // genuinely beats it (primary tier match is the meaningful signal).
+      expect(results[1].score).toBeGreaterThan(results[2].score);
     });
 
     it('ranks infrastructure-tier models highest for "fast_looping" intent', async () => {
@@ -157,7 +171,7 @@ describe('recommendModels', () => {
       expect(results[0].score).toBeGreaterThan(results[1].score);
     });
 
-    it('ranks local_sovereign-tier models highest for "private" intent', async () => {
+    it('ranks sovereign-deployable models highest for "private" intent', async () => {
       mockModels(allModels);
       const results = await recommendModels('private');
       expect(results[0].slug).toBe('meta-llama');

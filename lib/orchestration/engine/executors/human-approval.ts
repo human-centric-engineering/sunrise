@@ -58,6 +58,10 @@ export function executeHumanApproval(
       timeoutMinutes: config.timeoutMinutes,
       notificationChannel: config.notificationChannel,
       approverUserIds: config.approverUserIds,
+      // Surface the declarative review schema (if any) so the admin
+      // approval UI can render a structured form against the trace
+      // entry's output without re-fetching the workflow definition.
+      reviewSchema: config.reviewSchema,
     })
   );
 }

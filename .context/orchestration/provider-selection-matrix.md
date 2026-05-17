@@ -45,29 +45,32 @@ Seed (~36 defaults) → AiProviderModel table → provider-selector.ts → API e
 - **Seed-managed** (`isDefault: true`): ~36 default model entries populated by `009-provider-models.ts`. Re-seeding updates these rows.
 - **Admin-managed** (`isDefault: false`): Once an admin edits a seed model, `isDefault` flips to `false` and future seeds skip it. Admin-created models are always `isDefault: false`.
 
-## 6-Tier Classification
+## Capability Tier Classification
 
-| Tier | Role                | Use When                                                             | Example Models                                  |
-| ---- | ------------------- | -------------------------------------------------------------------- | ----------------------------------------------- |
-| 1    | **Thinking**        | Complex planning, multi-step reasoning, decomposition                | Claude Opus 4, GPT-5, Gemini 2.5 Pro            |
-| 2    | **Worker**          | Tool execution, summarisation, transformations, cheap parallel tasks | Claude Sonnet 4, GPT-4.1, DeepSeek Chat, Grok 3 |
-| 3    | **Infrastructure**  | Scaling, latency-sensitive loops, high-throughput                    | Claude Haiku 4.5, GPT-4o-mini, Groq Llama 3.3   |
-| 4    | **Control Plane**   | Fallback logic, A/B testing, cost routing, enterprise compliance     | OpenRouter Auto, Bedrock Claude, Azure GPT-4o   |
-| 5    | **Local/Sovereign** | Privacy-sensitive workloads, offline capability, data residency      | Llama 3.3 70B (Ollama), Qwen 2.5 72B            |
-| E    | **Embedding**       | Vector embeddings for knowledge base and semantic search             | text-embedding-3-small, Voyage 3, Mistral Embed |
+Models carry a single `tierRole` describing what they're FOR (capability tier) plus a `deploymentProfiles` array describing where they run (deployment locus). The two are orthogonal — Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['sovereign']`.
+
+| Tier | Role               | Use When                                                             | Example Models                                                                        |
+| ---- | ------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 1    | **Thinking**       | Complex planning, multi-step reasoning, decomposition                | Claude Opus 4, GPT-5, Gemini 2.5 Pro, Qwen 2.5 72B (sovereign-deployable)             |
+| 2    | **Worker**         | Tool execution, summarisation, transformations, cheap parallel tasks | Claude Sonnet 4, GPT-4.1, DeepSeek Chat, Grok 3, Llama 3.3 70B (sovereign-deployable) |
+| 3    | **Infrastructure** | Scaling, latency-sensitive loops, high-throughput                    | Claude Haiku 4.5, GPT-4o-mini, Groq Llama 3.3                                         |
+| 4    | **Control Plane**  | Fallback logic, A/B testing, cost routing, enterprise compliance     | OpenRouter Auto, Bedrock Claude, Azure GPT-4o                                         |
+| E    | **Embedding**      | Vector embeddings for knowledge base and semantic search             | text-embedding-3-small, Voyage 3, Mistral Embed                                       |
+
+The deployment-locus signal — previously baked into a `local_sovereign` tier — now lives in the `deploymentProfiles` array. Self-hosted open-weight models still appear in the matrix; they just carry their actual capability tier (thinking / worker) plus `['sovereign']` rather than collapsing both axes into a single tier value. See `.context/orchestration/meta/architectural-decisions.md` §3.11.
 
 ## Decision Heuristic
 
 When assigning a model in an agent system:
 
-| Condition                         | Recommendation                 |
-| --------------------------------- | ------------------------------ |
-| If it **thinks**                  | Use frontier models (Tier 1)   |
-| If it **does**                    | Use cheap/open models (Tier 2) |
-| If it **loops fast**              | Use infra providers (Tier 3)   |
-| If it **must not fail**           | Route via aggregators (Tier 4) |
-| If it **must stay private**       | Run local (Tier 5)             |
-| If it **needs vector embeddings** | Use embedding models (Tier E)  |
+| Condition                         | Recommendation                                                          |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| If it **thinks**                  | Use frontier models (Tier 1)                                            |
+| If it **does**                    | Use cheap/open models (Tier 2)                                          |
+| If it **loops fast**              | Use infra providers (Tier 3)                                            |
+| If it **must not fail**           | Route via aggregators (Tier 4)                                          |
+| If it **must stay private**       | Filter by `deploymentProfiles ⊇ ['sovereign']`; tier choice is separate |
+| If it **needs vector embeddings** | Use embedding models (Tier E)                                           |
 
 ### Programmatic API
 
@@ -80,7 +83,7 @@ const recs = await recommendModels(intent, { limit?: number; includeInactive?: b
 
 Scoring for chat intents (`thinking`, `doing`, `fast_looping`, `high_reliability`): primary factor is `tierRole` match (60 points), secondary tiebreaker from the relevant dimension (up to 30 points), tertiary tiebreaker from `contextLength` (up to 6 points). Non-matching tiers score 0 + secondary only. Models with equal scores are sorted alphabetically by slug for deterministic ordering.
 
-Scoring for private intent: primary factor is `tierRole` match (60 points), strong `local` preference (30pts for `local: true`), `costEfficiency` secondary (up to 5pts per level), `contextLength` tertiary (2pts per level).
+Scoring for private intent: primary factor is `deploymentProfiles.includes('sovereign')` (60 points — was `tierRole === 'local_sovereign'` until 2026-05-16; deployment locus is now its own axis), strong `local` preference (30pts for `local: true`), `costEfficiency` secondary (up to 5pts per level), `contextLength` tertiary (2pts per level). Tier role does not gate scoring for this intent — a sovereign-deployable thinking-tier model and a sovereign-deployable worker-tier model both score the same on the primary factor.
 
 Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pts), `quality` (20pts), `hasFreeTier` (10pts), `local` preference (5pts). Models with `quality: null` are treated as `'medium'`.
 
@@ -88,7 +91,8 @@ Scoring for embedding intent: `schemaCompatible` (40pts), `costEfficiency` (21pt
 
 | Dimension              | Values                                                                                                                                                             | Purpose                                                                                                                                                                                                                                       |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tierRole`             | thinking, worker, infrastructure, control_plane, local_sovereign, embedding                                                                                        | Primary classification                                                                                                                                                                                                                        |
+| `tierRole`             | thinking, worker, infrastructure, control_plane, embedding                                                                                                         | Capability tier — what the model is FOR. Orthogonal to `deploymentProfiles`.                                                                                                                                                                  |
+| `deploymentProfiles`   | Array of one or more: `hosted`, `sovereign`                                                                                                                        | Deployment locus — WHERE the model runs. `hosted` = vendor API; `sovereign` = operator infrastructure. A model can carry both. Split out of `tierRole` 2026-05-16; see `.context/orchestration/meta/architectural-decisions.md` §3.11.        |
 | `capabilities`         | Subset of `MODEL_CAPABILITIES` (`chat`, `reasoning`, `embedding`, `audio`, `image`, `moderation`). `unknown` is catalogue-only — the matrix Zod schema rejects it. | Engine paths: `chat`/`reasoning` → `provider.chat()`; `embedding` → `provider.embed()`; `audio` → `provider.transcribe?()`. `image`/`moderation` are storage-only — the engine does not invoke them (UI surfaces a "Storage-only" indicator). |
 | `providerSlug`         | String                                                                                                                                                             | Groups models by provider                                                                                                                                                                                                                     |
 | `modelId`              | String                                                                                                                                                             | API model identifier                                                                                                                                                                                                                          |

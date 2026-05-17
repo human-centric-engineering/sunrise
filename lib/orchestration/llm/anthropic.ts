@@ -163,8 +163,29 @@ export class AnthropicProvider implements LlmProvider {
       }
     }
 
+    const joinedContent = content.join('');
+
+    // Truncation guard. Anthropic returns `stop_reason: 'max_tokens'`
+    // when the model hits the cap; with extended thinking turned on
+    // the budget can be entirely consumed by thinking blocks (which
+    // we do not surface as text), leaving `joinedContent` empty. Same
+    // shape as the OpenAI-compatible guard — surface as a clear
+    // provider error so the operator sees a "raise maxTokens" message
+    // instead of a silent empty-output step that confuses downstream.
+    if (
+      message.stop_reason === 'max_tokens' &&
+      joinedContent.length === 0 &&
+      toolCalls.length === 0
+    ) {
+      const cap = (params as { max_tokens?: number }).max_tokens;
+      throw new ProviderError(
+        `Model "${options.model}" hit max_tokens before producing visible output. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        { code: 'truncated_no_output', retriable: false }
+      );
+    }
+
     const response: LlmResponse = {
-      content: content.join(''),
+      content: joinedContent,
       usage: {
         inputTokens: message.usage.input_tokens,
         outputTokens: message.usage.output_tokens,

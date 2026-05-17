@@ -15,6 +15,7 @@ import {
   deriveBestRole,
   deriveContextLength,
   deriveCostEfficiency,
+  deriveDeploymentProfiles,
   deriveLatency,
   deriveMatrixSlug,
   deriveReasoningDepth,
@@ -116,31 +117,21 @@ describe('deriveTierRole', () => {
         reasoningDepth: 'none',
         costEfficiency: 'high',
         latency: 'fast',
-        isLocal: false,
       })
     ).toBe('embedding');
   });
 
-  it('local model → local_sovereign tier', () => {
-    expect(
-      deriveTierRole({
-        capability: 'chat',
-        reasoningDepth: 'medium',
-        costEfficiency: 'very_high',
-        latency: 'medium',
-        isLocal: true,
-      })
-    ).toBe('local_sovereign');
-  });
-
-  it('frontier reasoning → thinking tier', () => {
+  it('frontier reasoning → thinking tier (regardless of locality)', () => {
+    // A local-deployable thinking-tier model (Qwen 2.5 72B style) gets
+    // classified by its capability tier, not by where it runs. Deployment
+    // locus is `deploymentProfiles`, which used to overlap with this tier
+    // via `local_sovereign` — removed 2026-05-16.
     expect(
       deriveTierRole({
         capability: 'chat',
         reasoningDepth: 'very_high',
         costEfficiency: 'none',
         latency: 'medium',
-        isLocal: false,
       })
     ).toBe('thinking');
   });
@@ -152,7 +143,6 @@ describe('deriveTierRole', () => {
         reasoningDepth: 'medium',
         costEfficiency: 'very_high',
         latency: 'fast',
-        isLocal: false,
       })
     ).toBe('worker');
   });
@@ -164,7 +154,6 @@ describe('deriveTierRole', () => {
         reasoningDepth: 'high',
         costEfficiency: 'medium',
         latency: 'medium',
-        isLocal: false,
       })
     ).toBe('infrastructure');
   });
@@ -201,8 +190,17 @@ describe('deriveBestRole', () => {
     expect(deriveBestRole('thinking', 'chat')).toMatch(/planner/i);
     expect(deriveBestRole('worker', 'chat')).toMatch(/worker/i);
     expect(deriveBestRole('infrastructure', 'chat')).toMatch(/workhorse/i);
-    expect(deriveBestRole('local_sovereign', 'chat')).toMatch(/private/i);
     expect(deriveBestRole('control_plane', 'chat')).toMatch(/routing/i);
+  });
+});
+
+describe('deriveDeploymentProfiles', () => {
+  it('local model → [sovereign]', () => {
+    expect(deriveDeploymentProfiles({ isLocal: true })).toEqual(['sovereign']);
+  });
+
+  it('non-local model → [hosted]', () => {
+    expect(deriveDeploymentProfiles({ isLocal: false })).toEqual(['hosted']);
   });
 });
 

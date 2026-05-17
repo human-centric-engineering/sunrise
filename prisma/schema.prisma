@@ -1017,7 +1017,15 @@ model AiProviderModel {
 
   // Classification
   capabilities String[] @default(["chat"]) // ["chat"], ["embedding"], ["chat","embedding"]
-  tierRole     String // 'thinking' | 'worker' | 'infrastructure' | 'control_plane' | 'local_sovereign' | 'embedding'
+  tierRole     String // 'thinking' | 'worker' | 'infrastructure' | 'control_plane' | 'embedding'
+
+  // Deployment profile — orthogonal to tierRole. A model can be a `thinking`-tier
+  // chat LLM that is also `sovereign`-deployable (e.g. Qwen2.5-72B) without
+  // forcing a false choice in the tier classification. Defaults to ["hosted"]
+  // (the most common case — vendor-hosted via API). Models that run on the
+  // operator's own infrastructure carry "sovereign". Reserved values for future
+  // expansion: "edge" (browser/device), "air_gapped" (no outbound network).
+  deploymentProfiles String[] @default(["hosted"])
 
   // Selection matrix dimensions
   reasoningDepth String // 'very_high' | 'high' | 'medium' | 'none'

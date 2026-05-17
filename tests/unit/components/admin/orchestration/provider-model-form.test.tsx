@@ -63,6 +63,11 @@ vi.mock('@/types/orchestration', () => ({
     thinking: { label: 'Thinking', description: 'High-reasoning tasks' },
     worker: { label: 'Worker', description: 'General tasks' },
   },
+  DEPLOYMENT_PROFILES: ['hosted', 'sovereign'],
+  DEPLOYMENT_PROFILE_META: {
+    hosted: { label: 'Hosted', description: 'Vendor-managed API' },
+    sovereign: { label: 'Sovereign', description: 'Your own infrastructure' },
+  },
   MODEL_CAPABILITIES: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
   STORAGE_ONLY_CAPABILITIES: ['image', 'moderation'],
 }));

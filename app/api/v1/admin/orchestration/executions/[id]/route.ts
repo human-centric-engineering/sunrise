@@ -60,7 +60,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   const execution = await prisma.aiWorkflowExecution.findUnique({
     where: { id },
-    include: { workflow: { select: { id: true, name: true } } },
+    include: { workflow: { select: { id: true, name: true, slug: true } } },
   });
   if (!execution || execution.userId !== session.user.id) {
     throw new NotFoundError(`Execution ${id} not found`);
@@ -136,7 +136,11 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
       startedAt: execution.startedAt,
       completedAt: execution.completedAt,
       createdAt: execution.createdAt,
-      workflow: { id: execution.workflow.id, name: execution.workflow.name },
+      workflow: {
+        id: execution.workflow.id,
+        name: execution.workflow.name,
+        slug: execution.workflow.slug,
+      },
     },
     trace,
     costEntries,

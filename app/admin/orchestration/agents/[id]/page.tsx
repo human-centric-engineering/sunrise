@@ -11,8 +11,8 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import {
+  getAgentModels,
   getEffectiveAgentDefaults,
-  getModels,
   getProviders,
 } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent } from '@/types/prisma';
@@ -33,8 +33,14 @@ export async function generateMetadata({
 /**
  * Admin — Edit agent page (Phase 4 Session 4.2).
  *
- * Server component shell. Fetches the agent, provider list, and model
- * registry in parallel. Missing agent → `notFound()`. Provider/model
+ * Server component shell. Fetches the agent, provider list, and the
+ * curated provider matrix (chat + reasoning capabilities only) in
+ * parallel. Restricted to models the operator has explicitly added —
+ * matches the discipline already used in the settings "Default Models"
+ * picker. An agent whose saved model is no longer in the matrix still
+ * surfaces it in the dropdown as a legacy option so the operator
+ * doesn't silently lose the selection on edit (handled in
+ * `agent-form.tsx`). Missing agent → `notFound()`. Provider/model
  * fetch failures are tolerated — the form renders with text-input
  * fallbacks.
  */
@@ -69,7 +75,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const [agent, providers, models, trend] = await Promise.all([
     getAgent(id),
     getProviders(),
-    getModels(),
+    getAgentModels(),
     getEvaluationTrend(id),
   ]);
 

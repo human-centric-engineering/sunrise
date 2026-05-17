@@ -22,14 +22,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Module mocks — must be declared before dynamic imports
 // ---------------------------------------------------------------------------
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // `$transaction` invokes the callback with the same prisma stub, so
+  // `tx.aiProviderModel.findUnique` / `tx.aiProviderModel.update` route
+  // to the same mock fns the tests configure via `mockFindUnique` /
+  // `mockUpdate` below. The serializable-isolation option is ignored
+  // by the mock — tests assert behaviour, not isolation level.
+  const prismaMock = {
     aiProviderModel: {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
-  },
-}));
+    $transaction: vi.fn(),
+  };
+  prismaMock.$transaction.mockImplementation(async (cb: (tx: typeof prismaMock) => unknown) =>
+    cb(prismaMock)
+  );
+  return { prisma: prismaMock };
+});
 
 vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
@@ -58,6 +68,8 @@ type AuditableField = (typeof AUDITABLE_FIELDS)[number];
 
 const mockFindUnique = prisma.aiProviderModel.findUnique as ReturnType<typeof vi.fn>;
 const mockUpdate = prisma.aiProviderModel.update as ReturnType<typeof vi.fn>;
+const mockTransaction = (prisma as unknown as { $transaction: ReturnType<typeof vi.fn> })
+  .$transaction;
 const mockInvalidateModelCache = invalidateModelCache as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
@@ -261,9 +273,14 @@ describe('ApplyAuditChangesCapability', () => {
       expect('models' in result && result.models).toHaveLength(2);
     });
 
-    it('rejects multi-model input with empty models array', () => {
+    it('accepts multi-model input with empty models array as a no-op', () => {
+      // Admins can reject every proposed change via the structured
+      // approval UI; the resulting `{ models: [] }` payload is a valid
+      // no-op rather than an error. The execute() path early-returns
+      // when entries is empty.
       const cap = new ApplyAuditChangesCapability();
-      expect(() => cap.validate({ models: [] })).toThrow(CapabilityValidationError);
+      const result = cap.validate({ models: [] });
+      expect('models' in result && result.models).toEqual([]);
     });
 
     it('rejects multi-model input when a model has empty changes', () => {
@@ -279,6 +296,31 @@ describe('ApplyAuditChangesCapability', () => {
       const cap = new ApplyAuditChangesCapability();
       const result = cap.validate({ newModels: [], deactivateModels: [] });
       expect('models' in result && result.models).toEqual([]);
+    });
+
+    it('accepts a wrapped approval envelope from approval-actions', () => {
+      // `approval-actions.executeApproval` writes the trace entry's
+      // output as `{ approved, notes, actor, approvalPayload }`.
+      // `argsFrom: 'review_changes'` forwards that whole object to this
+      // capability, so the unwrap preprocess must lift the payload's
+      // `models` key to top-level before schema validation.
+      const cap = new ApplyAuditChangesCapability();
+      const result = cap.validate({
+        approved: true,
+        notes: 'Reviewed',
+        actor: 'admin:user-1',
+        approvalPayload: {
+          models: [
+            {
+              model_id: 'model-1',
+              changes: [makeChange({ field: 'tierRole' })],
+            },
+          ],
+          newModels: [],
+          deactivateModels: [],
+        },
+      });
+      expect('models' in result && result.models).toHaveLength(1);
     });
   });
 
@@ -544,6 +586,109 @@ describe('ApplyAuditChangesCapability', () => {
 
       // Assert: no field-update calls (only the metadata write would fire, but skipped=0 applied)
       expect(mockUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('execute() — concurrency and array-aware drift', () => {
+    it('applies the change when DB and audit arrays differ only in element order', async () => {
+      // `deploymentProfiles` is the one array-typed AUDITABLE_FIELD. The LLM
+      // has no obligation to emit elements in a fixed order, so a string-wise
+      // JSON comparison would produce a spurious "Field value changed since
+      // audit" skip when the LLM emits `['sovereign','hosted']` against a DB
+      // value of `['hosted','sovereign']`. The valuesEqual helper sorts both
+      // sides before comparing.
+      mockFindUnique.mockResolvedValue(makeModel({ deploymentProfiles: ['hosted', 'sovereign'] }));
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          model_id: 'model-1',
+          changes: [
+            makeChange({
+              field: 'deploymentProfiles',
+              currentValue: ['sovereign', 'hosted'],
+              proposedValue: ['hosted'],
+            }),
+          ],
+        },
+        context
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.data?.applied).toBe(1);
+      expect(result.data?.skipped).toBe(0);
+    });
+
+    it('still detects genuine drift on array fields (different elements, not just different order)', async () => {
+      mockFindUnique.mockResolvedValue(makeModel({ deploymentProfiles: ['hosted'] }));
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          model_id: 'model-1',
+          changes: [
+            makeChange({
+              field: 'deploymentProfiles',
+              currentValue: ['hosted', 'sovereign'],
+              proposedValue: ['sovereign'],
+            }),
+          ],
+        },
+        context
+      );
+
+      expect(result.data?.skipped).toBe(1);
+      expect(result.data?.applied).toBe(0);
+    });
+
+    it('wraps each per-change read+update in a serializable transaction', async () => {
+      mockFindUnique.mockResolvedValue(makeModel({ costEfficiency: 'medium' }));
+      const cap = new ApplyAuditChangesCapability();
+
+      await cap.execute(
+        {
+          model_id: 'model-1',
+          changes: [
+            makeChange({ field: 'costEfficiency', currentValue: 'medium', proposedValue: 'high' }),
+          ],
+        },
+        context
+      );
+
+      // The transaction option object must request Serializable isolation,
+      // otherwise concurrent admin edits between the read and the write
+      // can be silently overwritten.
+      expect(mockTransaction).toHaveBeenCalled();
+      const lastCallOpts = mockTransaction.mock.calls.at(-1)?.[1];
+      expect(lastCallOpts).toEqual(expect.objectContaining({ isolationLevel: 'Serializable' }));
+    });
+
+    it('catches a concurrent overwrite via the in-transaction re-read (not the stale outer snapshot)', async () => {
+      // First findUnique (no longer called outside the transaction — kept
+      // as a leading mock for clarity): the value the audit observed.
+      // Second findUnique (inside the transaction): a CHANGED value, as
+      // if an admin saved between when the audit ran and when this apply
+      // step fired. The drift check uses the FRESH inner value and
+      // correctly emits 'skipped' rather than the cached 'medium'.
+      mockFindUnique.mockResolvedValueOnce(makeModel({ costEfficiency: 'low' }));
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          model_id: 'model-1',
+          changes: [
+            makeChange({ field: 'costEfficiency', currentValue: 'medium', proposedValue: 'high' }),
+          ],
+        },
+        context
+      );
+
+      expect(result.data?.skipped).toBe(1);
+      expect(result.data?.applied).toBe(0);
+      // The skip reason quotes the actual fresh-read value, not the
+      // (non-existent) outer snapshot.
+      expect(result.data?.changes[0].reason).toContain('low');
+      expect(result.data?.changes[0].previousValue).toBe('low');
     });
   });
 

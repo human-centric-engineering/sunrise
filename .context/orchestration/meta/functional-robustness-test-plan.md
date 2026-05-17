@@ -1385,9 +1385,9 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 
 ## Phase 4.5 — Provider Audit Workflow
 
-**What this covers:** The seeded `provider-model-audit` workflow plus the three audit capabilities (`apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) — the worked example of an autonomous workflow that proposes config changes via human approval.
+**What this covers:** The seeded `provider-model-audit` workflow plus the three audit capabilities (`apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) — the worked example of an autonomous workflow that proposes config changes via human approval. Also covers the step-output provenance contract this workflow is the first adopter of.
 
-**Reference docs:** `.context/admin/orchestration-provider-audit-guide.md`, `.context/admin/orchestration-provider-models.md`.
+**Reference docs:** `.context/admin/orchestration-provider-audit-guide.md`, `.context/admin/orchestration-provider-models.md`, `.context/orchestration/provenance.md`.
 
 ### Use scenarios
 
@@ -1395,17 +1395,27 @@ Lower frequency but worth a deliberate pass. Many of these are areas the platfor
 - C[ ] L[ ] M[ ] A[ ] — Approve via the admin queue → verify the audit-changes capabilities apply the changes to `AiProviderModel`.
 - C[ ] L[ ] M[ ] A[ ] — Reject → verify no changes are applied.
 - C[ ] L[ ] M[ ] A[ ] — Verify the audit log captures every change with from/to deltas.
+- C[ ] L[ ] M[ ] A[ ] — On the approval form, each proposed change row renders a Sources column with colour-coded pills (`web`, `kb`, `training`, etc.) and hover-out detail showing the reference URL/snippet/note.
+- C[ ] L[ ] M[ ] A[ ] — A change backed by a `web_search` source → pill is blue and links to a Brave-result URL on hover.
+- C[ ] L[ ] M[ ] A[ ] — A change with only `training_knowledge` sources → pill is amber and confidence is capped at `medium`/`low` (never `high`).
+- C[ ] L[ ] M[ ] A[ ] — After execution, open the execution-detail trace viewer → verify each producer step's expanded panel renders the same Sources sub-panel beneath the Output block.
 
 ### Abuse / robustness scenarios
 
 - C[ ] L[ ] M[ ] A[ ] — Tamper test from the audit guide: modify the proposed-changes JSON between proposal and approval → verify the integrity check rejects the tampered payload.
 - C[ ] L[ ] M[ ] A[ ] — Audit workflow proposes deactivating a model that's currently in active use by an agent → verify the warning surfaces.
 - C[ ] L[ ] M[ ] A[ ] — Audit proposes adding a model that already exists with conflicting fields → verify conflict resolution.
+- C[ ] L[ ] M[ ] A[ ] — Producer step emits a change with NO `sources` array → `validate_proposals` guard rejects on first attempt; retry context surfaces the offending object; the producer's retry attempt re-runs with attribution; on second consecutive failure the workflow routes to `report_validation_failure` rather than silently halting.
+- C[ ] L[ ] M[ ] A[ ] — Producer emits a change with `source: 'training_knowledge', confidence: 'high'` → guard rejects (training_knowledge is capped at `medium`/`low` by Rule 8).
+- C[ ] L[ ] M[ ] A[ ] — Producer emits a `web_search` source with no `reference` → guard rejects (Rule 8 requires reference for sourced kinds).
+- C[ ] L[ ] M[ ] A[ ] — Producer emits a malformed `sources` array (wrong type / unknown source kind) → engine's `extractProvenance` silently drops the field; approval UI's `SourcesField` renders the JSON fallback `<pre>` so the cell never blanks.
+- C[ ] L[ ] M[ ] A[ ] — Specifically: a chat/reasoning LLM (e.g. Qwen2.5-72B) ends up routed to `analyse_embedding` → the analyser's scope-check prompt instructs it to emit a `tierRole` correction back to the chat tier with attributed sources, NOT a stream of embedding-specific edits.
 
 ### Edge cases
 
 - C[ ] L[ ] M[ ] A[ ] — Audit workflow run when no changes are needed → verify clean no-op approval.
 - C[ ] L[ ] M[ ] A[ ] — Audit run while the provider it's auditing is unhealthy → verify graceful degradation.
+- C[ ] L[ ] M[ ] A[ ] — Audit run with `BRAVE_SEARCH_API_KEY` unset → `search_provider_info` skips (expected-skip), search-results block in producer prompts is empty, producers attribute every claim as `training_knowledge` at `medium`/`low` confidence; admin reviewing sees all-amber pills and can decide whether to approve without external evidence.
 
 ---
 

@@ -98,7 +98,19 @@ export type LlmFinishReason = 'stop' | 'tool_use' | 'length' | 'error';
 export interface LlmResponse {
   content: string;
   toolCalls?: LlmToolCall[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    /**
+     * For reasoning models (OpenAI o-series, gpt-5), the subset of
+     * `outputTokens` consumed by internal reasoning. Counts against
+     * the same `max_completion_tokens` cap that bounds visible
+     * output, so a high value with a low visible-content length
+     * signals the cap was too tight. Undefined for non-reasoning
+     * models and providers that don't report it.
+     */
+    reasoningTokens?: number;
+  };
   /** Echo of the model id the provider actually used. */
   model: string;
   finishReason: LlmFinishReason;
