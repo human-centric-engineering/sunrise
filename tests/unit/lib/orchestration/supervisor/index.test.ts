@@ -220,6 +220,55 @@ describe('tryParse', () => {
   it('returns null for a malformed fenced block (open without close)', () => {
     expect(tryParse('```\nnot valid json without a close fence')).toBeNull();
   });
+
+  it('extracts JSON from prose: "Here is my assessment: { ... }. Hope this helps!"', () => {
+    const wrapped =
+      "Here's my assessment of the workflow:\n\n" +
+      validReportJson() +
+      '\n\nLet me know if you need anything else.';
+    const parsed = tryParse(wrapped);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.verdict).toBe('pass');
+  });
+
+  it('extracts JSON when the model emits Markdown header before the JSON', () => {
+    const wrapped = `## Supervisor verdict\n\n${validReportJson()}`;
+    const parsed = tryParse(wrapped);
+    expect(parsed).not.toBeNull();
+  });
+
+  it('handles JSON with nested braces inside string values', () => {
+    // The balanced-brace scanner must respect string literals so `{`
+    // inside a quote doesn't increment the depth counter.
+    const tricky = JSON.stringify({
+      verdict: 'pass',
+      score: 0.9,
+      summary: 'Found pattern { foo: 1 } in step output',
+      strengths: [
+        { claim: 'good', evidenceStepId: 's1', evidenceQuote: 'curly { brace } content' },
+      ],
+      weaknesses: [
+        {
+          severity: 'low',
+          claim: 'minor',
+          evidenceStepId: 's1',
+          evidenceQuote: '}',
+          recommendation: 'fix',
+        },
+      ],
+      anomalies: [],
+      unverifiedAreas: [],
+      confidence: 'high',
+    });
+    const wrapped = `Here is the result: ${tricky} done.`;
+    const parsed = tryParse(wrapped);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.summary).toContain('pattern { foo: 1 }');
+  });
+
+  it('still returns null for prose with no JSON object at all', () => {
+    expect(tryParse('I have completed my analysis. Everything looks good.')).toBeNull();
+  });
 });
 
 // ─── validateCitations ──────────────────────────────────────────────────────

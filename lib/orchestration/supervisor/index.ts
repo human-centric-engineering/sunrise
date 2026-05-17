@@ -241,16 +241,85 @@ function stripFences(content: string): string {
   return trimmed;
 }
 
+/**
+ * Find the first balanced top-level JSON object in `content` and
+ * return that substring (or null). Used as a fallback when the LLM
+ * wrapped the JSON in prose ("Here's my assessment: {...}. Let me know
+ * if you need anything else.") — `JSON.parse` rejects the whole string
+ * because of the trailing text, but the JSON inside is still
+ * recoverable.
+ *
+ * Walks the string char by char, tracks string literals so braces
+ * inside quotes don't confuse the depth counter.
+ */
+function extractFirstJsonObject(content: string): string | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let start = -1;
+  for (let i = 0; i < content.length; i += 1) {
+    const c = content[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (c === '\\') {
+        escape = true;
+        continue;
+      }
+      if (c === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (c === '}') {
+      depth -= 1;
+      if (depth === 0 && start !== -1) {
+        return content.slice(start, i + 1);
+      }
+      if (depth < 0) return null; // malformed
+    }
+  }
+  return null;
+}
+
 export function tryParse(content: string): ParsedReport | null {
   const cleaned = stripFences(content);
-  let raw: unknown;
+
+  // Attempt 1: parse the cleaned content directly. Covers the happy
+  // path where the model returned pure JSON, optionally wrapped in
+  // ``` fences.
   try {
-    raw = JSON.parse(cleaned);
+    const direct = JSON.parse(cleaned) as unknown;
+    const result = reportShapeSchema.safeParse(direct);
+    if (result.success) return result.data;
   } catch {
-    return null;
+    // fall through to extraction
   }
-  const result = reportShapeSchema.safeParse(raw);
-  return result.success ? result.data : null;
+
+  // Attempt 2: extract the first balanced { ... } object from the
+  // content and parse THAT. Handles "Here's the JSON: {...}. Hope
+  // this helps!" and similar prose-wrapped responses.
+  const extracted = extractFirstJsonObject(cleaned);
+  if (extracted) {
+    try {
+      const raw = JSON.parse(extracted) as unknown;
+      const result = reportShapeSchema.safeParse(raw);
+      if (result.success) return result.data;
+    } catch {
+      // fall through
+    }
+  }
+
+  return null;
 }
 
 // ─── Citation validator ─────────────────────────────────────────────────────
@@ -445,7 +514,27 @@ export async function runSupervisorAssessment(
   let parsed = tryParse(first.content);
   let rawForFailure = first.content;
   if (!parsed) {
-    const retry = await params.llmCall(prompt, { temperature: 0 });
+    // Retry: rebuild the prompt with the failed response embedded and an
+    // explicit "JSON only" preamble. Asking again at temperature 0 with
+    // no acknowledgement of the previous failure usually produces the
+    // same malformed response — models tend to repeat their last output
+    // pattern. Showing the model what it returned and naming the problem
+    // is far more effective.
+    const retryPrompt =
+      `Your previous response could not be parsed as JSON. ` +
+      `Here is what you returned (verbatim, truncated to 4000 chars):\n\n` +
+      `--- BEGIN PREVIOUS RESPONSE ---\n` +
+      `${first.content.slice(0, 4000)}\n` +
+      `--- END PREVIOUS RESPONSE ---\n\n` +
+      `Common reasons your output failed parsing:\n` +
+      `  - You wrapped the JSON in prose ("Here is my assessment:" before, "Hope this helps" after).\n` +
+      `  - You included Markdown headers / lists / bold text instead of a JSON object.\n` +
+      `  - You returned multiple JSON objects, or a JSON array at the top level.\n` +
+      `  - You used trailing commas, single quotes, or unquoted keys.\n\n` +
+      `Return ONLY a single JSON object matching the schema in the original prompt.\n` +
+      `Start your response with { and end with } — no prose, no fences, no commentary.\n\n` +
+      `--- ORIGINAL PROMPT (re-stated for context) ---\n${prompt}`;
+    const retry = await params.llmCall(retryPrompt, { temperature: 0 });
     totalTokens += retry.tokensUsed;
     totalCost += retry.costUsd;
     rawForFailure = retry.content;

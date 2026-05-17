@@ -372,10 +372,24 @@ function SupervisorDetailsPanel({
       )}
 
       {r.parseFailure && (
-        <p className="text-xs text-red-700 dark:text-red-300">
-          Supervisor output couldn&apos;t be parsed; raw response preserved in{' '}
-          <code>supervisorReport.parseFailure</code>.
-        </p>
+        <details className="mt-2 rounded-md border border-red-200 bg-red-50/60 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
+          <summary className="cursor-pointer text-xs font-medium text-red-700 dark:text-red-300">
+            Supervisor output couldn&apos;t be parsed — show raw response
+          </summary>
+          {r.parseFailure.reason && (
+            <p className="text-muted-foreground mt-2 text-xs">{r.parseFailure.reason}</p>
+          )}
+          <pre className="bg-background/60 mt-2 max-h-72 overflow-auto rounded border border-red-200 p-2 font-mono text-[11px] whitespace-pre-wrap dark:border-red-900">
+            {r.parseFailure.rawResponse ?? '(no raw response captured)'}
+          </pre>
+          <p className="text-muted-foreground mt-2 text-xs">
+            Tip: this is what the judge model returned after two attempts. Common failure modes are
+            prose around the JSON (&quot;Here&apos;s my assessment:&quot;), markdown headers instead
+            of a JSON object, or a top-level array. The parser is forgiving (strips fences and
+            extracts the first balanced <code>{'{ … }'}</code> from prose); seeing this section
+            means even those fallbacks failed.
+          </p>
+        </details>
       )}
 
       {r.previousVerdicts && r.previousVerdicts.length > 0 && (
