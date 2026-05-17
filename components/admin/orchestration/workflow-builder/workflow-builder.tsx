@@ -179,6 +179,21 @@ function WorkflowBuilderInner({
     return counts;
   }, [nodes]);
 
+  // Run-time toggle plumbing for the supervisor step. When the
+  // workflow's DAG contains a `supervisor` step, the run dialog
+  // surfaces a "Run neutral supervisor review" checkbox whose initial
+  // state comes from that step's `defaultEnabled` config. The dialog
+  // injects `__runSupervisor: <boolean>` into the resulting
+  // `inputData`; the executor short-circuits to `expectedSkip` when
+  // explicitly false.
+  const supervisorInfo = useMemo(() => {
+    const node = nodes.find((n) => n.data.type === 'supervisor');
+    if (!node) return { hasSupervisorStep: false, supervisorDefaultEnabled: true };
+    const config = node.data.config as Record<string, unknown> | undefined;
+    const def = typeof config?.defaultEnabled === 'boolean' ? config.defaultEnabled : true;
+    return { hasSupervisorStep: true, supervisorDefaultEnabled: def };
+  }, [nodes]);
+
   // Live validation state.
   const [validationErrors, setValidationErrors] = useState<CombinedError[]>([]);
   const summaryPanelRef = useRef<HTMLDivElement | null>(null);
@@ -763,6 +778,8 @@ function WorkflowBuilderInner({
         onOpenChange={setExecutionDialogOpen}
         onConfirm={handleExecutionConfirm}
         workflowId={workflow?.id ?? ''}
+        hasSupervisorStep={supervisorInfo.hasSupervisorStep}
+        supervisorDefaultEnabled={supervisorInfo.supervisorDefaultEnabled}
       />
 
       <WorkflowDetailsDialog

@@ -191,6 +191,24 @@ After approval, the workflow continues:
 2. Find the model you tampered with
 3. Confirm the field was corrected back to its proper value
 
+## Supervisor verdict
+
+The audit ends with a `supervisor` step that audits the workflow's own execution and emits an honest, evidence-cited verdict. It exists to catch the failure mode where the optimistic `compile_report` narrative reads "everything went well" while the trace tells a different story (silent retries, validators that passed on bad data, capability dispatches that applied zero changes).
+
+**How it works.** A judge model independent of the audit's primary model (configured via `EVALUATION_JUDGE_MODEL` — defaults to `claude-sonnet-4-6`) reads the full step trace plus the workflow's input and produces a structured verdict:
+
+- **Verdict** — `pass` / `concerns` / `fail` / `inconclusive`. `inconclusive` means the judge ran but its response couldn't be parsed; the raw response is preserved for debugging.
+- **Score** — 0..1.
+- **Summary** — short paragraph stating the verdict and its load-bearing reason.
+- **Strengths** and **weaknesses** — every claim cites a specific `stepId` and a verbatim quote from that step's output. Citations that don't ground in the trace are stripped by a post-hoc validator, and if the strip rate breaks the `minWeaknesses` floor the verdict is automatically downgraded (`pass` → `concerns`, `concerns` → `fail`). This is the system's anti-optimism lever — the supervisor cannot deliver a clean pass while citing things that don't exist.
+- **Unverified areas** — what the supervisor could NOT assess, made first-class so blind spots are visible.
+
+**How to read it.** When `verdict: 'pass'` and `confidence: 'high'`, the audit can be trusted. When the verdict is `concerns`, treat the weakness list as a TODO before relying on the applied changes. When the verdict is `fail`, roll back manually and re-run after refining the analysis prompts — the supervisor is advisory (`failOnVerdict: 'never'`) so the workflow doesn't auto-terminate, but the verdict is the signal to investigate.
+
+**Run-time toggle.** The "Audit Models" dialog includes a **Run neutral supervisor review** checkbox, checked by default. Uncheck it on tight-budget environments where the extra judge-model call (~$0.02–$0.10 per audit) isn't worth the signal; the supervisor step shows `status: 'skipped'` and `expectedSkip: true` in the trace, and the notification body omits the verdict section.
+
+**Retroactive review.** Any past audit execution can be reviewed after the fact via the "Review this execution" button on the execution detail page — useful when you skipped the in-workflow supervisor at trigger time but later need an honest read on what happened.
+
 ## How attribution works
 
 Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) is required to attribute every claim it makes. The output JSON carries a `sources` array per change, per new model, and per deactivation:

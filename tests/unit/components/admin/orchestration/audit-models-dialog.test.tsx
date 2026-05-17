@@ -334,14 +334,16 @@ describe('AuditModelsDialog', () => {
       expect(screen.getByRole('button', { name: /deselect all/i })).toBeInTheDocument();
     });
 
-    it('clicking "Deselect all" unchecks all visible checkboxes', async () => {
+    it('clicking "Deselect all" unchecks all visible model checkboxes', async () => {
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
 
       await user.click(screen.getByRole('button', { name: /deselect all/i }));
 
-      const checkboxes = screen.getAllByRole('checkbox');
-      for (const checkbox of checkboxes) {
+      // Scope to model checkboxes only — the "Run supervisor" toggle has
+      // its own aria-label and stays in its independent state.
+      const modelCheckboxes = screen.getAllByRole('checkbox', { name: /select .* for audit/i });
+      for (const checkbox of modelCheckboxes) {
         expect(checkbox).not.toBeChecked();
       }
     });
@@ -543,6 +545,47 @@ describe('AuditModelsDialog', () => {
       expect(body.inputData.modelIds).toEqual(
         expect.arrayContaining([MODEL_OPENAI.id, MODEL_ANTHROPIC.id])
       );
+    });
+
+    it('defaults __runSupervisor=true in the submitted inputData', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue([
+        { id: 'wf-123', slug: 'tpl-provider-model-audit' },
+      ]);
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as {
+        inputData: { __runSupervisor: boolean };
+      };
+      expect(body.inputData.__runSupervisor).toBe(true);
+    });
+
+    it('unchecking "Run neutral supervisor review" sets __runSupervisor=false on submit', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue([
+        { id: 'wf-123', slug: 'tpl-provider-model-audit' },
+      ]);
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+
+      // Untick the supervisor checkbox before submitting.
+      const supervisorCheckbox = screen.getByRole('checkbox', {
+        name: /run neutral supervisor review/i,
+      });
+      expect(supervisorCheckbox).toBeChecked();
+      await user.click(supervisorCheckbox);
+      expect(supervisorCheckbox).not.toBeChecked();
+
+      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as {
+        inputData: { __runSupervisor: boolean };
+      };
+      expect(body.inputData.__runSupervisor).toBe(false);
     });
 
     it('swaps the dialog body to live progress and does NOT auto-navigate after submit', async () => {

@@ -168,6 +168,7 @@ export const KNOWN_STEP_TYPES = [
   'agent_call',
   'send_notification',
   'orchestrator',
+  'supervisor',
 ] as const;
 
 /** A conditional edge connecting workflow steps */

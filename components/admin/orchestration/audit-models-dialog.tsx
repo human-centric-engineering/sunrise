@@ -154,6 +154,10 @@ export function AuditModelsDialog({
   const [providerFilter, setProviderFilter] = useState<string>('all');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Default ON — the audit's primary value prop is honest assessment of
+  // its own work. Operators who want to skip the judge-model bill (e.g.
+  // tight-budget dev environments) can uncheck.
+  const [runSupervisor, setRunSupervisor] = useState<boolean>(true);
 
   // Post-submission state — when set, the dialog body swaps from the
   // model-picker form to the live progress panel. Persists across the
@@ -233,9 +237,12 @@ export function AuditModelsDialog({
         return;
       }
 
-      // Build input data with selected model details
+      // Build input data with selected model details. `__runSupervisor`
+      // is a reserved key consumed by the `supervisor` step executor —
+      // when explicitly false, the step short-circuits with expectedSkip
+      // and the audit produces no honest-audit verdict for this run.
       const selectedModels = models.filter((m) => selected.has(m.id));
-      const inputData = {
+      const inputData: Record<string, unknown> = {
         modelIds: selectedModels.map((m) => m.id),
         models: selectedModels.map((m) => ({
           id: m.id,
@@ -253,6 +260,7 @@ export function AuditModelsDialog({
           dimensions: m.dimensions,
           schemaCompatible: m.schemaCompatible,
         })),
+        __runSupervisor: runSupervisor,
       };
 
       // Execute the workflow. The endpoint returns SSE — not a JSON
@@ -286,7 +294,7 @@ export function AuditModelsDialog({
       setError(err instanceof Error ? err.message : 'Failed to start audit');
       setSubmitting(false);
     }
-  }, [selected, models, setInFlight]);
+  }, [selected, models, runSupervisor, setInFlight]);
 
   const allFilteredSelected = filtered.every((m) => selected.has(m.id));
 
@@ -457,6 +465,40 @@ export function AuditModelsDialog({
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* Run-time supervisor toggle — opts the supervisor_review
+                  step in/out per-execution. Default ON (the audit's
+                  primary value prop is honest assessment of its own
+                  work). When unchecked, inputData.__runSupervisor is
+                  set to false and the executor short-circuits with
+                  expectedSkip. */}
+              <div className="bg-muted/30 flex items-start gap-3 rounded-md border px-3 py-2">
+                <Checkbox
+                  id="audit-run-supervisor"
+                  checked={runSupervisor}
+                  onCheckedChange={(next) => setRunSupervisor(next === true)}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="audit-run-supervisor"
+                    className="flex cursor-pointer items-center gap-2 text-sm font-medium"
+                  >
+                    Run neutral supervisor review
+                    <FieldHelp title="Neutral supervisor review">
+                      A separate judge model audits the workflow&apos;s execution after it completes
+                      — looking at every step&apos;s output, the validator&apos;s decisions, and the
+                      changes actually applied — and produces an evidence-cited verdict (pass /
+                      concerns / fail). Designed to catch problems that the workflow&apos;s own
+                      optimistic summary would miss. Adds one judge-model LLM call (typically
+                      $0.02–$0.10) to the audit&apos;s cost. Uncheck to skip on a tight budget.
+                    </FieldHelp>
+                  </label>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    Independent post-hoc assessment of audit quality. Adds ~one LLM call.
+                  </p>
                 </div>
               </div>
 

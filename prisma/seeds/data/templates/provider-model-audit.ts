@@ -832,10 +832,61 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
             'Compile a consolidated, human-readable audit report from the following results.\n\n## Audit Scope\n{{load_models.output}}\n\n## Model Classification\n{{classify_models.output}}\n\n## Web Search Context\n{{search_provider_info.output}}\n\n## Chat Model Analysis\n{{analyse_chat.output}}\n\n## Embedding Model Analysis\n{{analyse_embedding.output}}\n\n## New Models Discovered\n{{discover_new_models.output}}\n\n## Validation Results\n{{validate_proposals.output}}\n\n## Reflection/Refinement\n{{refine_findings.output}}\n\n## Quality Score\n{{score_audit.output}}\n\n## Changes Applied\n{{apply_changes.output}}\n\n## New Models Added\n{{add_new_models.output}}\n\n## Models Deactivated\n{{deactivate_models.output}}\n\nWrite a structured report with these sections:\n1. **Executive Summary** — one paragraph overview of what was audited and key outcomes\n2. **Changes Applied** — table or list of field changes made, grouped by provider\n3. **New Models Added** — list of newly registered models with key attributes\n4. **Models Deactivated** — list of deactivated models with reasons\n5. **Quality Assessment** — summary of the audit quality scores\n6. **Recommendations** — any follow-up actions recommended (e.g. models needing manual review, providers to watch)\n\nUse clear formatting. Be specific — cite model names, providers, and field values.',
           maxToolIterations: 1,
         },
+        nextSteps: [{ targetStepId: 'supervisor_review' }],
+      },
+
+      // ─── Step 14: supervisor (neutral post-hoc audit) ────────────
+      // The audit's primary value prop is honest assessment of its own
+      // work. compile_report is written by an agent that has the same
+      // model lineage as the proposal-generating steps — that's marking
+      // your own homework. supervisor_review takes the full trace and
+      // produces an independent calibrated verdict using a separate
+      // judge model (EVALUATION_JUDGE_MODEL).
+      //
+      // Run-time toggle: when the operator unchecks "Run neutral
+      // supervisor review" in the audit dialog, inputData.__runSupervisor
+      // is set to false and this step short-circuits with expectedSkip.
+      // The notification template handles the missing verdict gracefully.
+      //
+      // failOnVerdict: 'never' — the supervisor is advisory, not a gate.
+      // By the time it runs, capability dispatches have already mutated
+      // the DB. A fail verdict surfaces in the notification and on the
+      // execution detail page so the operator can react; it does not
+      // terminate the workflow.
+      {
+        id: 'supervisor_review',
+        name: 'Neutral supervisor review',
+        type: 'supervisor',
+        config: {
+          assessmentCriteria:
+            'Audit success means: (1) every proposed change cites a defensible source — web search, training knowledge with explicit confidence, or a prior step output; (2) the validator passed only proposals consistent with their cited evidence; (3) approved capability dispatches actually mutated the database (apply_changes / add_new_models / deactivate_models report nonzero counts when proposals existed); (4) the compiled report does not contradict the trace; (5) the audit explored every model in scope rather than silently dropping any.',
+          redTeamPrompts: [
+            'Did any proposal change a field without a corresponding source?',
+            'Did the validator pass a proposal that contradicts an earlier step output?',
+            'Did apply_changes / add_new_models / deactivate_models report zero changes despite proposals being approved?',
+            'Was a model family proposed inconsistently (e.g. Sonnet upgraded but Haiku not assessed)?',
+            'Did refine_findings revise a proposal in a way that weakened its source evidence?',
+            'Did discover_new_models propose duplicates of existing registry entries?',
+            'Did the human approval payload accept a proposal whose sources are flagged "training_knowledge" with confidence below "high"?',
+          ],
+          requireEvidenceCitations: true,
+          minWeaknesses: 1,
+          useJudgeModel: true,
+          temperature: 0.2,
+          failOnVerdict: 'never',
+          includeStepOutputs: 'auto',
+          defaultEnabled: true,
+          respectRuntimeOptOut: true,
+          // skip on error so a flaky judge model can't flip a successful
+          // audit to FAILED. The supervisor's job is to add signal, not
+          // gate the workflow.
+          errorStrategy: 'skip',
+          expectedSkip: false,
+        },
         nextSteps: [{ targetStepId: 'notify_complete' }],
       },
 
-      // ─── Step 14: send_notification ───────────────────────────────
+      // ─── Step 15: send_notification ───────────────────────────────
       // Tests: Email/webhook notification output, bodyTemplate
       // interpolation with step references.
       // NOTE: `to` is a placeholder — admins should edit this workflow
@@ -845,6 +896,13 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       // delivery failure (e.g. invalid email credentials) must not flip
       // the workflow's terminal status from COMPLETED to FAILED. The
       // failed attempt is still visible in the trace.
+      //
+      // bodyTemplate leads with the supervisor's verdict so the email
+      // recipient sees the honest assessment before the (potentially
+      // optimistic) compile_report narrative. When the supervisor was
+      // skipped (run-time opt-out or skip-on-error), the
+      // supervisor_review.output fields resolve to empty strings and
+      // the section reads as "(supervisor was skipped)" — graceful.
       {
         id: 'notify_complete',
         name: 'Notify audit completion',
@@ -854,7 +912,7 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
           to: 'admin@example.com',
           subject: 'Provider Model Audit Complete',
           bodyTemplate:
-            'The provider model audit has completed.\n\n{{compile_report.output}}\n\n---\nView the full execution trace in the admin dashboard.',
+            'The provider model audit has completed.\n\n## NEUTRAL SUPERVISOR ASSESSMENT\n\nVerdict: {{supervisor_review.output.verdict}} (score {{supervisor_review.output.score}})\n\n{{supervisor_review.output.summary}}\n\n### Top weaknesses\n{{supervisor_review.output.weaknesses}}\n\n### Areas the supervisor could not verify\n{{supervisor_review.output.unverifiedAreas}}\n\n---\n\n## REPORT\n\n{{compile_report.output}}\n\n---\nView the full execution trace in the admin dashboard.',
           errorStrategy: 'skip',
         },
         nextSteps: [],
