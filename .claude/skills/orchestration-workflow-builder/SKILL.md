@@ -3,10 +3,12 @@ name: orchestration-workflow-builder
 description: |
   Expert workflow builder for Sunrise orchestration. Composes multi-step agent
   pipelines as workflow DAGs — routing requests to different agents, chaining
-  LLM calls, adding human approval gates, running parallel branches, and
-  integrating RAG retrieval. Uses 15 step types, template interpolation, error
-  strategies, and budget enforcement. Use when building multi-step agent
-  pipelines, adding approval flows, or connecting multiple agents in a sequence.
+  LLM calls, adding human approval gates, running parallel branches, integrating
+  RAG retrieval, and bolting on post-hoc supervisor audit + deterministic
+  Markdown reporting. Uses 17 step types, template interpolation, error
+  strategies, run-time toggles, and budget enforcement. Use when building
+  multi-step agent pipelines, adding approval flows, connecting multiple agents
+  in a sequence, or adding an honest end-of-workflow audit.
 ---
 
 # Workflow Builder Skill
@@ -27,7 +29,7 @@ interface WorkflowDefinition {
 interface WorkflowStep {
   id: string; // Unique within the workflow
   name: string; // Human-readable label
-  type: WorkflowStepType; // One of 15 step types
+  type: WorkflowStepType; // One of 17 step types
   config: Record<string, unknown>; // Type-specific configuration
   nextSteps: ConditionalEdge[]; // Outgoing edges
 }
@@ -38,7 +40,7 @@ interface ConditionalEdge {
 }
 ```
 
-## 15 Step Types
+## 17 Step Types
 
 ### Agent Steps
 
@@ -71,16 +73,49 @@ interface ConditionalEdge {
 
 ### Output Steps
 
-| Type                | Purpose                        | Key Config                                   |
-| ------------------- | ------------------------------ | -------------------------------------------- |
-| `parallel`          | Fan out to concurrent branches | `branches`, `timeoutMs`, `stragglerStrategy` |
-| `send_notification` | Email or webhook notification  | `channel`, `to`, `subject`, `bodyTemplate`   |
+| Type                | Purpose                                                         | Key Config                                                     |
+| ------------------- | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| `parallel`          | Fan out to concurrent branches                                  | `branches`, `timeoutMs`, `stragglerStrategy`                   |
+| `send_notification` | Email or webhook notification                                   | `channel`, `to`, `subject`, `bodyTemplate`                     |
+| `report`            | Deterministic Markdown render of the trace — no LLM, no opinion | `includeStepOutputs`, `defaultEnabled`, `respectRuntimeOptOut` |
 
 ### Orchestration Steps
 
 | Type           | Purpose                        | Key Config                                          |
 | -------------- | ------------------------------ | --------------------------------------------------- |
 | `orchestrator` | AI planner delegates to agents | `plannerPrompt`, `availableAgentSlugs`, `maxRounds` |
+
+### Quality & Reporting Steps
+
+| Type         | Purpose                                                                              | Key Config                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `supervisor` | Independent post-hoc audit — judge model emits an evidence-cited verdict             | `assessmentCriteria` (required), `redTeamPrompts`, `minWeaknesses`, `useJudgeModel`, `failOnVerdict`, `defaultEnabled` |
+| `report`     | (Listed above under Output for grouping; functionally a quality-reporting primitive) | —                                                                                                                      |
+
+### Run-time toggles (`supervisor` and `report`)
+
+Both `supervisor` and `report` honour a **reserved input key** that lets operators opt out per-execution without modifying the template:
+
+| Step         | Reserved key                 | Default behaviour                                                  |
+| ------------ | ---------------------------- | ------------------------------------------------------------------ |
+| `supervisor` | `inputData.__runSupervisor`  | `false` → step skips with `expectedSkip: true`; absent → step runs |
+| `report`     | `inputData.__generateReport` | `false` → step skips with `expectedSkip: true`; absent → step runs |
+
+The "Execute workflow" dialog (and the bespoke "Audit Models" dialog) renders a checkbox for each, visible only when the DAG contains the corresponding step. The initial state comes from the step's `defaultEnabled` config. Operators submit and the dialog injects the boolean into `inputData`.
+
+When you scaffold a workflow that includes either step, mention the toggle in the workflow's description — operators need to know they can flip it.
+
+### When to use which step type
+
+The four "evaluation-family" step types overlap; pick by **scope** and **lineage**:
+
+| Step         | Scope                  | Lineage                                     | When to reach for it                                                      |
+| ------------ | ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| `evaluate`   | One step's output      | Workflow's own model (or `modelOverride`)   | Gate a single step's output (e.g. "is this draft good enough to proceed") |
+| `reflect`    | One draft, in-step     | Workflow's own model                        | Same model self-critiques until convergence (no independent judgment)     |
+| `guard`      | One step's output      | LLM or regex                                | Binary pass/fail rule check before the next step                          |
+| `supervisor` | Entire execution trace | Independent judge model (`JUDGE_MODEL` env) | Honest end-of-workflow audit with evidence-cited weaknesses               |
+| `report`     | Entire execution trace | None (deterministic — no LLM)               | Human-readable structured narration for email / download                  |
 
 ## Template Interpolation
 

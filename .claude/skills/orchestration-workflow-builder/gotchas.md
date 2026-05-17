@@ -192,3 +192,33 @@ But the real fix is still option above: deterministic validation. After two hall
 ## Capability `isIdempotent` Default Is `false`
 
 The dispatch cache is **on by default** for `tool_call`. Capabilities can opt out by setting `isIdempotent: true` when they handle re-run dedup naturally (e.g. an idempotent upstream API). Misconfiguring `isIdempotent: true` on a destructive capability is documented as the "you marked it idempotent" admin trade-off. When designing workflows with risky tool calls, leave the default alone unless you've explicitly verified the capability is rerun-safe.
+
+## Don't put a `supervisor` inside a `parallel` branch
+
+The supervisor reads the **entire** `ctx.stepOutputs` map and is meant to audit the workflow as a whole. Inside a `parallel` branch it only sees the steps that have completed at that point, so it will judge a still-incomplete workflow and report misleadingly that steps in other branches were never run. Place the supervisor **after** the parallel converges (downstream of the join), not inside one of the branches.
+
+If you have a legitimate need to audit a single branch's output, use `evaluate` instead — it's scoped to a single step.
+
+## Supervisor placement: before or after irreversible steps?
+
+The supervisor is **advisory by default** (`failOnVerdict: 'never'`) — it doesn't block the workflow. That means placement is a real choice:
+
+- **Before** an irreversible step (capability dispatch that mutates the database, sends an email, charges a card): set `failOnVerdict: 'fail'` so a `fail` verdict throws `ExecutorError` and the engine's `errorStrategy` decides. Useful when the workflow can't be undone.
+- **After** the irreversible step: the supervisor audits the actual outcome (did the capability return success or zero-changes?) and surfaces a verdict for the operator. Most workflows want this.
+
+Provider-model-audit places the supervisor _after_ its capability dispatches (`apply_changes`, `add_new_models`, `deactivate_models`) for exactly this reason — the verdict can audit whether changes actually applied, not just whether proposals looked good.
+
+## Report step renders the trace up to its own entry
+
+The `report` step reads `ctx.stepOutputs`, which only contains steps that completed **before** the report step starts. So the report cannot describe itself, and it cannot describe any downstream step.
+
+Practical consequence: if you want the report to include the supervisor's verdict block, order the steps `... → supervisor → report → notify_complete`, not the reverse. The on-demand download endpoint (`GET /executions/:id/report.md`) reads the persisted trace _after_ finalize and so includes every step including the report step itself.
+
+## Run-time toggles vs design-time enablement
+
+Both `supervisor` and `report` have two layers of opt-in:
+
+1. **Design-time**: the step is in the DAG or it isn't. If it isn't, no checkbox appears in the run dialog and no verdict / report is produced unless the operator hits the retroactive endpoint.
+2. **Run-time**: when the DAG contains the step, `defaultEnabled` decides the checkbox's initial state. Operators uncheck → `inputData.__runSupervisor` / `__generateReport` is set to `false` → the executor short-circuits with `expectedSkip: true`.
+
+If you set `defaultEnabled: false`, document why — operators reading the workflow definition will wonder why the step ships disabled. A common case: a workflow used in dev/test environments where the judge-model cost isn't justified for every run.

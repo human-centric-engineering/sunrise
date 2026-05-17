@@ -202,3 +202,53 @@ See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An
 - `maxRounds` — max planning/delegation rounds
 - `maxDelegationsPerRound` — max agents per round
 - `timeoutMs` — total orchestration timeout
+
+## Quality & Reporting Steps
+
+### supervisor
+
+```json
+{
+  "assessmentCriteria": "Did the workflow accomplish its objective?",
+  "redTeamPrompts": [],
+  "requireEvidenceCitations": true,
+  "minWeaknesses": 1,
+  "useJudgeModel": true,
+  "modelOverride": "",
+  "temperature": 0.2,
+  "failOnVerdict": "never",
+  "includeStepOutputs": "auto",
+  "defaultEnabled": true,
+  "respectRuntimeOptOut": true
+}
+```
+
+- `assessmentCriteria` (required) — rubric describing what "doing its job" means for this workflow. The supervisor's prompt seeds with this.
+- `redTeamPrompts` — explicit failure modes to look for. Sensible defaults bake into the prompt; this array prepends workflow-specific concerns (e.g. "Did the validator pass a proposal that contradicts an earlier step output?").
+- `requireEvidenceCitations` — when true (default), every `strength` and `weakness` must carry an `evidenceStepId` + `evidenceQuote` that the post-hoc validator verifies against `ctx.stepOutputs`. Stripped citations downgrade the verdict.
+- `minWeaknesses` — floor for the supervisor's `weaknesses[]` array. If genuine, the supervisor emits a single "no defects found, verified stepIds: ..." entry; failing the floor downgrades the verdict.
+- `useJudgeModel` — when true (default), `modelOverride` falls through to the shared `JUDGE_MODEL` env var (independent judge model). `modelOverride` set on this step always wins.
+- `failOnVerdict` — `"never"` (default, advisory) or `"fail"` (a `fail` verdict throws `ExecutorError` so the engine's error strategy decides).
+- `includeStepOutputs` — truncation strategy for the trace projection. `"auto"` (default; head + middle + tail sampling at 4KB per step), `"all"` (no truncation), `"terminal-only"` (full output for the most recent step; 1KB head for earlier steps).
+- `defaultEnabled` — pre-checked state of the "Run neutral supervisor review" checkbox on the run dialog.
+- `respectRuntimeOptOut` — when true (default), `inputData.__runSupervisor === false` short-circuits the step with `expectedSkip: true`.
+
+Output shape: `{ verdict, score, summary, strengths[], weaknesses[], anomalies[], unverifiedAreas[], confidence, invalidCitations?, parseFailure?, triggeredBy }`. The four `supervisor*` columns on `AiWorkflowExecution` are populated via `StepResult.contextPatch` — no extra schema work in the workflow.
+
+### report
+
+```json
+{
+  "format": "markdown",
+  "includeStepOutputs": "auto",
+  "defaultEnabled": true,
+  "respectRuntimeOptOut": true
+}
+```
+
+- `format` — reserved for future formats; only `"markdown"` today.
+- `includeStepOutputs` — same truncation modes as `supervisor`.
+- `defaultEnabled` — pre-checked state of the "Generate execution report" checkbox.
+- `respectRuntimeOptOut` — when true (default), `inputData.__generateReport === false` short-circuits with `expectedSkip: true`.
+
+Output shape: `{ markdown, byteLength, generatedAt }`. The `markdown` field is the rendered document; downstream `send_notification` can interpolate `{{report_render.output.markdown}}` into its `bodyTemplate`. The on-demand download endpoint `GET /executions/:id/report.md` uses the same renderer and works regardless of whether the workflow includes a `report` step.
