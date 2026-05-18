@@ -60,6 +60,14 @@ export interface LlmRunParams {
   reasoningEffort?: ReasoningEffort;
   /** Request structured JSON output from the model. */
   responseFormat?: LlmResponseFormat;
+  /**
+   * Origin tag for steps whose `ctx.stepTelemetry` mixes calls of
+   * different intent (today: only `orchestrator`'s planner call).
+   * Forwarded onto the telemetry entry so `rollupTelemetry` can pick
+   * the planner's identity for the trace headline instead of whichever
+   * delegation ran last. Omit on single-purpose calls.
+   */
+  source?: 'planner' | 'delegation';
   /** Most recent step id, used to resolve `{{previous.output}}`. */
   previousStepId?: string;
 }
@@ -162,6 +170,7 @@ export async function runLlmCall(
         outputTokens: response.usage.outputTokens,
         durationMs: callDurationMs,
         ...(Object.keys(requestParams).length > 0 ? { requestParams } : {}),
+        ...(params.source ? { source: params.source } : {}),
       });
 
       const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);

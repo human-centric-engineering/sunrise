@@ -525,6 +525,23 @@ export interface LlmTelemetryEntry {
   /** Wall-clock time spent inside `provider.chat()` for this turn, in ms. */
   durationMs: number;
   /**
+   * Optional origin tag for steps whose telemetry mixes calls of
+   * different intent (today: only `orchestrator`, which makes its own
+   * planner LLM calls AND invokes sub-agents that push their own
+   * telemetry to the SAME `ctx.stepTelemetry`).
+   *
+   * When tagged, `rollupTelemetry()` uses the last `'planner'` entry
+   * for the trace's headline `model` / `provider` / `requestParams`,
+   * but continues to sum token counts and durations across BOTH
+   * planner and delegation entries (the trace row's totals must still
+   * reflect the full work the step did).
+   *
+   * When absent (every other step type), entries are treated equally
+   * and the LAST entry wins for the headline — the existing behaviour
+   * before this tag was introduced.
+   */
+  source?: 'planner' | 'delegation';
+  /**
    * Snapshot of the request envelope sent to the provider for this turn.
    * Lets the execution detail view show exactly what was sent when a
    * provider rejects a parameter (`400 Unsupported parameter: …`). The

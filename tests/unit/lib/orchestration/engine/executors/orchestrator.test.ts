@@ -153,6 +153,135 @@ describe('executeOrchestrator', () => {
     expect(executeAgentCall).not.toHaveBeenCalled();
   });
 
+  it("tags planner runLlmCall with source: 'planner' AND post-tags delegation telemetry with source: 'delegation'", async () => {
+    // Two-round planner: round 1 delegates, round 2 returns final.
+    // Verifies both tagging surfaces: planner calls are tagged at
+    // their runLlmCall site; delegation telemetry is tagged by the
+    // orchestrator after executeAgentCall returns, even though
+    // executeAgentCall itself doesn't know about the source tag.
+    //
+    // Because `runLlmCall` is mocked, we simulate the real production
+    // push of a telemetry entry — and crucially, we forward the
+    // `source` field from `LlmRunParams` so the planner-tagging
+    // contract on the runLlmCall side is exercised end-to-end.
+    const pushPlannerTelemetry = async (
+      ctxArg: Parameters<typeof runLlmCall>[0],
+      params: Parameters<typeof runLlmCall>[1],
+      result: Awaited<ReturnType<typeof runLlmCall>>
+    ): Promise<Awaited<ReturnType<typeof runLlmCall>>> => {
+      ctxArg.stepTelemetry?.push({
+        model: result.model,
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        durationMs: 100,
+        ...(params.source ? { source: params.source } : {}),
+      });
+      return result;
+    };
+    vi.mocked(runLlmCall).mockImplementationOnce(async (ctxArg, params) =>
+      pushPlannerTelemetry(
+        ctxArg,
+        params,
+        makePlannerResponse({
+          delegations: [{ agentSlug: 'researcher', message: 'find data' }],
+          reasoning: 'need research',
+        })
+      )
+    );
+    vi.mocked(runLlmCall).mockImplementationOnce(async (ctxArg, params) =>
+      pushPlannerTelemetry(
+        ctxArg,
+        params,
+        makePlannerResponse({ finalAnswer: 'done', reasoning: 'have enough' })
+      )
+    );
+
+    // makeCtx leaves stepTelemetry undefined by default — the engine
+    // pre-allocates the array in production via snapshotContext. We
+    // attach one here so the production-code optional chain actually
+    // pushes.
+    const ctx = makeCtx({ stepTelemetry: [] });
+    vi.mocked(executeAgentCall).mockImplementation(async (_step, delegationCtx) => {
+      delegationCtx.stepTelemetry?.push({
+        model: 'researcher-model',
+        provider: 'anthropic',
+        inputTokens: 30,
+        outputTokens: 20,
+        durationMs: 50,
+        // Note: NOT tagged here — the orchestrator's post-tag pass is
+        // what marks this as a delegation. Verifies that path.
+      });
+      return { output: 'research result', tokensUsed: 50, costUsd: 0.001 };
+    });
+
+    await executeOrchestrator(makeStep(), ctx);
+
+    const telemetry = ctx.stepTelemetry ?? [];
+    expect(telemetry.length).toBe(3); // 2 planner + 1 delegation
+
+    const plannerEntries = telemetry.filter((e) => e.source === 'planner');
+    expect(plannerEntries.length).toBe(2);
+
+    const delegationEntries = telemetry.filter((e) => e.source === 'delegation');
+    expect(delegationEntries.length).toBe(1);
+    expect(delegationEntries[0].model).toBe('researcher-model');
+
+    // No untagged entries — every telemetry push from inside an
+    // orchestrator step should be classified one way or the other.
+    expect(telemetry.filter((e) => e.source === undefined)).toEqual([]);
+  });
+
+  it('still tags delegation entries even when the delegation throws', async () => {
+    // Failure path: a delegation that pushes some telemetry before
+    // throwing must STILL have those entries tagged, otherwise they'd
+    // slip into the headline rollup as untagged "last entry wins"
+    // candidates and steal the planner's spot.
+    vi.mocked(runLlmCall).mockImplementationOnce(async (ctxArg, params) => {
+      ctxArg.stepTelemetry?.push({
+        model: 'planner',
+        provider: 'openai',
+        inputTokens: 50,
+        outputTokens: 20,
+        durationMs: 80,
+        ...(params.source ? { source: params.source } : {}),
+      });
+      return makePlannerResponse({
+        delegations: [{ agentSlug: 'researcher', message: 'find data' }],
+        reasoning: 'try',
+      });
+    });
+    vi.mocked(runLlmCall).mockImplementationOnce(async (ctxArg, params) => {
+      ctxArg.stepTelemetry?.push({
+        model: 'planner',
+        provider: 'openai',
+        inputTokens: 60,
+        outputTokens: 25,
+        durationMs: 90,
+        ...(params.source ? { source: params.source } : {}),
+      });
+      return makePlannerResponse({ finalAnswer: 'gave up', reasoning: 'delegation failed' });
+    });
+
+    const ctx = makeCtx({ stepTelemetry: [] });
+    vi.mocked(executeAgentCall).mockImplementation(async (_step, delegationCtx) => {
+      delegationCtx.stepTelemetry?.push({
+        model: 'researcher-model',
+        provider: 'anthropic',
+        inputTokens: 5,
+        outputTokens: 0,
+        durationMs: 10,
+      });
+      throw new Error('boom');
+    });
+
+    await executeOrchestrator(makeStep(), ctx);
+
+    const telemetry = ctx.stepTelemetry ?? [];
+    const delegationEntries = telemetry.filter((e) => e.source === 'delegation');
+    expect(delegationEntries.length).toBe(1); // tagged even though the delegation threw
+  });
+
   it('forwards reasoningEffort to the PLANNER LLM call only (delegations untouched)', async () => {
     vi.mocked(runLlmCall).mockResolvedValueOnce(
       makePlannerResponse({

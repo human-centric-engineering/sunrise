@@ -38,7 +38,10 @@ import type {
 } from 'openai/resources/chat/completions/completions';
 
 import { logger } from '@/lib/logging';
-import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
+import {
+  deriveParamProfile,
+  supportedReasoningEfforts,
+} from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_MAX_RETRIES,
@@ -480,8 +483,17 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     // we cast through a Record<string, unknown> for the field set. Non-
     // reasoning models drop the field silently — no 400, mirrors how
     // unsupported `max_tokens` was previously the trap.
+    //
+    // Within the reasoning family, the per-model accepted enum varies:
+    // o-series rejects `'minimal'` (which gpt-5 added), so we filter
+    // the value against `supportedReasoningEfforts()` before sending.
+    // Caller intent is still recorded on the trace's requestParams so
+    // a misconfigured "minimal on o3-mini" is visible after the fact.
     if (isReasoning && options.reasoningEffort !== undefined) {
-      (params as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+      const accepted = supportedReasoningEfforts(options.model, this.name);
+      if (accepted.has(options.reasoningEffort)) {
+        (params as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+      }
     }
     if (options.tools?.length) {
       params.tools = options.tools.map<ChatCompletionTool>((t) => ({

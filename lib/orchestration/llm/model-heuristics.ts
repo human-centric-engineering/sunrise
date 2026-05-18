@@ -27,7 +27,7 @@ import type {
 } from '@/types/orchestration';
 
 import type { Capability } from '@/lib/orchestration/llm/capability-inference';
-import type { ParamProfile } from '@/lib/orchestration/llm/types';
+import type { ParamProfile, ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 /**
  * Map input cost ($/M tokens) to the cost-efficiency rating used in
@@ -299,16 +299,80 @@ export function supportsReasoningEffort(
     .toLowerCase()
     .replace(/^(anthropic[./])/, '')
     .replace(/^(.*\/)/, '');
-  // Claude Opus 4 (any flavour) supports thinking. Claude Sonnet 4.5+
-  // supports thinking; Sonnet 4 (no .5) does not.
-  if (/^claude-opus-4/.test(id)) return true;
-  if (/^claude-sonnet-4-5/.test(id) || /^claude-sonnet-4\.5/.test(id)) return true;
-  // Future Sonnet versions (4.6, 4.7, …) — anchor on 4.x where x ≥ 5
-  // OR any 5.x+ family. Keep the regex conservative: only match
-  // `claude-sonnet-{4-5..4-9, 5+}` so Sonnet 4 itself stays out.
-  if (/^claude-sonnet-(4-[5-9]|[5-9])/.test(id)) return true;
-  if (/^claude-opus-[5-9]/.test(id)) return true;
+  // Claude Opus 4 and 5+ (any minor) support thinking. The `(?!-?\d)`
+  // negative lookahead after the major version prevents `claude-opus-4`
+  // from also matching `claude-opus-40` if Anthropic ever ships one with
+  // a different family (defensive — they haven't).
+  if (/^claude-opus-([4-9]|\d{2,})(?:\b|[-.])/.test(id)) return true;
+  // Claude Sonnet 4.5+ supports thinking; Sonnet 4.0–4.4 does not. Match
+  // 4.5–4.9 plus any 4.<two-digit>+, then unconditionally any 5+. Both
+  // dot and hyphen separators are accepted (`claude-sonnet-4-5` and
+  // `claude-sonnet-4.5` both ship in different SDK / API surfaces).
+  if (/^claude-sonnet-4[-.](?:[5-9]|\d{2,})(?:\b|[-.])/.test(id)) return true;
+  if (/^claude-sonnet-([5-9]|\d{2,})(?:\b|[-.])/.test(id)) return true;
   return false;
+}
+
+/**
+ * Which `ReasoningEffort` values does this OpenAI-compatible model
+ * actually accept?
+ *
+ * OpenAI's `reasoning_effort` enum has evolved:
+ *   - o-series (o1, o1-mini, o3-mini, o4-mini, …) accept
+ *     `'low' | 'medium' | 'high'` — they reject `'minimal'` with a 400.
+ *   - The gpt-5 family added `'minimal'` to the set.
+ *
+ * For non-`openai-reasoning` profiles, the field is dropped regardless
+ * of value, so this returns the full set — the openai-compatible
+ * provider class never reaches it. Anthropic / Gemini have their own
+ * shapes and don't consult this function.
+ *
+ * Used by the openai-compatible provider class to silently drop
+ * `'minimal'` when the resolved model is in the o-series, matching the
+ * codebase's "drop on unsupported, never 400" pattern for parameter
+ * compatibility. The caller's intent is still recorded on the trace's
+ * `requestParams.reasoningEffort` so a misconfigured agent is visible
+ * after the fact.
+ *
+ * Anchored at the start of the bare id (after stripping known provider
+ * prefixes) so a fine-tune named `my-o3-mini` doesn't inherit the
+ * o-series restriction.
+ */
+export function supportedReasoningEfforts(
+  modelId: string,
+  provider: string
+): ReadonlySet<ReasoningEffort> {
+  const id = modelId.toLowerCase().replace(/^(openai|azure)\//, '');
+  if (/^o\d+/.test(id) && provider !== 'anthropic' && provider !== 'gemini') {
+    // o-series — no 'minimal'.
+    return new Set(['low', 'medium', 'high']);
+  }
+  // Everything else accepts the full bucket set. For models that don't
+  // actually consume the field at all (non-reasoning models, Anthropic,
+  // Gemini), the openai-compatible / anthropic provider classes drop
+  // the field via their own checks — this function only governs the
+  // 'minimal' carve-out for OpenAI reasoning models.
+  return new Set(['minimal', 'low', 'medium', 'high']);
+}
+
+/**
+ * Narrow an arbitrary string (typically a DB column read) into the
+ * `ReasoningEffort` union, or return `undefined` for any unrecognised
+ * value.
+ *
+ * Why this exists: the column is plain `TEXT` in Postgres (no enum
+ * constraint), and the agent form's Zod schema only protects writes
+ * that go through the form. Direct SQL writes, backup/import bundles
+ * from forks, or future schema migrations could leave garbage values
+ * in the column. Without this narrow, the garbage would flow through
+ * to `provider.chat()` as a phantom enum member — at which point
+ * OpenAI's API would 400 (`Invalid value for reasoning_effort`).
+ *
+ * Mirror of `narrowParamProfile` in `db-model-adapter.ts`.
+ */
+export function narrowReasoningEffort(raw: string | null | undefined): ReasoningEffort | undefined {
+  if (raw === 'minimal' || raw === 'low' || raw === 'medium' || raw === 'high') return raw;
+  return undefined;
 }
 
 /**

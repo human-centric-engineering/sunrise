@@ -34,13 +34,9 @@ import type {
   ToolCallTrace,
 } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
-import type {
-  LlmMessage,
-  LlmToolCall,
-  LlmToolDefinition,
-  ReasoningEffort,
-} from '@/lib/orchestration/llm/types';
+import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   assertModelSupportsAttachments,
@@ -820,12 +816,19 @@ export class StreamingChatHandler {
         const toolCalls = new Map<number, LlmToolCall>();
         let usage: { inputTokens: number; outputTokens: number } | null = null;
 
+        // Runtime-narrow `agent.reasoningEffort` — the column is plain
+        // TEXT in Postgres, so direct SQL writes / forked backup bundles
+        // could leave a value outside the enum. The narrow drops unknown
+        // strings to undefined so we never forward a phantom enum
+        // member to the provider call (which would 400 on OpenAI).
+        const narrowedReasoningEffort = narrowReasoningEffort(agent.reasoningEffort);
+
         const llmOptions = {
           model: resolvedModel,
           ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
           ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
-          ...(agent.reasoningEffort !== null
-            ? { reasoningEffort: agent.reasoningEffort as ReasoningEffort }
+          ...(narrowedReasoningEffort !== undefined
+            ? { reasoningEffort: narrowedReasoningEffort }
             : {}),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
           ...(responseFormat && toolDefinitions.length === 0 ? { responseFormat } : {}),

@@ -25,10 +25,18 @@ import type {
  *
  * - Returns an object with only the fields that have meaningful values.
  *   Empty input → `{}` so spreading into a trace entry is a no-op.
- * - `model` / `provider` / `requestParams` come from the LAST turn — for
- *   multi-turn executors this is the model that produced the step's final
- *   output, and matches how `model`/`provider` already rolled up.
- * - Tokens and duration are summed across turns.
+ * - Tokens and duration are summed across ALL turns (planner + any
+ *   delegations) so the trace row's totals reflect the full work the
+ *   step did, including sub-agent calls invoked from inside.
+ * - `model` / `provider` / `requestParams` come from the LAST turn —
+ *   **unless** at least one entry is tagged `source: 'planner'`, in
+ *   which case the last *planner* entry wins. This carve-out is for
+ *   orchestrator-style steps where delegations push to the SAME
+ *   telemetry array as the planner; without it the trace's headline
+ *   identity would shift to whichever delegation happened to run last,
+ *   not the step's own primary work. For every other step type, no
+ *   entries are tagged and the behaviour is "last entry wins" exactly
+ *   as before this tag existed.
  */
 export function rollupTelemetry(entries: LlmTelemetryEntry[]): {
   model?: string;
@@ -43,20 +51,25 @@ export function rollupTelemetry(entries: LlmTelemetryEntry[]): {
   let inputTokens = 0;
   let outputTokens = 0;
   let llmDurationMs = 0;
+  let lastPlanner: LlmTelemetryEntry | undefined;
   for (const entry of entries) {
     inputTokens += entry.inputTokens;
     outputTokens += entry.outputTokens;
     llmDurationMs += entry.durationMs;
+    if (entry.source === 'planner') lastPlanner = entry;
   }
 
-  const last = entries[entries.length - 1];
+  // Prefer the last planner entry for the headline fields when any
+  // exists — single-call steps don't tag their entries, so they fall
+  // through to the original "last entry wins" path.
+  const headline = lastPlanner ?? entries[entries.length - 1];
   return {
-    model: last.model,
-    provider: last.provider,
+    model: headline.model,
+    provider: headline.provider,
     inputTokens,
     outputTokens,
     llmDurationMs,
-    ...(last.requestParams ? { requestParams: last.requestParams } : {}),
+    ...(headline.requestParams ? { requestParams: headline.requestParams } : {}),
   };
 }
 

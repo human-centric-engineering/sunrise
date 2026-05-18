@@ -23,6 +23,8 @@ import {
   deriveReasoningDepth,
   deriveTierRole,
   deriveToolUse,
+  narrowReasoningEffort,
+  supportedReasoningEfforts,
   supportsReasoningEffort,
 } from '@/lib/orchestration/llm/model-heuristics';
 
@@ -278,6 +280,30 @@ describe('supportsReasoningEffort', () => {
     expect(supportsReasoningEffort('claude-sonnet-4', 'anthropic', 'anthropic')).toBe(false);
   });
 
+  it('handles multi-digit future versions (4-10, 5-2, version 10+) without manual regex updates', () => {
+    // Forward-compat audit case — earlier regex used `[5-9]` character
+    // classes that capped at single-digit minors. These must work today
+    // (the cost is one regex constant, the alternative is rotting code).
+    expect(supportsReasoningEffort('claude-sonnet-4-10', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-sonnet-4-15', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-sonnet-5-2', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-sonnet-10', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-opus-5-3', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-opus-10', 'anthropic', 'anthropic')).toBe(true);
+    // Sonnet 4-0..4-4 must STAY excluded even with the widened regex —
+    // the audit caught an earlier draft that accidentally swallowed
+    // them by anchoring incorrectly.
+    expect(supportsReasoningEffort('claude-sonnet-4-0', 'anthropic', 'anthropic')).toBe(false);
+    expect(supportsReasoningEffort('claude-sonnet-4-4', 'anthropic', 'anthropic')).toBe(false);
+  });
+
+  it('accepts both dot and hyphen separators between major and minor (4.5 ↔ 4-5)', () => {
+    expect(supportsReasoningEffort('claude-sonnet-4.5', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-sonnet-4.5-20250601', 'anthropic', 'anthropic')).toBe(
+      true
+    );
+  });
+
   it('Claude Haiku is NOT a thinking model regardless of version', () => {
     expect(supportsReasoningEffort('claude-haiku-4-5', 'anthropic', 'anthropic')).toBe(false);
     expect(supportsReasoningEffort('claude-haiku-4', 'anthropic', 'anthropic')).toBe(false);
@@ -295,6 +321,82 @@ describe('supportsReasoningEffort', () => {
     expect(supportsReasoningEffort('gpt-4.1', 'openai', 'openai-legacy')).toBe(false);
     expect(supportsReasoningEffort('llama-3.3-70b', 'groq', 'openai-legacy')).toBe(false);
     expect(supportsReasoningEffort('gemini-2.5-pro', 'gemini', 'gemini')).toBe(false);
+  });
+});
+
+describe('narrowReasoningEffort', () => {
+  it('passes through the four enum values verbatim', () => {
+    expect(narrowReasoningEffort('minimal')).toBe('minimal');
+    expect(narrowReasoningEffort('low')).toBe('low');
+    expect(narrowReasoningEffort('medium')).toBe('medium');
+    expect(narrowReasoningEffort('high')).toBe('high');
+  });
+
+  it('returns undefined for null / undefined / empty input', () => {
+    expect(narrowReasoningEffort(null)).toBeUndefined();
+    expect(narrowReasoningEffort(undefined)).toBeUndefined();
+    expect(narrowReasoningEffort('')).toBeUndefined();
+  });
+
+  it('returns undefined for unrecognised strings rather than narrowing to a phantom enum member', () => {
+    // Operator wrote garbage via raw SQL, or a forked backup bundle
+    // carries a value we don't know. Must drop to undefined — otherwise
+    // the value reaches provider.chat() and 400s on OpenAI's enum check.
+    expect(narrowReasoningEffort('banana')).toBeUndefined();
+    expect(narrowReasoningEffort('HIGH')).toBeUndefined(); // case-sensitive
+    expect(narrowReasoningEffort('reasoning')).toBeUndefined();
+    expect(narrowReasoningEffort('auto')).toBeUndefined(); // form sentinel must not leak
+  });
+});
+
+describe('supportedReasoningEfforts', () => {
+  it('o-series models exclude `minimal` (added in gpt-5; o-series 400s on it)', () => {
+    expect(supportedReasoningEfforts('o1', 'openai')).toEqual(new Set(['low', 'medium', 'high']));
+    expect(supportedReasoningEfforts('o1-mini', 'openai')).toEqual(
+      new Set(['low', 'medium', 'high'])
+    );
+    expect(supportedReasoningEfforts('o3-mini', 'openai')).toEqual(
+      new Set(['low', 'medium', 'high'])
+    );
+    expect(supportedReasoningEfforts('o4-mini', 'openai')).toEqual(
+      new Set(['low', 'medium', 'high'])
+    );
+  });
+
+  it('gpt-5 family supports all four buckets including `minimal`', () => {
+    expect(supportedReasoningEfforts('gpt-5', 'openai')).toEqual(
+      new Set(['minimal', 'low', 'medium', 'high'])
+    );
+    expect(supportedReasoningEfforts('gpt-5-mini', 'openai')).toEqual(
+      new Set(['minimal', 'low', 'medium', 'high'])
+    );
+  });
+
+  it('strips known provider prefixes before applying the o-series rule', () => {
+    expect(supportedReasoningEfforts('openai/o3-mini', 'openai')).toEqual(
+      new Set(['low', 'medium', 'high'])
+    );
+    expect(supportedReasoningEfforts('azure/o1', 'openai')).toEqual(
+      new Set(['low', 'medium', 'high'])
+    );
+  });
+
+  it('non-reasoning models return the full set (the openai-compatible class drops the field anyway via the profile check)', () => {
+    expect(supportedReasoningEfforts('gpt-4o', 'openai')).toEqual(
+      new Set(['minimal', 'low', 'medium', 'high'])
+    );
+    expect(supportedReasoningEfforts('llama-3.3-70b', 'groq')).toEqual(
+      new Set(['minimal', 'low', 'medium', 'high'])
+    );
+  });
+
+  it('does not apply the o-series rule to anthropic-routed models that happen to start with "o"', () => {
+    // Defensive — a Claude model id that hypothetically started with
+    // "o" must not be treated as an OpenAI o-series. Provider guard
+    // prevents this even if the regex would otherwise match.
+    expect(supportedReasoningEfforts('o-some-future-claude', 'anthropic')).toEqual(
+      new Set(['minimal', 'low', 'medium', 'high'])
+    );
   });
 });
 

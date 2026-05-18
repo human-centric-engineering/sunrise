@@ -44,6 +44,7 @@ import { agentCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import {
   GEN_AI_OPERATION_NAME,
@@ -375,8 +376,17 @@ export async function executeAgentCall(
   // Resolve reasoning-effort precedence ONCE — step config beats the
   // agent's own `reasoningEffort` column. When both are null/unset, the
   // effective value is undefined and the provider sends nothing.
-  const effectiveReasoningEffort: ReasoningEffort | undefined =
-    config.reasoningEffort ?? (agent.reasoningEffort as ReasoningEffort | null) ?? undefined;
+  //
+  // Both sources are runtime-narrowed via `narrowReasoningEffort`: the
+  // step config is plain JSON on the workflow definition, and the agent
+  // column is plain TEXT in Postgres. Either could carry a value outside
+  // the enum if it bypassed the form / Zod (raw SQL, hand-edited
+  // workflow JSON, backup bundle from a fork). The narrow drops unknown
+  // strings to `undefined` so the runtime falls back to "no effort sent"
+  // instead of letting a phantom enum member 400 the provider call.
+  const stepEffort = narrowReasoningEffort(config.reasoningEffort);
+  const agentEffort = narrowReasoningEffort(agent.reasoningEffort);
+  const effectiveReasoningEffort: ReasoningEffort | undefined = stepEffort ?? agentEffort;
 
   // Interpolate the message template
   const interpolatedMessage = interpolatePrompt(message, ctx);

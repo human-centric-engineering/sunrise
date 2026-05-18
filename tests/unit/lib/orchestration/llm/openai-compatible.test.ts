@@ -1665,6 +1665,50 @@ describe('buildBaseParams', () => {
       const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(params?.reasoning_effort).toBeUndefined();
     });
+
+    // Per-model accepted enum — o-series does NOT accept 'minimal'
+    // (added with gpt-5). The provider drops the field rather than
+    // letting OpenAI 400. Caller intent is still on the trace.
+    it.each([
+      ['o1', 'o-series'],
+      ['o1-mini', 'o-series'],
+      ['o3-mini', 'o-series'],
+      ['o4-mini', 'o-series'],
+    ])('drops `minimal` silently on %s (%s rejects this enum value)', async (modelId) => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: modelId,
+        reasoningEffort: 'minimal',
+      });
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.reasoning_effort).toBeUndefined();
+    });
+
+    it.each(['low', 'medium', 'high'] as const)(
+      'still forwards %s on o3-mini (these are the supported buckets)',
+      async (value) => {
+        chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+        const provider = makeProvider();
+        await provider.chat([{ role: 'user', content: 'x' }], {
+          model: 'o3-mini',
+          reasoningEffort: value,
+        });
+        const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(params?.reasoning_effort).toBe(value);
+      }
+    );
+
+    it('forwards `minimal` on gpt-5 (gpt-5 family added this bucket)', async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-5',
+        reasoningEffort: 'minimal',
+      });
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.reasoning_effort).toBe('minimal');
+    });
   });
 
   // ── Prefixed model ids — the failure case that motivated promoting the

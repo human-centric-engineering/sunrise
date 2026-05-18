@@ -79,6 +79,71 @@ describe('rollupTelemetry', () => {
     expect(result.llmDurationMs).toBe(0);
   });
 
+  it("uses the LAST 'planner' entry for headline fields when any planner entries are present (orchestrator-style step)", () => {
+    // Orchestrator pushes one planner call THEN delegates to two
+    // sub-agents that push their own (untagged-then-post-tagged)
+    // entries. The trace's headline must reflect the planner's
+    // identity, not the last delegation's, even though all three
+    // entries share `ctx.stepTelemetry` and the delegation entries
+    // are appended later.
+    const result = rollupTelemetry([
+      telemetry({
+        model: 'planner-model',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        durationMs: 200,
+        requestParams: { maxTokens: 8192, temperature: 0.3, reasoningEffort: 'medium' },
+        source: 'planner',
+      }),
+      telemetry({
+        model: 'delegation-model-a',
+        provider: 'anthropic',
+        inputTokens: 30,
+        outputTokens: 20,
+        durationMs: 80,
+        requestParams: { maxTokens: 4096, temperature: 0.7 },
+        source: 'delegation',
+      }),
+      telemetry({
+        model: 'delegation-model-b',
+        provider: 'groq',
+        inputTokens: 40,
+        outputTokens: 25,
+        durationMs: 90,
+        requestParams: { maxTokens: 2048, temperature: 0.5 },
+        source: 'delegation',
+      }),
+    ]);
+
+    // Headline (model / provider / requestParams) reflects the planner.
+    expect(result.model).toBe('planner-model');
+    expect(result.provider).toBe('openai');
+    expect(result.requestParams).toEqual({
+      maxTokens: 8192,
+      temperature: 0.3,
+      reasoningEffort: 'medium',
+    });
+    // Totals sum across ALL entries — the trace row must still reflect
+    // the full work the orchestrator step did (planner + delegations).
+    expect(result.inputTokens).toBe(170);
+    expect(result.outputTokens).toBe(95);
+    expect(result.llmDurationMs).toBe(370);
+  });
+
+  it("falls through to 'last entry wins' when no entries carry a source tag (every other step type)", () => {
+    // Untagged entries — the single-call step pattern. Behaviour must
+    // be identical to before the tag was introduced: the LAST entry
+    // wins for the headline fields.
+    const result = rollupTelemetry([
+      telemetry({ model: 'first', provider: 'openai', requestParams: { maxTokens: 100 } }),
+      telemetry({ model: 'last', provider: 'anthropic', requestParams: { maxTokens: 200 } }),
+    ]);
+    expect(result.model).toBe('last');
+    expect(result.provider).toBe('anthropic');
+    expect(result.requestParams).toEqual({ maxTokens: 200 });
+  });
+
   it('carries requestParams from the LAST turn (matches model/provider rollup semantics)', () => {
     const result = rollupTelemetry([
       telemetry({ requestParams: { maxTokens: 100, temperature: 0.2 } }),
