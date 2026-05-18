@@ -161,6 +161,10 @@ export const API = {
       conversationById: (id: string): string => `/api/v1/admin/orchestration/conversations/${id}`,
       conversationMessages: (id: string): string =>
         `/api/v1/admin/orchestration/conversations/${id}/messages`,
+      conversationProvenance: (id: string): string =>
+        `/api/v1/admin/orchestration/conversations/${id}/provenance`,
+      conversationProvenanceMarkdown: (id: string): string =>
+        `/api/v1/admin/orchestration/conversations/${id}/provenance.md`,
       CONVERSATIONS_CLEAR: '/api/v1/admin/orchestration/conversations/clear',
       CONVERSATIONS_EXPORT: '/api/v1/admin/orchestration/conversations/export',
       CONVERSATIONS_SEARCH: '/api/v1/admin/orchestration/conversations/search',
