@@ -588,6 +588,7 @@ describe('CapabilityDispatcher', () => {
               section: 'Overview',
             },
             documentName: 'Agentic Design Patterns',
+            documentContentHash: 'sha256-react',
             similarity: 0.92,
           },
         ],
@@ -616,6 +617,9 @@ describe('CapabilityDispatcher', () => {
             chunkId: 'chunk-1',
             documentId: 'doc-1',
             documentName: 'Agentic Design Patterns',
+            // contentHash forwarded from the search layer onto each result
+            // item; Phase 3 audit-trail wiring.
+            documentContentHash: 'sha256-react',
             content: 'ReAct pattern',
             patternNumber: 1,
             patternName: 'ReAct',

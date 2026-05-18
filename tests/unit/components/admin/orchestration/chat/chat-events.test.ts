@@ -129,6 +129,8 @@ describe('parseChatStreamEvent', () => {
             chunkId: 'c1',
             documentId: 'd1',
             documentName: 'Guide',
+            contentHash: 'sha256-abc',
+            documentVersion: null,
             section: 'Intro',
             patternNumber: null,
             patternName: null,
