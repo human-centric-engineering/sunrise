@@ -11,12 +11,23 @@
  */
 
 import { useState } from 'react';
-import { Bot, Code, MessageSquare, Settings, User, Wrench } from 'lucide-react';
+import {
+  Bot,
+  Code,
+  Download,
+  FileJson,
+  FileText,
+  MessageSquare,
+  Settings,
+  User,
+  Wrench,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { messageMetadataSchema, messageProvenanceSchema } from '@/lib/validations/orchestration';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
@@ -61,6 +72,12 @@ export interface ConversationMessage {
 
 export interface ConversationTraceViewerProps {
   messages: ConversationMessage[];
+  /**
+   * Conversation id — required to render the provenance download
+   * buttons (JSON + Markdown). Omit when the viewer is used in a
+   * preview / non-routable context.
+   */
+  conversationId?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -152,6 +169,7 @@ function MessageCard({ message }: { message: ConversationMessage }) {
         meta.costUsd !== undefined) && (
         <div className="text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
           {message.modelId && <span>{message.modelId}</span>}
+          {message.providerSlug && <span>· {message.providerSlug}</span>}
           {meta.tokenUsage?.input !== undefined && (
             <span>{meta.tokenUsage.input.toLocaleString()} in</span>
           )}
@@ -160,6 +178,26 @@ function MessageCard({ message }: { message: ConversationMessage }) {
           )}
           {meta.latencyMs !== undefined && <span>{meta.latencyMs} ms</span>}
           {meta.costUsd !== undefined && <span>${meta.costUsd.toFixed(4)}</span>}
+        </div>
+      )}
+
+      {/* Provenance pin row — version pins surface as small badges next
+          to the message so an auditor can see at a glance which
+          agent/workflow version was running. Mirrors the
+          SupervisorVerdictBadge styling in execution-detail-view. */}
+      {(message.agentVersionId || message.workflowExecutionId) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {message.agentVersionId && (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              agent {message.agentVersionId.slice(0, 8)}
+            </Badge>
+          )}
+          {message.workflowExecutionId && (
+            <Badge variant="outline" className="font-mono text-[10px]">
+              workflow exec {message.workflowExecutionId.slice(0, 8)}
+              {message.workflowVersionId ? ` @ ${message.workflowVersionId.slice(0, 8)}` : ''}
+            </Badge>
+          )}
         </div>
       )}
 
@@ -260,12 +298,67 @@ function SummaryBar({ messages }: { messages: ConversationMessage[] }) {
   );
 }
 
+// ─── Download button group ──────────────────────────────────────────────────
+
+/**
+ * Audit-bundle download affordance — JSON + Markdown.
+ *
+ * Mirrors the per-execution "Download report.md" button in
+ * ExecutionDetailView. The PDF button is reserved for the future
+ * Gotenberg-backed `provenance.pdf` route and stays hidden until that
+ * infrastructure is provisioned.
+ */
+function DownloadProvenance({ conversationId }: { conversationId: string }) {
+  return (
+    <div
+      data-testid="download-provenance"
+      className="flex flex-wrap items-center gap-2 rounded-md border p-3"
+    >
+      <Download className="text-muted-foreground h-4 w-4" />
+      <span className="text-sm font-medium">Download provenance</span>
+      <FieldHelp title="What is the provenance bundle?">
+        The audit trail behind every assistant message — agent / workflow / model versions, KB
+        chunks cited (with their content hash at message time), capability calls, and workflow step
+        sources. Hand this to a reviewer to answer &ldquo;how did the agent arrive at this answer on
+        this date?&rdquo;
+      </FieldHelp>
+      <div className="ml-auto flex flex-wrap gap-2">
+        <Button asChild variant="outline" size="sm">
+          <a
+            href={API.ADMIN.ORCHESTRATION.conversationProvenance(conversationId)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <FileJson className="mr-1 h-3.5 w-3.5" />
+            JSON
+          </a>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <a
+            href={API.ADMIN.ORCHESTRATION.conversationProvenanceMarkdown(conversationId)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <FileText className="mr-1 h-3.5 w-3.5" />
+            Markdown
+          </a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export function ConversationTraceViewer({ messages }: ConversationTraceViewerProps) {
+export function ConversationTraceViewer({
+  messages,
+  conversationId,
+}: ConversationTraceViewerProps) {
   return (
     <div className="space-y-6">
       <SummaryBar messages={messages} />
+
+      {conversationId && <DownloadProvenance conversationId={conversationId} />}
 
       {messages.length === 0 ? (
         <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">

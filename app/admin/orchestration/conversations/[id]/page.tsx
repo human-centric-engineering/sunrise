@@ -110,7 +110,7 @@ export default async function ConversationDetailPage({
         <ConversationTags conversationId={conversation.id} initialTags={conversation.tags ?? []} />
       </div>
 
-      <ConversationTraceViewer messages={messages} />
+      <ConversationTraceViewer messages={messages} conversationId={conversation.id} />
     </div>
   );
 }

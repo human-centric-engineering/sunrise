@@ -462,4 +462,94 @@ describe('ConversationTraceViewer', () => {
       expect(screen.queryByTestId('message-trace')).not.toBeInTheDocument();
     });
   });
+
+  describe('Download provenance', () => {
+    it('renders the download button group when conversationId is supplied', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[makeMessage({ id: 'msg-1', role: 'assistant', content: 'A.' })]}
+          conversationId="conv-abc"
+        />
+      );
+
+      const jsonLink = screen.getByRole('link', { name: /json/i });
+      const mdLink = screen.getByRole('link', { name: /markdown/i });
+      expect(jsonLink).toHaveAttribute(
+        'href',
+        '/api/v1/admin/orchestration/conversations/conv-abc/provenance'
+      );
+      expect(mdLink).toHaveAttribute(
+        'href',
+        '/api/v1/admin/orchestration/conversations/conv-abc/provenance.md'
+      );
+    });
+
+    it('omits the download button group when conversationId is missing (preview mode)', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[makeMessage({ id: 'msg-1', role: 'assistant', content: 'A.' })]}
+        />
+      );
+
+      expect(screen.queryByTestId('download-provenance')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Provenance pin badges', () => {
+    it('renders the agent version pill when agentVersionId is set', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'A.',
+              agentVersionId: 'av-1234567890',
+            }),
+          ]}
+        />
+      );
+
+      // The pill prefix + the first-8-char truncation of the id.
+      expect(screen.getByText('agent av-12345')).toBeInTheDocument();
+    });
+
+    it('renders the workflow execution pill with version suffix when set', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'A.',
+              workflowExecutionId: 'exec-abcdef9999',
+              workflowVersionId: 'wv-1234567890',
+            }),
+          ]}
+        />
+      );
+
+      expect(screen.getByText('workflow exec exec-abc @ wv-12345')).toBeInTheDocument();
+    });
+
+    it('omits the pin row when no version pins are set', () => {
+      render(
+        <ConversationTraceViewer
+          messages={[
+            makeMessage({
+              id: 'msg-1',
+              role: 'assistant',
+              content: 'A.',
+              modelId: 'claude-sonnet-4-6',
+            }),
+          ]}
+        />
+      );
+
+      // No agent/workflow pills should render — the badge text would
+      // start with one of these prefixes if present.
+      expect(screen.queryByText(/^agent /)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^workflow exec /)).not.toBeInTheDocument();
+    });
+  });
 });
