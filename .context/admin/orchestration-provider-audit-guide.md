@@ -213,6 +213,14 @@ When a verdict is present on an execution row — whether produced in-workflow o
 
 **Download report.** Every terminal execution carries a **Download report** button next to the review controls. It hits `GET /api/v1/admin/orchestration/executions/:id/report.md` and serves a deterministic Markdown render of the trace — header, supervisor verdict (when present), input data, per-step timeline with inputs / outputs / duration / cost, errors, and output. No LLM cost; rendered fresh from the trace every click. The button works regardless of whether the workflow includes a `report` step in its DAG.
 
+## Cost estimate
+
+The "Audit Models" dialog renders an **Estimated cost** row above the trigger button as soon as anything is selected. It updates (with a 250ms debounce) when the operator toggles models or the supervisor checkbox, so the displayed number always reflects what the next click would actually run. The button label stays focused on the action — the cost lives in its own row with a ⓘ popover.
+
+**The estimator is a generic workflow service.** It auto-derives a heuristic from any workflow's published definition (counting LLM-producing steps + detecting whether there's a supervisor step) and switches to an empirical mode once ≥3 past runs are available. The audit dialog passes `itemCount = selected.size` so the per-model scaling factors in; other trigger UIs that wrap workflows without a scaling input simply omit it. The popover shows both models being priced — `modelUsed` for non-supervisor steps (the chat default) and `judgeModelUsed` for the supervisor (`EVALUATION_JUDGE_MODEL` env var if set, otherwise the chat default).
+
+See [`.context/orchestration/cost-estimation.md`](../orchestration/cost-estimation.md) for the full methodology, integration recipe, and calibration notes. The estimate is **planning-grade** — actual cost varies with prompt evolution, retry behaviour on the validation guard, and the agent's tool-use iterations in `discover_new_models`. The service lives in `lib/orchestration/cost-estimation/workflow-cost.ts`.
+
 ## How attribution works
 
 Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) is required to attribute every claim it makes. The output JSON carries a `sources` array per change, per new model, and per deactivation:

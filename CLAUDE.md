@@ -286,6 +286,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Knowledge Base           | `.context/orchestration/knowledge.md`                     | Document ingestion, chunking, vector search                                             |
 | Workflows                | `.context/orchestration/workflows.md`                     | DAG validator, step types, error codes                                                  |
 | Workflow Versioning      | `.context/orchestration/workflow-versioning.md`           | Publish/draft/rollback model, execution pinning, audit events                           |
+| Cost Estimation          | `.context/orchestration/cost-estimation.md`               | Generic pre-run USD estimate service; empirical/heuristic modes; trigger-UI recipe      |
 | Step Provenance          | `.context/orchestration/provenance.md`                    | `output.sources` contract, engine capture, approval/trace UI pills, opt-in guard rule   |
 | Patterns & Steps         | `.context/orchestration/patterns-and-steps.md`            | The 21 canonical patterns, step→pattern relationships, author guidance                  |
 | Orchestration Engine     | `.context/orchestration/engine.md`                        | Runtime executor, registry, events, strategies                                          |

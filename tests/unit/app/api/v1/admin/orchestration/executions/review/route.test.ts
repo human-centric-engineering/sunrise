@@ -399,4 +399,32 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
       triggeredBy: 'retroactive',
     });
   });
+
+  it('skips the archive when the prior supervisorReport is malformed', async () => {
+    // A corrupted prior row (e.g. an old write that lost the `verdict`
+    // field or got hand-edited) must not crash the rerun. The route
+    // logs and skips the archive; the fresh verdict still writes.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...happyExecution(),
+      supervisorVerdict: 'concerns',
+      supervisorReport: {
+        // verdict missing entirely — schema rejects.
+        summary: 'orphaned',
+        strengths: [],
+      },
+    } as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+
+    const res = await POST(makeRequest(), makeContext());
+    expect(res.status).toBe(200);
+    const call = vi.mocked(prisma.aiWorkflowExecution.update).mock.calls[0][0];
+    const reportWritten = call.data.supervisorReport as {
+      previousVerdicts?: unknown[];
+      verdict: string;
+    };
+    // No archive entry — the malformed prior was dropped, not appended.
+    expect(reportWritten.previousVerdicts).toBeUndefined();
+    // But the new verdict still wrote through.
+    expect(reportWritten.verdict).toBeDefined();
+  });
 });

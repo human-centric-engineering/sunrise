@@ -30,6 +30,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { logger } from '@/lib/logging';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
@@ -41,6 +42,34 @@ import {
   type SupervisorPreviousVerdict,
   type SupervisorReport,
 } from '@/types/orchestration';
+
+/**
+ * Narrow schema for the fields we read off a *prior* supervisor report
+ * when archiving it into `previousVerdicts[]`. Validates only what's
+ * lifted onto the new report — verdict, score, triggeredBy, and the
+ * nested `previousVerdicts[]` chain — so a corrupted or hand-edited
+ * Json column doesn't crash the rerun. We don't validate the whole
+ * SupervisorReport shape here because the new report is freshly built
+ * by `runSupervisorAssessment` (already type-safe) and the read path
+ * only touches these fields.
+ */
+const supervisorVerdictEnum = z.enum(['pass', 'concerns', 'fail', 'inconclusive']);
+const supervisorTriggeredByEnum = z.enum(['in_workflow', 'retroactive']);
+const supervisorPreviousVerdictSchema = z.object({
+  verdict: supervisorVerdictEnum,
+  score: z.number().nullable(),
+  reviewedAt: z.string(),
+  triggeredBy: supervisorTriggeredByEnum,
+});
+const priorSupervisorReportSchema = z.object({
+  verdict: supervisorVerdictEnum,
+  // `score` is permissive so a benign type drift (e.g. score stored as a
+  // string by an older writer) doesn't reject the whole archive. The
+  // downstream `typeof prior.score === 'number'` guard handles the cast.
+  score: z.unknown().optional(),
+  triggeredBy: supervisorTriggeredByEnum.optional(),
+  previousVerdicts: z.array(supervisorPreviousVerdictSchema).optional(),
+});
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -199,18 +228,29 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   // Archive any prior verdict into supervisorReport.previousVerdicts[] —
   // operators rerun for a reason; overwriting silently would discard the
-  // history they want to compare against.
+  // history they want to compare against. Validate the prior column
+  // shape so a corrupted Json row can't break the archive lift; on
+  // parse failure we log and skip the archive rather than fail the
+  // rerun (the new verdict still writes through cleanly).
   const finalReport: SupervisorReport = { ...assessment.report };
   if (execution.supervisorVerdict && execution.supervisorReport) {
-    const priorReport = execution.supervisorReport as unknown as SupervisorReport;
-    const priorEntry: SupervisorPreviousVerdict = {
-      verdict: priorReport.verdict,
-      score: typeof priorReport.score === 'number' ? priorReport.score : null,
-      reviewedAt: execution.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
-      triggeredBy: priorReport.triggeredBy ?? 'in_workflow',
-    };
-    const existing = priorReport.previousVerdicts ?? [];
-    finalReport.previousVerdicts = [...existing, priorEntry];
+    const priorParsed = priorSupervisorReportSchema.safeParse(execution.supervisorReport);
+    if (priorParsed.success) {
+      const prior = priorParsed.data;
+      const priorEntry: SupervisorPreviousVerdict = {
+        verdict: prior.verdict,
+        score: typeof prior.score === 'number' ? prior.score : null,
+        reviewedAt: execution.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
+        triggeredBy: prior.triggeredBy ?? 'in_workflow',
+      };
+      const existing = prior.previousVerdicts ?? [];
+      finalReport.previousVerdicts = [...existing, priorEntry];
+    } else {
+      logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
+        executionId: id,
+        issues: priorParsed.error.issues.map((i) => i.message),
+      });
+    }
   }
 
   await prisma.aiWorkflowExecution.update({

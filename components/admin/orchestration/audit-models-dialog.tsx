@@ -17,7 +17,7 @@
  * navigates to the canonical execution detail page.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ClipboardCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +51,7 @@ import { ExecutionProgressInline } from '@/components/admin/orchestration/execut
 import type { ExecutionLivePayload } from '@/lib/hooks/use-execution-live-poll';
 import { TIER_ROLE_META, type TierRole } from '@/types/orchestration';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
+import type { WorkflowCostEstimate } from '@/lib/orchestration/cost-estimation/workflow-cost';
 
 interface AuditModelsDialogProps {
   open: boolean;
@@ -68,6 +69,17 @@ function formatAuditAge(iso: string): string {
   if (days < 30) return `${days}d ago`;
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
+}
+
+/**
+ * Render a USD amount for the cost-estimate row. Sub-cent values
+ * collapse to "<$0.01" so the line doesn't read as "$0.00" (which the
+ * operator would read as "free").
+ */
+function formatUsd(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0.00';
+  if (usd < 0.01) return '<$0.01';
+  return `$${usd.toFixed(2)}`;
 }
 
 /**
@@ -180,10 +192,92 @@ export function AuditModelsDialog({
   } | null>(null);
   const [terminalStatus, setTerminalStatus] = useState<string | null>(null);
 
+  // Audit workflow lookup. Done once on dialog-open so the cost-estimate
+  // endpoint and the submit handler both reuse it. The lookup-by-slug
+  // is cheap (single DB row) but redoing it on every keystroke would
+  // burn rate-limit budget. `null` until the first fetch resolves.
+  const [workflowMeta, setWorkflowMeta] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  // Cost-estimate state — driven by selected.size + runSupervisor with
+  // a debounce so rapid checkbox toggles don't fan out a flurry of GETs.
+  // The estimate is only shown when something is selected; an empty
+  // selection has nothing useful to estimate.
+  const [estimate, setEstimate] = useState<WorkflowCostEstimate | null>(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
+
   const [, setInFlight, clearInFlight] = useLocalStorage<InFlightExecutionRef | null>(
     IN_FLIGHT_EXECUTION_STORAGE_KEY,
     null
   );
+
+  // Resolve the audit workflow id once when the dialog opens. Subsequent
+  // estimate calls + the eventual submit both use it.
+  useEffect(() => {
+    if (!open) return;
+    if (workflowMeta !== null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const workflows = await apiClient.get<{ id: string; slug: string; name?: string }[]>(
+          API.ADMIN.ORCHESTRATION.WORKFLOWS,
+          { params: { slug: AUDIT_WORKFLOW_SLUG, limit: 1 } }
+        );
+        const workflow = Array.isArray(workflows)
+          ? workflows.find((w) => w.slug === AUDIT_WORKFLOW_SLUG)
+          : null;
+        if (cancelled) return;
+        if (workflow) {
+          setWorkflowMeta({ id: workflow.id, name: workflow.name ?? workflow.slug });
+        }
+      } catch {
+        // Estimate will stay null; submit handler retries the lookup.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workflowMeta]);
+
+  // Refresh the estimate when the selection or supervisor toggle changes.
+  // Debounced so flicking through models doesn't fan out one GET per click.
+  // No-op when nothing is selected (button is disabled too).
+  useEffect(() => {
+    if (!workflowMeta || submittedExecution) {
+      setEstimate(null);
+      return;
+    }
+    if (selected.size === 0) {
+      setEstimate(null);
+      setEstimateLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setEstimateLoading(true);
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const data = await apiClient.get<WorkflowCostEstimate>(
+            API.ADMIN.ORCHESTRATION.workflowCostEstimate(workflowMeta.id),
+            { params: { itemCount: selected.size, supervisor: runSupervisor } }
+          );
+          if (!cancelled) setEstimate(data);
+        } catch {
+          // Estimate is best-effort — silently drop it; the submit path
+          // still works and the operator can click through.
+          if (!cancelled) setEstimate(null);
+        } finally {
+          if (!cancelled) setEstimateLoading(false);
+        }
+      })();
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [workflowMeta, submittedExecution, selected.size, runSupervisor]);
 
   const providers = useMemo(() => [...new Set(models.map((m) => m.providerSlug))].sort(), [models]);
 
@@ -226,17 +320,22 @@ export function AuditModelsDialog({
     setError(null);
 
     try {
-      // Find the audit workflow by slug. `name` is optional in the
-      // response type because older fixtures don't include it; the
-      // banner label falls back to the slug if the row was minimal.
-      const workflows = await apiClient.get<{ id: string; slug: string; name?: string }[]>(
-        API.ADMIN.ORCHESTRATION.WORKFLOWS,
-        { params: { slug: AUDIT_WORKFLOW_SLUG, limit: 1 } }
-      );
-
-      const workflow = Array.isArray(workflows)
-        ? workflows.find((w) => w.slug === AUDIT_WORKFLOW_SLUG)
-        : null;
+      // Prefer the cached metadata fetched on dialog open; fall back to
+      // a fresh lookup so a slow / failed initial fetch still lets the
+      // operator submit. `name` is optional in the API response because
+      // older fixtures don't include it; the banner label falls back to
+      // the slug when the row was minimal.
+      let workflow: { id: string; name: string } | null = workflowMeta;
+      if (!workflow) {
+        const workflows = await apiClient.get<{ id: string; slug: string; name?: string }[]>(
+          API.ADMIN.ORCHESTRATION.WORKFLOWS,
+          { params: { slug: AUDIT_WORKFLOW_SLUG, limit: 1 } }
+        );
+        const found = Array.isArray(workflows)
+          ? workflows.find((w) => w.slug === AUDIT_WORKFLOW_SLUG)
+          : null;
+        workflow = found ? { id: found.id, name: found.name ?? found.slug } : null;
+      }
 
       if (!workflow) {
         setError(
@@ -288,7 +387,7 @@ export function AuditModelsDialog({
       }
 
       const startedAt = new Date().toISOString();
-      const label = workflow.name ?? workflow.slug;
+      const label = workflow.name;
       setSubmittedExecution({
         id: executionId,
         workflowName: label,
@@ -304,7 +403,7 @@ export function AuditModelsDialog({
       setError(err instanceof Error ? err.message : 'Failed to start audit');
       setSubmitting(false);
     }
-  }, [selected, models, runSupervisor, generateReport, setInFlight]);
+  }, [selected, models, runSupervisor, generateReport, setInFlight, workflowMeta]);
 
   const allFilteredSelected = filtered.every((m) => selected.has(m.id));
 
@@ -574,6 +673,63 @@ export function AuditModelsDialog({
             </>
           )}
         </div>
+
+        {!submittedExecution && selected.size > 0 && (estimateLoading || estimate) && (
+          <div
+            className="text-muted-foreground flex items-center justify-end gap-1.5 border-t pt-3 text-xs"
+            data-testid="audit-cost-estimate"
+          >
+            {estimate ? (
+              <>
+                <span>
+                  Estimated cost:{' '}
+                  <span className="text-foreground font-medium">~{formatUsd(estimate.midUsd)}</span>{' '}
+                  <span className="text-muted-foreground/70">
+                    (range {formatUsd(estimate.lowUsd)}–{formatUsd(estimate.highUsd)})
+                  </span>
+                </span>
+                <FieldHelp title="How the cost is estimated" contentClassName="w-80">
+                  <p>{estimate.notes}</p>
+                  <p className="mt-2">
+                    <strong>Model{estimate.judgeModelUsed ? 's' : ''}:</strong> non-supervisor steps
+                    priced against <code>{estimate.modelUsed}</code> (the configured chat default).
+                    {estimate.judgeModelUsed ? (
+                      <>
+                        {' '}
+                        Supervisor step priced against <code>{estimate.judgeModelUsed}</code>
+                        {estimate.judgeModelUsed === estimate.modelUsed ? (
+                          <>
+                            {' '}
+                            (same as the chat default — set <code>EVALUATION_JUDGE_MODEL</code> to
+                            give the supervisor an independent judge)
+                          </>
+                        ) : null}
+                        .
+                      </>
+                    ) : (
+                      '.'
+                    )}
+                  </p>
+                  <p className="mt-2">
+                    <strong>Source:</strong>{' '}
+                    {estimate.basedOn === 'empirical'
+                      ? `past run history (${estimate.sampleSize} match${
+                          estimate.sampleSize === 1 ? '' : 'es'
+                        })`
+                      : 'heuristic — fixed token assumptions repriced at the current model rates'}
+                    .
+                  </p>
+                  <p className="mt-2">
+                    Actual cost depends on prompt evolution, retry behaviour, and any agent tool-use
+                    iterations — treat this as planning-grade, not a quote.
+                  </p>
+                </FieldHelp>
+              </>
+            ) : (
+              <span>Estimating cost…</span>
+            )}
+          </div>
+        )}
 
         <DialogFooter>
           {submittedExecution ? (

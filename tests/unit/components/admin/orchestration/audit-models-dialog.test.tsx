@@ -974,4 +974,130 @@ describe('AuditModelsDialog', () => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
+
+  // ── Cost estimate ──────────────────────────────────────────────────────────
+
+  describe('cost estimate', () => {
+    /**
+     * Route apiClient.get by URL so the workflow lookup and the
+     * cost-estimate call can return different shapes. Without this the
+     * mock would feed the workflow array into setEstimate and render
+     * "$0.00" — fine for tests that don't look at the estimate but
+     * confusing here.
+     */
+    async function mockApiByUrl(estimate: unknown): Promise<void> {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((path: string): Promise<unknown> => {
+        if (path.includes('/cost-estimate')) {
+          return Promise.resolve(estimate);
+        }
+        return Promise.resolve([{ id: 'wf-123', slug: 'tpl-provider-model-audit' }]);
+      });
+    }
+
+    it('hides the estimate row when nothing is selected', async () => {
+      // Dialog opens with no selection; the row should not be in the DOM.
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+      expect(screen.queryByTestId('audit-cost-estimate')).not.toBeInTheDocument();
+    });
+
+    it('renders the estimate row after selecting models', async () => {
+      await mockApiByUrl({
+        midUsd: 0.42,
+        lowUsd: 0.3,
+        highUsd: 0.6,
+        basedOn: 'empirical',
+        sampleSize: 7,
+        modelUsed: 'claude-sonnet-4-6',
+        judgeModelUsed: null,
+        notes: 'Calibrated from 7 past runs.',
+      });
+
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+
+      await user.click(screen.getByRole('button', { name: /^select all$/i }));
+
+      // The estimate row mounts immediately as "Estimating cost…" then
+      // swaps to the priced version after the debounced fetch resolves.
+      // Wait for the priced text, not the loading text.
+      await screen.findByText(/Estimated cost:/i, undefined, { timeout: 1500 });
+
+      const row = screen.getByTestId('audit-cost-estimate');
+      expect(row).toHaveTextContent('$0.42');
+      expect(row).toHaveTextContent('$0.30');
+      expect(row).toHaveTextContent('$0.60');
+    });
+
+    it('passes the selected model count and supervisor toggle to the estimate endpoint', async () => {
+      await mockApiByUrl({
+        midUsd: 0.5,
+        lowUsd: 0.4,
+        highUsd: 0.7,
+        basedOn: 'heuristic',
+        sampleSize: 0,
+        modelUsed: 'claude-sonnet-4-6',
+        judgeModelUsed: 'claude-sonnet-4-6',
+        notes: 'Rough heuristic.',
+      });
+      const { apiClient } = await import('@/lib/api/client');
+
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+
+      await user.click(screen.getByRole('button', { name: /^select all$/i }));
+      // Tick the supervisor box so the call includes supervisor=true.
+      await user.click(screen.getByRole('checkbox', { name: /run neutral supervisor review/i }));
+
+      await waitFor(
+        () => {
+          const supervisorCall = vi
+            .mocked(apiClient.get)
+            .mock.calls.find(
+              ([path, opts]) =>
+                typeof path === 'string' &&
+                path.includes('/cost-estimate') &&
+                (opts as { params?: Record<string, unknown> } | undefined)?.params?.supervisor ===
+                  true
+            );
+          expect(supervisorCall).toBeDefined();
+        },
+        { timeout: 1500 }
+      );
+
+      const [, opts] =
+        vi
+          .mocked(apiClient.get)
+          .mock.calls.find(
+            ([path]) => typeof path === 'string' && path.includes('/cost-estimate')
+          ) ?? [];
+      const params = (opts as { params?: { itemCount?: number; supervisor?: boolean } } | undefined)
+        ?.params;
+      expect(params?.itemCount).toBe(2);
+    });
+
+    it('falls back silently when the estimate endpoint errors', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path.includes('/cost-estimate')) {
+          return Promise.reject(new Error('boom'));
+        }
+        return Promise.resolve([{ id: 'wf-123', slug: 'tpl-provider-model-audit' }]);
+      });
+
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} />);
+
+      await user.click(screen.getByRole('button', { name: /^select all$/i }));
+
+      // The estimate row should not be visible — the dialog stays usable
+      // even with a broken estimate endpoint.
+      await waitFor(
+        () => {
+          expect(screen.queryByTestId('audit-cost-estimate')).not.toBeInTheDocument();
+        },
+        { timeout: 1500 }
+      );
+    });
+  });
 });
