@@ -97,6 +97,10 @@ const unit: SeedUnit = {
         contextLength: 'very_high',
         toolUse: 'strong',
         bestRole: 'Planner / orchestrator',
+        // gpt-5 family rejects `max_tokens` and any non-default temperature
+        // — the OpenAI-compatible provider switches to `max_completion_tokens`
+        // and skips temperature when paramProfile is set to 'openai-reasoning'.
+        paramProfile: 'openai-reasoning',
       },
       {
         slug: 'openai-gpt-4-1',
@@ -162,6 +166,7 @@ const unit: SeedUnit = {
         contextLength: 'very_high',
         toolUse: 'strong',
         bestRole: 'Hard reasoning, planning, verification',
+        paramProfile: 'openai-reasoning',
       },
 
       // OpenAI — Audio (Whisper) — unlocks the streaming-chat mic input.
@@ -827,6 +832,12 @@ const unit: SeedUnit = {
         costEfficiency: model.costEfficiency,
         contextLength: model.contextLength,
         toolUse: model.toolUse,
+        // Wire-level parameter convention. When unset, the runtime falls
+        // back to `deriveParamProfile()` — safe default that correctly
+        // classifies most ids. Set explicitly on rows where the wire
+        // shape differs in a way the heuristic can't infer (e.g. gpt-5,
+        // o-series — both reject `max_tokens`).
+        paramProfile: model.paramProfile ?? null,
         bestRole: model.bestRole,
         dimensions: model.dimensions ?? null,
         schemaCompatible: model.schemaCompatible ?? null,

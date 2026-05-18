@@ -27,6 +27,7 @@ import type {
 } from '@/types/orchestration';
 
 import type { Capability } from '@/lib/orchestration/llm/capability-inference';
+import type { ParamProfile } from '@/lib/orchestration/llm/types';
 
 /**
  * Map input cost ($/M tokens) to the cost-efficiency rating used in
@@ -230,4 +231,36 @@ export function deriveMatrixSlug(providerSlug: string, modelId: string): string 
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+/**
+ * Fallback param profile when the DB row's `paramProfile` column is
+ * null. Resolution order:
+ *
+ *   1. Strip known provider prefixes (`openai/`, `azure/`) so an
+ *      OpenRouter id like `openai/gpt-5-mini` matches the same patterns
+ *      as the bare id. This is the exact failure mode that motivated
+ *      promoting param routing into the registry: the prior regex on
+ *      `openai-compatible.ts` anchored on `^gpt-5` and silently missed
+ *      prefixed ids.
+ *   2. Anthropic / Gemini providers always use their own conventions;
+ *      they don't go through openai-compatible, but we still return the
+ *      matching profile so the admin UI is self-documenting.
+ *   3. OpenAI reasoning / gpt-5 family — pattern-matched on the
+ *      stripped id. Anchored so a fine-tuned id like `my-gpt-4o-fork`
+ *      that happens to contain `gpt-5` as a substring doesn't trigger.
+ *   4. Everything else (OpenAI legacy chat models, Llama / Mixtral via
+ *      Groq / Together / Fireworks, local Ollama) → `openai-legacy`.
+ *
+ * Returning `openai-legacy` as the catch-all is the safer default: it
+ * matches what the OpenAI-compatible Chat Completions API has accepted
+ * for years. A misclassified reasoning model would 400 with a clear
+ * error message; a misclassified legacy model would silently work.
+ */
+export function deriveParamProfile(modelId: string, provider: string): ParamProfile {
+  if (provider === 'anthropic') return 'anthropic';
+  if (provider === 'gemini') return 'gemini';
+  const id = modelId.toLowerCase().replace(/^(openai|azure)\//, '');
+  if (/^(o\d+|gpt-5)/.test(id)) return 'openai-reasoning';
+  return 'openai-legacy';
 }

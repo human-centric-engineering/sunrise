@@ -80,6 +80,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.costEfficiency !== undefined) data.costEfficiency = body.costEfficiency;
   if (body.contextLength !== undefined) data.contextLength = body.contextLength;
   if (body.toolUse !== undefined) data.toolUse = body.toolUse;
+  if (body.paramProfile !== undefined) data.paramProfile = body.paramProfile;
   if (body.bestRole !== undefined) data.bestRole = body.bestRole;
   if (body.dimensions !== undefined) data.dimensions = body.dimensions;
   if (body.schemaCompatible !== undefined) data.schemaCompatible = body.schemaCompatible;

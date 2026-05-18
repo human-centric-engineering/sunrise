@@ -19,7 +19,7 @@
  */
 
 import type { AiProviderModel } from '@/types/prisma';
-import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
+import type { ModelInfo, ModelTier, ParamProfile } from '@/lib/orchestration/llm/types';
 
 /**
  * Map the DB row's `tierRole` (admin matrix vocabulary) and
@@ -76,9 +76,25 @@ function mapContextLengthToMax(contextLength: string): number {
   }
 }
 
+/**
+ * Narrow a row's `paramProfile` string to the `ParamProfile` union.
+ * Row column is plain `String?` (Postgres has no enum constraint), so
+ * an operator could in principle write garbage via raw SQL. We treat
+ * any unknown value as absent (`undefined`) so the runtime falls back
+ * to `deriveParamProfile()` rather than panicking.
+ */
+function narrowParamProfile(raw: string | null | undefined): ParamProfile | undefined {
+  if (raw === 'openai-legacy') return 'openai-legacy';
+  if (raw === 'openai-reasoning') return 'openai-reasoning';
+  if (raw === 'anthropic') return 'anthropic';
+  if (raw === 'gemini') return 'gemini';
+  return undefined;
+}
+
 /** Convert a single DB row into a `ModelInfo`. Always marks `available: true`. */
 export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
   const cost = row.costPerMillionTokens ?? 0;
+  const paramProfile = narrowParamProfile(row.paramProfile);
   return {
     id: row.modelId,
     name: row.name,
@@ -94,6 +110,7 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
     // The capability gate is still the authoritative runtime check;
     // this prop is for UX-level constraint only.
     capabilities: row.capabilities,
+    ...(paramProfile ? { paramProfile } : {}),
   };
 }
 

@@ -1393,6 +1393,11 @@ const ratingLevelSchema = z.enum(['very_high', 'high', 'medium', 'none']);
 const contextLengthLevelSchema = z.enum(['very_high', 'high', 'medium', 'n_a']);
 const latencyLevelSchema = z.enum(['very_fast', 'fast', 'medium']);
 const toolUseLevelSchema = z.enum(['strong', 'moderate', 'none']);
+// Wire-level parameter convention. See `lib/orchestration/llm/types.ts`
+// for the runtime semantics. Persisted as a nullable text column on
+// `ai_provider_model.paramProfile`; null means "let the runtime derive
+// it via deriveParamProfile()".
+const paramProfileSchema = z.enum(['openai-legacy', 'openai-reasoning', 'anthropic', 'gemini']);
 // Matrix capability set — must mirror MODEL_CAPABILITIES in
 // types/orchestration.ts. Intentionally excludes `unknown` (catalogue
 // only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
@@ -1440,6 +1445,7 @@ export const createProviderModelSchema = z.object({
   costEfficiency: ratingLevelSchema,
   contextLength: contextLengthLevelSchema,
   toolUse: toolUseLevelSchema,
+  paramProfile: paramProfileSchema.nullable().optional(),
   bestRole: z
     .string()
     .min(1, 'Best role is required')
@@ -1501,6 +1507,7 @@ export const updateProviderModelSchema = z.object({
   costEfficiency: ratingLevelSchema.optional(),
   contextLength: contextLengthLevelSchema.optional(),
   toolUse: toolUseLevelSchema.optional(),
+  paramProfile: paramProfileSchema.nullable().optional(),
   bestRole: z
     .string()
     .min(1, 'Best role is required')
@@ -1553,6 +1560,7 @@ const bulkProviderModelRowSchema = z.object({
   costEfficiency: ratingLevelSchema,
   contextLength: contextLengthLevelSchema,
   toolUse: toolUseLevelSchema,
+  paramProfile: paramProfileSchema.nullable().optional(),
   bestRole: z
     .string()
     .min(1, 'Best role is required')

@@ -185,6 +185,7 @@ export const POST = withAdminAuth(async (request, session) => {
         costEfficiency: body.costEfficiency,
         contextLength: body.contextLength,
         toolUse: body.toolUse,
+        paramProfile: body.paramProfile ?? null,
         bestRole: body.bestRole,
         dimensions: body.dimensions ?? null,
         schemaCompatible: body.schemaCompatible ?? null,

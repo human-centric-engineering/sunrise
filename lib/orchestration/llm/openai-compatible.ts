@@ -38,6 +38,7 @@ import type {
 } from 'openai/resources/chat/completions/completions';
 
 import { logger } from '@/lib/logging';
+import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_MAX_RETRIES,
@@ -81,35 +82,32 @@ const DEFAULT_LOCAL_EMBEDDING_MODEL = 'nomic-embed-text';
 
 /** Default token cap when the caller doesn't supply one. Applied to whichever
  *  field the model accepts — `max_tokens` for legacy chat models, or
- *  `max_completion_tokens` for OpenAI's newer reasoning / gpt-5 families.
- *  See {@link usesModernCompletionConvention}. */
+ *  `max_completion_tokens` for OpenAI's reasoning / gpt-5 families.
+ *  Param-shape selection is owned by `resolveParamProfile`. */
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
- * Predicate: does this model id require the post-o-series OpenAI
- * parameter convention?
+ * Resolve the wire-level parameter convention for `modelId`.
  *
- * OpenAI's reasoning-class models (o1, o3, o4, future o5+) and the
- * gpt-5 family reject the legacy `max_tokens` field in favour of
- * `max_completion_tokens`, and reject any `temperature` other than the
- * default `1`. Sending the legacy params returns a 400:
+ * Authority order:
+ *   1. Registry hit (DB-backed `AiProviderModel.paramProfile`, surfaced
+ *      via `dbModelToModelInfo`). This is the source of truth — admins
+ *      pick the profile from a dropdown on the Provider Model form, and
+ *      it round-trips through `getModel()` here.
+ *   2. Heuristic fallback (`deriveParamProfile`). Covers the cases the
+ *      registry can't: OpenRouter-only entries (no DB row), legacy
+ *      seeds, fine-tuned ids. Strips known provider prefixes so an
+ *      OpenRouter id like `openai/gpt-5-mini` resolves the same as
+ *      bare `gpt-5-mini`.
  *
- *   `Unsupported parameter: 'max_tokens' is not supported with this model.
- *    Use 'max_completion_tokens' instead.`
- *
- * Anchored at the start of the id so a custom model called e.g.
- * `my-fine-tuned-gpt-4o` doesn't accidentally trigger the new convention
- * just because the substring matches. The list mirrors the existing
- * reasoning-family detection in `lib/orchestration/llm/tokeniser.ts` and
- * `lib/orchestration/llm/model-heuristics.ts`.
- *
- * Non-OpenAI providers (Groq, Together, Mistral) host different model
- * families (Llama, Mixtral, …) and use the legacy chat-completions
- * conventions — those ids don't match this pattern so they're
- * unaffected.
+ * Replacing the previous regex-on-raw-id approach was motivated by a
+ * production failure: a `gpt-5`-family id with an `openai/` prefix
+ * slipped past the anchored regex and 400'd with `'max_tokens' is not
+ * supported with this model. Use 'max_completion_tokens' instead.`
  */
-function usesModernCompletionConvention(modelId: string): boolean {
-  return /^(o\d+|gpt-5)/i.test(modelId);
+function resolveParamProfile(modelId: string, providerName: string) {
+  const info = getModel(modelId);
+  return info?.paramProfile ?? deriveParamProfile(modelId, providerName);
 }
 
 /** Constructor options for `OpenAiCompatibleProvider`. */
@@ -459,20 +457,21 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     options: LlmOptions
   ): ChatCompletionCreateParamsNonStreaming {
     const tokenCap = options.maxTokens ?? DEFAULT_MAX_TOKENS;
-    const modern = usesModernCompletionConvention(options.model);
+    const profile = resolveParamProfile(options.model, this.name);
+    const isReasoning = profile === 'openai-reasoning';
 
     // OpenAI's reasoning / gpt-5 families reject `max_tokens` (400:
     // "Unsupported parameter") and reject any temperature other than
-    // the default 1. Branch the parameter shape based on the model id.
+    // the default 1. Branch on the resolved param profile.
     const params: ChatCompletionCreateParamsNonStreaming = {
       model: options.model,
       messages: messages.map(toSdkMessage),
-      ...(modern ? { max_completion_tokens: tokenCap } : { max_tokens: tokenCap }),
+      ...(isReasoning ? { max_completion_tokens: tokenCap } : { max_tokens: tokenCap }),
     };
-    // Skip the temperature send for modern OpenAI models — they only
+    // Skip the temperature send for reasoning models — they only
     // accept the default. Legacy chat models honour any value the
     // caller supplied.
-    if (!modern && options.temperature !== undefined) {
+    if (!isReasoning && options.temperature !== undefined) {
       params.temperature = options.temperature;
     }
     if (options.tools?.length) {

@@ -1094,6 +1094,14 @@ model AiProviderModel {
   // expansion: "edge" (browser/device), "air_gapped" (no outbound network).
   deploymentProfiles String[] @default(["hosted"])
 
+  // Wire-level parameter convention. Maps to ParamProfile in
+  // lib/orchestration/llm/types.ts. Determines whether the OpenAI-compatible
+  // provider sends `max_tokens` vs `max_completion_tokens` and whether
+  // `temperature` is honoured. Nullable: when null, deriveParamProfile() in
+  // model-heuristics.ts derives a fallback from model id + provider, so
+  // rows from before this column existed keep working.
+  paramProfile String? // 'openai-legacy' | 'openai-reasoning' | 'anthropic' | 'gemini'
+
   // Selection matrix dimensions
   reasoningDepth String // 'very_high' | 'high' | 'medium' | 'none'
   latency        String // 'very_fast' | 'fast' | 'medium'

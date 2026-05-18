@@ -237,6 +237,29 @@ export type ModelTier = 'budget' | 'mid' | 'frontier' | 'local';
  * `available` is only set after a provider list-models call confirms
  * the model is reachable through a currently-configured provider.
  */
+/**
+ * Wire-level parameter convention required by the model.
+ *
+ * Determines which fields the runtime sends and which it omits:
+ *
+ *  - `openai-legacy`: `max_tokens`, free `temperature`, no
+ *    `reasoning_effort`. Covers gpt-4o, gpt-4, gpt-3.5, and any Llama /
+ *    Mixtral hosted via OpenAI-compatible APIs (Groq, Together, …).
+ *  - `openai-reasoning`: `max_completion_tokens` instead of `max_tokens`,
+ *    `temperature` locked to 1 (we skip the send), accepts
+ *    `reasoning_effort`. Covers o-series and gpt-5.
+ *  - `anthropic`: `max_tokens` required (not optional), supports `top_k`
+ *    and `thinking`. Consumed by `anthropic.ts`, not openai-compatible.
+ *  - `gemini`: `maxOutputTokens` (different field name). Reserved for a
+ *    future Gemini provider class.
+ *
+ * Sourced from the `AiProviderModel.paramProfile` column when present.
+ * When absent (OpenRouter-only entries, legacy rows, fine-tuned ids),
+ * the runtime falls back to `deriveParamProfile()` in
+ * `@/lib/orchestration/llm/model-heuristics`.
+ */
+export type ParamProfile = 'openai-legacy' | 'openai-reasoning' | 'anthropic' | 'gemini';
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -246,6 +269,12 @@ export interface ModelInfo {
   outputCostPerMillion: number;
   maxContext: number;
   supportsTools: boolean;
+  /**
+   * Wire-level parameter convention. Optional — when omitted, the
+   * runtime resolves a fallback via `deriveParamProfile()`. Setting
+   * this in the registry / DB is the authoritative path.
+   */
+  paramProfile?: ParamProfile;
   available?: boolean;
   /**
    * Capability strings carried on the matrix row (e.g. `'vision'`,
