@@ -2593,6 +2593,103 @@ export const supervisorConfigSchema = stepErrorConfigSchema
     }
   );
 
+// ─── Supervisor report (persisted JSON) ─────────────────────────────────────
+//
+// Two schemas for the `AiWorkflowExecution.supervisorReport` column —
+// both used by code that reads the column back from Prisma. The cast-
+// without-validation pattern was caught in PR #195 review; promoting
+// these schemas to `lib/validations/orchestration.ts` lets every read
+// site validate identically.
+
+const supervisorVerdictEnum = z.enum(['pass', 'concerns', 'fail', 'inconclusive']);
+const supervisorSeverityEnum = z.enum(['low', 'medium', 'high']);
+const supervisorConfidenceEnum = z.enum(['low', 'medium', 'high']);
+const supervisorTriggeredByEnum = z.enum(['in_workflow', 'retroactive']);
+
+const supervisorStrengthSchema = z.object({
+  claim: z.string(),
+  evidenceStepId: z.string(),
+  evidenceQuote: z.string(),
+});
+
+const supervisorWeaknessSchema = z.object({
+  severity: supervisorSeverityEnum,
+  claim: z.string(),
+  evidenceStepId: z.string().nullable(),
+  evidenceQuote: z.string().nullable(),
+  recommendation: z.string(),
+});
+
+const supervisorAnomalySchema = z.object({
+  stepId: z.string(),
+  observation: z.string(),
+});
+
+const supervisorInvalidCitationSchema = z.object({
+  location: z.enum(['strength', 'weakness']),
+  index: z.number(),
+  reason: z.enum(['unknown_step_id', 'quote_not_found']),
+  evidenceStepId: z.string(),
+  evidenceQuote: z.string(),
+});
+
+/** A single entry in `supervisorReport.previousVerdicts[]`. */
+export const supervisorPreviousVerdictSchema = z.object({
+  verdict: supervisorVerdictEnum,
+  score: z.number().nullable(),
+  reviewedAt: z.string(),
+  triggeredBy: supervisorTriggeredByEnum,
+});
+
+/**
+ * Strict schema for a SupervisorReport JSON read back from
+ * `AiWorkflowExecution.supervisorReport`. Mirrors the `SupervisorReport`
+ * TypeScript interface in `types/orchestration.ts`. Used by the
+ * Markdown renderer, the UI panel, and any other read site that needs
+ * the full report shape.
+ *
+ * Callers MUST use `safeParse` and degrade gracefully on failure — a
+ * partial / legacy / hand-edited row should not crash the consumer.
+ * The Markdown renderer skips the supervisor block, the UI panel
+ * returns null, etc.
+ */
+export const supervisorReportSchema = z.object({
+  verdict: supervisorVerdictEnum,
+  score: z.number(),
+  summary: z.string(),
+  strengths: z.array(supervisorStrengthSchema),
+  weaknesses: z.array(supervisorWeaknessSchema),
+  anomalies: z.array(supervisorAnomalySchema),
+  unverifiedAreas: z.array(z.string()),
+  confidence: supervisorConfidenceEnum,
+  invalidCitations: z.array(supervisorInvalidCitationSchema).optional(),
+  previousVerdicts: z.array(supervisorPreviousVerdictSchema).optional(),
+  triggeredBy: supervisorTriggeredByEnum.optional(),
+  parseFailure: z
+    .object({
+      rawResponse: z.string(),
+      reason: z.string(),
+    })
+    .optional(),
+});
+
+/**
+ * Lenient schema used by the retroactive `review/route.ts` endpoint to
+ * lift the prior verdict into `previousVerdicts[]` on rerun. Older
+ * rows may have a non-numeric `score` or be missing optional fields;
+ * we only need a valid `verdict` to archive the prior entry, so
+ * everything else is optional and `score` is unknown (the call site
+ * does its own `typeof === 'number'` guard).
+ */
+export const priorSupervisorReportSchema = z.object({
+  verdict: supervisorVerdictEnum,
+  score: z.unknown().optional(),
+  triggeredBy: supervisorTriggeredByEnum.optional(),
+  previousVerdicts: z.array(supervisorPreviousVerdictSchema).optional(),
+});
+
+export type SupervisorReportParsed = z.infer<typeof supervisorReportSchema>;
+
 /**
  * `report` — deterministic human-readable Markdown render of the trace.
  *

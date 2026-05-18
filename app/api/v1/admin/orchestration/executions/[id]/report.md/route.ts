@@ -18,15 +18,16 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { logger } from '@/lib/logging';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
-import { executionTraceSchema } from '@/lib/validations/orchestration';
+import { executionTraceSchema, supervisorReportSchema } from '@/lib/validations/orchestration';
 import {
   renderExecutionMarkdown,
   type RenderExecutionInfo,
 } from '@/lib/orchestration/trace/render-markdown';
-import { WorkflowStatus, type SupervisorReport } from '@/types/orchestration';
+import { WorkflowStatus } from '@/types/orchestration';
 
 /**
  * Terminal statuses on which a report can safely be rendered. A running
@@ -68,6 +69,23 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
 
   const trace = executionTraceSchema.parse(execution.executionTrace);
 
+  // Validate the persisted supervisorReport JSON against the shared
+  // schema. On parse failure (legacy row, hand-edit, mid-deploy drift)
+  // we log and pass `null` so the renderer omits the supervisor block
+  // rather than crashing on a missing required field.
+  let supervisorReport = null;
+  if (execution.supervisorReport !== null) {
+    const reportParsed = supervisorReportSchema.safeParse(execution.supervisorReport);
+    if (reportParsed.success) {
+      supervisorReport = reportParsed.data;
+    } else {
+      logger.warn('report.md: supervisorReport failed schema validation, omitting block', {
+        executionId: id,
+        issues: reportParsed.error.issues.length,
+      });
+    }
+  }
+
   const renderInfo: RenderExecutionInfo = {
     id: execution.id,
     workflowId: execution.workflowId,
@@ -83,7 +101,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     errorMessage: execution.errorMessage,
     supervisorVerdict: execution.supervisorVerdict,
     supervisorScore: execution.supervisorScore,
-    supervisorReport: execution.supervisorReport as SupervisorReport | null,
+    supervisorReport,
     supervisorReviewedAt: execution.supervisorReviewedAt?.toISOString() ?? null,
   };
 

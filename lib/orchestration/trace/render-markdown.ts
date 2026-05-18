@@ -47,7 +47,14 @@ export interface RenderExecutionInfo {
   errorMessage?: string | null;
   supervisorVerdict?: string | null;
   supervisorScore?: number | null;
-  supervisorReport?: unknown;
+  /**
+   * Validated supervisor report — callers MUST run the raw Json column
+   * through `supervisorReportSchema.safeParse` before passing it in.
+   * `null` means "no supervisor ran" or "validation failed, skip block".
+   * Keeping this typed (vs `unknown`) lets the renderer access fields
+   * without local casts.
+   */
+  supervisorReport?: SupervisorReport | null;
   supervisorReviewedAt?: string | null;
 }
 
@@ -232,9 +239,10 @@ export function renderExecutionMarkdown(
   }
 
   // ─── Supervisor block ──────────────────────────────────────────────────
+  // `supervisorReport` is now typed `SupervisorReport | null` on
+  // `RenderExecutionInfo`, validated by the caller. No cast needed.
   if (execution.supervisorReport) {
-    const sr = execution.supervisorReport as SupervisorReport;
-    lines.push(renderSupervisorBlock(sr));
+    lines.push(renderSupervisorBlock(execution.supervisorReport));
     lines.push('');
   }
 

@@ -74,6 +74,7 @@ import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
 import { ExecutionStatusSynopsis } from '@/components/admin/orchestration/execution-status-synopsis';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
+import { supervisorReportSchema } from '@/lib/validations/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -195,8 +196,13 @@ interface SupervisorReportLike {
 }
 
 function asSupervisorReport(data: unknown): SupervisorReportLike | null {
-  if (data === null || typeof data !== 'object') return null;
-  return data as SupervisorReportLike;
+  if (data === null || typeof data === 'undefined') return null;
+  const parsed = supervisorReportSchema.safeParse(data);
+  // The Zod-inferred type is a stricter superset of `SupervisorReportLike`
+  // (which has every field optional for legacy UI defensiveness) — every
+  // required field of the loose type is guaranteed present, so the
+  // assignment is structurally safe and no cast is needed.
+  return parsed.success ? parsed.data : null;
 }
 
 function SupervisorDetailsPanel({

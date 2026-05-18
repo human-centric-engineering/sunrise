@@ -291,10 +291,14 @@ describe('SetupWizard', () => {
     // The wizard still renders Step 1 even though both Step-1 fetches
     // failed — the manual flavour-picker path is the IIFE catch's
     // fallback. Probing-error banner surfaces from the top-level probe.
-    await waitFor(() => {
-      expect(screen.getByText(/Step 1 of 4/i)).toBeInTheDocument();
-    });
-    expect(screen.getByText(/Could not check your current setup/i)).toBeInTheDocument();
+    //
+    // Both assertions use polling (findByText) because the Step-1
+    // mount and the top-level probe banner are set by independent async
+    // paths — under slow CI the banner sometimes lands AFTER Step 1
+    // appears, and a synchronous getByText would race ahead and fail
+    // (CI flake observed on PR #195).
+    await screen.findByText(/Step 1 of 4/i);
+    await screen.findByText(/Could not check your current setup/i);
   });
 
   it('Step indicator shows a clickable trail of completed steps', async () => {

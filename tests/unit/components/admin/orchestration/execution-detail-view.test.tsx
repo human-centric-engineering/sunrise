@@ -1069,6 +1069,7 @@ describe('ExecutionDetailView', () => {
             supervisorVerdict: 'inconclusive',
             supervisorReport: {
               verdict: 'inconclusive',
+              score: 0,
               summary: 'unparseable',
               strengths: [],
               weaknesses: [],
@@ -1093,8 +1094,18 @@ describe('ExecutionDetailView', () => {
               ...REPORT_BASE,
               verdict: 'pass',
               previousVerdicts: [
-                { verdict: 'concerns', triggeredBy: 'in_workflow', reviewedAt: '2025-01-01' },
-                { verdict: 'fail', triggeredBy: 'retroactive', reviewedAt: '2025-01-02' },
+                {
+                  verdict: 'concerns',
+                  score: 0.6,
+                  triggeredBy: 'in_workflow',
+                  reviewedAt: '2025-01-01',
+                },
+                {
+                  verdict: 'fail',
+                  score: 0.2,
+                  triggeredBy: 'retroactive',
+                  reviewedAt: '2025-01-02',
+                },
               ],
             },
           })}

@@ -34,7 +34,7 @@ import { logger } from '@/lib/logging';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
-import { executionTraceSchema } from '@/lib/validations/orchestration';
+import { executionTraceSchema, priorSupervisorReportSchema } from '@/lib/validations/orchestration';
 import {
   CostOperation,
   WorkflowStatus,
@@ -42,34 +42,6 @@ import {
   type SupervisorPreviousVerdict,
   type SupervisorReport,
 } from '@/types/orchestration';
-
-/**
- * Narrow schema for the fields we read off a *prior* supervisor report
- * when archiving it into `previousVerdicts[]`. Validates only what's
- * lifted onto the new report — verdict, score, triggeredBy, and the
- * nested `previousVerdicts[]` chain — so a corrupted or hand-edited
- * Json column doesn't crash the rerun. We don't validate the whole
- * SupervisorReport shape here because the new report is freshly built
- * by `runSupervisorAssessment` (already type-safe) and the read path
- * only touches these fields.
- */
-const supervisorVerdictEnum = z.enum(['pass', 'concerns', 'fail', 'inconclusive']);
-const supervisorTriggeredByEnum = z.enum(['in_workflow', 'retroactive']);
-const supervisorPreviousVerdictSchema = z.object({
-  verdict: supervisorVerdictEnum,
-  score: z.number().nullable(),
-  reviewedAt: z.string(),
-  triggeredBy: supervisorTriggeredByEnum,
-});
-const priorSupervisorReportSchema = z.object({
-  verdict: supervisorVerdictEnum,
-  // `score` is permissive so a benign type drift (e.g. score stored as a
-  // string by an older writer) doesn't reject the whole archive. The
-  // downstream `typeof prior.score === 'number'` guard handles the cast.
-  score: z.unknown().optional(),
-  triggeredBy: supervisorTriggeredByEnum.optional(),
-  previousVerdicts: z.array(supervisorPreviousVerdictSchema).optional(),
-});
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
