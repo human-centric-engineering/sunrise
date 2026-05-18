@@ -64,13 +64,13 @@ describe('ConversationTraceViewer', () => {
         makeMessage({
           id: 'msg-1',
           metadata: {
-            tokenUsage: { input: 100, output: 50 },
+            tokenUsage: { inputTokens: 100, outputTokens: 50 },
           },
         }),
         makeMessage({
           id: 'msg-2',
           metadata: {
-            tokenUsage: { input: 200, output: 80 },
+            tokenUsage: { inputTokens: 200, outputTokens: 80 },
           },
         }),
       ];
@@ -207,7 +207,7 @@ describe('ConversationTraceViewer', () => {
             makeMessage({
               id: 'msg-1',
               role: 'assistant',
-              metadata: { tokenUsage: { input: 150, output: 75 } },
+              metadata: { tokenUsage: { inputTokens: 150, outputTokens: 75 } },
             }),
           ]}
         />

@@ -37,7 +37,7 @@ import type { Citation, ToolCallTrace } from '@/types/orchestration';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface MessageMetadata {
-  tokenUsage?: { input?: number; output?: number };
+  tokenUsage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   latencyMs?: number;
   costUsd?: number;
 }
@@ -170,11 +170,11 @@ function MessageCard({ message }: { message: ConversationMessage }) {
         <div className="text-muted-foreground mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
           {message.modelId && <span>{message.modelId}</span>}
           {message.providerSlug && <span>· {message.providerSlug}</span>}
-          {meta.tokenUsage?.input !== undefined && (
-            <span>{meta.tokenUsage.input.toLocaleString()} in</span>
+          {meta.tokenUsage?.inputTokens !== undefined && (
+            <span>{meta.tokenUsage.inputTokens.toLocaleString()} in</span>
           )}
-          {meta.tokenUsage?.output !== undefined && (
-            <span>{meta.tokenUsage.output.toLocaleString()} out</span>
+          {meta.tokenUsage?.outputTokens !== undefined && (
+            <span>{meta.tokenUsage.outputTokens.toLocaleString()} out</span>
           )}
           {meta.latencyMs !== undefined && <span>{meta.latencyMs} ms</span>}
           {meta.costUsd !== undefined && <span>${meta.costUsd.toFixed(4)}</span>}
@@ -235,7 +235,7 @@ function SummaryBar({ messages }: { messages: ConversationMessage[] }) {
   for (const msg of messages) {
     const meta = parseMetadata(msg.metadata);
     if (meta.tokenUsage) {
-      totalTokens += (meta.tokenUsage.input ?? 0) + (meta.tokenUsage.output ?? 0);
+      totalTokens += (meta.tokenUsage.inputTokens ?? 0) + (meta.tokenUsage.outputTokens ?? 0);
     }
     if (meta.costUsd !== undefined) totalCost += meta.costUsd;
     if (meta.latencyMs !== undefined) {

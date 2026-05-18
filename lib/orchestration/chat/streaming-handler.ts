@@ -802,6 +802,7 @@ export class StreamingChatHandler {
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
         iteration++;
+        const iterationStartedAt = Date.now();
 
         // Emit thinking indicator before each LLM turn
         if (iteration === 1) {
@@ -1087,7 +1088,13 @@ export class StreamingChatHandler {
               outputTokens: finalUsage.outputTokens,
               totalTokens: finalUsage.inputTokens + finalUsage.outputTokens,
             };
+            assistantMetadata.costUsd = calculateCost(
+              resolvedModel,
+              finalUsage.inputTokens,
+              finalUsage.outputTokens
+            ).totalCostUsd;
           }
+          assistantMetadata.latencyMs = Date.now() - iterationStartedAt;
           if (isTerminalTurn && citations.length > 0) {
             assistantProvenance.citations = citations;
           }
