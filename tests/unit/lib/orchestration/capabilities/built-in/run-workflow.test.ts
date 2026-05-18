@@ -368,4 +368,85 @@ describe('RunWorkflowCapability', () => {
       expect(opts.budgetLimitUsd).toBeUndefined();
     });
   });
+
+  describe('redactProvenance', () => {
+    it('declares processesPii=true', () => {
+      expect(new RunWorkflowCapability().processesPii).toBe(true);
+    });
+
+    it('redacts the workflow input and keeps the slug verbatim', () => {
+      const cap = new RunWorkflowCapability();
+      const redacted = cap.redactProvenance(
+        {
+          workflowSlug: 'refund-flow',
+          input: { customerEmail: 'alice@example.com', orderId: 'ord-99', amount: 5000 },
+        },
+        {
+          success: true,
+          data: {
+            status: 'completed',
+            executionId: 'exec-1',
+            output: { refundId: 'rf_x' },
+            totalCostUsd: 0.05,
+            totalTokensUsed: 1234,
+          },
+        }
+      );
+      const safeArgs = redacted.args as { workflowSlug: string; input: string };
+      expect(safeArgs.workflowSlug).toBe('refund-flow');
+      expect(safeArgs.input).toBe('<redacted: workflow-input>');
+    });
+
+    it('redacts the workflow output in resultPreview but keeps executionId + totals', () => {
+      const cap = new RunWorkflowCapability();
+      const redacted = cap.redactProvenance(
+        { workflowSlug: 'refund-flow' },
+        {
+          success: true,
+          data: {
+            status: 'completed',
+            executionId: 'exec-1',
+            output: { refundId: 'rf_x', customerEmail: 'alice@example.com' },
+            totalCostUsd: 0.05,
+            totalTokensUsed: 1234,
+          },
+        }
+      );
+      expect(redacted.resultPreview).toContain('"executionId":"exec-1"');
+      expect(redacted.resultPreview).toContain('"totalCostUsd":0.05');
+      expect(redacted.resultPreview).toContain('<redacted: workflow-output>');
+      expect(redacted.resultPreview).not.toContain('alice@example.com');
+      expect(redacted.resultPreview).not.toContain('rf_x');
+    });
+
+    it('passes pending_approval envelopes through (prompt/tokens are not PII)', () => {
+      const cap = new RunWorkflowCapability();
+      const redacted = cap.redactProvenance(
+        { workflowSlug: 'refund-flow' },
+        {
+          success: true,
+          data: {
+            status: 'pending_approval',
+            executionId: 'exec-1',
+            stepId: 'step-2',
+            prompt: 'Approve refund of $50?',
+            expiresAt: '2026-05-18T08:00:00Z',
+            approveToken: 'hmac-approve',
+            rejectToken: 'hmac-reject',
+          },
+        }
+      );
+      expect(redacted.resultPreview).toContain('pending_approval');
+      expect(redacted.resultPreview).toContain('hmac-approve');
+    });
+
+    it('passes failure envelopes through unchanged', () => {
+      const cap = new RunWorkflowCapability();
+      const redacted = cap.redactProvenance(
+        { workflowSlug: 'refund-flow' },
+        { success: false, error: { code: 'workflow_failed', message: 'step X failed' } }
+      );
+      expect(redacted.resultPreview).toContain('workflow_failed');
+    });
+  });
 });

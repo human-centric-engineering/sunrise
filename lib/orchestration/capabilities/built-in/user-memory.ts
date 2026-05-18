@@ -18,6 +18,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
+import { redactedString } from '@/lib/security/redact';
 
 // ── Read Memory ──────────────────────────────────────────────────────────────
 
@@ -39,6 +40,43 @@ interface ReadData {
 
 export class ReadUserMemoryCapability extends BaseCapability<ReadArgs, ReadData> {
   readonly slug = 'read_user_memory';
+  readonly processesPii = true;
+
+  /**
+   * The `key` argument is a short structured label (e.g.
+   * `preferred_language`, `favorite_topic`) — not PII. Memory `value`
+   * fields, however, are exactly the kind of free-text the LLM
+   * extracts from conversation context: "user's name is X", "their
+   * address is Y", "they prefer to be called Z". Persisting those
+   * verbatim in the chat message's audit row would defeat the point
+   * of user-memory being scoped to the user/agent pair.
+   *
+   * Audit row keeps the `key` (so an auditor can confirm "memory for
+   * preferred_language was read") + the count of returned entries;
+   * each `value` becomes a sentinel.
+   */
+  redactProvenance(
+    args: ReadArgs,
+    result: CapabilityResult<ReadData>
+  ): {
+    args: unknown;
+    resultPreview: string;
+  } {
+    if (result.success && result.data) {
+      const safeData = {
+        memories: result.data.memories.map((m) => ({
+          key: m.key,
+          value: redactedString('memory-value'),
+          updatedAt: m.updatedAt,
+        })),
+      };
+      return {
+        args,
+        resultPreview: JSON.stringify({ success: true, data: safeData }),
+      };
+    }
+    return { args, resultPreview: JSON.stringify(result) };
+  }
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'read_user_memory',
@@ -102,6 +140,32 @@ interface WriteData {
 
 export class WriteUserMemoryCapability extends BaseCapability<WriteArgs, WriteData> {
   readonly slug = 'write_user_memory';
+  readonly processesPii = true;
+
+  /**
+   * The `value` parameter is up to 5000 chars of LLM-extracted user
+   * fact — name, preference, address, schedule, anything the model
+   * decided was worth remembering. Persisting it verbatim on the chat
+   * message's audit row creates a second copy outside the per-user
+   * memory store.
+   *
+   * Audit row keeps `key` (the label, useful for "was a preference
+   * stored?" auditing) + the result envelope's structural fields
+   * (created vs updated). Value is redacted.
+   */
+  redactProvenance(
+    args: WriteArgs,
+    result: CapabilityResult<WriteData>
+  ): {
+    args: unknown;
+    resultPreview: string;
+  } {
+    const safeArgs = {
+      key: args.key,
+      value: redactedString(`memory-value, ${args.value.length} chars`),
+    };
+    return { args: safeArgs, resultPreview: JSON.stringify(result) };
+  }
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'write_user_memory',

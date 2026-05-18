@@ -41,6 +41,7 @@ import type {
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { redactedString } from '@/lib/security/redact';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 const customConfigSchema = z
@@ -98,6 +99,61 @@ const SLUG = 'run_workflow';
 
 export class RunWorkflowCapability extends BaseCapability<Args, Data> {
   readonly slug = SLUG;
+  readonly processesPii = true;
+
+  /**
+   * Workflow `input` is `record<string, unknown>` — arbitrary
+   * LLM-constructed payload, near-certain to contain PII for any
+   * workflow that processes user-specific data (refund flows, document
+   * generation, account changes). Workflow `output` is the same shape.
+   *
+   * The audit row keeps `workflowSlug` (structural), the executionId
+   * (so the message can join back to the execution row), the
+   * pending-approval prompt and tokens are kept (they're already
+   * persisted on `AiMessage.metadata.pendingApproval` for the approval
+   * UI — provenance redaction here doesn't help / hurt that), but
+   * `input` and `output` get redacted.
+   *
+   * The execution row itself stores the un-redacted input/output in
+   * `AiWorkflowExecution.inputData` / `outputData` — that's a separate
+   * surface with its own retention story (see deferred item in the
+   * privacy plan). What we redact here is the *copy* that lands on
+   * the chat message's provenance bundle.
+   */
+  redactProvenance(
+    args: Args,
+    result: CapabilityResult<Data>
+  ): {
+    args: unknown;
+    resultPreview: string;
+  } {
+    const safeArgs = {
+      workflowSlug: args.workflowSlug,
+      ...(args.input !== undefined ? { input: redactedString('workflow-input') } : {}),
+    };
+
+    if (result.success && result.data) {
+      if (result.data.status === 'completed') {
+        const safeData = {
+          status: result.data.status,
+          executionId: result.data.executionId,
+          output: redactedString('workflow-output'),
+          totalCostUsd: result.data.totalCostUsd,
+          totalTokensUsed: result.data.totalTokensUsed,
+        };
+        return {
+          args: safeArgs,
+          resultPreview: JSON.stringify({ success: true, data: safeData }),
+        };
+      }
+      // pending_approval: prompt is user-visible by design; tokens are
+      // HMAC strings (not PII). Already persisted elsewhere on the
+      // synthetic assistant message for the approval card.
+      return { args: safeArgs, resultPreview: JSON.stringify(result) };
+    }
+    // Failure envelopes carry no payload.
+    return { args: safeArgs, resultPreview: JSON.stringify(result) };
+  }
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: SLUG,

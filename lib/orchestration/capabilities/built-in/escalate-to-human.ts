@@ -20,6 +20,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
+import { redactedString } from '@/lib/security/redact';
 
 const schema = z.object({
   reason: z.string().min(1).max(1000),
@@ -37,6 +38,45 @@ interface Data {
 
 export class EscalateToHumanCapability extends BaseCapability<Args, Data> {
   readonly slug = 'escalate_to_human';
+  readonly processesPii = true;
+
+  /**
+   * `reason` is free-text the LLM constructs from conversation context
+   * — almost certain to contain PII (names, account refs, complaint
+   * details). `metadata` is unstructured user context, same risk.
+   *
+   * The audit row keeps `priority` and the length of `reason` (a
+   * useful integrity check), plus a sentinel marking that escalation
+   * fired. The escalation itself still propagates the un-redacted
+   * payload to webhook subscribers and the notifier — those surfaces
+   * have their own access controls.
+   */
+  redactProvenance(
+    args: Args,
+    result: CapabilityResult<Data>
+  ): {
+    args: unknown;
+    resultPreview: string;
+  } {
+    const safeArgs = {
+      reason: redactedString(`free-text, ${args.reason.length} chars`),
+      ...(args.priority !== undefined ? { priority: args.priority } : {}),
+      ...(args.metadata !== undefined ? { metadata: redactedString('user-context') } : {}),
+    };
+    // Result envelope echoes `reason` — drop it from the preview too.
+    if (result.success && result.data) {
+      const safeData = {
+        escalated: result.data.escalated,
+        reason: redactedString(`free-text, ${result.data.reason.length} chars`),
+        priority: result.data.priority,
+      };
+      return {
+        args: safeArgs,
+        resultPreview: JSON.stringify({ success: true, data: safeData }),
+      };
+    }
+    return { args: safeArgs, resultPreview: JSON.stringify(result) };
+  }
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'escalate_to_human',

@@ -147,4 +147,48 @@ describe('EscalateToHumanCapability', () => {
       CapabilityValidationError
     );
   });
+
+  describe('redactProvenance', () => {
+    it('declares processesPii=true', () => {
+      expect(new EscalateToHumanCapability().processesPii).toBe(true);
+    });
+
+    it('redacts free-text reason and metadata in the persisted args', () => {
+      const cap = new EscalateToHumanCapability();
+      const redacted = cap.redactProvenance(
+        {
+          reason: 'Customer Alice Smith (alice@example.com) needs urgent help with ticket #4421',
+          priority: 'high',
+          metadata: { customerEmail: 'alice@example.com', orderId: 'ord-99' },
+        },
+        {
+          success: true,
+          data: {
+            escalated: true,
+            reason: 'Customer Alice Smith (alice@example.com) needs urgent help with ticket #4421',
+            priority: 'high',
+          },
+        }
+      );
+      const safeArgs = redacted.args as { reason: string; metadata: string; priority: string };
+      // Reason redacted, length preserved as a structural signal.
+      expect(safeArgs.reason).toMatch(/^<redacted: free-text, \d+ chars>$/);
+      expect(safeArgs.metadata).toBe('<redacted: user-context>');
+      // Priority preserved — it's a fixed enum, not PII.
+      expect(safeArgs.priority).toBe('high');
+    });
+
+    it('redacts the echoed reason in resultPreview', () => {
+      const cap = new EscalateToHumanCapability();
+      const redacted = cap.redactProvenance(
+        { reason: 'help me with my account', priority: 'low' },
+        {
+          success: true,
+          data: { escalated: true, reason: 'help me with my account', priority: 'low' },
+        }
+      );
+      expect(redacted.resultPreview).not.toContain('help me with my account');
+      expect(redacted.resultPreview).toContain('<redacted: free-text');
+    });
+  });
 });

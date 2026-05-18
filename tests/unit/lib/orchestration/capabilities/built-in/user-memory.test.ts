@@ -224,3 +224,56 @@ describe('WriteUserMemoryCapability', () => {
     );
   });
 });
+
+describe('User-memory redactProvenance', () => {
+  it('both capabilities declare processesPii=true', () => {
+    expect(new ReadUserMemoryCapability().processesPii).toBe(true);
+    expect(new WriteUserMemoryCapability().processesPii).toBe(true);
+  });
+
+  it('Read: keeps key + updatedAt on each memory but redacts value', () => {
+    const cap = new ReadUserMemoryCapability();
+    const redacted = cap.redactProvenance(
+      {},
+      {
+        success: true,
+        data: {
+          memories: [
+            { key: 'preferred_language', value: 'English', updatedAt: '2026-05-18T00:00:00Z' },
+            {
+              key: 'full_name',
+              value: 'Alice Smith of 12 Bourne Lane',
+              updatedAt: '2026-05-17T00:00:00Z',
+            },
+          ],
+        },
+      }
+    );
+    expect(redacted.resultPreview).toContain('"key":"preferred_language"');
+    expect(redacted.resultPreview).toContain('"key":"full_name"');
+    expect(redacted.resultPreview).toContain('<redacted: memory-value>');
+    expect(redacted.resultPreview).not.toContain('Alice Smith');
+    expect(redacted.resultPreview).not.toContain('Bourne Lane');
+  });
+
+  it('Write: redacts the value in args but keeps key', () => {
+    const cap = new WriteUserMemoryCapability();
+    const redacted = cap.redactProvenance(
+      { key: 'address', value: '12 Bourne Lane, London, SW1A 1AA' },
+      { success: true, data: { key: 'address', action: 'created' } }
+    );
+    const safeArgs = redacted.args as { key: string; value: string };
+    expect(safeArgs.key).toBe('address');
+    expect(safeArgs.value).toMatch(/^<redacted: memory-value, \d+ chars>$/);
+  });
+
+  it('Write: result envelope (key + action) passes through (no PII)', () => {
+    const cap = new WriteUserMemoryCapability();
+    const redacted = cap.redactProvenance(
+      { key: 'address', value: '...' },
+      { success: true, data: { key: 'address', action: 'updated' } }
+    );
+    expect(redacted.resultPreview).toContain('"key":"address"');
+    expect(redacted.resultPreview).toContain('"action":"updated"');
+  });
+});

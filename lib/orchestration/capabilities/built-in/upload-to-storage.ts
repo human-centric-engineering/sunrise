@@ -51,6 +51,7 @@ import type {
 import { getStorageClient } from '@/lib/storage/client';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 import { getMaxFileSizeBytes } from '@/lib/validations/storage';
+import { redactedString } from '@/lib/security/redact';
 
 /**
  * RFC 6838 loose match — type/subtype with the usual punctuation.
@@ -119,6 +120,41 @@ const SLUG = 'upload_to_storage';
 
 export class UploadToStorageCapability extends BaseCapability<Args, Data> {
   readonly slug = SLUG;
+  readonly processesPii = true;
+
+  /**
+   * The `data` argument is base64-encoded file bytes — invoices,
+   * receipts, PDFs of medical letters, screenshots of user docs — and
+   * routinely contains PII. The default trace would JSON-stringify the
+   * entire base64 string (truncated to 480 chars), preserving the first
+   * ~360 raw bytes of the file forever in the audit row.
+   *
+   * Audit row keeps `contentType`, `filename` (just the original name —
+   * useful for "was an invoice uploaded?" audit context), `description`,
+   * and the file size derived from the base64 length. The bytes themselves
+   * become a sentinel.
+   */
+  redactProvenance(
+    args: Args,
+    result: CapabilityResult<Data>
+  ): {
+    args: unknown;
+    resultPreview: string;
+  } {
+    // Approximate decoded size from base64 length (4 chars → 3 bytes).
+    // Useful for "was this a thumbnail or a 5MB upload?" audit context.
+    const approxBytes = Math.floor((args.data.length * 3) / 4);
+    const safeArgs = {
+      data: redactedString(`file bytes, ~${approxBytes} bytes`),
+      contentType: args.contentType,
+      ...(args.filename !== undefined ? { filename: args.filename } : {}),
+      ...(args.description !== undefined ? { description: args.description } : {}),
+    };
+    // The result envelope is structural (key, url, size, contentType,
+    // signed, expiresAt) — no file content echoed back. Safe to persist
+    // as-is via the default JSON-stringify path.
+    return { args: safeArgs, resultPreview: JSON.stringify(result) };
+  }
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: SLUG,

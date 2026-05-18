@@ -789,4 +789,86 @@ describe('UploadToStorageCapability.execute()', () => {
       expect(args.contentType).toBe('application/pdf');
     });
   });
+
+  describe('redactProvenance', () => {
+    it('declares processesPii=true', () => {
+      expect(new UploadToStorageCapability().processesPii).toBe(true);
+    });
+
+    it('redacts the base64 data and surfaces an approximate byte count', () => {
+      const cap = new UploadToStorageCapability();
+      const redacted = cap.redactProvenance(
+        {
+          data: VALID_BASE64, // "aGVsbG8=" → 5 bytes
+          contentType: 'application/pdf',
+          filename: 'receipt.pdf',
+          description: 'Customer receipt',
+        },
+        {
+          success: true,
+          data: {
+            key: 'agent-uploads/x/y.pdf',
+            url: 'https://example.com/y.pdf',
+            size: 5,
+            contentType: 'application/pdf',
+            signed: false,
+          },
+        }
+      );
+      const safeArgs = redacted.args as {
+        data: string;
+        contentType: string;
+        filename: string;
+        description: string;
+      };
+      // Bytes themselves redacted with a size annotation.
+      expect(safeArgs.data).toMatch(/^<redacted: file bytes, ~\d+ bytes>$/);
+      // Structural fields preserved.
+      expect(safeArgs.contentType).toBe('application/pdf');
+      expect(safeArgs.filename).toBe('receipt.pdf');
+      expect(safeArgs.description).toBe('Customer receipt');
+    });
+
+    it('persists the result envelope verbatim (key, url, size — no PII)', () => {
+      const cap = new UploadToStorageCapability();
+      const redacted = cap.redactProvenance(
+        { data: VALID_BASE64, contentType: 'application/pdf' },
+        {
+          success: true,
+          data: {
+            key: 'agent-uploads/x/y.pdf',
+            url: 'https://example.com/y.pdf',
+            size: 5,
+            contentType: 'application/pdf',
+            signed: false,
+          },
+        }
+      );
+      expect(redacted.resultPreview).toContain('agent-uploads/x/y.pdf');
+      expect(redacted.resultPreview).toContain('https://example.com/y.pdf');
+    });
+
+    it('the redacted args never echo the original bytes', () => {
+      const cap = new UploadToStorageCapability();
+      // A base64 string that, if leaked verbatim, would betray the
+      // bytes "Alice Smith, 12 Bourne Lane".
+      const sensitive = Buffer.from('Alice Smith, 12 Bourne Lane').toString('base64');
+      const redacted = cap.redactProvenance(
+        { data: sensitive, contentType: 'text/plain' },
+        {
+          success: true,
+          data: {
+            key: 'a/b',
+            url: 'https://x',
+            size: 27,
+            contentType: 'text/plain',
+            signed: false,
+          },
+        }
+      );
+      const serialised = JSON.stringify(redacted);
+      expect(serialised).not.toContain(sensitive);
+      expect(serialised).not.toContain('QWxpY2U='); // first base64 chunk
+    });
+  });
 });
