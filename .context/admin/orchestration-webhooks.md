@@ -88,7 +88,7 @@ Receivers integrating with both must check for the appropriate header to determi
 
 ## Sidebar
 
-Linked from the admin sidebar under AI Orchestration, between Workflows and MCP Server in the Build subgroup. Icon: `Webhook` from lucide-react.
+Linked from the admin sidebar under AI Orchestration as "Event Subscriptions", in the Operate subgroup after Approval Queue. Icon: `Webhook` from lucide-react.
 
 ## Related
 
