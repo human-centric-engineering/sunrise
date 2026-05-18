@@ -407,6 +407,20 @@ describe('AgentForm — Model tab', () => {
     });
   });
 
+  // ── Reasoning effort ───────────────────────────────────────────────────────
+
+  describe('reasoning effort', () => {
+    it('renders the reasoning-effort select defaulting to Auto', async () => {
+      await renderAndOpenModelTab();
+      const select = screen.getByRole('combobox', { name: /reasoning effort/i });
+      expect(select).toBeInTheDocument();
+      // Default visible value is "Auto (provider default)" when the agent
+      // has no reasoningEffort set — the option text contains "Auto" and
+      // "provider default", so a partial match is enough.
+      expect(select).toHaveTextContent(/auto/i);
+    });
+  });
+
   // ── Rate limit RPM ─────────────────────────────────────────────────────────
 
   describe('rate limit RPM', () => {

@@ -172,6 +172,14 @@ model AiAgent {
   providerConfig            Json?
   temperature               Float    @default(0.7)
   maxTokens                 Int      @default(4096)
+  // How much reasoning the model should do before producing visible output.
+  // Maps to ReasoningEffort in lib/orchestration/llm/types.ts:
+  //   'minimal' | 'low' | 'medium' | 'high'
+  // Null = use the provider's default (no `reasoning_effort` / `thinking`
+  // is sent on the wire). Honoured only by reasoning-capable models;
+  // dropped silently by other models. See lib/orchestration/llm/
+  // model-heuristics.ts → supportsReasoningEffort().
+  reasoningEffort           String?
   monthlyBudgetUsd          Float?
   metadata                  Json?
   knowledgeAccessMode       String   @default("full") // "full" = unrestricted KB access (default — preserves prior behaviour). "restricted" = effective doc set is (granted docs) ∪ (docs in any granted tag) ∪ (docs with scope = 'system').

@@ -141,6 +141,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     providerConfig: null,
     temperature: 0.7,
     maxTokens: 4096,
+    reasoningEffort: null,
     monthlyBudgetUsd: null,
     metadata: null,
     isActive: true,

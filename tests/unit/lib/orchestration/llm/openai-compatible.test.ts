@@ -1625,6 +1625,48 @@ describe('buildBaseParams', () => {
     });
   });
 
+  // ── reasoning_effort wire param ────────────────────────────────────────
+  //
+  // The provider sends `reasoning_effort` only when (a) the model resolves
+  // to the openai-reasoning profile AND (b) the caller supplied a value.
+  // On any non-reasoning model the field is dropped silently — same drop
+  // pattern as the `max_tokens` / `temperature` adjustments above.
+
+  describe('reasoning_effort wire param', () => {
+    it.each(['minimal', 'low', 'medium', 'high'] as const)(
+      'forwards %s on a reasoning model',
+      async (value) => {
+        chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+        const provider = makeProvider();
+        await provider.chat([{ role: 'user', content: 'x' }], {
+          model: 'gpt-5',
+          reasoningEffort: value,
+        });
+        const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(params?.reasoning_effort).toBe(value);
+      }
+    );
+
+    it('drops the field on a legacy model rather than 400ing', async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-4o',
+        reasoningEffort: 'high',
+      });
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.reasoning_effort).toBeUndefined();
+    });
+
+    it('omits the field entirely when the caller did not set it', async () => {
+      chatCreateMock.mockResolvedValue(makeChatCompletion('ok', 'stop'));
+      const provider = makeProvider();
+      await provider.chat([{ role: 'user', content: 'x' }], { model: 'gpt-5' });
+      const params = chatCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(params?.reasoning_effort).toBeUndefined();
+    });
+  });
+
   // ── Prefixed model ids — the failure case that motivated promoting the
   //    param-shape decision into the model registry. The prior regex was
   //    anchored on `^(o\d+|gpt-5)`, so an OpenRouter / Azure id like

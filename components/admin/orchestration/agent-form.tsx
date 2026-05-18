@@ -70,6 +70,11 @@ const agentFormSchema = z.object({
   model: z.string().min(1, 'Model is required'),
   temperature: z.number().min(0).max(2),
   maxTokens: z.number().int().min(1).max(200000),
+  // Reasoning-effort bucket. `'auto'` is the form sentinel for "let
+  // the provider apply its default" — Radix Select forbids empty-string
+  // values, so we can't use `''` even though the column persists as
+  // null. The submit handler translates `'auto'` → null.
+  reasoningEffort: z.enum(['auto', 'minimal', 'low', 'medium', 'high']),
   monthlyBudgetUsd: z.number().positive().max(10000).optional(),
   isActive: z.boolean(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
@@ -167,6 +172,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       model: initialModel,
       temperature: agent?.temperature ?? 0.7,
       maxTokens: agent?.maxTokens ?? 4096,
+      reasoningEffort: (agent?.reasoningEffort as AgentFormData['reasoningEffort']) ?? 'auto',
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
       isActive: agent?.isActive ?? true,
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
@@ -309,9 +315,12 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
     // Transform comma-separated strings into arrays for the API and map the
     // form's knowledgeTagIds / knowledgeDocumentIds onto the API contract
     // (grantedTagIds / grantedDocumentIds).
-    const { knowledgeTagIds, knowledgeDocumentIds, ...rest } = data;
+    const { knowledgeTagIds, knowledgeDocumentIds, reasoningEffort, ...rest } = data;
     const payload = {
       ...rest,
+      // `'auto'` is the form sentinel for "let the runtime use the
+      // provider default" — persist as null so the DB column matches.
+      reasoningEffort: reasoningEffort === 'auto' ? null : reasoningEffort,
       topicBoundaries: rest.topicBoundaries
         ? rest.topicBoundaries
             .split(',')
@@ -819,6 +828,54 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
             {errors.maxTokens && (
               <p className="text-destructive text-xs">{errors.maxTokens.message}</p>
             )}
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="reasoningEffort">
+              Reasoning effort{' '}
+              <FieldHelp title="How much the model thinks before answering">
+                <p>
+                  Controls how much internal reasoning the model does before producing visible
+                  output. Honoured only by reasoning-capable models:
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-4">
+                  <li>
+                    <strong>OpenAI o-series / gpt-5</strong> — sends <code>reasoning_effort</code>{' '}
+                    with the chosen bucket.
+                  </li>
+                  <li>
+                    <strong>Anthropic Claude 4 Opus / Sonnet 4.5+</strong> — enables extended
+                    thinking with a token budget derived from the bucket (low ≈ 1k, medium ≈ 4k,
+                    high ≈ 16k tokens).
+                  </li>
+                  <li>
+                    <strong>All other models</strong> — the field is dropped silently. No 400.
+                  </li>
+                </ul>
+                <p className="mt-2">
+                  Higher effort = more tokens billed per turn. <code>Auto</code> means &ldquo;use
+                  the provider default&rdquo; — which on reasoning models is typically{' '}
+                  <code>medium</code>.
+                </p>
+              </FieldHelp>
+            </Label>
+            <Select
+              defaultValue={(agent?.reasoningEffort as string | null) ?? 'auto'}
+              onValueChange={(v) =>
+                setValue('reasoningEffort', v as AgentFormData['reasoningEffort'])
+              }
+            >
+              <SelectTrigger id="reasoningEffort">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto (provider default)</SelectItem>
+                <SelectItem value="minimal">Minimal</SelectItem>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid gap-2">
@@ -1353,6 +1410,8 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                       model: fresh.model,
                       temperature: fresh.temperature,
                       maxTokens: fresh.maxTokens,
+                      reasoningEffort:
+                        (fresh.reasoningEffort as AgentFormData['reasoningEffort']) ?? 'auto',
                       monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
                       isActive: fresh.isActive,
                       inputGuardMode:

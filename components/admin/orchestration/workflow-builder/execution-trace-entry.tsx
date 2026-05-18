@@ -296,6 +296,9 @@ export function ExecutionTraceEntryRow({
                 typeof requestParams.temperature === 'number'
                   ? `temperature: ${requestParams.temperature}`
                   : null,
+                requestParams.reasoningEffort
+                  ? `reasoning: ${requestParams.reasoningEffort}`
+                  : null,
                 requestParams.responseFormat ? `response: ${requestParams.responseFormat}` : null,
                 typeof requestParams.toolCount === 'number' && requestParams.toolCount > 0
                   ? `tools: ${requestParams.toolCount}`

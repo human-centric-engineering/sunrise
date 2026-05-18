@@ -18,7 +18,7 @@
 import { logger } from '@/lib/logging';
 import { CostOperation } from '@/types/orchestration';
 import type { LlmRequestParamsSnapshot } from '@/types/orchestration';
-import type { LlmResponseFormat } from '@/lib/orchestration/llm/types';
+import type { LlmResponseFormat, ReasoningEffort } from '@/lib/orchestration/llm/types';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
@@ -50,6 +50,14 @@ export interface LlmRunParams {
   modelOverride?: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * How much reasoning the model should do before producing visible
+   * output. Honoured only by reasoning-capable models (the OpenAI
+   * o-series / gpt-5 families and Anthropic Claude 4 thinking models);
+   * silently dropped on others. See `lib/orchestration/llm/types.ts`
+   * for the per-provider mapping.
+   */
+  reasoningEffort?: ReasoningEffort;
   /** Request structured JSON output from the model. */
   responseFormat?: LlmResponseFormat;
   /** Most recent step id, used to resolve `{{previous.output}}`. */
@@ -123,6 +131,7 @@ export async function runLlmCall(
           model: modelId,
           temperature: params.temperature,
           maxTokens: params.maxTokens,
+          ...(params.reasoningEffort ? { reasoningEffort: params.reasoningEffort } : {}),
           ...(params.responseFormat ? { responseFormat: params.responseFormat } : {}),
           signal: ctx.signal,
         });
@@ -145,6 +154,7 @@ export async function runLlmCall(
       if (params.maxTokens !== undefined) requestParams.maxTokens = params.maxTokens;
       if (params.temperature !== undefined) requestParams.temperature = params.temperature;
       if (params.responseFormat) requestParams.responseFormat = params.responseFormat.type;
+      if (params.reasoningEffort) requestParams.reasoningEffort = params.reasoningEffort;
       ctx.stepTelemetry?.push({
         model: modelId,
         provider: modelInfo.provider,

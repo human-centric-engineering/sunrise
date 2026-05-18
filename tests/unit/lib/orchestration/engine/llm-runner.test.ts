@@ -245,6 +245,31 @@ describe('runLlmCall', () => {
     });
   });
 
+  it('forwards reasoningEffort to provider.chat AND captures it in telemetry requestParams', async () => {
+    const mockChat = vi.fn().mockResolvedValue({
+      content: 'answer',
+      usage: { inputTokens: 12, outputTokens: 7 },
+    });
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({ chat: mockChat } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0.001, isLocal: false } as any);
+    vi.mocked(logCost).mockResolvedValue(null as any);
+
+    const telemetry: import('@/types/orchestration').LlmTelemetryEntry[] = [];
+    const ctx = makeCtx({ stepTelemetry: telemetry });
+    await runLlmCall(ctx, {
+      stepId: 's1',
+      prompt: 'hi',
+      modelOverride: 'gpt-5',
+      reasoningEffort: 'high',
+    });
+
+    // The provider received the param verbatim.
+    expect(mockChat.mock.calls[0][1].reasoningEffort).toBe('high');
+    // The telemetry snapshot recorded the caller intent.
+    expect(telemetry[0].requestParams?.reasoningEffort).toBe('high');
+  });
+
   it('omits requestParams entirely when the caller passed none (undefined fields would be misleading)', async () => {
     vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
     vi.mocked(getProvider).mockResolvedValue({

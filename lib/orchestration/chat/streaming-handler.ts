@@ -34,7 +34,12 @@ import type {
   ToolCallTrace,
 } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
-import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
+import type {
+  LlmMessage,
+  LlmToolCall,
+  LlmToolDefinition,
+  ReasoningEffort,
+} from '@/lib/orchestration/llm/types';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
@@ -819,6 +824,9 @@ export class StreamingChatHandler {
           model: resolvedModel,
           ...(agent.temperature !== null ? { temperature: agent.temperature } : {}),
           ...(agent.maxTokens !== null ? { maxTokens: agent.maxTokens } : {}),
+          ...(agent.reasoningEffort !== null
+            ? { reasoningEffort: agent.reasoningEffort as ReasoningEffort }
+            : {}),
           ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
           ...(responseFormat && toolDefinitions.length === 0 ? { responseFormat } : {}),
           ...(request.signal ? { signal: request.signal } : {}),

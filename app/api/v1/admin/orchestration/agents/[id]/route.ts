@@ -130,6 +130,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
   if (body.temperature !== undefined) data.temperature = body.temperature;
   if (body.maxTokens !== undefined) data.maxTokens = body.maxTokens;
+  if (body.reasoningEffort !== undefined) data.reasoningEffort = body.reasoningEffort;
   if (body.monthlyBudgetUsd !== undefined) data.monthlyBudgetUsd = body.monthlyBudgetUsd;
   if (body.metadata !== undefined) {
     data.metadata = body.metadata as Prisma.InputJsonValue;
@@ -293,6 +294,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           fallbackProviders: current.fallbackProviders,
           temperature: current.temperature,
           maxTokens: current.maxTokens,
+          reasoningEffort: current.reasoningEffort,
           topicBoundaries: current.topicBoundaries,
           brandVoiceInstructions: current.brandVoiceInstructions,
           metadata: current.metadata,

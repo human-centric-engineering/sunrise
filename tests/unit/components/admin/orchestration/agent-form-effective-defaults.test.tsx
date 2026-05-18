@@ -111,6 +111,7 @@ function makeSystemSeededAgent(): AiAgent {
     model: '',
     temperature: 0.7,
     maxTokens: 4096,
+    reasoningEffort: null,
     monthlyBudgetUsd: null,
     isActive: true,
     isSystem: true,

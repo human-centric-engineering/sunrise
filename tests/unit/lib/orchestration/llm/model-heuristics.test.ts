@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  anthropicThinkingBudget,
   deriveBestRole,
   deriveContextLength,
   deriveCostEfficiency,
@@ -22,6 +23,7 @@ import {
   deriveReasoningDepth,
   deriveTierRole,
   deriveToolUse,
+  supportsReasoningEffort,
 } from '@/lib/orchestration/llm/model-heuristics';
 
 describe('deriveCostEfficiency', () => {
@@ -249,6 +251,62 @@ describe('deriveParamProfile', () => {
     expect(deriveParamProfile('meta-llama/Llama-3.3-70B-Instruct-Turbo', 'together')).toBe(
       'openai-legacy'
     );
+  });
+});
+
+describe('supportsReasoningEffort', () => {
+  it('any model with the openai-reasoning profile supports it', () => {
+    expect(supportsReasoningEffort('gpt-5', 'openai', 'openai-reasoning')).toBe(true);
+    expect(supportsReasoningEffort('o3-mini', 'openai', 'openai-reasoning')).toBe(true);
+    // Profile is authoritative — even a non-openai provider name with the
+    // reasoning profile counts as supported (an admin could in principle
+    // route reasoning models through an OpenAI-compatible reseller).
+    expect(supportsReasoningEffort('gpt-5', 'azure', 'openai-reasoning')).toBe(true);
+  });
+
+  it('Claude Opus 4.x supports thinking', () => {
+    expect(supportsReasoningEffort('claude-opus-4', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-opus-4-6', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-opus-4-20250514', 'anthropic', 'anthropic')).toBe(true);
+  });
+
+  it('Claude Sonnet 4.5+ supports thinking; Sonnet 4 does NOT', () => {
+    expect(supportsReasoningEffort('claude-sonnet-4-5', 'anthropic', 'anthropic')).toBe(true);
+    expect(supportsReasoningEffort('claude-sonnet-4-6', 'anthropic', 'anthropic')).toBe(true);
+    // Sonnet 4 (no .5 / -5) does not support thinking — exclusion case
+    // motivated by the failing-test risk of an over-broad regex.
+    expect(supportsReasoningEffort('claude-sonnet-4', 'anthropic', 'anthropic')).toBe(false);
+  });
+
+  it('Claude Haiku is NOT a thinking model regardless of version', () => {
+    expect(supportsReasoningEffort('claude-haiku-4-5', 'anthropic', 'anthropic')).toBe(false);
+    expect(supportsReasoningEffort('claude-haiku-4', 'anthropic', 'anthropic')).toBe(false);
+  });
+
+  it('strips Bedrock and OpenRouter prefixes before matching', () => {
+    expect(
+      supportsReasoningEffort('anthropic.claude-opus-4-20250514-v1:0', 'anthropic', 'anthropic')
+    ).toBe(true);
+    expect(supportsReasoningEffort('anthropic/claude-opus-4', 'anthropic', 'anthropic')).toBe(true);
+  });
+
+  it('returns false for legacy / non-reasoning models', () => {
+    expect(supportsReasoningEffort('gpt-4o', 'openai', 'openai-legacy')).toBe(false);
+    expect(supportsReasoningEffort('gpt-4.1', 'openai', 'openai-legacy')).toBe(false);
+    expect(supportsReasoningEffort('llama-3.3-70b', 'groq', 'openai-legacy')).toBe(false);
+    expect(supportsReasoningEffort('gemini-2.5-pro', 'gemini', 'gemini')).toBe(false);
+  });
+});
+
+describe('anthropicThinkingBudget', () => {
+  it('returns undefined for minimal (extended thinking is off)', () => {
+    expect(anthropicThinkingBudget('minimal')).toBeUndefined();
+  });
+
+  it('returns increasing budgets for low / medium / high', () => {
+    expect(anthropicThinkingBudget('low')).toBe(1024);
+    expect(anthropicThinkingBudget('medium')).toBe(4096);
+    expect(anthropicThinkingBudget('high')).toBe(16384);
   });
 });
 

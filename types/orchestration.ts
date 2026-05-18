@@ -555,6 +555,14 @@ export interface LlmRequestParamsSnapshot {
   responseFormat?: 'json_object' | 'json_schema';
   /** Count of tool definitions sent. Absent / 0 for non-tool calls. */
   toolCount?: number;
+  /**
+   * Reasoning-effort bucket the caller selected, if any. Only meaningful
+   * on models that accept it — the provider class drops the field
+   * silently for non-reasoning models, but the snapshot still records
+   * the caller intent so a misconfiguration (caller set 'high' on a
+   * model that ignores it) is visible in the trace.
+   */
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
 }
 
 /**

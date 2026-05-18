@@ -109,6 +109,7 @@ export async function importOrchestrationConfig(
             fallbackProviders: agent.fallbackProviders,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            reasoningEffort: agent.reasoningEffort ?? null,
             monthlyBudgetUsd: agent.monthlyBudgetUsd,
             visibility: agent.visibility,
             isActive: agent.isActive,

@@ -34,6 +34,7 @@ import {
 const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
 const guardModeSchema = z.enum(['log_only', 'warn_and_continue', 'block']).nullable();
 const visibilitySchema = z.enum(['internal', 'public', 'invite_only']);
+const reasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional();
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
@@ -90,6 +91,7 @@ export const POST = withAdminAuth(async (request, session) => {
         providerConfig: jsonRecord.parse(agent.providerConfig),
         temperature: agent.temperature,
         maxTokens: agent.maxTokens,
+        reasoningEffort: reasoningEffortSchema.parse(agent.reasoningEffort),
         monthlyBudgetUsd: agent.monthlyBudgetUsd,
         metadata: jsonRecord.parse(agent.metadata),
         isActive: agent.isActive,

@@ -157,6 +157,7 @@ describe('AgentForm — General tab', () => {
         model: 'claude-opus-4-6',
         temperature: 0.7,
         maxTokens: 4096,
+        reasoningEffort: null,
         monthlyBudgetUsd: null,
         isActive: true,
         isSystem: false,

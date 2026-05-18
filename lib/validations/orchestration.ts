@@ -102,6 +102,11 @@ export const createAgentSchema = z.object({
     .max(200000, 'Max tokens must be at most 200000')
     .default(4096),
 
+  // Reasoning-effort bucket. Honoured only by reasoning-capable models
+  // (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking). Silently
+  // dropped by other models. Null / undefined = use provider default.
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+
   monthlyBudgetUsd: z
     .number()
     .positive('Monthly budget must be positive')
@@ -219,6 +224,8 @@ export const updateAgentSchema = z.object({
     .min(1, 'Max tokens must be at least 1')
     .max(200000, 'Max tokens must be at most 200000')
     .optional(),
+
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 
   monthlyBudgetUsd: z
     .number()
@@ -817,6 +824,10 @@ const bundledAgentSchema = z.object({
   providerConfig: z.record(z.string(), z.unknown()).nullable().optional(),
   temperature: z.number().min(0).max(2),
   maxTokens: z.number().int().min(1).max(200000),
+  // Reasoning-effort bucket. Optional — older bundles omit it, in which
+  // case the agent is imported with null and the runtime sends no
+  // reasoning_effort.
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
   monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   isActive: z.boolean(),
@@ -2384,6 +2395,7 @@ export const executionTraceEntrySchema = z
         temperature: z.number().optional(),
         responseFormat: z.enum(['json_object', 'json_schema']).optional(),
         toolCount: z.number().int().nonnegative().optional(),
+        reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
       })
       .optional()
       .catch(() => undefined),

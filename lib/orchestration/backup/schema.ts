@@ -17,6 +17,11 @@ const agentBackupSchema = z.object({
   fallbackProviders: z.array(z.string()),
   temperature: z.number(),
   maxTokens: z.number(),
+  // Reasoning-effort bucket. Added with the param-profile work; older
+  // backup bundles omit the field, in which case the agent is imported
+  // with `null` and the runtime sends no reasoning_effort. The enum
+  // includes 'minimal' / 'low' / 'medium' / 'high'.
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
   monthlyBudgetUsd: z.number().nullable(),
   visibility: z.string(),
   isActive: z.boolean(),

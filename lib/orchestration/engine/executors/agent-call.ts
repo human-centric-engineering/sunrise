@@ -25,7 +25,12 @@ import type {
   WorkflowStep,
 } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
-import type { LlmMessage, LlmToolCall, LlmToolDefinition } from '@/lib/orchestration/llm/types';
+import type {
+  LlmMessage,
+  LlmToolCall,
+  LlmToolDefinition,
+  ReasoningEffort,
+} from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
@@ -147,6 +152,9 @@ async function runSingleTurn(
             model: model,
             ...(agent!.temperature !== null ? { temperature: agent!.temperature } : {}),
             ...(agent!.maxTokens !== null ? { maxTokens: agent!.maxTokens } : {}),
+            ...(agent!.reasoningEffort !== null
+              ? { reasoningEffort: agent!.reasoningEffort as ReasoningEffort }
+              : {}),
             ...(toolDefinitions.length > 0 ? { tools: toolDefinitions } : {}),
             signal: ctx.signal,
           });
@@ -170,6 +178,10 @@ async function runSingleTurn(
         const requestParams: LlmRequestParamsSnapshot = {};
         if (agent!.maxTokens !== null) requestParams.maxTokens = agent!.maxTokens;
         if (agent!.temperature !== null) requestParams.temperature = agent!.temperature;
+        if (agent!.reasoningEffort !== null) {
+          requestParams.reasoningEffort = agent!
+            .reasoningEffort as LlmRequestParamsSnapshot['reasoningEffort'];
+        }
         if (toolDefinitions.length > 0) requestParams.toolCount = toolDefinitions.length;
         ctx.stepTelemetry?.push({
           model: model,

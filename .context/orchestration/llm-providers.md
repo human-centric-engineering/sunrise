@@ -348,6 +348,20 @@ Short-but-non-empty responses that hit the cap are **not** flagged — the visib
 
 For OpenAI reasoning models, `LlmResponse.usage` exposes an optional `reasoningTokens` count — the subset of `outputTokens` consumed by internal reasoning. Captured from `completion.usage.completion_tokens_details.reasoning_tokens`. Useful when tuning `maxTokens` for a new agent or diagnosing the truncation guard above. Undefined for non-reasoning models and providers that don't report the breakdown.
 
+### Reasoning-effort knob
+
+`LlmOptions.reasoningEffort: 'minimal' | 'low' | 'medium' | 'high'` controls how much reasoning the model does before producing visible output. Set per-agent via `AiAgent.reasoningEffort` (Model tab on the agent form). Per-provider mapping:
+
+| Provider class      | When honoured                                                                | Wire mapping                                                                                                                                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai-compatible` | Resolved `paramProfile === 'openai-reasoning'` (gpt-5, o-series)             | Sends `reasoning_effort: <value>`                                                                                                                                                                                                                                     |
+| `anthropic`         | Claude 4 Opus (any) and Claude Sonnet 4.5+ (per `supportsReasoningEffort()`) | `minimal` → no thinking. `low` / `medium` / `high` → `thinking: { type: 'enabled', budget_tokens: 1024 / 4096 / 16384 }`, clamped to leave ≥ 1024 tokens of visible-output headroom. Temperature is omitted when thinking is enabled (Anthropic locks it to default). |
+| Any other           | —                                                                            | Field dropped silently. No 400. Caller intent still recorded on the trace's `LlmRequestParamsSnapshot.reasoningEffort`.                                                                                                                                               |
+
+The model-registry resolution path is the same as `paramProfile`: DB-backed `AiProviderModel.paramProfile` is authoritative; when null, `deriveParamProfile()` derives a fallback. `supportsReasoningEffort()` then layers the per-model thinking-capability check on top (id-pattern match for Claude 4 thinking models).
+
+Anthropic thinking blocks are stripped from response content in both `chat()` and `chatStream()` — callers see only the final answer. Exposing the thinking trail to callers is intentionally out of scope; it's a richer integration than this knob warrants.
+
 ## Configuration
 
 `AiProviderConfig` rows (see `prisma/schema.prisma`) drive the provider manager. Fields used here:

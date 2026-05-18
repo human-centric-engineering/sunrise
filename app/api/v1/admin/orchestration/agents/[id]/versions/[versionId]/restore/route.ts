@@ -38,6 +38,7 @@ const versionSnapshotSchema = z.object({
   fallbackProviders: z.array(z.string()).optional(),
   temperature: z.number().nullable().optional(),
   maxTokens: z.number().int().nullable().optional(),
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
   topicBoundaries: z.array(z.string()).optional(),
   brandVoiceInstructions: z.string().nullable().optional(),
   metadata: z.unknown().optional(),
@@ -141,6 +142,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.temperature = snapshot.temperature;
     if (snapshot.maxTokens !== undefined && snapshot.maxTokens !== null)
       updateData.maxTokens = snapshot.maxTokens;
+    if (snapshot.reasoningEffort !== undefined)
+      updateData.reasoningEffort = snapshot.reasoningEffort;
     if (snapshot.topicBoundaries !== undefined)
       updateData.topicBoundaries = snapshot.topicBoundaries;
     if (snapshot.brandVoiceInstructions !== undefined)

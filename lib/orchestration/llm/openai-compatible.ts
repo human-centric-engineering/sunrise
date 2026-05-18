@@ -475,6 +475,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     if (!isReasoning && options.temperature !== undefined) {
       params.temperature = options.temperature;
     }
+    // `reasoning_effort` is only honoured by the reasoning family. The
+    // OpenAI SDK types only widen to include it on reasoning models, so
+    // we cast through a Record<string, unknown> for the field set. Non-
+    // reasoning models drop the field silently — no 400, mirrors how
+    // unsupported `max_tokens` was previously the trap.
+    if (isReasoning && options.reasoningEffort !== undefined) {
+      (params as unknown as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
+    }
     if (options.tools?.length) {
       params.tools = options.tools.map<ChatCompletionTool>((t) => ({
         type: 'function',

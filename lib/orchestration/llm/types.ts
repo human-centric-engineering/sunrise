@@ -75,6 +75,31 @@ export type LlmResponseFormat =
   | { type: 'json_object' }
   | { type: 'json_schema'; name: string; schema: Record<string, unknown>; strict?: boolean };
 
+/**
+ * How much reasoning the model should do before producing visible output.
+ * Only honoured by reasoning-capable models — the OpenAI reasoning /
+ * gpt-5 families (`paramProfile === 'openai-reasoning'`) and Anthropic's
+ * extended-thinking Claude 4 models (resolved via
+ * `supportsReasoningEffort()` in `model-heuristics`). Silently dropped
+ * by other models — no error.
+ *
+ * The four buckets map across providers (each provider class translates
+ * to its wire-level shape):
+ *
+ *   - `minimal`  — OpenAI: `reasoning_effort: 'minimal'`.
+ *                  Anthropic: no extended thinking (the field is omitted).
+ *   - `low`      — OpenAI: `reasoning_effort: 'low'`.
+ *                  Anthropic: `thinking: { budget_tokens: 1024 }`.
+ *   - `medium`   — OpenAI: `reasoning_effort: 'medium'`.
+ *                  Anthropic: `thinking: { budget_tokens: 4096 }`.
+ *   - `high`     — OpenAI: `reasoning_effort: 'high'`.
+ *                  Anthropic: `thinking: { budget_tokens: 16384 }`.
+ *
+ * Anthropic's `budget_tokens` is clamped below `max_tokens` by the
+ * provider class — if `maxTokens` is small, the budget is reduced to fit.
+ */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
+
 /** Per-call options passed to a provider. */
 export interface LlmOptions {
   /** Model id understood by the target provider. */
@@ -85,6 +110,13 @@ export interface LlmOptions {
   toolChoice?: LlmToolChoice;
   /** Request structured JSON output from the model. */
   responseFormat?: LlmResponseFormat;
+  /**
+   * How much reasoning the model should do before producing visible
+   * output. Only honoured by reasoning-capable models — others drop the
+   * field silently. See {@link ReasoningEffort} for the per-provider
+   * mapping.
+   */
+  reasoningEffort?: ReasoningEffort;
   /** Override the provider's default request timeout. */
   timeoutMs?: number;
   /** Caller-supplied cancellation signal. */

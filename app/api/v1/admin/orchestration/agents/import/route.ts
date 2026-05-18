@@ -123,6 +123,7 @@ export const POST = withAdminAuth(async (request, session) => {
         providerConfig: (bundled.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         temperature: bundled.temperature,
         maxTokens: bundled.maxTokens,
+        reasoningEffort: bundled.reasoningEffort ?? null,
         monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
         metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isActive: bundled.isActive,

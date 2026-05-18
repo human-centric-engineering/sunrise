@@ -264,3 +264,81 @@ export function deriveParamProfile(modelId: string, provider: string): ParamProf
   if (/^(o\d+|gpt-5)/.test(id)) return 'openai-reasoning';
   return 'openai-legacy';
 }
+
+/**
+ * Does this model accept the `reasoningEffort` parameter?
+ *
+ * Two distinct routes lead to true:
+ *   1. **OpenAI reasoning family** — any model resolved to the
+ *      `openai-reasoning` param profile accepts `reasoning_effort`
+ *      (`minimal | low | medium | high`).
+ *   2. **Anthropic extended thinking** — only specific Claude 4 models
+ *      accept the `thinking` field. We check this via a prefix match
+ *      because the matrix doesn't carry a separate "supports thinking"
+ *      column. Patterns covered: `claude-opus-4*`, `claude-sonnet-4-5*`
+ *      and later 4.x. Claude Haiku 4.5 is intentionally NOT in the list
+ *      — Anthropic doesn't ship extended thinking on Haiku.
+ *
+ * Anthropic-prefixed Bedrock ids (`anthropic.claude-…`) and OpenRouter
+ * ids (`anthropic/claude-…`) are handled by stripping the known
+ * prefixes before matching, mirroring `deriveParamProfile`.
+ *
+ * Anything else → false. The provider class drops the field silently
+ * when this returns false, so a misconfigured agent never 400s — the
+ * caller intent is still recorded in the trace's `requestParams` so a
+ * misuse is visible after the fact.
+ */
+export function supportsReasoningEffort(
+  modelId: string,
+  provider: string,
+  paramProfile: ParamProfile
+): boolean {
+  if (paramProfile === 'openai-reasoning') return true;
+  if (provider !== 'anthropic' && paramProfile !== 'anthropic') return false;
+  const id = modelId
+    .toLowerCase()
+    .replace(/^(anthropic[./])/, '')
+    .replace(/^(.*\/)/, '');
+  // Claude Opus 4 (any flavour) supports thinking. Claude Sonnet 4.5+
+  // supports thinking; Sonnet 4 (no .5) does not.
+  if (/^claude-opus-4/.test(id)) return true;
+  if (/^claude-sonnet-4-5/.test(id) || /^claude-sonnet-4\.5/.test(id)) return true;
+  // Future Sonnet versions (4.6, 4.7, …) — anchor on 4.x where x ≥ 5
+  // OR any 5.x+ family. Keep the regex conservative: only match
+  // `claude-sonnet-{4-5..4-9, 5+}` so Sonnet 4 itself stays out.
+  if (/^claude-sonnet-(4-[5-9]|[5-9])/.test(id)) return true;
+  if (/^claude-opus-[5-9]/.test(id)) return true;
+  return false;
+}
+
+/**
+ * Map a {@link ReasoningEffort} value to Anthropic's `thinking.budget_tokens`.
+ *
+ * Anthropic's `thinking` parameter is shaped `{ type: 'enabled',
+ * budget_tokens: N }` where N is a token budget separate from the
+ * `max_tokens` cap. The four `ReasoningEffort` buckets translate as:
+ *
+ *   - `minimal` — undefined (the `thinking` field is omitted entirely;
+ *                 extended thinking is off).
+ *   - `low`     — 1024 tokens.
+ *   - `medium`  — 4096 tokens.
+ *   - `high`    — 16384 tokens.
+ *
+ * The provider class applies a final clamp against `max_tokens` so the
+ * budget can never exceed the visible-output cap; that clamp is the
+ * provider's responsibility, not this function's.
+ */
+export function anthropicThinkingBudget(
+  effort: 'minimal' | 'low' | 'medium' | 'high'
+): number | undefined {
+  switch (effort) {
+    case 'minimal':
+      return undefined;
+    case 'low':
+      return 1024;
+    case 'medium':
+      return 4096;
+    case 'high':
+      return 16384;
+  }
+}

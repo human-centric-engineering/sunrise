@@ -60,6 +60,18 @@ shadcn `<Slider>` from 0 to 2 with step 0.05. Readout shows the current value to
 
 Number input. Default 4096. Validation min 1, max 200_000.
 
+### Reasoning effort
+
+Radix `<Select>` (`AiAgent.reasoningEffort`). Controls how much internal reasoning the model does before producing visible output. Values: `auto` (form sentinel, persists as null) · `minimal` · `low` · `medium` · `high`.
+
+Honoured only by reasoning-capable models:
+
+- **OpenAI o-series / gpt-5** (`paramProfile === 'openai-reasoning'`) — sends `reasoning_effort` with the chosen bucket.
+- **Anthropic Claude 4 Opus and Sonnet 4.5+** — enables extended thinking with a token budget derived from the bucket (low ≈ 1k, medium ≈ 4k, high ≈ 16k tokens). The budget is clamped to leave at least 1024 tokens of visible-output headroom inside the configured `maxTokens`. `minimal` on Anthropic deliberately means "no extended thinking" (the field is omitted entirely).
+- **Everything else** — silently dropped. No 400. The caller intent is still recorded on `LlmRequestParamsSnapshot.reasoningEffort` so a misconfigured agent shows up in the execution trace's request-envelope line.
+
+When set on a thinking-capable Anthropic model, the provider class also strips thinking blocks from the response content (callers see only the answer). Streaming `chatStream()` applies the same filter — thinking-delta events are not yielded as text. See `lib/orchestration/llm/anthropic.ts` and `lib/orchestration/llm/model-heuristics.ts → supportsReasoningEffort()` / `anthropicThinkingBudget()`.
+
 ### Max history tokens
 
 Optional number input (`AiAgent.maxHistoryTokens`). Overrides the context-window budget when building the prompt. Leave blank to use the model's full context window. Validation min 1 000, max 2 000 000. **This is the token knob** — it protects the model's context window from overflow.
