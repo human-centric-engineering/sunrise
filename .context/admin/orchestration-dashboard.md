@@ -76,7 +76,6 @@ All live under `components/admin/orchestration/`. Server components unless flagg
 - `observability-stats-cards.tsx` — merged into `dashboard-stats-cards.tsx`.
 - `recent-activity-list.tsx` — replaced by `dashboard-activity-feed.tsx`.
 - `recent-errors-panel.tsx` — merged into `dashboard-activity-feed.tsx`.
-- `quick-actions.tsx` — removed from dashboard (sidebar covers this).
 
 ## Adding a new stat card
 
