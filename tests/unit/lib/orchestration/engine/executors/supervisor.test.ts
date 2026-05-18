@@ -163,6 +163,14 @@ describe('run-time toggle (__runSupervisor)', () => {
     expect(result.tokensUsed).toBe(0);
     expect(result.costUsd).toBe(0);
     expect(runLlmCall).not.toHaveBeenCalled();
+    // skipError feeds the trace UI's "Reason" cell — without it the
+    // viewer falls back to "no reason captured". Output.reason is the
+    // programmatic mirror.
+    expect(result.skipError).toBe('supervisor disabled at trigger time');
+    expect(result.output).toMatchObject({
+      skipped: true,
+      reason: 'supervisor disabled at trigger time',
+    });
   });
 
   it('runs when __runSupervisor is absent (key undefined)', async () => {

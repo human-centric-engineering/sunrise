@@ -886,20 +886,28 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
         nextSteps: [{ targetStepId: 'report_render' }],
       },
 
-      // ─── Step 15: report (deterministic Markdown render) ──────────
-      // No LLM. Walks the trace and produces a structured Markdown
+      // ─── Step 15: report (Markdown render for email body) ─────────
+      // No LLM. Walks the trace and renders a structured Markdown
       // report — header, supervisor verdict block (when present),
       // per-step timeline with inputs/outputs/duration/cost, footer.
       // Output lives on `report_render.output.markdown` so the
-      // downstream notification interpolates it directly.
+      // downstream notification interpolates it into the email body.
+      //
+      // NOTE: this step is NOT what makes the downloadable report
+      // available. `GET /executions/:id/report.md` renders the report
+      // on-demand from the persisted trace and works whether this step
+      // ran or not. The sole job of this step is to embed the report
+      // into the notification email body via
+      // `{{report_render.output.markdown}}`.
       //
       // Run-time toggle: when inputData.__generateReport is false,
       // this step short-circuits with expectedSkip. The notification
       // template handles the missing value gracefully (the markdown
-      // section reads as empty).
+      // section reads as empty); the downloadable report endpoint is
+      // unaffected.
       {
         id: 'report_render',
-        name: 'Render human-readable report',
+        name: 'Prepare report for email',
         type: 'report',
         config: {
           format: 'markdown',

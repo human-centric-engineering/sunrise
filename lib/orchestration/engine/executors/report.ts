@@ -42,11 +42,17 @@ export function executeReport(
       executionId: ctx.executionId,
       stepId: step.id,
     });
+    // Set BOTH `output.reason` (for programmatic consumers reading
+    // step outputs) AND top-level `skipError` (which the engine
+    // promotes onto the trace entry's `error` field — the trace UI
+    // reads `entry.error` and otherwise shows "no reason captured").
+    const reason = 'report generation disabled at trigger time';
     return Promise.resolve({
-      output: { skipped: true, reason: 'report generation disabled at trigger time' },
+      output: { skipped: true, reason },
       tokensUsed: 0,
       costUsd: 0,
       skipped: true,
+      skipError: reason,
       expectedSkip: true,
     });
   }

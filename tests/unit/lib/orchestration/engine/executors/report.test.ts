@@ -71,6 +71,14 @@ describe('executeReport', () => {
     expect(result.expectedSkip).toBe(true);
     expect(result.tokensUsed).toBe(0);
     expect(result.costUsd).toBe(0);
+    // skipError feeds the trace UI's "Reason" cell — without it the
+    // viewer falls back to "no reason captured". Output.reason is the
+    // programmatic mirror.
+    expect(result.skipError).toBe('report generation disabled at trigger time');
+    expect(result.output).toMatchObject({
+      skipped: true,
+      reason: 'report generation disabled at trigger time',
+    });
   });
 
   it('runs when __generateReport is absent (key undefined)', async () => {

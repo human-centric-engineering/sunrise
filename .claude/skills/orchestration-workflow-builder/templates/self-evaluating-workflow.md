@@ -72,7 +72,7 @@ honest assessment of what happened, not just an optimistic summary.
     },
     {
       "id": "report_render",
-      "name": "Render human-readable report",
+      "name": "Prepare report for email",
       "type": "report",
       "config": {
         "format": "markdown",
