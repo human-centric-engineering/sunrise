@@ -17,6 +17,7 @@ import { logger } from '@/lib/logging';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
+import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -32,8 +33,15 @@ const newModelSchema = z.object({
   providerSlug: z.string().min(1).max(50).trim(),
   modelId: z.string().min(1).max(100).trim(),
   description: z.string().min(1).max(2000).trim(),
+  // Source the closed set from the canonical CAPABILITIES enum so this
+  // capability stays in sync with the audit-proposals Zod schema and
+  // the analyse_chat / discover_new_models prompts. The previous
+  // hardcoded list was missing `vision` and `documents`, which the
+  // audit pipeline emits as valid proposals — the workflow then died
+  // here at step 14 (add_approved_models) with a confusing schema
+  // error.
   capabilities: z
-    .array(z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']))
+    .array(z.enum(CAPABILITIES as unknown as [string, ...string[]]))
     .min(1)
     .default(['chat']),
   tierRole: z.enum(['thinking', 'worker', 'infrastructure', 'control_plane', 'embedding']),
@@ -110,7 +118,11 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
                 type: 'array',
                 items: {
                   type: 'string',
-                  enum: ['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'],
+                  // Mirror the runtime Zod enum above — sourced from the
+                  // canonical CAPABILITIES constant so the tool definition
+                  // shown to LLMs and the validation gate that catches
+                  // their output never disagree.
+                  enum: [...CAPABILITIES],
                 },
                 description: 'Model capabilities.',
               },

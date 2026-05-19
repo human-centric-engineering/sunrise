@@ -80,7 +80,16 @@ function makeNewModel(
     providerSlug: string;
     modelId: string;
     description: string;
-    capabilities: ('chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation')[];
+    capabilities: (
+      | 'chat'
+      | 'reasoning'
+      | 'embedding'
+      | 'audio'
+      | 'image'
+      | 'moderation'
+      | 'vision'
+      | 'documents'
+    )[];
     tierRole: TierRole;
     deploymentProfiles: DeploymentProfile[];
     bestRole: string;
@@ -107,6 +116,8 @@ function makeNewModel(
       | 'audio'
       | 'image'
       | 'moderation'
+      | 'vision'
+      | 'documents'
     )[],
     tierRole: 'thinking' as TierRole,
     deploymentProfiles: ['hosted'] as DeploymentProfile[],
@@ -149,6 +160,42 @@ describe('AddProviderModelsCapability', () => {
       const cap = new AddProviderModelsCapability();
       const result = cap.validate({ newModels: [makeNewModel()] });
       expect(result.newModels).toHaveLength(1);
+    });
+
+    // Regression: the canonical CAPABILITIES enum has 8 values; this
+    // capability used to hardcode 6 (missing `vision` and `documents`),
+    // so the audit pipeline died at step 14 with "Invalid option:
+    // expected one of chat|reasoning|embedding|audio|image|moderation"
+    // whenever a vision-capable model made it through the approval
+    // queue. Source must stay in sync with the audit-proposals schema.
+    it('accepts every value from the canonical CAPABILITIES enum (including vision + documents)', () => {
+      const cap = new AddProviderModelsCapability();
+      const result = cap.validate({
+        newModels: [
+          makeNewModel({
+            capabilities: [
+              'chat',
+              'reasoning',
+              'embedding',
+              'audio',
+              'image',
+              'moderation',
+              'vision',
+              'documents',
+            ],
+          }),
+        ],
+      });
+      expect(result.newModels[0]?.capabilities).toEqual([
+        'chat',
+        'reasoning',
+        'embedding',
+        'audio',
+        'image',
+        'moderation',
+        'vision',
+        'documents',
+      ]);
     });
 
     it('accepts up to 20 models', () => {
