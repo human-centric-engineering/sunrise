@@ -2569,12 +2569,21 @@ export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
 
 export const guardConfigSchema = stepErrorConfigSchema.extend({
   rules: z.string().optional(),
-  mode: z.enum(['llm', 'regex']).optional(),
+  mode: z.enum(['llm', 'regex', 'schema']).optional(),
   failAction: z.enum(['block', 'flag']).optional(),
   modelOverride: z.string().optional(),
   temperature: z.number().optional(),
-  // Only meaningful in `mode: 'llm'`. Regex mode ignores it.
+  // Only meaningful in `mode: 'llm'`. Regex / schema modes ignore it.
   reasoningEffort: reasoningEffortConfigSchema,
+  // Schema-mode fields. Both optional at the schema layer — the
+  // authoritative "schema mode requires schemaName" check lives in the
+  // executor so the operator sees a typed `missing_schema_name`
+  // ExecutorError in the trace rather than a generic ZodError. (A
+  // form-side check at save time is a separate improvement.)
+  schemaName: z.string().min(1).max(100).optional(),
+  // Step id whose output is validated. When absent, schema mode falls
+  // back to validating `ctx.inputData` (matches regex-mode default).
+  inputStepId: z.string().min(1).max(100).optional(),
 });
 
 export const evaluateConfigSchema = stepErrorConfigSchema.extend({

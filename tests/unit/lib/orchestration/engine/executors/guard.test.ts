@@ -4,6 +4,8 @@
  * Covers:
  *   - Happy path LLM mode: PASS and FAIL responses routed correctly.
  *   - Regex mode: matching and non-matching input.
+ *   - Schema mode: registered-schema pass/fail, issues surfaced,
+ *     inputStepId targeting, missing schema, missing input step.
  *   - Missing rules → ExecutorError('missing_rules').
  *   - Invalid regex → ExecutorError('invalid_regex').
  *   - Flag mode: failure continues to pass edge.
@@ -11,6 +13,9 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+
+import { registerSchema, resetSchemaRegistry } from '@/lib/orchestration/schemas/registry';
 
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
@@ -199,6 +204,155 @@ describe('executeGuard', () => {
     await expect(executeGuard(step, makeCtx())).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'missing_rules',
+    });
+  });
+
+  // ── Schema mode ─────────────────────────────────────────────────────────
+  // Schema mode is the deterministic alternative to LLM mode for
+  // closed-set / shape checks. The registry is process-global so we
+  // reset it before every schema-mode test to keep them isolated.
+  describe('schema mode', () => {
+    beforeEach(() => {
+      resetSchemaRegistry();
+    });
+
+    it('passes when ctx.inputData matches the registered schema (no inputStepId)', async () => {
+      registerSchema('demo', z.object({ message: z.string() }));
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'demo',
+        // rules deliberately absent — schema mode keys off `schemaName`,
+        // not `rules`. The executor must not demand `rules` here.
+        rules: undefined,
+      });
+
+      const result = await executeGuard(step, makeCtx());
+
+      expect(result).toMatchObject({
+        output: { passed: true, verdict: 'pass' },
+        nextStepIds: ['pass-step'],
+        tokensUsed: 0,
+        costUsd: 0,
+      });
+    });
+
+    it('fails and surfaces Zod issues when ctx.inputData does not match', async () => {
+      registerSchema('strict', z.object({ message: z.string(), missing: z.number() }));
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'strict',
+        rules: undefined,
+      });
+
+      const result = await executeGuard(step, makeCtx());
+
+      expect(result.output).toMatchObject({ passed: false, verdict: 'fail' });
+      expect(result.nextStepIds).toEqual(['fail-step']);
+      // The Zod issues array must be carried through so a downstream
+      // retry's __retryContext can quote the precise field that failed.
+      const out = result.output as { issues?: Array<{ path: string[]; message: string }> };
+      expect(Array.isArray(out.issues)).toBe(true);
+      expect(out.issues?.[0]?.path).toContain('missing');
+    });
+
+    it('inputStepId: validates the named step output instead of ctx.inputData', async () => {
+      registerSchema('proposals', z.object({ items: z.array(z.string()) }));
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'proposals',
+        inputStepId: 'producer',
+        rules: undefined,
+      });
+
+      const ctx = makeCtx({
+        inputData: { totally: 'unrelated' },
+        stepOutputs: { producer: { items: ['a', 'b'] } },
+      });
+
+      const result = await executeGuard(step, ctx);
+      expect(result.output).toMatchObject({ passed: true });
+    });
+
+    it('throws schema_not_found when the named schema is not registered', async () => {
+      // Registry is reset; nothing registered.
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'absent',
+        rules: undefined,
+      });
+
+      await expect(executeGuard(step, makeCtx())).rejects.toMatchObject({
+        name: 'ExecutorError',
+        code: 'schema_not_found',
+      });
+    });
+
+    it('throws missing_schema_name when mode is schema but no schemaName is set', async () => {
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: undefined,
+        rules: undefined,
+      });
+
+      await expect(executeGuard(step, makeCtx())).rejects.toMatchObject({
+        name: 'ExecutorError',
+        code: 'missing_schema_name',
+      });
+    });
+
+    it('throws input_step_not_found when inputStepId references an uncompleted step', async () => {
+      registerSchema('any', z.unknown());
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'any',
+        inputStepId: 'never-ran',
+        rules: undefined,
+      });
+
+      // ctx.stepOutputs is empty — the named step has not completed.
+      await expect(executeGuard(step, makeCtx())).rejects.toMatchObject({
+        name: 'ExecutorError',
+        code: 'input_step_not_found',
+      });
+    });
+
+    it('does NOT call the LLM in schema mode (deterministic, zero cost)', async () => {
+      registerSchema('demo', z.object({ message: z.string() }));
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'demo',
+        rules: undefined,
+      });
+
+      await executeGuard(step, makeCtx());
+
+      // Schema mode must short-circuit before any LLM call — the
+      // whole point of the mode is to avoid LLM hallucination on
+      // closed-set checks. If a future regression accidentally
+      // re-introduces a model call here, this assertion fires.
+      expect(vi.mocked(runLlmCall)).not.toHaveBeenCalled();
+    });
+
+    it('flag mode: schema failure still routes to pass edge', async () => {
+      registerSchema('strict', z.object({ required: z.string() }));
+      const step = makeGuardStep({
+        mode: 'schema',
+        schemaName: 'strict',
+        failAction: 'flag',
+        rules: undefined,
+      });
+
+      const result = await executeGuard(step, makeCtx());
+
+      expect(result.output).toMatchObject({
+        passed: false,
+        failAction: 'flag',
+        verdict: 'fail',
+      });
+      // Flag mode keeps execution flowing — fail verdict still goes
+      // to the pass edge. The verdict and issues stay on the output
+      // for trace inspection.
+      expect(result.nextStepIds).toEqual(['pass-step']);
     });
   });
 });
