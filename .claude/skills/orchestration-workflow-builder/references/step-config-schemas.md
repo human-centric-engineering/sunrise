@@ -78,17 +78,60 @@ Default config values for every step type, as defined in `lib/orchestration/engi
 { "rules": "", "mode": "llm", "failAction": "block", "temperature": 0.1 }
 ```
 
-- `rules` — safety rules to check against (required)
-- `mode` — `"llm"` (LLM evaluates) or `"regex"` (regex pattern matching)
-- `failAction` — `"block"` (stop workflow) or `"flag"` (continue with warning)
+- `rules` — safety rules (LLM mode) or regex pattern (regex mode). **Not required** in `mode: 'schema'` — that mode keys off `schemaName` instead.
+- `mode` — `"llm"` (LLM evaluates), `"regex"` (regex pattern matching against `JSON.stringify(ctx.inputData)`), or `"schema"` (Zod schema lookup, deterministic).
+- `failAction` — `"block"` (stop workflow) or `"flag"` (continue with warning).
 
 **`mode: 'llm'` authoring rules:**
 
-- If a rule references a closed set ("must be a recognised X", "field name must be valid"), **enumerate the set in the prompt** — the LLM cannot read your schema. Source the list from the same constant the downstream apply step uses (`import { … } from '@/lib/orchestration/capabilities/built-in/…'`) so the two cannot drift.
-- Backtick-wrap literal identifier values (`` `bestRole` ``) so the model parses them as strings, not natural-language nouns.
-- For purely structural checks (enum-in-set, regex shape, presence/absence), prefer `mode: 'regex'` or a deterministic capability over an LLM guard. LLM mode is for fuzzy judgments (tone, on-topic, plausibility), not closed-set membership.
+- If a rule references a closed set ("must be a recognised X", "field name must be valid"), **use `mode: 'schema'` instead**. LLM mode is unreliable on closed-set checks even with the spec enumerated in the prompt — see `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_.
+- For genuine fuzzy judgments (tone, on-topic, plausibility) where there is no enum to check against, LLM mode is the right tool. Backtick-wrap literal identifier values (`` `bestRole` ``) so the model parses them as strings, not natural-language nouns.
 
-See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the failure mode this guards against.
+**`mode: 'schema'` config:**
+
+```json
+{
+  "mode": "schema",
+  "schemaName": "audit-proposals",
+  "inputStepId": "analyse_chat",
+  "failAction": "block"
+}
+```
+
+- `schemaName` (required) — slug into the schema registry (`lib/orchestration/schemas/registry.ts`). The executor runs `getSchema(name).safeParse(...)` on the resolved input. Throws typed `ExecutorError('schema_not_found')` when the slug isn't registered, or `ExecutorError('missing_schema_name')` when the field itself is missing.
+- `inputStepId` (optional) — step id whose `output` is validated. When set, the executor validates `ctx.stepOutputs[inputStepId]`. When absent, falls back to `ctx.inputData` (workflow input — matches regex-mode default). Typed `ExecutorError('input_step_not_found')` when the named step has not completed.
+- On parse failure the output carries `passed: false`, `reason: 'Schema validation failed at <path>: <message>'`, and the full Zod `issues` array so a downstream retry can interpolate `{{guard_step.output.issues}}` into its retry prompt for precise feedback.
+- Schema mode never calls the LLM — zero cost, deterministic, no hallucination risk. `modelOverride` / `temperature` / `reasoningEffort` are ignored.
+
+**Registering a schema** — register feature-scoped schemas at module load in a file under `lib/orchestration/<feature>/schemas.ts`, then ensure that module is imported on app start (typically via re-export in the feature's barrel). The registry ships empty — Sunrise itself registers no built-in schemas, so domain coupling stays per-feature.
+
+```ts
+// lib/orchestration/audit/schemas.ts
+import { z } from 'zod';
+import { registerSchema } from '@/lib/orchestration/schemas/registry';
+import { CAPABILITIES, TIER_ROLES } from '@/lib/orchestration/model-audit/enums';
+
+registerSchema(
+  'audit-proposals',
+  z.object({
+    models: z.array(
+      z.object({
+        model_id: z.string(),
+        changes: z.array(
+          z.object({
+            field: z.string(),
+            currentValue: z.unknown(),
+            proposedValue: z.unknown(),
+            sources: z.array(z.unknown()).min(1),
+          })
+        ),
+      })
+    ),
+  })
+);
+```
+
+See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the LLM-mode failure mode that schema mode fixes.
 
 ### evaluate
 
