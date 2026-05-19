@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/select';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { narrowParamProfile } from '@/lib/orchestration/llm/db-model-adapter';
 import {
   DEPLOYMENT_PROFILES,
   DEPLOYMENT_PROFILE_META,
@@ -241,7 +242,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       costEfficiency: (model?.costEfficiency as ModelFormData['costEfficiency']) ?? 'medium',
       contextLength: (model?.contextLength as ModelFormData['contextLength']) ?? 'medium',
       toolUse: (model?.toolUse as ModelFormData['toolUse']) ?? 'moderate',
-      paramProfile: (model?.paramProfile as ModelFormData['paramProfile']) ?? 'auto',
+      paramProfile: narrowParamProfile(model?.paramProfile) ?? 'auto',
       bestRole: model?.bestRole ?? '',
       dimensions: model?.dimensions?.toString() ?? '',
       schemaCompatible: model?.schemaCompatible ?? false,

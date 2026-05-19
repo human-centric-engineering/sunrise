@@ -83,7 +83,7 @@ function mapContextLengthToMax(contextLength: string): number {
  * any unknown value as absent (`undefined`) so the runtime falls back
  * to `deriveParamProfile()` rather than panicking.
  */
-function narrowParamProfile(raw: string | null | undefined): ParamProfile | undefined {
+export function narrowParamProfile(raw: string | null | undefined): ParamProfile | undefined {
   if (raw === 'openai-legacy') return 'openai-legacy';
   if (raw === 'openai-reasoning') return 'openai-reasoning';
   if (raw === 'anthropic') return 'anthropic';

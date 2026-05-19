@@ -49,7 +49,10 @@ import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-v
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import { KnowledgeAccessSection } from '@/components/admin/orchestration/knowledge-access-section';
-import { ReasoningEffortSelect } from '@/components/admin/orchestration/reasoning-effort-select';
+import {
+  ReasoningEffortSelect,
+  toReasoningEffortFormValue,
+} from '@/components/admin/orchestration/reasoning-effort-select';
 import { slugSchema } from '@/lib/validations/common';
 import type { EffectiveAgentDefaults, ModelOption } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
@@ -173,7 +176,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
       model: initialModel,
       temperature: agent?.temperature ?? 0.7,
       maxTokens: agent?.maxTokens ?? 4096,
-      reasoningEffort: (agent?.reasoningEffort as AgentFormData['reasoningEffort']) ?? 'auto',
+      reasoningEffort: toReasoningEffortFormValue(agent?.reasoningEffort),
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
       isActive: agent?.isActive ?? true,
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
@@ -1369,8 +1372,7 @@ export function AgentForm({ mode, agent, providers, models, effectiveDefaults }:
                       model: fresh.model,
                       temperature: fresh.temperature,
                       maxTokens: fresh.maxTokens,
-                      reasoningEffort:
-                        (fresh.reasoningEffort as AgentFormData['reasoningEffort']) ?? 'auto',
+                      reasoningEffort: toReasoningEffortFormValue(fresh.reasoningEffort),
                       monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
                       isActive: fresh.isActive,
                       inputGuardMode:
