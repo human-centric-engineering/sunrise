@@ -171,7 +171,7 @@ function SupervisorVerdictBadge({
       {typeof score === 'number' && (
         <span
           className="text-muted-foreground text-xs"
-          title="Supervisor score on a 0.00–1.00 scale (higher is better). The judge model picks the score alongside the verdict — see the panel below for the rubric."
+          title="0.00 (worst) to 1.00 (best). Pass ≥ 0.80, Concerns 0.50–0.80, Fail < 0.50. Investigate anything below 0.50."
         >
           score {score.toFixed(2)} / 1.00
         </span>
@@ -265,12 +265,10 @@ function SupervisorDetailsPanel({
               parsed.
             </p>
             <p className="mt-2">
-              The <strong>score</strong> is a 0.00–1.00 continuous read (higher is better). The
-              judge picks it alongside the verdict using the same calibration anchors, so it adds
-              nuance (low Pass vs. high Pass, borderline Concerns, etc.) rather than acting as a
-              separate signal. In practice Pass typically lands above ~0.80, Concerns in the
-              ~0.50–0.80 band, and Fail below — but the verdict is the headline; the score just
-              shades it.
+              The <strong>score</strong> runs from 0.00 to 1.00. Higher is better. Pass usually
+              scores 0.80 or higher, Concerns falls in 0.50–0.80, and Fail is below 0.50.{' '}
+              <strong>Investigate any score below 0.50</strong>, and look closely at anything below
+              0.70 even if the verdict says Pass — the supervisor flagged something.
             </p>
             <p className="mt-2">
               <strong>Weaknesses</strong> cite specific steps with verbatim quotes; the post-hoc
@@ -288,7 +286,7 @@ function SupervisorDetailsPanel({
         {typeof score === 'number' && (
           <span
             className="text-muted-foreground text-xs"
-            title="Supervisor score on a 0.00–1.00 scale (higher is better). The judge picks it alongside the verdict — see the ⓘ above for the rubric."
+            title="0.00 (worst) to 1.00 (best). Pass ≥ 0.80, Concerns 0.50–0.80, Fail < 0.50. Investigate anything below 0.50."
           >
             score {score.toFixed(2)} / 1.00
           </span>
