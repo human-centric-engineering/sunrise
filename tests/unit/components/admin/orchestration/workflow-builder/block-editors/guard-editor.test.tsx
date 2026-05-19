@@ -309,4 +309,55 @@ describe('GuardEditor', () => {
     expect(lastArg).toHaveProperty('temperature');
     expect(typeof lastArg.temperature).toBe('number');
   });
+
+  // ── Defensive defaults when config arrives without the required fields ────
+
+  // A workflow JSON can land in the editor before any field has been touched —
+  // the engine validator gates the missing-field case at execution time, but
+  // the editor must still render so the operator can fill it in. These tests
+  // exercise the `?? default` short-circuits for every field.
+  it('renders with sensible defaults when every config field is absent', () => {
+    // Cast through `unknown` — the prop type requires rules/mode/failAction
+    // but the editor is designed to tolerate undefined values on every field.
+    const empty = {} as unknown as GuardConfig;
+    render(<GuardEditor config={empty} onChange={vi.fn()} />);
+
+    const rules = document.getElementById('guard-rules') as HTMLTextAreaElement;
+    expect(rules.value).toBe('');
+
+    expect(document.getElementById('guard-mode')!).toHaveTextContent('LLM');
+    expect(document.getElementById('guard-fail-action')!).toHaveTextContent('Block');
+
+    // failAction defaulted to 'block' → retry input is rendered
+    const retries = document.getElementById('guard-max-retries') as HTMLInputElement;
+    expect(retries).toBeInTheDocument();
+    expect(retries.value).toBe('0');
+
+    // mode defaulted to 'llm' → LLM-specific fields are rendered
+    expect(document.getElementById('guard-model-override')).toBeInTheDocument();
+    expect(document.getElementById('guard-temperature')).toBeInTheDocument();
+  });
+
+  it('shows singular "retry attempt" (no trailing s) when maxRetries is exactly 1', () => {
+    const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block', maxRetries: 1 };
+    render(<GuardEditor config={config} onChange={vi.fn()} />);
+
+    // Exact phrase — the alternate branch ("attempts") must NOT match.
+    expect(screen.getByText(/up to 1 retry attempt\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/retry attempts\./i)).not.toBeInTheDocument();
+  });
+
+  it("coerces an empty maxRetries input to 0 via the `Number('') || 0` fallback", () => {
+    const onChange = vi.fn();
+    const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block', maxRetries: 5 };
+    render(<GuardEditor config={config} onChange={onChange} />);
+
+    const input = document.getElementById('guard-max-retries') as HTMLInputElement;
+    // Empty string → Number('') is NaN → falsy → || 0 kicks in.
+    // Without that fallback the field would propagate NaN through to the
+    // engine and the workflow validator would later reject the step.
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(onChange).toHaveBeenCalledWith({ maxRetries: 0 });
+  });
 });

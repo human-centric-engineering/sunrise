@@ -8,7 +8,7 @@
  * existing `ExecutionTraceEntryRow` for each trace entry.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
@@ -638,8 +638,35 @@ export function ExecutionDetailView({
   const [actionLoading, setActionLoading] = useState(false);
   const [actionResult, setActionResult] = useState<{
     type: 'success' | 'error';
-    message: string;
+    message: ReactNode;
   } | null>(null);
+  // Supervisor panel auto-scroll + ring highlight after a (re-)review lands.
+  // Without these, the success banner is the only feedback and the verdict
+  // change happens well below the fold — operators routinely miss it.
+  const supervisorPanelRef = useRef<HTMLDivElement | null>(null);
+  const [highlightSupervisor, setHighlightSupervisor] = useState(false);
+  // Detect when a fresh review's data has propagated through router.refresh()
+  // by watching supervisorReviewedAt. We seed the ref with the initial value
+  // so first-paint with an existing review doesn't trigger a spurious scroll.
+  const prevReviewedAtRef = useRef<string | null>(execution.supervisorReviewedAt ?? null);
+  useEffect(() => {
+    const current = execution.supervisorReviewedAt ?? null;
+    if (current && current !== prevReviewedAtRef.current) {
+      prevReviewedAtRef.current = current;
+      requestAnimationFrame(() => {
+        supervisorPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      setHighlightSupervisor(true);
+    }
+  }, [execution.supervisorReviewedAt]);
+  useEffect(() => {
+    if (!highlightSupervisor) return;
+    const t = setTimeout(() => setHighlightSupervisor(false), 2500);
+    return () => clearTimeout(t);
+  }, [highlightSupervisor]);
+  const scrollToSupervisor = useCallback(() => {
+    supervisorPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
   // Tracks which trace row was last clicked from the timeline strip so the
   // matching row below can be highlighted and scrolled into view.
   const [highlightedStepId, setHighlightedStepId] = useState<string | null>(null);
@@ -763,14 +790,47 @@ export function ExecutionDetailView({
     setReviewDialogOpen(false);
     setActionLoading(true);
     setActionResult(null);
+    // Capture the prior verdict BEFORE router.refresh() — once the refresh
+    // lands, execution.supervisorVerdict holds the new value and we can no
+    // longer show a before/after diff in the success banner.
+    const previousVerdict = execution.supervisorVerdict ?? null;
+    const previousScore = execution.supervisorScore ?? null;
     try {
       const result = await apiClient.post<{ verdict: string; score: number }>(
         API.ADMIN.ORCHESTRATION.executionReview(execution.id),
         { body: {} }
       );
+      const newLabel = VERDICT_LABEL[result.verdict] ?? result.verdict;
+      const prevLabel = previousVerdict
+        ? (VERDICT_LABEL[previousVerdict] ?? previousVerdict)
+        : null;
       setActionResult({
         type: 'success',
-        message: `Supervisor reviewed this execution — verdict: ${result.verdict} (score ${result.score.toFixed(2)}). Refreshing…`,
+        message: (
+          <span
+            className="flex flex-wrap items-baseline gap-x-1"
+            data-testid="execution-review-success"
+          >
+            <strong>{previousVerdict ? 'Re-review complete.' : 'Review complete.'}</strong>
+            <span>
+              New verdict: <strong>{newLabel}</strong> (score {result.score.toFixed(2)}).
+            </span>
+            {prevLabel && (
+              <span className="opacity-75">
+                Previous: {prevLabel}
+                {typeof previousScore === 'number' ? ` (${previousScore.toFixed(2)})` : ''}.
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={scrollToSupervisor}
+              className="underline hover:no-underline"
+              data-testid="jump-to-supervisor-details"
+            >
+              Jump to details ↓
+            </button>
+          </span>
+        ),
       });
       router.refresh();
     } catch (err) {
@@ -781,7 +841,13 @@ export function ExecutionDetailView({
     } finally {
       setActionLoading(false);
     }
-  }, [execution.id, router]);
+  }, [
+    execution.id,
+    execution.supervisorVerdict,
+    execution.supervisorScore,
+    router,
+    scrollToSupervisor,
+  ]);
 
   const canCancel = liveSnap.status === 'running' || liveSnap.status === 'paused_for_approval';
   const canApprove = liveSnap.status === 'paused_for_approval';
@@ -1077,16 +1143,27 @@ export function ExecutionDetailView({
           verdict card. Renders the summary, top weaknesses, anomalies,
           and unverified areas when a verdict is present. Without this
           the operator would have to scroll to the supervisor step row
-          and expand it to learn why the verdict landed. */}
+          and expand it to learn why the verdict landed.
+
+          Wrapped in a ref'd div so handleReview's success path can
+          scroll-into-view and pulse a ring after a (re-)review lands. */}
       {execution.supervisorReport != null && execution.supervisorVerdict != null && (
-        <SupervisorDetailsPanel
-          verdict={execution.supervisorVerdict}
-          score={execution.supervisorScore ?? null}
-          report={execution.supervisorReport}
-          reviewedAt={execution.supervisorReviewedAt ?? null}
-          onJumpToStep={handleSelectStep}
-          reachableStepIds={new Set(displayTrace.map((e) => e.stepId))}
-        />
+        <div
+          ref={supervisorPanelRef}
+          className={cn(
+            'rounded-md transition-shadow duration-500',
+            highlightSupervisor && 'ring-primary ring-2 ring-offset-2'
+          )}
+        >
+          <SupervisorDetailsPanel
+            verdict={execution.supervisorVerdict}
+            score={execution.supervisorScore ?? null}
+            report={execution.supervisorReport}
+            reviewedAt={execution.supervisorReviewedAt ?? null}
+            onJumpToStep={handleSelectStep}
+            reachableStepIds={new Set(displayTrace.map((e) => e.stepId))}
+          />
+        </div>
       )}
 
       {/* Input / Output cards */}

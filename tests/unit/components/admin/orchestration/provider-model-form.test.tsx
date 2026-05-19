@@ -628,4 +628,132 @@ describe('ProviderModelForm', () => {
     // toolUse (index 5) shows "Strong"
     expect(triggers[5].textContent).toMatch(/strong/i);
   });
+
+  // ── Deployment profiles ───────────────────────────────────────────────────
+
+  it('toggling Sovereign appends "sovereign" to the deploymentProfiles PATCH payload', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel({ deploymentProfiles: ['hosted'] })} />);
+
+    await user.click(screen.getByRole('checkbox', { name: /sovereign/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({
+            deploymentProfiles: expect.arrayContaining(['hosted', 'sovereign']),
+          }),
+        })
+      );
+    });
+  });
+
+  it('drops unknown deployment profile values from the form defaults (falls back to hosted)', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderModelForm
+        // Cast through `unknown` — the prop type rejects this directly,
+        // but legacy/audit-corrupted DB rows can carry a profile token
+        // the current enum doesn't recognise. The form must silently
+        // drop it instead of crashing or persisting the bad value.
+        model={makeModel({
+          deploymentProfiles: ['hosted', 'legacy-unknown-profile'],
+        } as unknown as Partial<ProviderModelData>)}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalled();
+    });
+    const body = mockPatch.mock.calls[0][1].body as { deploymentProfiles: string[] };
+    expect(body.deploymentProfiles).toEqual(['hosted']);
+    expect(body.deploymentProfiles).not.toContain('legacy-unknown-profile');
+  });
+
+  // ── Param profile ─────────────────────────────────────────────────────────
+
+  it('sends updated paramProfile in PATCH payload when changed from Auto', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel()} />);
+
+    // Find the Param Profile trigger — it shows "Auto …" because makeModel
+    // doesn't set paramProfile.
+    const triggers = screen.getAllByRole('combobox');
+    const paramProfileTrigger = triggers.find((t) => /auto.*derive/i.test(t.textContent ?? ''));
+    if (!paramProfileTrigger) throw new Error('Param Profile trigger not found');
+    await user.click(paramProfileTrigger);
+
+    await user.click(await screen.findByRole('option', { name: /openai reasoning/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({ paramProfile: 'openai-reasoning' }),
+        })
+      );
+    });
+  });
+
+  // ── Embedding-section interactions ────────────────────────────────────────
+
+  it('toggling schemaCompatible, hasFreeTier, and local sends true values in the create payload', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm />);
+
+    await fillRequiredFields(user);
+
+    // Enable embedding so the section mounts
+    await user.click(screen.getByRole('checkbox', { name: /^embedding$/i }));
+
+    await user.click(screen.getByRole('checkbox', { name: /schema compatible/i }));
+    await user.click(screen.getByRole('checkbox', { name: /free tier/i }));
+    await user.click(screen.getByRole('checkbox', { name: /local \/ self-hosted/i }));
+
+    await user.click(screen.getByRole('button', { name: /create model/i }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({
+            schemaCompatible: true,
+            hasFreeTier: true,
+            local: true,
+          }),
+        })
+      );
+    });
+  });
+
+  it('selecting embedding quality sends the chosen value in the payload', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm />);
+
+    await fillRequiredFields(user);
+    await user.click(screen.getByRole('checkbox', { name: /^embedding$/i }));
+
+    // Quality trigger is the only combobox inside the embedding section
+    // with the placeholder "Select quality" — it has no defaultValue.
+    const qualityTrigger = screen.getByText(/select quality/i).closest('button');
+    if (!qualityTrigger) throw new Error('Quality trigger not found');
+    await user.click(qualityTrigger);
+
+    await user.click(await screen.findByRole('option', { name: /^high$/i }));
+    await user.click(screen.getByRole('button', { name: /create model/i }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: expect.objectContaining({ quality: 'high' }),
+        })
+      );
+    });
+  });
 });

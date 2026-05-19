@@ -276,7 +276,7 @@ The matrix toolbar includes an **Audit Models** button that triggers the Provide
 
 The audit can take a few minutes per model. From the inline progress panel, the operator can:
 
-- **Run in background** — closes the dialog and writes the execution id to `localStorage` under `sunrise.orchestration.in-flight-execution.v1`. The `InFlightExecutionBanner` mounted by `app/admin/orchestration/layout.tsx` picks the handoff up and renders a sticky peek pill across every page in `/admin/orchestration/*`. The banner polls execution status (3 s cadence), flashes briefly on terminal status, then auto-dismisses and clears the localStorage entry.
+- **Run in background** — closes the dialog and writes the execution id to `localStorage` under `sunrise.orchestration.in-flight-execution.v1`. The `InFlightExecutionBanner` mounted by `app/admin/layout.tsx` picks the handoff up and renders a sticky peek pill; the banner returns `null` when the localStorage entry is empty, so in practice it surfaces only while an orchestration run is in flight. The banner polls execution status (3 s cadence), flashes briefly on terminal status, then auto-dismisses and clears the localStorage entry.
 - **View full details** — navigates to `/admin/orchestration/executions/:id`, leaving the localStorage entry intact so the banner survives the transition.
 - **Esc / overlay click** — treated as "Run in background" while the run is active, and as "Close" once terminal.
 
@@ -291,7 +291,7 @@ Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence
 | Trigger dialog           | `components/admin/orchestration/audit-models-dialog.tsx`                |
 | Inline progress panel    | `components/admin/orchestration/execution-progress-inline.tsx`          |
 | Cross-page peek banner   | `components/admin/orchestration/in-flight-execution-banner.tsx`         |
-| Banner host layout       | `app/admin/orchestration/layout.tsx`                                    |
+| Banner host layout       | `app/admin/layout.tsx`                                                  |
 | Storage handoff contract | `lib/orchestration/in-flight-execution.ts`                              |
 | Approval-prompt helper   | `lib/orchestration/trace/approval-prompt.ts`                            |
 | Button in matrix         | `components/admin/orchestration/provider-models-matrix.tsx`             |

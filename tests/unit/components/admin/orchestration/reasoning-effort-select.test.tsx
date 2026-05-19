@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import {
   ReasoningEffortSelect,
@@ -68,5 +69,16 @@ describe('ReasoningEffortSelect component', () => {
       />
     );
     expect(screen.getByRole('combobox', { name: /planner reasoning effort/i })).toBeInTheDocument();
+  });
+
+  it('fires onChange with the picked form value when the operator selects an option', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ReasoningEffortSelect id="rfx-select" value="auto" onChange={onChange} />);
+
+    await user.click(screen.getByRole('combobox', { name: /reasoning effort/i }));
+    await user.click(await screen.findByRole('option', { name: /^high$/i }));
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('high');
   });
 });

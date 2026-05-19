@@ -1219,6 +1219,39 @@ describe('ExecutionDetailView', () => {
       await user.click(screen.getByTestId('execution-review-button'));
       expect(screen.getByText(/\$0\.02–\$0\.10/)).toBeInTheDocument();
     });
+
+    it('success banner renders new verdict + previous verdict + jump-to-details button on re-review', async () => {
+      mockPost.mockResolvedValueOnce({ verdict: 'pass', score: 0.87 });
+      const user = userEvent.setup();
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ supervisorVerdict: 'concerns', supervisorScore: 0.62 })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+      await user.click(screen.getByTestId('execution-review-button'));
+      await user.click(screen.getByTestId('execution-review-confirm'));
+      const banner = await screen.findByTestId('execution-review-success');
+      // Definitive "complete" wording, not the old "Refreshing…" ellipsis.
+      expect(banner).toHaveTextContent(/Re-review complete\./);
+      // New verdict label and score.
+      expect(banner).toHaveTextContent(/New verdict:.*Pass.*0\.87/);
+      // Previous verdict label and score so operators can see what changed.
+      expect(banner).toHaveTextContent(/Previous:.*Concerns.*0\.62/);
+      // Jump-to-details affordance is wired.
+      expect(screen.getByTestId('jump-to-supervisor-details')).toBeInTheDocument();
+    });
+
+    it('success banner says "Review complete" (not "Re-review") and omits the previous-verdict line on first review', async () => {
+      mockPost.mockResolvedValueOnce({ verdict: 'pass', score: 0.9 });
+      const user = userEvent.setup();
+      render(<ExecutionDetailView execution={makeExecution()} trace={[TRACE_ENTRY]} />);
+      await user.click(screen.getByTestId('execution-review-button'));
+      await user.click(screen.getByTestId('execution-review-confirm'));
+      const banner = await screen.findByTestId('execution-review-success');
+      expect(banner).toHaveTextContent(/^Review complete\./);
+      expect(banner).not.toHaveTextContent(/Previous:/);
+    });
   });
 
   describe('Download report button', () => {
