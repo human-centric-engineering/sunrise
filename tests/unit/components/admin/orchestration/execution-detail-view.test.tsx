@@ -1289,4 +1289,55 @@ describe('ExecutionDetailView', () => {
       expect(screen.queryByTestId('execution-download-report-button')).not.toBeInTheDocument();
     });
   });
+
+  // ── Re-run + lineage ─────────────────────────────────────────────────────
+  // Three things are wired by Phase 5: the Re-run button on terminal
+  // executions, the hidden state on in-flight runs, and the lineage
+  // breadcrumb on a re-run-derived execution. These tests pin the
+  // visibility rules — the dialog itself is exercised by its own
+  // test file + the rerun route tests.
+  describe('Re-run button and lineage breadcrumb', () => {
+    it('shows the Re-run button on a completed execution', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'completed' })} trace={[]} />);
+      expect(screen.getByTestId('execution-rerun-button')).toBeInTheDocument();
+    });
+
+    it('shows the Re-run button on a failed execution (operators commonly want to retry after a fix)', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'failed' })} trace={[]} />);
+      expect(screen.getByTestId('execution-rerun-button')).toBeInTheDocument();
+    });
+
+    it('hides the Re-run button on a running execution (the original still has moves left)', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'running' })} trace={[]} />);
+      expect(screen.queryByTestId('execution-rerun-button')).not.toBeInTheDocument();
+    });
+
+    it('hides the Re-run button on a paused-for-approval execution', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval' })}
+          trace={[]}
+        />
+      );
+      expect(screen.queryByTestId('execution-rerun-button')).not.toBeInTheDocument();
+    });
+
+    it('renders the parent-execution breadcrumb when parentExecutionId is set', () => {
+      const PARENT = 'cmjbv4i3x00003wsloputgwu0';
+      render(
+        <ExecutionDetailView execution={makeExecution({ parentExecutionId: PARENT })} trace={[]} />
+      );
+      const crumb = screen.getByTestId('execution-parent-breadcrumb');
+      expect(crumb).toHaveTextContent('Re-run of execution');
+      // The link target is the parent execution's detail page — full
+      // navigation refreshes the live-poll hook against the new id.
+      const anchor = crumb.querySelector('a');
+      expect(anchor?.getAttribute('href')).toBe(`/admin/orchestration/executions/${PARENT}`);
+    });
+
+    it('omits the parent breadcrumb when parentExecutionId is absent', () => {
+      render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
+      expect(screen.queryByTestId('execution-parent-breadcrumb')).not.toBeInTheDocument();
+    });
+  });
 });
