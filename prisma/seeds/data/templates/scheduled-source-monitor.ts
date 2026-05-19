@@ -60,6 +60,8 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fetch_source',
         name: 'Fetch monitored source',
+        description:
+          'GETs the watched URL on each scheduled tick. Replace the placeholder URL with the page or feed you actually want to watch after cloning the template.',
         type: 'external_call',
         config: {
           url: 'https://example.invalid/source',
@@ -73,6 +75,8 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'categorise_change',
         name: 'Categorise change vs. previous snapshot',
+        description:
+          'Diffs the freshly fetched response against the previous snapshot supplied via {{input}} and labels the change as material, minor, or none with a one-line summary.',
         type: 'llm_call',
         config: {
           prompt:
@@ -85,6 +89,8 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'route_change',
         name: 'Route on change tier',
+        description:
+          'Branches on the change tier — material runs the notification step; minor and none both go to the quiet-tick logger so the run history captures every check.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -100,6 +106,8 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'notify_change',
         name: 'Notify on material change',
+        description:
+          'Sends an email summarising the material change. Edit the recipient address after cloning the template.',
         type: 'send_notification',
         config: {
           channel: 'email',
@@ -113,6 +121,8 @@ export const SCHEDULED_SOURCE_MONITOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'record_quiet_tick',
         name: 'Record quiet tick',
+        description:
+          'Writes a one-sentence log line noting that this tick observed no material change. Keeps the run history honest — silence would look identical to a broken job.',
         type: 'llm_call',
         config: {
           prompt:

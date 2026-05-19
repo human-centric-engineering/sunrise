@@ -47,6 +47,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'plan_outline',
         name: 'Plan content stages',
+        description:
+          'Breaks the content brief into an ordered list of stages (research, audience analysis, outline, draft, review). The plan is reference context for the downstream steps — they each act on the original brief, not on the plan output directly.',
         type: 'plan',
         config: {
           objective:
@@ -58,6 +60,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fanout',
         name: 'Research and audience in parallel',
+        description:
+          'Parallel fan-out point — kicks off topic research and audience analysis concurrently with a 60-second cap. Both branches feed the outline step downstream.',
         type: 'parallel',
         config: {
           branches: ['research_topic', 'analyze_audience'],
@@ -69,6 +73,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'research_topic',
         name: 'Research topic',
+        description:
+          'Produces a bullet list of key facts, recent developments, and primary sources for the topic. One half of the parallel fan-out; feeds the outline step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -81,6 +87,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'analyze_audience',
         name: 'Analyse audience',
+        description:
+          'Describes the target audience — level, goals, and resonating tone — so the outline and draft hit the right register. Other half of the parallel fan-out.',
         type: 'llm_call',
         config: {
           prompt:
@@ -93,6 +101,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'outline',
         name: 'Write outline',
+        description:
+          'Combines the research findings and the audience analysis into a section-by-section outline. Hands off to the drafting step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -105,6 +115,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'draft',
         name: 'Draft article',
+        description:
+          'Writes the full article from the outline, matching the audience tone. Higher temperature than the upstream analytical steps because the output is reader-facing prose.',
         type: 'llm_call',
         config: {
           prompt:
@@ -117,6 +129,8 @@ export const CONTENT_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'critique',
         name: 'Critique and revise',
+        description:
+          'Critique-revise loop. Reviews the draft for clarity, accuracy, structure, and tone, then revises — up to 3 iterations or until the critique returns no further changes.',
         type: 'reflect',
         config: {
           critiquePrompt:

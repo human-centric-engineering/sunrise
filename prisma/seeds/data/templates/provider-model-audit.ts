@@ -171,6 +171,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'load_models',
         name: 'Parse input and load model data',
+        description:
+          'Parses the audit-trigger input into a structured model list (IDs, names, providers, current field values) that downstream analysis steps and the report writer consume.',
         type: 'llm_call',
         config: {
           prompt:
@@ -196,6 +198,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'search_provider_info',
         name: 'Search web for current provider model info',
+        description:
+          'Single Brave Search call with a generic AI-news query. The five result URLs are injected into each analysis step as a numbered citation block so proposed changes can attribute to a URL rather than rely on training knowledge alone. Skipped silently when BRAVE_SEARCH_API_KEY is unset.',
         type: 'external_call',
         config: {
           // Static query — Brave caps the `q` param at 400 characters, and
@@ -237,6 +241,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'classify_models',
         name: 'Route by model capability type',
+        description:
+          'LLM-driven routing pass that labels the audit batch as chat-only, embedding-only, or mixed so the parallel analysis stage runs the right prompts.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -263,6 +269,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'audit_models',
         name: 'Analyse models and discover new ones in parallel',
+        description:
+          'Parallel fan-out point — kicks off chat analysis, embedding analysis, and new-model discovery concurrently with a 120-second cap.',
         type: 'parallel',
         config: {
           branches: ['analyse_chat', 'analyse_embedding', 'discover_new_models'],
@@ -278,6 +286,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'analyse_chat',
         name: 'Analyse chat/completion models',
+        description:
+          'Evaluates every chat/completion model in scope and proposes field-level changes (tier role, latency, cost-efficiency, context length, tool use, deployment profiles) with per-claim source attribution.',
         type: 'llm_call',
         config: {
           prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
@@ -358,6 +368,8 @@ Respond with ONLY the JSON object, no markdown fencing.`,
       {
         id: 'analyse_embedding',
         name: 'Analyse embedding models',
+        description:
+          'Evaluates embedding models specifically — dimensions, quality tier, deployment profiles — and flags any that have been deprecated or superseded.',
         type: 'llm_call',
         config: {
           prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
@@ -437,6 +449,8 @@ Respond with ONLY the JSON object, no markdown fencing.`,
       {
         id: 'discover_new_models',
         name: 'Identify new models from providers (agent)',
+        description:
+          'Delegates to the provider-model-auditor agent to scan for recently released models that are missing from the registry, proposing full new-model entries with capability tags and source attribution.',
         type: 'agent_call',
         config: {
           agentSlug: 'provider-model-auditor',
@@ -490,6 +504,8 @@ Respond with ONLY the JSON object, no markdown fencing.`,
       {
         id: 'validate_proposals',
         name: 'Validate proposed values against schemas',
+        description:
+          'Schema-validation gate. Rejects any proposed change, new model, or deactivation whose values are outside the allowed enums, whose sources array is missing, or whose rationale fails to engage with the current value. Up to two retries with the failure reason passed back to the producer.',
         type: 'guard',
         config: {
           rules: `You are a schema validator for AI-model-audit proposals. Validate every change, new-model entry, and deactivation proposal against the spec below.
@@ -586,6 +602,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'refine_findings',
         name: 'Refine audit findings',
+        description:
+          'Draft-critique-revise loop that re-reads the proposals and tightens confidence levels, rationales, and consistency before they hit the approval queue.',
         type: 'reflect',
         config: {
           critiquePrompt:
@@ -601,6 +619,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'score_audit',
         name: 'Score audit confidence and completeness',
+        description:
+          'Scores the refined proposal set against a 1–10 rubric covering accuracy, completeness, specificity, confidence calibration, and consistency.',
         type: 'evaluate',
         config: {
           rubric:
@@ -628,6 +648,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'review_changes',
         name: 'Admin reviews proposed changes and new models',
+        description:
+          'Pauses the workflow for admin review. Renders proposed field changes, new models, and deactivations as a per-row structured form with Accept / Reject / Modify and colour-coded source pills.',
         type: 'human_approval',
         config: {
           prompt:
@@ -779,6 +801,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'apply_changes',
         name: 'Apply accepted changes',
+        description:
+          'Writes accepted field changes back to the AiProviderModel rows via the apply_audit_changes capability.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'apply_audit_changes',
@@ -794,6 +818,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'add_new_models',
         name: 'Add approved new models',
+        description:
+          'Creates the approved new model entries via the add_provider_models capability.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'add_provider_models',
@@ -809,6 +835,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'deactivate_models',
         name: 'Deactivate deprecated models',
+        description:
+          'Soft-deletes deprecated models via the deactivate_provider_models capability. Reactivation is possible later.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'deactivate_provider_models',
@@ -825,6 +853,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'compile_report',
         name: 'Compile consolidated audit report',
+        description:
+          'Delegates to the audit-report-writer agent to synthesise an executive-summary narrative report from every preceding step output.',
         type: 'agent_call',
         config: {
           agentSlug: 'audit-report-writer',
@@ -856,6 +886,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'supervisor_review',
         name: 'Neutral supervisor review',
+        description:
+          'Independent judge model audits the full execution and produces a calibrated verdict (Pass / Concerns / Fail) plus a 0.00–1.00 score. Advisory only — does not gate the workflow. Can be turned off per-run from the trigger dialog.',
         type: 'supervisor',
         config: {
           assessmentCriteria:
@@ -908,6 +940,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'report_render',
         name: 'Prepare report for email',
+        description:
+          'Walks the trace and renders a deterministic Markdown report — step-by-step inputs, outputs, durations, costs — for embedding into the notification email. Can be turned off per-run.',
         type: 'report',
         config: {
           format: 'markdown',
@@ -939,6 +973,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'notify_complete',
         name: 'Notify audit completion',
+        description:
+          'Emails the configured recipient with the supervisor verdict, the agent-authored narrative, and the structured Markdown report.',
         type: 'send_notification',
         config: {
           channel: 'email',
@@ -967,6 +1003,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'report_validation_failure',
         name: 'Notify admin: validation exhausted',
+        description:
+          'Terminal failure path. Reached when validate_proposals exhausts its retry budget. Emails the admin with the last validator verdict and marks the execution FAILED.',
         type: 'send_notification',
         config: {
           channel: 'email',

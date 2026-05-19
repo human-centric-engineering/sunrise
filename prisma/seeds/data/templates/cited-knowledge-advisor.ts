@@ -61,6 +61,8 @@ export const CITED_KNOWLEDGE_ADVISOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'search_kb',
         name: 'Search knowledge base (with citations)',
+        description:
+          'Invokes the search_knowledge_base capability. Returns chunks pre-tagged with monotonic [N] citation markers so the drafting step can reference them inline.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'search_knowledge_base',
@@ -70,6 +72,8 @@ export const CITED_KNOWLEDGE_ADVISOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'draft_answer',
         name: 'Draft answer with citations',
+        description:
+          'Drafts a reply using only the retrieved chunks. Every factual claim must carry an inline [N] marker; uncited assertions are caught by the next step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -82,6 +86,8 @@ export const CITED_KNOWLEDGE_ADVISOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'citation_guard',
         name: 'Citation guard',
+        description:
+          'Fails closed on any claim without an inline [N] marker, any marker referencing a chunk that was not retrieved, or any assertion unsupported by the retrieved chunks. On pass the workflow goes to expert review; on fail it generates an honest "no grounded answer" notice.',
         type: 'guard',
         config: {
           rules:
@@ -98,6 +104,8 @@ export const CITED_KNOWLEDGE_ADVISOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'no_grounded_answer',
         name: 'Generate no-grounded-answer notice',
+        description:
+          'Reached when the citation guard blocked the draft. Produces a short, honest reply acknowledging the corpus does not cover the question, stating what was searched, and suggesting next steps — shown to the user instead of an unsupported claim.',
         type: 'llm_call',
         config: {
           prompt:
@@ -110,6 +118,8 @@ export const CITED_KNOWLEDGE_ADVISOR_TEMPLATE: WorkflowTemplate = {
       {
         id: 'expert_review',
         name: 'Expert review before send',
+        description:
+          'Pauses the workflow for a domain expert to verify each [N] citation matches its chunk and that the answer is fit for purpose before it reaches the end user. 60-minute timeout, in-app notification.',
         type: 'human_approval',
         config: {
           prompt:

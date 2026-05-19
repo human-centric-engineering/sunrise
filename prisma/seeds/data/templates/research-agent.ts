@@ -50,6 +50,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'plan_research',
         name: 'Plan the investigation',
+        description:
+          'Produces a research plan identifying the key questions to answer, the sources to consult, and the deliverable format. The plan grounds every downstream specialist so they share the same scope.',
         type: 'plan',
         config: {
           objective:
@@ -61,6 +63,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'retrieve_priors',
         name: 'Retrieve prior art',
+        description:
+          'Vector-searches the knowledge base for the top 8 chunks relevant to the research plan (similarity threshold 0.65). Provides shared prior-art context for the three parallel specialists.',
         type: 'rag_retrieve',
         config: {
           query: '{{plan_research.output}}',
@@ -72,6 +76,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fanout',
         name: 'Specialists in parallel',
+        description:
+          'Parallel fan-out point — runs the historical, current-state, and future-outlook specialists concurrently with a 90-second cap.',
         type: 'parallel',
         config: {
           branches: ['specialist_history', 'specialist_current', 'specialist_future'],
@@ -87,6 +93,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'specialist_history',
         name: 'Historical specialist',
+        description:
+          'Summarises how the topic has evolved over time using the plan and retrieved context. One of three parallel specialists; output feeds the synthesis step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -99,6 +107,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'specialist_current',
         name: 'Current-state specialist',
+        description:
+          'Summarises the state of the art and open questions using the plan and retrieved context. One of three parallel specialists; output feeds the synthesis step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -111,6 +121,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'specialist_future',
         name: 'Future-outlook specialist',
+        description:
+          'Projects likely 1–3-year developments using the plan and retrieved context. One of three parallel specialists; output feeds the synthesis step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -123,6 +135,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'synthesize',
         name: 'Synthesise report',
+        description:
+          'Merges the three specialist outputs into a single cohesive report with Past / Present / Future sections, citing source chunks where useful.',
         type: 'llm_call',
         config: {
           prompt:
@@ -135,6 +149,8 @@ export const RESEARCH_AGENT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'quality_check',
         name: 'Reflect on quality',
+        description:
+          'Critique-revise loop that catches coverage gaps, unsupported claims, and structural problems before the report is returned. Up to 3 iterations or until the critique returns no further changes.',
         type: 'reflect',
         config: {
           critiquePrompt:

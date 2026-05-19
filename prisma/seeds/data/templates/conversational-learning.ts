@@ -51,6 +51,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'load_context',
         name: 'Load conversation context',
+        description:
+          'Calls the search_knowledge_base capability to pull prior conversation context, profile data, or recent history before the LLM sees the user turn.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'search_knowledge_base',
@@ -60,6 +62,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'understand',
         name: 'Understand the user turn',
+        description:
+          'Restates the user message in terms of what they are asking for and the implicit goal behind it — a structured handoff to the reasoning step rather than feeding the raw message forward.',
         type: 'llm_call',
         config: {
           prompt:
@@ -72,6 +76,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'reason',
         name: 'Reason about next action',
+        description:
+          'Decides whether the assistant should answer directly, ask a clarifying question, or fetch a specific reference — and returns a short action plan the response step follows.',
         type: 'llm_call',
         config: {
           prompt:
@@ -84,6 +90,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'lookup_facts',
         name: 'Look up pattern detail',
+        description:
+          'Fetches supporting facts the response will need via the get_pattern_detail capability. Replace with your own domain-specific lookup capability after cloning the template.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'get_pattern_detail',
@@ -93,6 +101,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'respond',
         name: 'Compose response',
+        description:
+          'Writes the conversational reply using the action plan and the looked-up facts. Higher temperature than the upstream reasoning steps because the output is user-facing prose.',
         type: 'llm_call',
         config: {
           prompt:
@@ -105,6 +115,8 @@ export const CONVERSATIONAL_LEARNING_TEMPLATE: WorkflowTemplate = {
       {
         id: 'evaluate_quality',
         name: 'Evaluate reply quality',
+        description:
+          'LLM-as-judge scores helpfulness, accuracy, and tone on a 1–5 scale with one-line feedback. The score feeds the learning loop that adjusts the agent over time.',
         type: 'llm_call',
         config: {
           prompt:
