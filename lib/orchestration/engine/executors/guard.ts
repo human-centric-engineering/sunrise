@@ -40,7 +40,10 @@ import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt, runLlmCall } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
-import { getSchema } from '@/lib/orchestration/schemas/registry';
+// Import via the barrel so feature-scoped schema modules (e.g.
+// `audit-proposals.ts`) get a chance to register at import time.
+// The barrel re-exports `getSchema` so this stays a one-liner.
+import { getSchema } from '@/lib/orchestration/schemas';
 
 export async function executeGuard(
   step: WorkflowStep,
