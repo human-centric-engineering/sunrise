@@ -428,43 +428,88 @@ Respond with ONLY the JSON object, no markdown fencing.`,
           agentSlug: 'provider-model-auditor',
           message: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate and produce a corrected new-model proposal set. Pay particular attention to enum values — they must match the allowed lists exactly, and every proposed model MUST carry a non-empty \`sources\` array.
 
-{{/if}}You are an AI model landscape expert. Given the list of providers and their currently registered models, identify any recently released models that are NOT in the registry.
+{{/if}}You are an AI model landscape expert. Your task is to identify models missing from the registry and propose complete entries for admin review.
 
-Current model registry:
-{{load_models.output}}
+## Output contract
 
-${SEARCH_RESULTS_BLOCK}
+Respond with ONLY this JSON object (no markdown fencing):
+
+\`\`\`json
+{
+  "newModels": [...],
+  "reasoning": "≤3 sentences summarising what was found and the strength of evidence."
+}
+\`\`\`
+
+If nothing is missing, respond with \`{ "newModels": [], "reasoning": "All known models are already registered" }\`.
+
+Each entry in \`newModels\`:
+- \`name\`: Human-readable name (e.g. "Claude Sonnet 4.5")
+- \`slug\`: Lowercase letters / digits / hyphens only, prefixed with the provider (e.g. "anthropic-claude-sonnet-4-5")
+- \`providerSlug\`: Must match an existing provider slug from the registry
+- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-opus-4\` (NOT \`claude-opus-4-20250514\`), \`gpt-5\` (NOT \`gpt-5-2026-01-15\`), \`o3-mini\`.
+- \`description\`: Brief — purpose and strengths in one sentence.
+- \`capabilities\`: array of one or more of: \`chat\`, \`reasoning\`, \`embedding\`, \`audio\`, \`image\`, \`moderation\`, \`vision\`, \`documents\`. Use these exact tokens — do not invent values like \`multimodal\` or \`pdf\`. \`image\` = image generation; \`vision\` = image input to a chat model.
+- \`tierRole\`: one of \`thinking\` / \`worker\` / \`infrastructure\` / \`control_plane\` / \`embedding\` (the model's capability tier).
+- \`deploymentProfiles\`: array of one or more of \`hosted\` / \`sovereign\` (\`hosted\` for vendor API, \`sovereign\` for self-hosted like Ollama/vLLM; both if available either way). NEVER omit.
+- \`reasoningDepth\`: \`very_high\` / \`high\` / \`medium\` / \`none\`
+- \`latency\`: \`very_fast\` / \`fast\` / \`medium\`
+- \`costEfficiency\`: \`very_high\` / \`high\` / \`medium\` / \`none\`
+- \`contextLength\`: \`very_high\` / \`high\` / \`medium\` / \`n_a\`
+- \`toolUse\`: \`strong\` / \`moderate\` / \`none\`
+- \`bestRole\`: One-line summary of the optimal slot (≤8 words).
+- For embedding models also include: \`dimensions\` (int), \`quality\` (\`high\` / \`medium\` / \`budget\`), \`schemaCompatible\` (bool).
+- \`sources\`: non-empty array per the rules below.
 
 ${SOURCES_INSTRUCTIONS}
 
-For each provider represented in the data, check if they have released new models that are missing from the registry. For each new model found, propose a complete entry with:
-- "name": Human-readable name (e.g. "Claude Opus 4")
-- "slug": Lowercase with hyphens only (e.g. "anthropic-claude-opus-4")
-- "providerSlug": Must match an existing provider slug from the registry
-- "modelId": The API model identifier (e.g. "claude-opus-4-20250514")
-- "description": Brief description of the model's purpose and strengths
-- "capabilities": array of one or more of: chat, reasoning, embedding, audio, image, moderation, vision, documents. Use these exact tokens — do not substitute synonyms (e.g. use "image" for image generation, "vision" for image input to a chat model; do not invent values like "multimodal" or "pdf")
-- "tierRole": one of: thinking, worker, infrastructure, control_plane, embedding — what the model is FOR (capability tier)
-- "deploymentProfiles": array of one or more of: hosted, sovereign — where the model RUNS. \`hosted\` for vendor-managed API (default); \`sovereign\` for self-hosted (Ollama, vLLM); both if available either way. NEVER omit this field.
-- "reasoningDepth": one of: very_high, high, medium, none
-- "latency": one of: very_fast, fast, medium
-- "costEfficiency": one of: very_high, high, medium, none
-- "contextLength": one of: very_high, high, medium, n_a
-- "toolUse": one of: strong, moderate, none
-- "bestRole": One-line summary of optimal use case
-- For embedding models also include: "dimensions" (integer), "quality" (high | medium | budget), "schemaCompatible" (boolean)
-- "sources": non-empty array per the contract above — every new-model proposal MUST attribute the claim that the model exists and that its capabilities/tier are correct.
+## Worked example
 
-Respond with a JSON object:
+Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search result [2] reads "Claude Sonnet 4.5 released October 2025" at https://anthropic.com/news/sonnet-4-5 with description "Anthropic announces Claude Sonnet 4.5, available via API from October 2025." A well-formed proposal looks like this:
+
+\`\`\`json
 {
-  "newModels": [...array of proposed models...],
-  "reasoning": "Summary of what was found and why these models should be added"
+  "name": "Claude Sonnet 4.5",
+  "slug": "anthropic-claude-sonnet-4-5",
+  "providerSlug": "anthropic",
+  "modelId": "claude-sonnet-4-5",
+  "description": "Anthropic's mid-tier 4.5-generation chat model, balancing reasoning quality and cost.",
+  "capabilities": ["chat", "vision", "documents"],
+  "tierRole": "infrastructure",
+  "deploymentProfiles": ["hosted"],
+  "reasoningDepth": "high",
+  "latency": "medium",
+  "costEfficiency": "high",
+  "contextLength": "very_high",
+  "toolUse": "strong",
+  "bestRole": "General chat workhorse",
+  "sources": [{
+    "source": "web_search",
+    "confidence": "high",
+    "reference": "https://anthropic.com/news/sonnet-4-5",
+    "snippet": "Anthropic announces Claude Sonnet 4.5, available via API from October 2025.",
+    "note": "Result [2] announces the model's release."
+  }]
 }
+\`\`\`
 
-If no new models are found, respond with { "newModels": [], "reasoning": "All known models are already registered" }.
+Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-5\`, not the dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
 
-IMPORTANT: Only propose models you are confident exist with attributable evidence. A model proposed solely from training knowledge with "low" confidence is acceptable to emit so the admin can verify; a model with NO source is not acceptable and will be rejected by the validator.
-Respond with ONLY the JSON object, no markdown fencing.`,
+## Data
+
+### Current model registry
+
+\`\`\`json
+{{load_models.output}}
+\`\`\`
+
+${SEARCH_RESULTS_BLOCK}
+
+## Instruction
+
+For each provider represented in the registry above, identify models that are **not present in the registry above** — "missing" is what matters, not "when released". Cross-reference web search results [N] when possible; a missing model with a \`web_search\` source is far stronger evidence than one with only \`training_knowledge\`.
+
+Only propose models you can attribute. A proposal with only \`training_knowledge: "low"\` is acceptable so the admin can verify; a proposal with NO source will be rejected by the validator.`,
           maxToolIterations: 5,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],

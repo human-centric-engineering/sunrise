@@ -219,7 +219,13 @@ const newModelSchema = z.object({
   // Rule 6: slug must match the slug regex (lowercase, hyphenated).
   slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
   providerSlug: z.string().min(1),
-  modelId: z.string().min(1),
+  // modelId must use the provider's canonical short form: lowercase
+  // alphanumeric runs joined by `.` / `-` / `/`, with no leading or
+  // trailing separator. Catches the common drift modes — uppercase
+  // (`Claude-Opus-4`), spaces, dated suffixes leaving a trailing
+  // hyphen, etc. The "no date suffix" rule itself is semantic and
+  // belongs in the prompt; this regex is the structural floor.
+  modelId: z.string().regex(/^[a-z0-9]+([./-][a-z0-9]+)*$/),
   description: z.string().min(1),
   // Per-element enum check (Rule 3): each capability is in the
   // CAPABILITIES spec.

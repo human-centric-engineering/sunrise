@@ -326,4 +326,54 @@ describe('audit-proposals schema', () => {
     );
     expect(result.success).toBe(false);
   });
+
+  // ── modelId canonical-form regex (Issue 5 — registry uses bare ids) ──
+  // The schema enforces structural shape; the "no date suffix" rule is
+  // a semantic constraint that lives in the prompt. The regex still
+  // catches the most common drift modes (uppercase, spaces, trailing
+  // separators) so the validator surfaces them at attempt 1 rather
+  // than letting the downstream tool_call key on a malformed id.
+
+  function makeNewModel(overrides: Record<string, unknown> = {}) {
+    return {
+      name: 'Demo',
+      slug: 'provider-demo',
+      providerSlug: 'provider',
+      modelId: 'demo-1',
+      description: 'A demo model',
+      capabilities: ['chat'],
+      tierRole: 'thinking',
+      deploymentProfiles: ['hosted'],
+      bestRole: 'Demo',
+      sources: [SOURCE],
+      ...overrides,
+    };
+  }
+
+  it.each([
+    ['claude-opus-4', true],
+    ['claude-sonnet-4-5', true],
+    ['gpt-5', true],
+    ['gpt-4.1', true],
+    ['gpt-4o-mini', true],
+    ['o3-mini', true],
+    ['text-embedding-3-large', true],
+    ['meta-llama/llama-3.3-70b', true], // slashes allowed for compound provider ids
+    ['Claude-Opus-4', false], // uppercase
+    ['claude-opus-4-', false], // trailing hyphen
+    ['-claude-opus-4', false], // leading hyphen
+    ['gpt 5', false], // space
+    ['gpt--5', false], // double separator
+    ['gpt-5.', false], // trailing dot
+  ])('modelId %s → valid: %s', (modelId, expected) => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        discover_new_models: {
+          newModels: [makeNewModel({ modelId })],
+          reasoning: '',
+        },
+      })
+    );
+    expect(result.success).toBe(expected);
+  });
 });
