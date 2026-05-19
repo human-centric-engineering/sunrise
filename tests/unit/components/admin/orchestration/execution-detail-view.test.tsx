@@ -989,7 +989,10 @@ describe('ExecutionDetailView', () => {
         />
       );
       expect(screen.getByText('Concerns')).toBeInTheDocument();
-      expect(screen.getByText('score 0.60')).toBeInTheDocument();
+      // Score is rendered with an explicit `/ 1.00` so the operator sees the
+      // range at a glance; query loosely so the assertion isn't brittle to
+      // future range/format tweaks.
+      expect(screen.getByText(/score 0\.60.*\/ 1\.00/)).toBeInTheDocument();
     });
   });
 
@@ -1035,6 +1038,23 @@ describe('ExecutionDetailView', () => {
       expect(screen.getByText(/Validator was lenient/)).toBeInTheDocument();
       expect(screen.getByText(/duration spike/)).toBeInTheDocument();
       expect(screen.getByText('downstream consumers')).toBeInTheDocument();
+    });
+
+    it('renders the score with an explicit `/ 1.00` range so the scale is obvious', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            supervisorVerdict: 'concerns',
+            supervisorScore: 0.6,
+            supervisorReport: REPORT_BASE,
+          })}
+          trace={[TRACE_ENTRY]}
+        />
+      );
+      const panel = screen.getByTestId('supervisor-details-panel');
+      // The panel header score uses `/ 1.00` so the operator sees the scale
+      // without hovering. The badge in the metadata row uses the same shape.
+      expect(panel).toHaveTextContent(/score 0\.60 \/ 1\.00/);
     });
 
     it('renders an invalidCitations note when the validator stripped citations', () => {
@@ -1234,10 +1254,10 @@ describe('ExecutionDetailView', () => {
       const banner = await screen.findByTestId('execution-review-success');
       // Definitive "complete" wording, not the old "Refreshing…" ellipsis.
       expect(banner).toHaveTextContent(/Re-review complete\./);
-      // New verdict label and score.
-      expect(banner).toHaveTextContent(/New verdict:.*Pass.*0\.87/);
+      // New verdict label and score — `/ 1.00` makes the scale obvious.
+      expect(banner).toHaveTextContent(/New verdict:.*Pass.*0\.87 \/ 1\.00/);
       // Previous verdict label and score so operators can see what changed.
-      expect(banner).toHaveTextContent(/Previous:.*Concerns.*0\.62/);
+      expect(banner).toHaveTextContent(/Previous:.*Concerns.*0\.62 \/ 1\.00/);
       // Jump-to-details affordance is wired.
       expect(screen.getByTestId('jump-to-supervisor-details')).toBeInTheDocument();
     });

@@ -169,7 +169,12 @@ function SupervisorVerdictBadge({
         {VERDICT_LABEL[verdict] ?? verdict}
       </Badge>
       {typeof score === 'number' && (
-        <span className="text-muted-foreground text-xs">score {score.toFixed(2)}</span>
+        <span
+          className="text-muted-foreground text-xs"
+          title="Supervisor score on a 0.00–1.00 scale (higher is better). The judge model picks the score alongside the verdict — see the panel below for the rubric."
+        >
+          score {score.toFixed(2)} / 1.00
+        </span>
       )}
     </div>
   );
@@ -260,6 +265,14 @@ function SupervisorDetailsPanel({
               parsed.
             </p>
             <p className="mt-2">
+              The <strong>score</strong> is a 0.00–1.00 continuous read (higher is better). The
+              judge picks it alongside the verdict using the same calibration anchors, so it adds
+              nuance (low Pass vs. high Pass, borderline Concerns, etc.) rather than acting as a
+              separate signal. In practice Pass typically lands above ~0.80, Concerns in the
+              ~0.50–0.80 band, and Fail below — but the verdict is the headline; the score just
+              shades it.
+            </p>
+            <p className="mt-2">
               <strong>Weaknesses</strong> cite specific steps with verbatim quotes; the post-hoc
               citation validator strips any quote that doesn&apos;t actually appear in the cited
               step&apos;s output, and downgrades the verdict if the floor breaks.{' '}
@@ -273,7 +286,12 @@ function SupervisorDetailsPanel({
           {VERDICT_LABEL[verdict] ?? verdict}
         </Badge>
         {typeof score === 'number' && (
-          <span className="text-muted-foreground text-xs">score {score.toFixed(2)}</span>
+          <span
+            className="text-muted-foreground text-xs"
+            title="Supervisor score on a 0.00–1.00 scale (higher is better). The judge picks it alongside the verdict — see the ⓘ above for the rubric."
+          >
+            score {score.toFixed(2)} / 1.00
+          </span>
         )}
         {reviewedAt && (
           <span className="text-muted-foreground ml-auto text-xs">
@@ -813,12 +831,12 @@ export function ExecutionDetailView({
           >
             <strong>{previousVerdict ? 'Re-review complete.' : 'Review complete.'}</strong>
             <span>
-              New verdict: <strong>{newLabel}</strong> (score {result.score.toFixed(2)}).
+              New verdict: <strong>{newLabel}</strong> (score {result.score.toFixed(2)} / 1.00).
             </span>
             {prevLabel && (
               <span className="opacity-75">
                 Previous: {prevLabel}
-                {typeof previousScore === 'number' ? ` (${previousScore.toFixed(2)})` : ''}.
+                {typeof previousScore === 'number' ? ` (${previousScore.toFixed(2)} / 1.00)` : ''}.
               </span>
             )}
             <button
